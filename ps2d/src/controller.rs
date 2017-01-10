@@ -1,4 +1,4 @@
-use io::{Io, Pio, ReadOnly, WriteOnly};
+use syscall::io::{Io, Pio, ReadOnly, WriteOnly};
 
 bitflags! {
     flags StatusFlags: u8 {

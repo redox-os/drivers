@@ -1,6 +1,6 @@
 use std::ptr;
 
-use dma::Dma;
+use syscall::io::Dma;
 use syscall::error::Result;
 
 use super::hba::{HbaPort, HbaCmdTable, HbaCmdHeader};

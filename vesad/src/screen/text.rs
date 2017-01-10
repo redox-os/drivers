@@ -48,7 +48,7 @@ impl Screen for TextScreen {
         Ok(0)
     }
 
-    fn map(&self, offset: usize, size: usize) -> Result<usize> {
+    fn map(&self, _offset: usize, _size: usize) -> Result<usize> {
         Err(Error::new(EBADF))
     }
 

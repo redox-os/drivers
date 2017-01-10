@@ -1,3 +1,4 @@
+#![deny(warnings)]
 #![feature(alloc)]
 #![feature(asm)]
 #![feature(heap_api)]

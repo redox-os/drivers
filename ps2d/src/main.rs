@@ -1,9 +1,9 @@
+#![deny(warnings)]
 #![feature(asm)]
 
 #[macro_use]
 extern crate bitflags;
 extern crate event;
-extern crate io;
 extern crate orbclient;
 extern crate syscall;
 

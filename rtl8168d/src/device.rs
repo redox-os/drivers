@@ -1,10 +1,9 @@
 use std::mem;
 
-use dma::Dma;
-use io::{Mmio, Io, ReadOnly};
 use netutils::setcfg;
 use syscall::error::{Error, EACCES, EWOULDBLOCK, Result};
 use syscall::flag::O_NONBLOCK;
+use syscall::io::{Dma, Mmio, Io, ReadOnly};
 use syscall::scheme::SchemeMut;
 
 #[repr(packed)]

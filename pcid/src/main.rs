@@ -1,3 +1,4 @@
+#![deny(warnings)]
 #![feature(asm)]
 
 extern crate rustc_serialize;

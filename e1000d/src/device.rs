@@ -1,9 +1,9 @@
 use std::{cmp, mem, ptr, slice};
 
-use dma::Dma;
 use netutils::setcfg;
 use syscall::error::{Error, EACCES, EWOULDBLOCK, Result};
 use syscall::flag::O_NONBLOCK;
+use syscall::io::Dma;
 use syscall::scheme::Scheme;
 
 const CTRL: u32 = 0x00;

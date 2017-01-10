@@ -1,3 +1,5 @@
+#![deny(warnings)]
+
 use std::env;
 
 fn main() {

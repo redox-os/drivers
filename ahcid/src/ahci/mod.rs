@@ -1,4 +1,4 @@
-use io::Io;
+use syscall::io::Io;
 
 use self::disk::Disk;
 use self::hba::{HbaMem, HbaPortType};

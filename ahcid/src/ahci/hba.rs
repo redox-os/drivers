@@ -2,8 +2,7 @@ use std::mem::size_of;
 use std::ops::DerefMut;
 use std::{ptr, u32};
 
-use dma::Dma;
-use io::{Io, Mmio};
+use syscall::io::{Dma, Io, Mmio};
 use syscall::error::{Error, Result, EIO};
 
 use super::fis::{FisType, FisRegH2D};

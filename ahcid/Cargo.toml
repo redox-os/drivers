@@ -4,7 +4,5 @@ version = "0.1.0"
 
 [dependencies]
 bitflags = "*"
-dma = { path = "../../crates/dma/" }
-io = { path = "../../crates/io/" }
 spin = "*"
-redox_syscall = { path = "../../syscall/" }
+redox_syscall = { git = "https://github.com/redox-os/syscall.git" }
