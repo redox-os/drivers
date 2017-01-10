@@ -10,7 +10,7 @@ use primitive::{fast_set32, fast_set64, fast_copy, fast_copy64};
 use self::rusttype::{Font, FontCollection, Scale, point};
 
 #[cfg(not(feature="rusttype"))]
-static FONT: &'static [u8] = include_bytes!("../../../res/fonts/unifont.font");
+use orbclient::FONT;
 
 #[cfg(feature="rusttype")]
 static FONT: &'static [u8] = include_bytes!("../../../res/fonts/DejaVuSansMono.ttf");
