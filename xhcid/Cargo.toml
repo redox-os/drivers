@@ -1,0 +1,8 @@
+[package]
+name = "xhcid"
+version = "0.1.0"
+
+[dependencies]
+bitflags = "*"
+spin = "*"
+redox_syscall = { git = "https://github.com/redox-os/syscall.git" }
