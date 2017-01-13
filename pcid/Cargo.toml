@@ -3,6 +3,6 @@ name = "pcid"
 version = "0.1.0"
 
 [dependencies]
-redox_syscall = { git = "https://github.com/redox-os/syscall.git" }
+redox_syscall = "0.1"
 rustc-serialize = "0.3"
 toml = "0.2"
