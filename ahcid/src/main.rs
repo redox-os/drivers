@@ -1,7 +1,6 @@
 #![deny(warnings)]
 #![feature(asm)]
 
-#[macro_use]
 extern crate bitflags;
 extern crate spin;
 extern crate syscall;
