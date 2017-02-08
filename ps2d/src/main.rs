@@ -7,7 +7,7 @@ extern crate event;
 extern crate orbclient;
 extern crate syscall;
 
-use std::env;
+use std::{env, process};
 use std::fs::File;
 use std::io::{Read, Write, Result};
 use std::os::unix::io::AsRawFd;
@@ -122,72 +122,82 @@ impl<'a> Ps2d<'a> {
     }
 }
 
+fn daemon(input: File) {
+    unsafe {
+        iopl(3).expect("ps2d: failed to get I/O permission");
+        asm!("cli" : : : : "intel", "volatile");
+    }
+
+    let extra_packet = controller::Ps2::new().init();
+    let keymap = match env::args().skip(1).next() {
+        Some(k) => match k.to_lowercase().as_ref() {
+            "dvorak" => (keymap::dvorak::get_char),
+            "english" => (keymap::english::get_char),
+            &_ => (keymap::english::get_char)
+        },
+        None => (keymap::english::get_char)
+    };
+    let mut ps2d = Ps2d::new(input, extra_packet,&keymap);
+
+    let mut event_queue = EventQueue::<(bool, u8)>::new().expect("ps2d: failed to create event queue");
+
+    let mut key_irq = File::open("irq:1").expect("ps2d: failed to open irq:1");
+
+    event_queue.add(key_irq.as_raw_fd(), move |_count: usize| -> Result<Option<(bool, u8)>> {
+        let mut irq = [0; 8];
+        if key_irq.read(&mut irq)? >= mem::size_of::<usize>() {
+            let data: u8;
+            unsafe {
+                asm!("in al, dx" : "={al}"(data) : "{dx}"(0x60) : : "intel", "volatile");
+            }
+
+            key_irq.write(&irq)?;
+
+            Ok(Some((true, data)))
+        } else {
+            Ok(None)
+        }
+    }).expect("ps2d: failed to poll irq:1");
+
+    let mut mouse_irq = File::open("irq:12").expect("ps2d: failed to open irq:12");
+
+    event_queue.add(mouse_irq.as_raw_fd(), move |_count: usize| -> Result<Option<(bool, u8)>> {
+        let mut irq = [0; 8];
+        if mouse_irq.read(&mut irq)? >= mem::size_of::<usize>() {
+            let data: u8;
+            unsafe {
+                asm!("in al, dx" : "={al}"(data) : "{dx}"(0x60) : : "intel", "volatile");
+            }
+
+            mouse_irq.write(&irq)?;
+
+            Ok(Some((false, data)))
+        } else {
+            Ok(None)
+        }
+    }).expect("ps2d: failed to poll irq:12");
+
+    for (keyboard, data) in event_queue.trigger_all(0).expect("ps2d: failed to trigger events") {
+        ps2d.handle(keyboard, data);
+    }
+
+    loop {
+        let (keyboard, data) = event_queue.run().expect("ps2d: failed to handle events");
+        ps2d.handle(keyboard, data);
+    }
+}
+
 fn main() {
-    // Daemonize
-    if unsafe { syscall::clone(0).unwrap() } == 0 {
-        unsafe {
-            iopl(3).expect("ps2d: failed to get I/O permission");
-            asm!("cli" : : : : "intel", "volatile");
-        }
-
-        let input = File::open("display:input").expect("ps2d: failed to open display:input");
-
-        let extra_packet = controller::Ps2::new().init();
-        let keymap = match env::args().skip(1).next() {
-            Some(k) => match k.to_lowercase().as_ref() {
-                "dvorak" => (keymap::dvorak::get_char),
-                "english" => (keymap::english::get_char),
-                &_ => (keymap::english::get_char)
-            },
-            None => (keymap::english::get_char)
-        };
-        let mut ps2d = Ps2d::new(input, extra_packet,&keymap);
-
-        let mut event_queue = EventQueue::<(bool, u8)>::new().expect("ps2d: failed to create event queue");
-
-        let mut key_irq = File::open("irq:1").expect("ps2d: failed to open irq:1");
-
-        event_queue.add(key_irq.as_raw_fd(), move |_count: usize| -> Result<Option<(bool, u8)>> {
-            let mut irq = [0; 8];
-            if key_irq.read(&mut irq)? >= mem::size_of::<usize>() {
-                let data: u8;
-                unsafe {
-                    asm!("in al, dx" : "={al}"(data) : "{dx}"(0x60) : : "intel", "volatile");
-                }
-
-                key_irq.write(&irq)?;
-
-                Ok(Some((true, data)))
-            } else {
-                Ok(None)
+    match File::open("display:input") {
+        Ok(input) => {
+            // Daemonize
+            if unsafe { syscall::clone(0).unwrap() } == 0 {
+                daemon(input);
             }
-        }).expect("ps2d: failed to poll irq:1");
-
-        let mut mouse_irq = File::open("irq:12").expect("ps2d: failed to open irq:12");
-
-        event_queue.add(mouse_irq.as_raw_fd(), move |_count: usize| -> Result<Option<(bool, u8)>> {
-            let mut irq = [0; 8];
-            if mouse_irq.read(&mut irq)? >= mem::size_of::<usize>() {
-                let data: u8;
-                unsafe {
-                    asm!("in al, dx" : "={al}"(data) : "{dx}"(0x60) : : "intel", "volatile");
-                }
-
-                mouse_irq.write(&irq)?;
-
-                Ok(Some((false, data)))
-            } else {
-                Ok(None)
-            }
-        }).expect("ps2d: failed to poll irq:12");
-
-        for (keyboard, data) in event_queue.trigger_all(0).expect("ps2d: failed to trigger events") {
-            ps2d.handle(keyboard, data);
-        }
-
-        loop {
-            let (keyboard, data) = event_queue.run().expect("ps2d: failed to handle events");
-            ps2d.handle(keyboard, data);
+        },
+        Err(err) => {
+            println!("ps2d: failed to open display: {}", err);
+            process::exit(1);
         }
     }
 }
