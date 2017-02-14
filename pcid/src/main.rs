@@ -142,7 +142,7 @@ fn main() {
                                     command.arg(&arg);
                                 }
 
-                                println!("PCID SPAWN {:?}", command);
+                                //println!("PCID SPAWN {:?}", command);
 
                                 match command.spawn() {
                                     Ok(mut child) => match child.wait() {
