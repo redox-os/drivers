@@ -1,8 +1,13 @@
 use syscall::io::{Io, Mmio};
 
+#[repr(packed)]
 pub struct NvmeCmd {
-    /// Command dword 0
-    cdw0: u32,
+    /// Opcode
+    opcode: u8,
+    /// Flags
+    flags: u8,
+    /// Command ID
+    cid: u16,
     /// Namespace identifier
     nsid: u32,
     /// Reserved
@@ -28,7 +33,9 @@ pub struct NvmeCmd {
 impl NvmeCmd {
     pub fn read(cid: u16, lba: u64, count: u16, dst: u64) -> Self {
         NvmeCmd {
-            cdw0: (cid as u32) << 16 | 1 << 14 | 2,
+            opcode: 2,
+            flags: 1 << 6,
+            cid: cid,
             nsid: 0xFFFFFFFF,
             _rsvd: 0,
             mptr: 0,
@@ -44,7 +51,9 @@ impl NvmeCmd {
 
     pub fn write(cid: u16, lba: u64, count: u16, src: u64) -> Self {
         NvmeCmd {
-            cdw0: (cid as u32) << 16 | 1 << 14 | 1,
+            opcode: 1,
+            flags: 1 << 6,
+            cid: cid,
             nsid: 0xFFFFFFFF,
             _rsvd: 0,
             mptr: 0,
@@ -87,4 +96,21 @@ pub struct NvmeRegs {
     cmbloc: Mmio<u32>,
     /// Controller memory buffer size
     cmbsz: Mmio<u32>,
+}
+
+pub struct Nvme {
+    regs: &'static mut NvmeRegs
+}
+
+impl Nvme {
+    pub fn new(address: usize) -> Self {
+        Nvme {
+            regs: unsafe { &mut *(address as *mut NvmeRegs) }
+        }
+    }
+
+    pub fn init(&mut self) {
+        println!("  - CAPS: {:X}", self.regs.cap.read());
+        println!("  - VS: {:X}", self.regs.vs.read());
+    }
 }

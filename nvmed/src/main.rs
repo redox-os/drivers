@@ -11,6 +11,8 @@ use std::io::{Read, Write};
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use syscall::{EVENT_READ, MAP_WRITE, Event, Packet, Result, Scheme};
 
+use self::nvme::Nvme;
+
 mod nvme;
 
 fn create_scheme_fallback<'a>(name: &'a str, fallback: &'a str) -> Result<(&'a str, RawFd)> {
@@ -40,6 +42,8 @@ fn main() {
     if unsafe { syscall::clone(0).unwrap() } == 0 {
         let address = unsafe { syscall::physmap(bar, 4096, MAP_WRITE).expect("nvmed: failed to map address") };
         {
+            let mut nvme = Nvme::new(address);
+            nvme.init();
             /*
             let (_scheme_name, socket_fd) = create_scheme_fallback("disk", &name).expect("nvmed: failed to create disk scheme");
             let mut socket = unsafe { File::from_raw_fd(socket_fd) };
