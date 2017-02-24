@@ -24,7 +24,7 @@ fn main() {
         let address = unsafe { syscall::physmap(bar, 4096, syscall::MAP_WRITE).expect("xhcid: failed to map address") };
         match Xhci::new(address) {
             Ok(mut xhci) => {
-                xhci.init();
+                //xhci.init();
             },
             Err(err) => {
                 println!("xhcid: error: {}", err);
