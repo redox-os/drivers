@@ -4,6 +4,6 @@ version = "0.1.0"
 
 [dependencies]
 bitflags = "0.7"
-orbclient = "0.2"
+orbclient = "0.3"
 redox_event = { git = "https://github.com/redox-os/event.git" }
 redox_syscall = "0.1"

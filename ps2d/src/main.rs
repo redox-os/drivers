@@ -14,7 +14,7 @@ use std::os::unix::io::AsRawFd;
 use std::mem;
 
 use event::EventQueue;
-use orbclient::{KeyEvent, MouseEvent};
+use orbclient::{KeyEvent, MouseEvent, ScrollEvent};
 use syscall::iopl;
 
 mod controller;
@@ -98,11 +98,14 @@ impl<'a> Ps2d<'a> {
                         dy += 0x100;
                     }
 
-                    let _extra = if self.extra_packet {
-                        self.packets[3]
-                    } else {
-                        0
-                    };
+                    let mut dz = 0;
+                    if self.extra_packet {
+                        let mut scroll = (self.packets[3] & 0xF) as i8;
+                        if scroll & (1 << 3) == 1 << 3 {
+                            scroll -= 16;
+                        }
+                        dz = -scroll as i32;
+                    }
 
                     self.input.write(&MouseEvent {
                         x: dx,
@@ -111,6 +114,13 @@ impl<'a> Ps2d<'a> {
                         middle_button: flags.contains(MIDDLE_BUTTON),
                         right_button: flags.contains(RIGHT_BUTTON)
                     }.to_event()).expect("ps2d: failed to write mouse event");
+
+                    if dz != 0 {
+                        self.input.write(&ScrollEvent {
+                            x: 0,
+                            y: dz,
+                        }.to_event()).expect("ps2d: failed to write scroll event");
+                    }
                 } else {
                     println!("ps2d: overflow {:X} {:X} {:X} {:X}", self.packets[0], self.packets[1], self.packets[2], self.packets[3]);
                 }
@@ -137,7 +147,7 @@ fn daemon(input: File) {
         },
         None => (keymap::english::get_char)
     };
-    let mut ps2d = Ps2d::new(input, extra_packet,&keymap);
+    let mut ps2d = Ps2d::new(input, extra_packet, &keymap);
 
     let mut event_queue = EventQueue::<(bool, u8)>::new().expect("ps2d: failed to create event queue");
 
