@@ -193,7 +193,8 @@ impl Screen for TextScreen {
                         for y in 0..display.height/16 {
                             changed.insert(y);
                         }
-                    }
+                    },
+                    ransid::Event::Title { .. } => ()
                 }
             });
         }
