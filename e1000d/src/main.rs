@@ -17,6 +17,7 @@ use syscall::error::EWOULDBLOCK;
 
 pub mod device;
 
+/// device driver executable, called with VERIFY: `e1000d NAME ADDRESS IRQ`
 fn main() {
     let mut args = env::args().skip(1);
 
@@ -42,11 +43,27 @@ fn main() {
 
             let mut event_queue = EventQueue::<usize>::new().expect("e1000d: failed to create event queue");
 
+            // TODO: purpose of this?
             let todo = Arc::new(RefCell::new(Vec::<Packet>::new()));
 
+            // this seems CRAZY that you can just clone these like this. What is the justification
+            // here?
             let device_irq = device.clone();
             let socket_irq = socket.clone();
             let todo_irq = todo.clone();
+
+            // TODO: need overall archetecture documentation here... how do these three event loops
+            // work together?
+            //
+            // i.e. the irq handler just reads data and puts in a buffer, then the socket loop does
+            // this other thing. The write loop does something else...
+
+            // TODO: IRQ handling process
+            // this should be moved into a separate inline function that get's passed the closure
+            // arguments. That function should be documented with it's general archetecture.
+            //
+            // i.e. interrupts are handled by copying the data from the available buffers to
+            // virtual memory at WHERE. The irq is then marked as handled.
             let mut irq_file = File::open(format!("irq:{}", irq)).expect("e1000d: failed to open IRQ file");
             event_queue.add(irq_file.as_raw_fd(), move |_count: usize| -> Result<Option<usize>> {
                 let mut irq = [0; 8];
@@ -76,6 +93,7 @@ fn main() {
                 Ok(None)
             }).expect("e1000d: failed to catch events on IRQ file");
 
+            // what is this event loop doing???
             let socket_packet = socket.clone();
             event_queue.add(socket_fd, move |_count: usize| -> Result<Option<usize>> {
                 loop {
@@ -100,7 +118,7 @@ fn main() {
                 }
 
                 Ok(None)
-            }).expect("e1000d: failed to catch events on IRQ file");
+            }).expect("e1000d: TODO: Copy paste error???");
 
             for event_count in event_queue.trigger_all(0).expect("e1000d: failed to trigger events") {
                 socket.borrow_mut().write(&Packet {
@@ -118,6 +136,7 @@ fn main() {
             loop {
                 let event_count = event_queue.run().expect("e1000d: failed to handle events");
 
+                // TODO: what is going on in here? Why is it writing this packet in a loop?
                 socket.borrow_mut().write(&Packet {
                     id: 0,
                     pid: 0,

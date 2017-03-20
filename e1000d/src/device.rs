@@ -1,3 +1,4 @@
+//! device driver for the Intel8254x ethernet device
 use std::{cmp, mem, ptr, slice};
 
 use netutils::setcfg;
@@ -6,6 +7,9 @@ use syscall::flag::O_NONBLOCK;
 use syscall::io::Dma;
 use syscall::scheme::Scheme;
 
+// TODO: One // line here to describe what this GROUP of constants is
+// TODO: one /// line describing each constant. Just defining the acronym
+// would be very beneficial for all of these constants
 const CTRL: u32 = 0x00;
 const CTRL_LRST: u32 = 1 << 3;
 const CTRL_ASDE: u32 = 1 << 5;
@@ -14,15 +18,21 @@ const CTRL_ILOS: u32 = 1 << 7;
 const CTRL_VME: u32 = 1 << 30;
 const CTRL_PHY_RST: u32 = 1 << 31;
 
+// TODO: status bit for what? 
 const STATUS: u32 = 0x08;
 
+// TODO: One // line here to describe what this GROUP of constants is
+// TODO: leave one line description of these using ///
 const FCAL: u32 = 0x28;
 const FCAH: u32 = 0x2C;
 const FCT: u32 = 0x30;
 const FCTTV: u32 = 0x170;
 
+// TODO: ICR means what?
 const ICR: u32 = 0xC0;
 
+// TODO: One // line here to describe what this GROUP of constants is
+// TODO: leave one line description of these using ///
 const IMS: u32 = 0xD0;
 const IMS_TXDW: u32 = 1;
 const IMS_TXQE: u32 = 1 << 1;
@@ -32,6 +42,8 @@ const IMS_RXDMT: u32 = 1 << 4;
 const IMS_RX: u32 = 1 << 6;
 const IMS_RXT: u32 = 1 << 7;
 
+// TODO: One // line here to describe what this GROUP of constants is
+// TODO: leave one line description of these using ///
 const RCTL: u32 = 0x100;
 const RCTL_EN: u32 = 1 << 1;
 const RCTL_UPE: u32 = 1 << 3;
@@ -44,17 +56,22 @@ const RCTL_BSIZE2: u32 = 1 << 17;
 const RCTL_BSEX: u32 = 1 << 25;
 const RCTL_SECRC: u32 = 1 << 26;
 
+// TODO: One // line here to describe what this GROUP of constants is
+// TODO: leave one line description of these using ///
 const RDBAL: u32 = 0x2800;
 const RDBAH: u32 = 0x2804;
 const RDLEN: u32 = 0x2808;
 const RDH: u32 = 0x2810;
 const RDT: u32 = 0x2818;
 
+// TODO: One // line here to describe what this GROUP of constants is
+// TODO: leave one line description of these using ///
 const RAL0: u32 = 0x5400;
 const RAH0: u32 = 0x5404;
 
 #[derive(Debug)]
 #[repr(packed)]
+// TODO: what does Rd stand for?
 struct Rd {
     buffer: u64,
     length: u16,
@@ -63,6 +80,9 @@ struct Rd {
     error: u8,
     special: u16,
 }
+
+// TODO: One // line here to describe what this GROUP of constants is
+// TODO: leave one line description of these using ///
 const RD_DD: u8 = 1;
 const RD_EOP: u8 = 1 << 1;
 
@@ -78,6 +98,7 @@ const TDT: u32 = 0x3818;
 
 #[derive(Debug)]
 #[repr(packed)]
+// TODO: what is a Td?
 struct Td {
     buffer: u64,
     length: u16,
@@ -87,11 +108,17 @@ struct Td {
     css: u8,
     special: u16,
 }
+
+// TODO: One // line here to describe what this GROUP of constants is
+// TODO: leave one line description of these using ///
 const TD_CMD_EOP: u8 = 1;
 const TD_CMD_IFCS: u8 = 1 << 1;
 const TD_CMD_RS: u8 = 1 << 3;
 const TD_DD: u8 = 1;
 
+/// The Intel8254x device and it's associated device memory
+/// 
+/// TODO: are the values pointing to physical memory, memory on the device buffers... what?
 pub struct Intel8254x {
     base: usize,
     receive_buffer: [Dma<[u8; 16384]>; 16],
@@ -113,6 +140,9 @@ impl Scheme for Intel8254x {
         Ok(id)
     }
 
+    /// TODO: what is the basic archetecture here? Are we reading data from physical
+    /// memory on the device to RAM? What is happening here? How are we sending
+    /// the data back to the caller?
     fn read(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
         let head = unsafe { self.read(RDH) };
         let mut tail = unsafe { self.read(RDT) };
@@ -148,6 +178,8 @@ impl Scheme for Intel8254x {
         }
     }
 
+    /// same questions as read -- where is the memory? What is the overall archetecture
+    /// here?
     fn write(&self, _id: usize, buf: &[u8]) -> Result<usize> {
         loop {
             let head = unsafe { self.read(TDH) };
@@ -191,14 +223,17 @@ impl Scheme for Intel8254x {
         }
     }
 
+    /// why is this always Ok?
     fn fevent(&self, _id: usize, _flags: usize) -> Result<usize> {
         Ok(0)
     }
 
+    /// why is this always Ok?
     fn fsync(&self, _id: usize) -> Result<usize> {
         Ok(0)
     }
 
+    /// why is this always Ok? Does close actually not do anything???
     fn close(&self, _id: usize) -> Result<usize> {
         Ok(0)
     }
@@ -206,6 +241,9 @@ impl Scheme for Intel8254x {
 
 impl Intel8254x {
     pub unsafe fn new(base: usize) -> Result<Self> {
+        // Why this specific amount of Dma's (what is a Dma??).
+        // Answering whether this stuff is on the device itself will help me
+        // understand
         let mut module = Intel8254x {
             base: base,
             receive_buffer: [Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
@@ -225,11 +263,14 @@ impl Intel8254x {
         Ok(module)
     }
 
+    /// I don't understand where the data is going. Is it getting stored in the receive
+    /// buffer?
     pub unsafe fn irq(&self) -> bool {
         let icr = self.read(ICR);
         icr != 0
     }
 
+    /// what is the difference between this and read? What are the use cases here
     pub fn next_read(&self) -> usize {
         let head = unsafe { self.read(RDH) };
         let mut tail = unsafe { self.read(RDT) };
@@ -249,15 +290,19 @@ impl Intel8254x {
         0
     }
 
+    // TODO: whoa whoa... what? this just returns... a pointer as a u32? Why is it u32 and not u64?
+    // Is this pretty much just a shortcut to the data that exists on the device?
     pub unsafe fn read(&self, register: u32) -> u32 {
         ptr::read_volatile((self.base + register as usize) as *mut u32)
     }
 
+    // TODO: similar questions to read here
     pub unsafe fn write(&self, register: u32, data: u32) -> u32 {
         ptr::write_volatile((self.base + register as usize) as *mut u32, data);
         ptr::read_volatile((self.base + register as usize) as *mut u32)
     }
 
+    /// VERIFY sets or clears the requested flag to the register without changing other flags
     pub unsafe fn flag(&self, register: u32, flag: u32, value: bool) {
         if value {
             self.write(register, self.read(register) | flag);
@@ -266,6 +311,12 @@ impl Intel8254x {
         }
     }
 
+    /// Initialize the ethernet driver:
+    /// - VERIFY: setting relevant cpu register options
+    /// - VERIFY: setting the mac address
+    /// - VERIFY: initializing the receive and transmit buffers and telling the
+    ///   device where they are located (???)
+    /// - VERIFY: setting up the device's registers and finally enabling it for operation
     pub unsafe fn init(&mut self) {
         // Enable auto negotiate, link, clear reset, do not Invert Loss-Of Signal
         self.flag(CTRL, CTRL_ASDE | CTRL_SLU, true);
@@ -299,7 +350,7 @@ impl Intel8254x {
         // MTA => 0;
         //
 
-        // Receive Buffer
+        // Initialize Receive Buffer
         for i in 0..self.receive_ring.len() {
             self.receive_ring[i].buffer = self.receive_buffer[i].physical() as u64;
         }
@@ -310,7 +361,7 @@ impl Intel8254x {
         self.write(RDH, 0);
         self.write(RDT, self.receive_ring.len() as u32 - 1);
 
-        // Transmit Buffer
+        // Initialize Transmit Buffer
         for i in 0..self.transmit_ring.len() {
             self.transmit_ring[i].buffer = self.transmit_buffer[i].physical() as u64;
         }
@@ -321,6 +372,7 @@ impl Intel8254x {
         self.write(TDH, 0);
         self.write(TDT, 0);
 
+        // TODO: what are we doing after this point???
         self.write(IMS, IMS_RXT | IMS_RX | IMS_RXDMT | IMS_RXSEQ); // | IMS_LSC | IMS_TXQE | IMS_TXDW
 
         self.flag(RCTL, RCTL_EN, true);
