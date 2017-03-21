@@ -1,4 +1,4 @@
-use std::{cmp, mem, ptr, slice};
+use std::{cmp, mem, ptr, slice, thread, time};
 
 use netutils::setcfg;
 use syscall::error::{Error, EACCES, EWOULDBLOCK, Result};
@@ -11,6 +11,7 @@ const CTRL_LRST: u32 = 1 << 3;
 const CTRL_ASDE: u32 = 1 << 5;
 const CTRL_SLU: u32 = 1 << 6;
 const CTRL_ILOS: u32 = 1 << 7;
+const CTRL_RST: u32 = 1 << 26;
 const CTRL_VME: u32 = 1 << 30;
 const CTRL_PHY_RST: u32 = 1 << 31;
 
@@ -267,11 +268,17 @@ impl Intel8254x {
     }
 
     pub unsafe fn init(&mut self) {
+        self.flag(CTRL, CTRL_RST, true);
+        loop {
+            thread::sleep(time::Duration::new(0, 1000));
+            if self.read(CTRL) & CTRL_RST != CTRL_RST {
+                break;
+            }
+        }
+
         // Enable auto negotiate, link, clear reset, do not Invert Loss-Of Signal
         self.flag(CTRL, CTRL_ASDE | CTRL_SLU, true);
-        self.flag(CTRL, CTRL_LRST, false);
-        self.flag(CTRL, CTRL_PHY_RST, false);
-        self.flag(CTRL, CTRL_ILOS, false);
+        self.flag(CTRL, CTRL_LRST | CTRL_PHY_RST | CTRL_ILOS, false);
 
         // No flow control
         self.write(FCAH, 0);
@@ -342,5 +349,17 @@ impl Intel8254x {
         // TCTL.COLD = Collision distance
         // TIPG Packet Gap
         // TODO ...
+
+        print!("{}", format!("   - CTRL: {:X}\n", self.read(CTRL)));
+        print!("{}", format!("   - STS: {:X}\n", self.read(STATUS)));
+        print!("{}", format!("   - RCTL: {:X}\n", self.read(RCTL)));
+        print!("{}", format!("   - TCTL: {:X}\n", self.read(TCTL)));
+        print!("{}", format!("   - IMS: {:X}\n", self.read(IMS)));
+
+
+        while self.read(STATUS) & 2 != 2 {
+            print!("   - Waiting for link up\n");
+            thread::sleep(time::Duration::new(1, 0));
+        }
     }
 }
