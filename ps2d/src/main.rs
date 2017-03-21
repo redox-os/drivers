@@ -7,15 +7,18 @@ extern crate event;
 extern crate orbclient;
 extern crate syscall;
 
-use std::{env, process};
+use std::{cmp, env, process};
+use std::cell::RefCell;
 use std::fs::File;
 use std::io::{Read, Write, Result};
 use std::os::unix::io::AsRawFd;
-use std::mem;
+use std::sync::Arc;
 
 use event::EventQueue;
-use orbclient::{KeyEvent, MouseEvent, ScrollEvent};
+use orbclient::{KeyEvent, MouseEvent, ButtonEvent, ScrollEvent};
 use syscall::iopl;
+
+use controller::Ps2;
 
 mod controller;
 mod keymap;
@@ -33,27 +36,64 @@ bitflags! {
     }
 }
 
-struct Ps2d<'a> {
+struct Ps2d<F: Fn(u8,bool) -> char>  {
+    ps2: Ps2,
     input: File,
+    width: u32,
+    height: u32,
     lshift: bool,
     rshift: bool,
+    mouse_x: i32,
+    mouse_y: i32,
+    mouse_left: bool,
+    mouse_middle: bool,
+    mouse_right: bool,
     packets: [u8; 4],
     packet_i: usize,
     extra_packet: bool,
     //Keymap function
-    get_char: &'a Fn(u8,bool) -> char
+    get_char: F
 }
 
-impl<'a> Ps2d<'a> {
-    fn new(input: File, extra_packet: bool, keymap: &'a Fn(u8,bool) -> char) -> Self {
+impl<F: Fn(u8,bool) -> char> Ps2d<F> {
+    fn new(input: File, keymap: F) -> Self {
+        let mut ps2 = Ps2::new();
+        let extra_packet = ps2.init();
+
+        let mut width = 0;
+        let mut height = 0;
+        {
+            let mut buf: [u8; 4096] = [0; 4096];
+            if let Ok(count) = syscall::fpath(input.as_raw_fd() as usize, &mut buf) {
+                let path = unsafe { String::from_utf8_unchecked(Vec::from(&buf[..count])) };
+                let res = path.split(":").nth(1).unwrap_or("");
+                width = res.split("/").nth(1).unwrap_or("").parse::<u32>().unwrap_or(0);
+                height = res.split("/").nth(2).unwrap_or("").parse::<u32>().unwrap_or(0);
+            }
+        }
+
         Ps2d {
+            ps2: ps2,
             input: input,
+            width: width,
+            height: height,
             lshift: false,
             rshift: false,
+            mouse_x: 0,
+            mouse_y: 0,
+            mouse_left: false,
+            mouse_middle: false,
+            mouse_right: false,
             packets: [0; 4],
             packet_i: 0,
             extra_packet: extra_packet,
             get_char: keymap
+        }
+    }
+
+    fn irq(&mut self) {
+        while let Some((keyboard, data)) = self.ps2.next() {
+            self.handle(keyboard, data);
         }
     }
 
@@ -107,13 +147,30 @@ impl<'a> Ps2d<'a> {
                         dz = -scroll as i32;
                     }
 
-                    self.input.write(&MouseEvent {
-                        x: dx,
-                        y: dy,
-                        left_button: flags.contains(LEFT_BUTTON),
-                        middle_button: flags.contains(MIDDLE_BUTTON),
-                        right_button: flags.contains(RIGHT_BUTTON)
-                    }.to_event()).expect("ps2d: failed to write mouse event");
+                    let x = cmp::max(0, cmp::min(self.width as i32, self.mouse_x + dx));
+                    let y = cmp::max(0, cmp::min(self.height as i32, self.mouse_y + dy));
+                    if x != self.mouse_x || y != self.mouse_y {
+                        self.mouse_x = x;
+                        self.mouse_y = y;
+                        self.input.write(&MouseEvent {
+                            x: x,
+                            y: y,
+                        }.to_event()).expect("ps2d: failed to write mouse event");
+                    }
+
+                    let left = flags.contains(LEFT_BUTTON);
+                    let middle = flags.contains(MIDDLE_BUTTON);
+                    let right = flags.contains(RIGHT_BUTTON);
+                    if left != self.mouse_left || middle != self.mouse_middle || right != self.mouse_right {
+                        self.mouse_left = left;
+                        self.mouse_middle = middle;
+                        self.mouse_right = right;
+                        self.input.write(&ButtonEvent {
+                            left: left,
+                            middle: middle,
+                            right: right,
+                        }.to_event()).expect("ps2d: failed to write button event");
+                    }
 
                     if dz != 0 {
                         self.input.write(&ScrollEvent {
@@ -138,7 +195,6 @@ fn daemon(input: File) {
         asm!("cli" : : : : "intel", "volatile");
     }
 
-    let extra_packet = controller::Ps2::new().init();
     let keymap = match env::args().skip(1).next() {
         Some(k) => match k.to_lowercase().as_ref() {
             "dvorak" => (keymap::dvorak::get_char),
@@ -147,54 +203,35 @@ fn daemon(input: File) {
         },
         None => (keymap::english::get_char)
     };
-    let mut ps2d = Ps2d::new(input, extra_packet, &keymap);
+    let ps2d = Arc::new(RefCell::new(Ps2d::new(input, keymap)));
 
-    let mut event_queue = EventQueue::<(bool, u8)>::new().expect("ps2d: failed to create event queue");
+    let mut event_queue = EventQueue::<()>::new().expect("ps2d: failed to create event queue");
 
     let mut key_irq = File::open("irq:1").expect("ps2d: failed to open irq:1");
-
-    event_queue.add(key_irq.as_raw_fd(), move |_count: usize| -> Result<Option<(bool, u8)>> {
+    let key_ps2d = ps2d.clone();
+    event_queue.add(key_irq.as_raw_fd(), move |_count: usize| -> Result<Option<()>> {
         let mut irq = [0; 8];
-        if key_irq.read(&mut irq)? >= mem::size_of::<usize>() {
-            let data: u8;
-            unsafe {
-                asm!("in al, dx" : "={al}"(data) : "{dx}"(0x60) : : "intel", "volatile");
-            }
-
+        if key_irq.read(&mut irq)? >= irq.len() {
+            key_ps2d.borrow_mut().irq();
             key_irq.write(&irq)?;
-
-            Ok(Some((true, data)))
-        } else {
-            Ok(None)
         }
+        Ok(None)
     }).expect("ps2d: failed to poll irq:1");
 
     let mut mouse_irq = File::open("irq:12").expect("ps2d: failed to open irq:12");
-
-    event_queue.add(mouse_irq.as_raw_fd(), move |_count: usize| -> Result<Option<(bool, u8)>> {
+    let mouse_ps2d = ps2d;
+    event_queue.add(mouse_irq.as_raw_fd(), move |_count: usize| -> Result<Option<()>> {
         let mut irq = [0; 8];
-        if mouse_irq.read(&mut irq)? >= mem::size_of::<usize>() {
-            let data: u8;
-            unsafe {
-                asm!("in al, dx" : "={al}"(data) : "{dx}"(0x60) : : "intel", "volatile");
-            }
-
+        if mouse_irq.read(&mut irq)? >= irq.len() {
+            mouse_ps2d.borrow_mut().irq();
             mouse_irq.write(&irq)?;
-
-            Ok(Some((false, data)))
-        } else {
-            Ok(None)
         }
+        Ok(None)
     }).expect("ps2d: failed to poll irq:12");
 
-    for (keyboard, data) in event_queue.trigger_all(0).expect("ps2d: failed to trigger events") {
-        ps2d.handle(keyboard, data);
-    }
+    event_queue.trigger_all(0).expect("ps2d: failed to trigger events");
 
-    loop {
-        let (keyboard, data) = event_queue.run().expect("ps2d: failed to handle events");
-        ps2d.handle(keyboard, data);
-    }
+    event_queue.run().expect("ps2d: failed to handle events");
 }
 
 fn main() {

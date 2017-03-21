@@ -158,6 +158,17 @@ impl Ps2 {
         self.read()
     }
 
+    pub fn next(&mut self) -> Option<(bool, u8)> {
+        let status = self.status();
+        println!("{:?}", status);
+        if status.contains(OUTPUT_FULL) {
+            let data = self.data.read();
+            Some((! status.contains(SECOND_OUTPUT_FULL), data))
+        } else {
+            None
+        }
+    }
+
     pub fn init(&mut self) -> bool {
         // Disable devices
         self.command(Command::DisableFirst);
