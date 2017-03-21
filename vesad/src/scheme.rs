@@ -8,6 +8,8 @@ use display::Display;
 use screen::{Screen, GraphicScreen, TextScreen};
 
 pub struct DisplayScheme {
+    width: usize,
+    height: usize,
     active: usize,
     pub screens: BTreeMap<usize, Box<Screen>>
 }
@@ -27,6 +29,8 @@ impl DisplayScheme {
         }
 
         DisplayScheme {
+            width: width,
+            height: height,
             active: 1,
             screens: screens
         }
@@ -88,7 +92,7 @@ impl SchemeMut for DisplayScheme {
 
     fn fpath(&mut self, id: usize, buf: &mut [u8]) -> Result<usize> {
         let path_str = if id == 0 {
-            format!("display:input")
+            format!("display:input/{}/{}", self.width, self.height)
         } else if let Some(screen) = self.screens.get(&id) {
             format!("display:{}/{}/{}", id, screen.width(), screen.height())
         } else {

@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::{cmp, mem, slice};
 
-use orbclient::{Event, EventOption};
+use orbclient::Event;
 use syscall::error::*;
 use syscall::flag::{SEEK_SET, SEEK_CUR, SEEK_END};
 
@@ -12,8 +12,6 @@ use screen::Screen;
 pub struct GraphicScreen {
     pub display: Display,
     pub seek: usize,
-    pub mouse_x: i32,
-    pub mouse_y: i32,
     pub input: VecDeque<Event>,
     pub requested: usize
 }
@@ -23,8 +21,6 @@ impl GraphicScreen {
         GraphicScreen {
             display: display,
             seek: 0,
-            mouse_x: 0,
-            mouse_y: 0,
             input: VecDeque::new(),
             requested: 0
         }
@@ -54,19 +50,7 @@ impl Screen for GraphicScreen {
     }
 
     fn input(&mut self, event: &Event) {
-        if let EventOption::Mouse(mut mouse_event) = event.to_option() {
-            let x = cmp::max(0, cmp::min(self.display.width as i32, self.mouse_x + mouse_event.x));
-            let y = cmp::max(0, cmp::min(self.display.height as i32, self.mouse_y + mouse_event.y));
-
-            mouse_event.x = x;
-            self.mouse_x = x;
-            mouse_event.y = y;
-            self.mouse_y = y;
-
-            self.input.push_back(mouse_event.to_event());
-        } else {
-            self.input.push_back(*event);
-        }
+        self.input.push_back(*event);
     }
 
     fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
