@@ -197,7 +197,18 @@ fn main() {
     if unsafe { syscall::clone(0).unwrap() } == 0 {
         unsafe { iopl(3).expect("vboxd: failed to get I/O permission"); };
 
-        let mut display = File::open("display:input").ok();
+        let mut width = 0;
+        let mut height = 0;
+        let mut display_opt = File::open("display:input").ok();
+        if let Some(ref display) = display_opt {
+            let mut buf: [u8; 4096] = [0; 4096];
+            if let Ok(count) = syscall::fpath(display.as_raw_fd() as usize, &mut buf) {
+                let path = unsafe { String::from_utf8_unchecked(Vec::from(&buf[..count])) };
+                let res = path.split(":").nth(1).unwrap_or("");
+                width = res.split("/").nth(1).unwrap_or("").parse::<u32>().unwrap_or(0);
+                height = res.split("/").nth(2).unwrap_or("").parse::<u32>().unwrap_or(0);
+            }
+        }
 
         let mut irq_file = File::open(format!("irq:{}", irq)).expect("vboxd: failed to open IRQ file");
 
@@ -241,7 +252,15 @@ fn main() {
 
                         if host_events & VBOX_EVENT_MOUSE == VBOX_EVENT_MOUSE {
                             port.write(get_mouse.physical() as u32);
-                            println!("Mouse {}, {}", get_mouse.x.read(), get_mouse.y.read());
+                            let x = get_mouse.x.read() * width / 0x10000;
+                            let y = get_mouse.y.read() * height / 0x10000;
+                            println!("Mouse {}, {} in {}, {} = {}, {}", get_mouse.x.read(), get_mouse.y.read(), width, height, x, y);
+                            if let Some(ref mut display) = display_opt {
+                                let _ = display.write(&orbclient::MouseEvent {
+                                    x: x as i32,
+                                    y: y as i32,
+                                }.to_event());
+                            }
                         }
                     }
                 }
