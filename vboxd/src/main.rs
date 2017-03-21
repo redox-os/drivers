@@ -254,7 +254,6 @@ fn main() {
                             port.write(get_mouse.physical() as u32);
                             let x = get_mouse.x.read() * width / 0x10000;
                             let y = get_mouse.y.read() * height / 0x10000;
-                            println!("Mouse {}, {} in {}, {} = {}, {}", get_mouse.x.read(), get_mouse.y.read(), width, height, x, y);
                             if let Some(ref mut display) = display_opt {
                                 let _ = display.write(&orbclient::MouseEvent {
                                     x: x as i32,
