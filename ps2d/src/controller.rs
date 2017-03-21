@@ -160,7 +160,6 @@ impl Ps2 {
 
     pub fn next(&mut self) -> Option<(bool, u8)> {
         let status = self.status();
-        println!("{:?}", status);
         if status.contains(OUTPUT_FULL) {
             let data = self.data.read();
             Some((! status.contains(SECOND_OUTPUT_FULL), data))
