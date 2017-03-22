@@ -1,4 +1,4 @@
-use std::mem;
+use std::{mem, thread};
 
 use netutils::setcfg;
 use syscall::error::{Error, EACCES, EWOULDBLOCK, Result};
@@ -133,7 +133,7 @@ impl SchemeMut for Rtl8168 {
                     self.regs.tppoll.writef(1 << 6, true); //Notify of normal priority packet
 
                     while self.regs.tppoll.readf(1 << 6) {
-                        unsafe { asm!("pause" : : : "memory" : "intel", "volatile"); }
+                        thread::yield_now();
                     }
 
                     return Ok(i);
@@ -224,7 +224,9 @@ impl Rtl8168 {
 
         // Reset - this will disable tx and rx, reinitialize FIFOs, and set the system buffer pointer to the initial value
         self.regs.cmd.writef(1 << 4, true);
-        while self.regs.cmd.readf(1 << 4) {}
+        while self.regs.cmd.readf(1 << 4) {
+            thread::yield_now();
+        }
 
         // Set up rx buffers
         for i in 0..self.receive_ring.len() {
