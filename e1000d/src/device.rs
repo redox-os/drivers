@@ -187,8 +187,6 @@ impl Scheme for Intel8254x {
 
                 return Ok(i);
             }
-
-            unsafe { asm!("pause" : : : "memory" : "intel", "volatile"); }
         }
     }
 
@@ -347,13 +345,6 @@ impl Intel8254x {
         // TCTL.COLD = Collision distance
         // TIPG Packet Gap
         // TODO ...
-
-        print!("{}", format!("   - CTRL: {:X}\n", self.read(CTRL)));
-        print!("{}", format!("   - STS: {:X}\n", self.read(STATUS)));
-        print!("{}", format!("   - RCTL: {:X}\n", self.read(RCTL)));
-        print!("{}", format!("   - TCTL: {:X}\n", self.read(TCTL)));
-        print!("{}", format!("   - IMS: {:X}\n", self.read(IMS)));
-
 
         print!("   - Waiting for link up\n");
         while self.read(STATUS) & 2 != 2 {

@@ -24,10 +24,6 @@ const HBA_SIG_ATAPI: u32 = 0xEB140101;
 const HBA_SIG_PM: u32 = 0x96690101;
 const HBA_SIG_SEMB: u32 = 0xC33C0101;
 
-fn pause() {
-    unsafe { asm!("pause" : : : "memory" : "intel", "volatile"); }
-}
-
 #[derive(Debug)]
 pub enum HbaPortType {
     None,
@@ -77,7 +73,7 @@ impl HbaPort {
 
     pub fn start(&mut self) {
         while self.cmd.readf(HBA_PORT_CMD_CR) {
-            pause();
+            thread::yield_now();
         }
 
         self.cmd.writef(HBA_PORT_CMD_FRE | HBA_PORT_CMD_ST, true);
@@ -87,7 +83,7 @@ impl HbaPort {
         self.cmd.writef(HBA_PORT_CMD_ST, false);
 
         while self.cmd.readf(HBA_PORT_CMD_FR | HBA_PORT_CMD_CR) {
-            pause();
+            thread::yield_now();
         }
 
         self.cmd.writef(HBA_PORT_CMD_FRE, false);
@@ -163,7 +159,7 @@ impl HbaPort {
             }
 
             while self.tfd.readf((ATA_DEV_BUSY | ATA_DEV_DRQ) as u32) {
-                pause();
+                thread::yield_now();
             }
 
             self.ci.writef(1 << slot, true);
@@ -171,7 +167,7 @@ impl HbaPort {
             self.start();
 
             while (self.ci.readf(1 << slot) || self.tfd.readf(0x80)) && self.is.read() & HBA_PORT_IS_ERR == 0 {
-                pause();
+                thread::yield_now();
             }
 
             self.stop();
@@ -299,7 +295,7 @@ impl HbaPort {
                 //print!("WAIT ATA_DEV_BUSY | ATA_DEV_DRQ\n");
             }
             while self.tfd.readf((ATA_DEV_BUSY | ATA_DEV_DRQ) as u32) {
-                pause();
+                thread::yield_now();
             }
 
             if write {
@@ -313,7 +309,7 @@ impl HbaPort {
                 //print!("{}", format!("WAIT CI {:X} in {:X}\n", 1 << slot, self.ci.read()));
             }
             while (self.ci.readf(1 << slot) || self.tfd.readf(0x80)) && self.is.read() & HBA_PORT_IS_ERR == 0 {
-                pause();
+                thread::yield_now();
                 if write {
                     //print!("{}", format!("WAIT CI {:X} TFD {:X} IS {:X} CMD {:X} SERR {:X}\n", self.ci.read(), self.tfd.read(), self.is.read(), self.cmd.read(), self.serr.read()));
                 }

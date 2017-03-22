@@ -140,7 +140,7 @@ impl SchemeMut for Rtl8168 {
                 }
             }
 
-            unsafe { asm!("pause" : : : "memory" : "intel", "volatile"); }
+            thread::yield_now();
         }
     }
 
