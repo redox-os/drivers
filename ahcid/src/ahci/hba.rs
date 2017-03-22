@@ -1,6 +1,7 @@
 use std::mem::size_of;
 use std::ops::DerefMut;
 use std::{ptr, u32};
+use std::thread;
 
 use syscall::io::{Dma, Io, Mmio};
 use syscall::error::{Error, Result, EIO};
