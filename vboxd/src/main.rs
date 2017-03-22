@@ -13,6 +13,10 @@ use syscall::flag::MAP_WRITE;
 use syscall::io::{Dma, Io, Mmio, Pio};
 use syscall::iopl;
 
+use bga::Bga;
+
+mod bga;
+
 const VBOX_REQUEST_HEADER_VERSION: u32 = 0x10001;
 const VBOX_VMMDEV_VERSION: u32 = 0x00010003;
 
@@ -234,6 +238,7 @@ fn main() {
 
             let mut event_queue = EventQueue::<()>::new().expect("vboxd: failed to create event queue");
 
+            let mut bga = Bga::new();
             let get_mouse = VboxGetMouse::new().expect("vboxd: failed to map GetMouse");
             let display_change = VboxDisplayChange::new().expect("vboxd: failed to map DisplayChange");
             let ack_events = VboxAckEvents::new().expect("vboxd: failed to map AckEvents");
@@ -247,14 +252,27 @@ fn main() {
 
                         if host_events & VBOX_EVENT_DISPLAY == VBOX_EVENT_DISPLAY {
                             port.write(display_change.physical() as u32);
-                            println!("Display {}, {}", display_change.xres.read(), display_change.yres.read());
+                            if let Some(ref mut display) = display_opt {
+                                let new_width = display_change.xres.read();
+                                let new_height = display_change.yres.read();
+                                if width != new_width || height != new_height {
+                                    width = new_width;
+                                    height = new_height;
+                                    println!("Display {}, {}", width, height);
+                                    bga.set_size(width as u16, height as u16);
+                                    let _ = display.write(&orbclient::ResizeEvent {
+                                        width: width,
+                                        height: height,
+                                    }.to_event());
+                                }
+                            }
                         }
 
                         if host_events & VBOX_EVENT_MOUSE == VBOX_EVENT_MOUSE {
                             port.write(get_mouse.physical() as u32);
-                            let x = get_mouse.x.read() * width / 0x10000;
-                            let y = get_mouse.y.read() * height / 0x10000;
                             if let Some(ref mut display) = display_opt {
+                                let x = get_mouse.x.read() * width / 0x10000;
+                                let y = get_mouse.y.read() * height / 0x10000;
                                 let _ = display.write(&orbclient::MouseEvent {
                                     x: x as i32,
                                     y: y as i32,

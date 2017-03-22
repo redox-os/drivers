@@ -55,8 +55,9 @@ fn main() {
             let mut socket = File::create(":display").expect("vesad: failed to create display scheme");
 
             let size = width * height;
-
-            let onscreen = unsafe { physmap(physbaseptr, size * 4, MAP_WRITE | MAP_WRITE_COMBINE).expect("vesad: failed to map VBE LFB") };
+            //TODO: Remap on resize
+            let largest_size = 8 * 1024 * 1024;
+            let onscreen = unsafe { physmap(physbaseptr, largest_size * 4, MAP_WRITE | MAP_WRITE_COMBINE).expect("vesad: failed to map VBE LFB") };
             unsafe { fast_set64(onscreen as *mut u64, 0, size/2) };
 
             let mut scheme = DisplayScheme::new(width, height, onscreen, &spec);

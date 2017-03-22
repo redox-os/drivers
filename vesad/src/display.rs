@@ -68,6 +68,36 @@ impl Display {
         }
     }
 
+    pub fn resize(&mut self, width: usize, height: usize) {
+        println!("Resize display to {}, {}", width, height);
+
+        let size = width * height;
+        let offscreen = unsafe { heap::allocate(size * 4, 4096) };
+
+        {
+            let mut old_ptr = self.offscreen.as_ptr();
+            let mut new_ptr = offscreen as *mut u32;
+            for _y in 0..cmp::min(height, self.height) {
+                unsafe {
+                    fast_copy(new_ptr as *mut u8, old_ptr as *const u8, cmp::min(width, self.width) * 4);
+                    old_ptr = old_ptr.offset(self.width as isize);
+                    new_ptr = new_ptr.offset(width as isize);
+                }
+            }
+        }
+
+        self.width = width;
+        self.height = height;
+
+        let onscreen = self.onscreen.as_mut_ptr();
+        self.onscreen = unsafe { slice::from_raw_parts_mut(onscreen, size) };
+
+        unsafe { heap::deallocate(self.offscreen.as_mut_ptr() as *mut u8, self.offscreen.len() * 4, 4096) };
+        self.offscreen = unsafe { slice::from_raw_parts_mut(offscreen as *mut u32, size) };
+
+        self.sync(0, 0, width, height);
+    }
+
     /// Draw a rectangle
     pub fn rect(&mut self, x: usize, y: usize, w: usize, h: usize, color: u32) {
         let start_y = cmp::min(self.height - 1, y);
@@ -242,5 +272,11 @@ impl Display {
             onscreen_ptr += stride;
             rows -= 1;
         }
+    }
+}
+
+impl Drop for Display {
+    fn drop(&mut self) {
+        unsafe { heap::deallocate(self.offscreen.as_mut_ptr() as *mut u8, self.offscreen.len() * 4, 4096) };
     }
 }

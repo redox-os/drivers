@@ -43,6 +43,10 @@ impl Screen for TextScreen {
         self.console.h
     }
 
+    fn resize(&mut self, width: usize, height: usize) {
+        self.display.resize(width, height);
+    }
+
     fn event(&mut self, flags: usize) -> Result<usize> {
         self.requested = flags;
         Ok(0)

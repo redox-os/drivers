@@ -142,21 +142,27 @@ impl SchemeMut for DisplayScheme {
                 let events = unsafe { slice::from_raw_parts(buf.as_ptr() as *const Event, buf.len()/mem::size_of::<Event>()) };
 
                 for event in events.iter() {
-                    let new_active_opt = if let EventOption::Key(key_event) = event.to_option() {
-                        match key_event.scancode {
+                    let mut new_active_opt = None;
+                    match event.to_option() {
+                        EventOption::Key(key_event) => match key_event.scancode {
                             f @ 0x3B ... 0x44 => { // F1 through F10
-                                Some((f - 0x3A) as usize)
+                                new_active_opt = Some((f - 0x3A) as usize);
                             },
                             0x57 => { // F11
-                                Some(11)
+                                new_active_opt = Some(11);
                             },
                             0x58 => { // F12
-                                Some(12)
+                                new_active_opt = Some(12);
                             },
-                            _ => None
-                        }
-                    } else {
-                        None
+                            _ => ()
+                        },
+                        EventOption::Resize(resize_event) => {
+                            println!("Resizing to {}, {}", resize_event.width, resize_event.height);
+                            for (_screen_id, screen) in self.screens.iter_mut() {
+                                screen.resize(resize_event.width as usize, resize_event.height as usize);
+                            }
+                        },
+                        _ => ()
                     };
 
                     if let Some(new_active) = new_active_opt {

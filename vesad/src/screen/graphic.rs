@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::{cmp, mem, slice};
 
-use orbclient::Event;
+use orbclient::{Event, ResizeEvent};
 use syscall::error::*;
 use syscall::flag::{SEEK_SET, SEEK_CUR, SEEK_END};
 
@@ -34,6 +34,15 @@ impl Screen for GraphicScreen {
 
     fn height(&self) -> usize {
         self.display.height
+    }
+
+    fn resize(&mut self, width: usize, height: usize) {
+        //TODO: Fix issue with mapped screens
+        self.display.resize(width, height);
+        self.input.push_back(ResizeEvent {
+            width: width as u32,
+            height: height as u32,
+        }.to_event());
     }
 
     fn event(&mut self, flags: usize) -> Result<usize> {
