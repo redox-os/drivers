@@ -182,7 +182,7 @@ impl Scheme for Intel8254x {
                 unsafe { self.write(TDT, tail) };
 
                 while td.status == 0 {
-                    unsafe { asm!("pause" : : : "memory" : "intel", "volatile"); }
+                    thread::yield_now();
                 }
 
                 return Ok(i);
@@ -269,11 +269,9 @@ impl Intel8254x {
 
     pub unsafe fn init(&mut self) {
         self.flag(CTRL, CTRL_RST, true);
-        loop {
-            thread::sleep(time::Duration::new(0, 1000));
-            if self.read(CTRL) & CTRL_RST != CTRL_RST {
-                break;
-            }
+        thread::sleep(time::Duration::new(0, 1000));
+        while self.read(CTRL) & CTRL_RST == CTRL_RST {
+            thread::yield_now();
         }
 
         // Enable auto negotiate, link, clear reset, do not Invert Loss-Of Signal
@@ -357,9 +355,14 @@ impl Intel8254x {
         print!("{}", format!("   - IMS: {:X}\n", self.read(IMS)));
 
 
+        print!("   - Waiting for link up\n");
         while self.read(STATUS) & 2 != 2 {
-            print!("   - Waiting for link up\n");
-            thread::sleep(time::Duration::new(1, 0));
+            thread::yield_now();
         }
+        print!("   - Link is up with speed {}\n", match (self.read(STATUS) >> 6) & 0b11 {
+            0b00 => "10 Mb/s",
+            0b01 => "100 Mb/s",
+            _ => "1000 Mb/s",
+        });
     }
 }
