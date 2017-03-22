@@ -192,7 +192,6 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
 fn daemon(input: File) {
     unsafe {
         iopl(3).expect("ps2d: failed to get I/O permission");
-        asm!("cli" : : : : "intel", "volatile");
     }
 
     let keymap = match env::args().skip(1).next() {
