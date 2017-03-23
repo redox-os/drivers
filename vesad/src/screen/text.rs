@@ -45,6 +45,8 @@ impl Screen for TextScreen {
 
     fn resize(&mut self, width: usize, height: usize) {
         self.display.resize(width, height);
+        self.console.w = width / 8;
+        self.console.h = height / 16;
     }
 
     fn event(&mut self, flags: usize) -> Result<usize> {
