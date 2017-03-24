@@ -4,7 +4,7 @@ extern crate rusttype;
 use alloc::heap;
 use std::{cmp, slice};
 
-use primitive::{fast_set32, fast_set64, fast_copy, fast_copy64};
+use primitive::{fast_set32, fast_set64, fast_copy};
 
 #[cfg(feature="rusttype")]
 use self::rusttype::{Font, FontCollection, Scale, point};
