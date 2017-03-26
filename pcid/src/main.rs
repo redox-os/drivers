@@ -108,10 +108,11 @@ fn main() {
                         }
 
                         if let Some(ref args) = driver.command {
-                            // Enable bus mastering
+                            // Enable bus mastering, memory space, and I/O space
                             unsafe {
                                 let cmd = pci.read(bus.num, dev.num, func.num, 0x04);
-                                pci.write(bus.num, dev.num, func.num, 0x04, cmd | 4);
+                                println!("PCI CMD: {:>02X}", cmd);
+                                pci.write(bus.num, dev.num, func.num, 0x04, cmd | 7);
                             }
 
                             let mut args = args.iter();
