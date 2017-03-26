@@ -182,11 +182,15 @@ impl Screen for TextScreen {
         {
             let display = &mut self.display;
             let changed = &mut self.changed;
+            let input = &mut self.input;
             self.console.write(buf, |event| {
                 match event {
                     ransid::Event::Char { x, y, c, color, bold, .. } => {
                         display.char(x * 8, y * 16, c, color.data, bold, false);
                         changed.insert(y);
+                    },
+                    ransid::Event::Input { data } => {
+                        input.extend(data);
                     },
                     ransid::Event::Rect { x, y, w, h, color } => {
                         display.rect(x * 8, y * 16, w * 8, h * 16, color.data);
