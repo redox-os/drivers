@@ -36,13 +36,14 @@ bitflags! {
     }
 }
 
-struct Ps2d<F: Fn(u8,bool) -> char>  {
+struct Ps2d<F: Fn(u8,bool,bool) -> char>  {
     ps2: Ps2,
     input: File,
     width: u32,
     height: u32,
     lshift: bool,
     rshift: bool,
+    alt_gr: bool,
     mouse_x: i32,
     mouse_y: i32,
     mouse_left: bool,
@@ -52,10 +53,12 @@ struct Ps2d<F: Fn(u8,bool) -> char>  {
     packet_i: usize,
     extra_packet: bool,
     //Keymap function
-    get_char: F
+    get_char: F,
+    // state to switch to PS/2 Scan Code Set 2
+    scancode_set_2: bool,
 }
 
-impl<F: Fn(u8,bool) -> char> Ps2d<F> {
+impl<F: Fn(u8,bool,bool) -> char> Ps2d<F> {
     fn new(input: File, keymap: F) -> Self {
         let mut ps2 = Ps2::new();
         let extra_packet = ps2.init();
@@ -79,31 +82,57 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
             height: height,
             lshift: false,
             rshift: false,
+            alt_gr: false,
             mouse_x: 0,
             mouse_y: 0,
             mouse_left: false,
             mouse_middle: false,
             mouse_right: false,
+            scancode_set_2: false,
             packets: [0; 4],
             packet_i: 0,
             extra_packet: extra_packet,
             get_char: keymap
         }
+        
     }
 
     fn irq(&mut self) {
         while let Some((keyboard, data)) = self.ps2.next() {
-            self.handle(keyboard, data);
+            if keyboard {
+                self.handle_keyboard(data);
+            }
+            else {
+                self.handle_mouse(data);
+            }
         }
     }
 
-    fn handle(&mut self, keyboard: bool, data: u8) {
-        if keyboard {
-            let (scancode, pressed) = if data >= 0x80 {
-                (data - 0x80, false)
-            } else {
-                (data, true)
+    fn handle_keyboard(&mut self, data: u8) {
+        // The scancode is at least in two part
+        // Switch the state machine so that with the next call we get the next piece of the scancode
+        if data == 0xE0 {
+            self.scancode_set_2 = !self.scancode_set_2;
+        } else {
+             let (scancode, pressed) = if data >= 0x80 {
+               (data - 0x80, false)
+            } else   {
+               (data, true)
             };
+
+            // Previous call switched the state machine
+            if self.scancode_set_2 {
+                // set the state machine to the original state
+                self.scancode_set_2 = false;
+
+                // 0xE0, 0x38 is Alt_gr scancode
+                if scancode == 0x38 {
+                    self.alt_gr = pressed;
+                    // We ignore this key_event further
+                    // This is to avoid a problem with orbital/src/scheme.rs
+                    return ;
+                }
+            }
 
             if scancode == 0x2A {
                 self.lshift = pressed;
@@ -112,79 +141,81 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
             }
 
             self.input.write(&KeyEvent {
-                character: (self.get_char)(scancode, self.lshift || self.rshift),
+                character: (self.get_char)(scancode, self.lshift || self.rshift, self.alt_gr),
                 scancode: scancode,
                 pressed: pressed
             }.to_event()).expect("ps2d: failed to write key event");
-        } else {
-            self.packets[self.packet_i] = data;
-            self.packet_i += 1;
+        }
+    }
+    
+    fn handle_mouse(&mut self, data: u8) {
+        self.packets[self.packet_i] = data;
+        self.packet_i += 1;
 
-            let flags = MousePacketFlags::from_bits_truncate(self.packets[0]);
-            if ! flags.contains(ALWAYS_ON) {
-                println!("MOUSE MISALIGN {:X}", self.packets[0]);
+        let flags = MousePacketFlags::from_bits_truncate(self.packets[0]);
+        if ! flags.contains(ALWAYS_ON) {
+            println!("MOUSE MISALIGN {:X}", self.packets[0]);
 
-                self.packets = [0; 4];
-                self.packet_i = 0;
-            } else if self.packet_i >= self.packets.len() || (!self.extra_packet && self.packet_i >= 3) {
-                if ! flags.contains(X_OVERFLOW) && ! flags.contains(Y_OVERFLOW) {
-                    let mut dx = self.packets[1] as i32;
-                    if flags.contains(X_SIGN) {
-                        dx -= 0x100;
-                    }
-
-                    let mut dy = -(self.packets[2] as i32);
-                    if flags.contains(Y_SIGN) {
-                        dy += 0x100;
-                    }
-
-                    let mut dz = 0;
-                    if self.extra_packet {
-                        let mut scroll = (self.packets[3] & 0xF) as i8;
-                        if scroll & (1 << 3) == 1 << 3 {
-                            scroll -= 16;
-                        }
-                        dz = -scroll as i32;
-                    }
-
-                    let x = cmp::max(0, cmp::min(self.width as i32, self.mouse_x + dx));
-                    let y = cmp::max(0, cmp::min(self.height as i32, self.mouse_y + dy));
-                    if x != self.mouse_x || y != self.mouse_y {
-                        self.mouse_x = x;
-                        self.mouse_y = y;
-                        self.input.write(&MouseEvent {
-                            x: x,
-                            y: y,
-                        }.to_event()).expect("ps2d: failed to write mouse event");
-                    }
-
-                    let left = flags.contains(LEFT_BUTTON);
-                    let middle = flags.contains(MIDDLE_BUTTON);
-                    let right = flags.contains(RIGHT_BUTTON);
-                    if left != self.mouse_left || middle != self.mouse_middle || right != self.mouse_right {
-                        self.mouse_left = left;
-                        self.mouse_middle = middle;
-                        self.mouse_right = right;
-                        self.input.write(&ButtonEvent {
-                            left: left,
-                            middle: middle,
-                            right: right,
-                        }.to_event()).expect("ps2d: failed to write button event");
-                    }
-
-                    if dz != 0 {
-                        self.input.write(&ScrollEvent {
-                            x: 0,
-                            y: dz,
-                        }.to_event()).expect("ps2d: failed to write scroll event");
-                    }
-                } else {
-                    println!("ps2d: overflow {:X} {:X} {:X} {:X}", self.packets[0], self.packets[1], self.packets[2], self.packets[3]);
+            self.packets = [0; 4];
+            self.packet_i = 0;
+        } else if self.packet_i >= self.packets.len() || (!self.extra_packet && self.packet_i >= 3) {
+            if ! flags.contains(X_OVERFLOW) && ! flags.contains(Y_OVERFLOW) {
+                let mut dx = self.packets[1] as i32;
+                if flags.contains(X_SIGN) {
+                    dx -= 0x100;
                 }
 
-                self.packets = [0; 4];
-                self.packet_i = 0;
+                let mut dy = -(self.packets[2] as i32);
+                if flags.contains(Y_SIGN) {
+                    dy += 0x100;
+                }
+
+                let mut dz = 0;
+                if self.extra_packet {
+                    let mut scroll = (self.packets[3] & 0xF) as i8;
+                    if scroll & (1 << 3) == 1 << 3 {
+                        scroll -= 16;
+                    }
+                    dz = -scroll as i32;
+                }
+
+                let x = cmp::max(0, cmp::min(self.width as i32, self.mouse_x + dx));
+                let y = cmp::max(0, cmp::min(self.height as i32, self.mouse_y + dy));
+                if x != self.mouse_x || y != self.mouse_y {
+                    self.mouse_x = x;
+                    self.mouse_y = y;
+                    self.input.write(&MouseEvent {
+                        x: x,
+                        y: y,
+                    }.to_event()).expect("ps2d: failed to write mouse event");
+                }
+
+                let left = flags.contains(LEFT_BUTTON);
+                let middle = flags.contains(MIDDLE_BUTTON);
+                let right = flags.contains(RIGHT_BUTTON);
+                if left != self.mouse_left || middle != self.mouse_middle || right != self.mouse_right {
+                    self.mouse_left = left;
+                    self.mouse_middle = middle;
+                    self.mouse_right = right;
+                    self.input.write(&ButtonEvent {
+                        left: left,
+                        middle: middle,
+                        right: right,
+                    }.to_event()).expect("ps2d: failed to write button event");
+                }
+
+                if dz != 0 {
+                    self.input.write(&ScrollEvent {
+                        x: 0,
+                        y: dz,
+                    }.to_event()).expect("ps2d: failed to write scroll event");
+                }
+            } else {
+                println!("ps2d: overflow {:X} {:X} {:X} {:X}", self.packets[0], self.packets[1], self.packets[2], self.packets[3]);
             }
+
+            self.packets = [0; 4];
+            self.packet_i = 0;
         }
     }
 }
