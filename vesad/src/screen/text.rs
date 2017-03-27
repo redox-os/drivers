@@ -198,6 +198,7 @@ impl Screen for TextScreen {
                             changed.insert(y2);
                         }
                     },
+                    ransid::Event::ScreenBuffer { .. } => (),
                     ransid::Event::Scroll { rows, color } => {
                         display.scroll(rows * 16, color.data);
                         for y in 0..display.height/16 {
