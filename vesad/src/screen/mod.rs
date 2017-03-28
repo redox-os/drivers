@@ -12,6 +12,8 @@ pub trait Screen {
 
     fn height(&self) -> usize;
 
+    fn resize(&mut self, width: usize, height: usize);
+
     fn event(&mut self, flags: usize) -> Result<usize>;
 
     fn map(&self, offset: usize, size: usize) -> Result<usize>;

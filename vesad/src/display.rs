@@ -4,7 +4,7 @@ extern crate rusttype;
 use alloc::heap;
 use std::{cmp, slice};
 
-use primitive::{fast_set32, fast_set64, fast_copy, fast_copy64};
+use primitive::{fast_set32, fast_set64, fast_copy};
 
 #[cfg(feature="rusttype")]
 use self::rusttype::{Font, FontCollection, Scale, point};
@@ -68,12 +68,57 @@ impl Display {
         }
     }
 
+    pub fn resize(&mut self, width: usize, height: usize) {
+        if width != self.width || height != self.height {
+            println!("Resize display to {}, {}", width, height);
+
+            let size = width * height;
+            let offscreen = unsafe { heap::allocate(size * 4, 4096) };
+
+            {
+                let mut old_ptr = self.offscreen.as_ptr();
+                let mut new_ptr = offscreen as *mut u32;
+
+                for _y in 0..cmp::min(height, self.height) {
+                    unsafe {
+                        fast_copy(new_ptr as *mut u8, old_ptr as *const u8, cmp::min(width, self.width) * 4);
+                        if width > self.width {
+                            fast_set32(new_ptr.offset(self.width as isize), 0, width - self.width);
+                        }
+                        old_ptr = old_ptr.offset(self.width as isize);
+                        new_ptr = new_ptr.offset(width as isize);
+                    }
+                }
+
+                if height > self.height {
+                    for _y in self.height..height {
+                        unsafe {
+                            fast_set32(new_ptr, 0, width);
+                            new_ptr = new_ptr.offset(width as isize);
+                        }
+                    }
+                }
+            }
+
+            self.width = width;
+            self.height = height;
+
+            let onscreen = self.onscreen.as_mut_ptr();
+            self.onscreen = unsafe { slice::from_raw_parts_mut(onscreen, size) };
+
+            unsafe { heap::deallocate(self.offscreen.as_mut_ptr() as *mut u8, self.offscreen.len() * 4, 4096) };
+            self.offscreen = unsafe { slice::from_raw_parts_mut(offscreen as *mut u32, size) };
+        } else {
+            println!("Display is already {}, {}", width, height);
+        }
+    }
+
     /// Draw a rectangle
     pub fn rect(&mut self, x: usize, y: usize, w: usize, h: usize, color: u32) {
-        let start_y = cmp::min(self.height - 1, y);
+        let start_y = cmp::min(self.height, y);
         let end_y = cmp::min(self.height, y + h);
 
-        let start_x = cmp::min(self.width - 1, x);
+        let start_x = cmp::min(self.width, x);
         let len = cmp::min(self.width, x + w) - start_x;
 
         let mut offscreen_ptr = self.offscreen.as_mut_ptr() as usize;
@@ -95,10 +140,10 @@ impl Display {
 
     /// Invert a rectangle
     pub fn invert(&mut self, x: usize, y: usize, w: usize, h: usize) {
-        let start_y = cmp::min(self.height - 1, y);
+        let start_y = cmp::min(self.height, y);
         let end_y = cmp::min(self.height, y + h);
 
-        let start_x = cmp::min(self.width - 1, x);
+        let start_x = cmp::min(self.width, x);
         let len = cmp::min(self.width, x + w) - start_x;
 
         let mut offscreen_ptr = self.offscreen.as_mut_ptr() as usize;
@@ -201,27 +246,25 @@ impl Display {
 
     /// Scroll display
     pub fn scroll(&mut self, rows: usize, color: u32) {
-        let data = (color as u64) << 32 | color as u64;
-
-        let width = self.width/2;
+        let width = self.width;
         let height = self.height;
         if rows > 0 && rows < height {
             let off1 = rows * width;
             let off2 = height * width - off1;
             unsafe {
-                let data_ptr = self.offscreen.as_mut_ptr() as *mut u64;
-                fast_copy64(data_ptr, data_ptr.offset(off1 as isize), off2);
-                fast_set64(data_ptr.offset(off2 as isize), data, off1);
+                let data_ptr = self.offscreen.as_mut_ptr() as *mut u32;
+                fast_copy(data_ptr as *mut u8, data_ptr.offset(off1 as isize) as *const u8, off2 as usize * 4);
+                fast_set32(data_ptr.offset(off2 as isize), color, off1 as usize);
             }
         }
     }
 
     /// Copy from offscreen to onscreen
     pub fn sync(&mut self, x: usize, y: usize, w: usize, h: usize) {
-        let start_y = cmp::min(self.height - 1, y);
+        let start_y = cmp::min(self.height, y);
         let end_y = cmp::min(self.height, y + h);
 
-        let start_x = cmp::min(self.width - 1, x);
+        let start_x = cmp::min(self.width, x);
         let len = (cmp::min(self.width, x + w) - start_x) * 4;
 
         let mut offscreen_ptr = self.offscreen.as_mut_ptr() as usize;
@@ -242,5 +285,11 @@ impl Display {
             onscreen_ptr += stride;
             rows -= 1;
         }
+    }
+}
+
+impl Drop for Display {
+    fn drop(&mut self) {
+        unsafe { heap::deallocate(self.offscreen.as_mut_ptr() as *mut u8, self.offscreen.len() * 4, 4096) };
     }
 }

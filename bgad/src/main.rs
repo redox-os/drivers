@@ -25,6 +25,6 @@ fn main() {
         unsafe { iopl(3).unwrap() };
 
         let mut bga = Bga::new();
-        print!("{}", format!("   - BGA {}x{}", bga.width(), bga.height()));
+        print!("{}", format!("   - BGA {}x{}\n", bga.width(), bga.height()));
     }
 }
