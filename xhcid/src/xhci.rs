@@ -72,15 +72,21 @@ bitflags! {
     }
 }
 
-pub struct XhciPort(Mmio<u32>);
+#[repr(packed)]
+pub struct XhciPort {
+    portsc : Mmio<u32>,
+    portpmsc : Mmio<u32>,
+    portli : Mmio<u32>,
+    porthlpmc : Mmio<u32>,
+}
 
 impl XhciPort {
     fn read(&self) -> u32 {
-        self.0.read()
+        self.portsc.read()
     }
 
     fn state(&self) -> u32 {
-        (self.read() & (0b111 << 5)) >> 5
+        (self.read() & (0b1111 << 5)) >> 5
     }
 
     fn speed(&self) -> u32 {
