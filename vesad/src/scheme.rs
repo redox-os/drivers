@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 use std::{mem, slice, str};
 
-use orbclient::{Event, EventOption};
+use orbclient::{Keymap, Event, EventOption};
+use orbclient::keycode::*;
 use syscall::{Result, Error, EACCES, EBADF, ENOENT, SchemeMut};
 
 use display::Display;
@@ -11,6 +12,7 @@ pub struct DisplayScheme {
     width: usize,
     height: usize,
     active: usize,
+    keymap: Keymap,
     pub screens: BTreeMap<usize, Box<Screen>>
 }
 
@@ -32,6 +34,7 @@ impl DisplayScheme {
             width: width,
             height: height,
             active: 1,
+            keymap: Keymap::default(),
             screens: screens
         }
     }
@@ -53,6 +56,8 @@ impl SchemeMut for DisplayScheme {
             } else {
                 Err(Error::new(EACCES))
             }
+        } else if path == b"keymap"{
+            Ok(4000000000)
         } else {
             let path_str = str::from_utf8(path).unwrap_or("").trim_matches('/');
             let mut parts = path_str.split('/');
@@ -93,6 +98,8 @@ impl SchemeMut for DisplayScheme {
     fn fpath(&mut self, id: usize, buf: &mut [u8]) -> Result<usize> {
         let path_str = if id == 0 {
             format!("display:input/{}/{}", self.width, self.height)
+        } else if id == 4000000000 {
+            format!("display:keymap")
         } else if let Some(screen) = self.screens.get(&id) {
             format!("display:{}/{}/{}", id, screen.width(), screen.height())
         } else {
@@ -144,14 +151,14 @@ impl SchemeMut for DisplayScheme {
                 for event in events.iter() {
                     let mut new_active_opt = None;
                     match event.to_option() {
-                        EventOption::Key(key_event) => match key_event.scancode {
-                            f @ 0x3B ... 0x44 => { // F1 through F10
-                                new_active_opt = Some((f - 0x3A) as usize);
+                        EventOption::Key(key_event) => match key_event.keycode {
+                            f @ KC_F1 ... KC_F10 => { // F1 through F10
+                                new_active_opt = Some((f - KC_F1 + 1) as usize);
                             },
-                            0x57 => { // F11
+                            KC_F11 => { // F11
                                 new_active_opt = Some(11);
                             },
-                            0x58 => { // F12
+                            KC_F12 => { // F12
                                 new_active_opt = Some(12);
                             },
                             _ => ()
@@ -175,13 +182,34 @@ impl SchemeMut for DisplayScheme {
                         }
                     } else {
                         if let Some(mut screen) = self.screens.get_mut(&self.active) {
-                            screen.input(event);
+                            // Apply keymap
+                            let event_opt = event.to_option();
+                            let event = if let EventOption::Key(mut key_event) = event_opt {
+                                key_event.character = match key_event.keycode {
+                                    c @ 0 ... 58 => self.keymap.get_char(c, key_event.modifiers),
+                                    _ => '\0',
+                                };
+
+                                // from old code:
+                                // c @ 0 ... 58 => event.character = self.keymap.get_char(c, self.shift_key, self.alt_gr_key),
+                                key_event.to_event()
+                            } else {
+                                *event
+                            };
+
+
+                            // Pass on the event to the active screen
+                            screen.input(&event);
                         }
                     }
                 }
 
                 Ok(events.len() * mem::size_of::<Event>())
             }
+        } else if id == 4000000000 {
+            let keymap = Keymap::from_file(str::from_utf8(buf).unwrap());
+            self.keymap = keymap?;
+            Ok(buf.len())
         } else if let Some(mut screen) = self.screens.get_mut(&id) {
             screen.write(buf, id == self.active)
         } else {

@@ -3,6 +3,7 @@ extern crate ransid;
 use std::collections::{BTreeSet, VecDeque};
 
 use orbclient::{Event, EventOption};
+use orbclient::keycode::*;
 use syscall::error::*;
 
 use display::Display;
@@ -63,41 +64,41 @@ impl Screen for TextScreen {
 
         match event.to_option() {
             EventOption::Key(key_event) => {
-                if key_event.scancode == 0x1D {
+                if key_event.keycode == 0x1D {
                     self.ctrl = key_event.pressed;
                 } else if key_event.pressed {
-                    match key_event.scancode {
-                        0x0E => { // Backspace
+                    match key_event.keycode {
+                        KC_BKSP => { // Backspace
                             buf.extend_from_slice(b"\x7F");
                         },
-                        0x47 => { // Home
+                        KC_HOME => { // Home
                             buf.extend_from_slice(b"\x1B[H");
                         },
-                        0x48 => { // Up
+                        KC_UP => { // Up
                             buf.extend_from_slice(b"\x1B[A");
                         },
-                        0x49 => { // Page up
+                        KC_PGUP => { // Page up
                             buf.extend_from_slice(b"\x1B[5~");
                         },
-                        0x4B => { // Left
+                        KC_LEFT => { // Left
                             buf.extend_from_slice(b"\x1B[D");
                         },
-                        0x4D => { // Right
+                        KC_RIGHT => { // Right
                             buf.extend_from_slice(b"\x1B[C");
                         },
-                        0x4F => { // End
+                        KC_END => { // End
                             buf.extend_from_slice(b"\x1B[F");
                         },
-                        0x50 => { // Down
+                        KC_DOWN => { // Down
                             buf.extend_from_slice(b"\x1B[B");
                         },
-                        0x51 => { // Page down
+                        KC_PGDN => { // Page down
                             buf.extend_from_slice(b"\x1B[6~");
                         },
                         0x52 => { // Insert
                             buf.extend_from_slice(b"\x1B[2~");
                         },
-                        0x53 => { // Delete
+                        KC_DEL => { // Delete
                             buf.extend_from_slice(b"\x1B[3~");
                         },
                         _ => {
