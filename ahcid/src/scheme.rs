@@ -98,6 +98,17 @@ impl Scheme for DiskScheme {
         }
     }
 
+    fn fpath(&self, _id: usize, buf: &mut [u8]) -> Result<usize> {
+        //TODO: Get path
+        let mut i = 0;
+        let scheme_path = b"disk:";
+        while i < buf.len() && i < scheme_path.len() {
+            buf[i] = scheme_path[i];
+            i += 1;
+        }
+        Ok(i)
+    }
+
     fn read(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
         let mut handles = self.handles.lock();
         match *handles.get_mut(&id).ok_or(Error::new(EBADF))? {
