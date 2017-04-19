@@ -75,8 +75,12 @@ impl Screen for GraphicScreen {
         Ok(i * mem::size_of::<Event>())
     }
 
-    fn will_block(&self) -> bool {
-        self.input.is_empty()
+    fn can_read(&self) -> Option<usize> {
+        if self.input.is_empty() {
+            None
+        } else {
+            Some(self.input.len() * mem::size_of::<Event>())
+        }
     }
 
     fn write(&mut self, buf: &[u8], sync: bool) -> Result<usize> {

@@ -22,7 +22,7 @@ pub trait Screen {
 
     fn read(&mut self, buf: &mut [u8]) -> Result<usize>;
 
-    fn will_block(&self) -> bool;
+    fn can_read(&self) -> Option<usize>;
 
     fn write(&mut self, buf: &[u8], sync: bool) -> Result<usize>;
 

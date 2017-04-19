@@ -167,8 +167,14 @@ impl Screen for TextScreen {
         Ok(i)
     }
 
-    fn will_block(&self) -> bool {
-        self.input.is_empty() && ! self.end_of_input
+    fn can_read(&self) -> Option<usize> {
+        if self.end_of_input {
+            Some(0)
+        } else if self.input.is_empty() {
+            None
+        } else {
+            Some(self.input.len())
+        }
     }
 
     fn write(&mut self, buf: &[u8], sync: bool) -> Result<usize> {

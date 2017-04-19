@@ -7,7 +7,7 @@ extern crate alloc;
 extern crate orbclient;
 extern crate syscall;
 
-use std::{env, mem};
+use std::env;
 use std::fs::File;
 use std::io::{Read, Write};
 use syscall::{physmap, physunmap, Packet, SchemeMut, EVENT_READ, MAP_WRITE, MAP_WRITE_COMBINE};
@@ -68,7 +68,7 @@ fn main() {
                 socket.read(&mut packet).expect("vesad: failed to read display scheme");
 
                 // If it is a read packet, and there is no data, block it. Otherwise, handle packet
-                if packet.a == syscall::number::SYS_READ && packet.d > 0 && scheme.will_block(packet.b) {
+                if packet.a == syscall::number::SYS_READ && packet.d > 0 && scheme.can_read(packet.b).is_none() {
                     blocked.push(packet);
                 } else {
                     scheme.handle(&mut packet);
@@ -79,7 +79,7 @@ fn main() {
                 {
                     let mut i = 0;
                     while i < blocked.len() {
-                        if ! scheme.will_block(blocked[i].b) {
+                        if scheme.can_read(blocked[i].b).is_some() {
                             let mut packet = blocked.remove(i);
                             scheme.handle(&mut packet);
                             socket.write(&packet).expect("vesad: failed to write display scheme");
@@ -90,7 +90,7 @@ fn main() {
                 }
 
                 for (screen_id, screen) in scheme.screens.iter() {
-                    if ! screen.will_block() {
+                    if let Some(count) = screen.can_read() {
                         let event_packet = Packet {
                             id: 0,
                             pid: 0,
@@ -99,7 +99,7 @@ fn main() {
                             a: syscall::number::SYS_FEVENT,
                             b: *screen_id,
                             c: EVENT_READ,
-                            d: mem::size_of::<orbclient::Event>()
+                            d: count
                         };
 
                         socket.write(&event_packet).expect("vesad: failed to write display event");
