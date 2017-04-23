@@ -1,7 +1,8 @@
 #![deny(warnings)]
 #![feature(asm)]
 
-extern crate rustc_serialize;
+extern crate serde;
+#[macro_use] extern crate serde_derive;
 extern crate syscall;
 extern crate toml;
 
@@ -25,7 +26,7 @@ fn main() {
         if let Ok(mut config_file) = File::open(&config_path) {
             let mut config_data = String::new();
             if let Ok(_) = config_file.read_to_string(&mut config_data) {
-                config = toml::decode_str(&config_data).unwrap_or(Config::default());
+                config = toml::from_str(&config_data).unwrap_or(Config::default());
             }
         }
     }
