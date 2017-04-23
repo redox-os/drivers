@@ -60,16 +60,17 @@ pub mod english {
         [' ', ' ']
     ];
 
-    pub fn get_char(scancode: u8, shift: bool) -> char {
-        if let Some(c) = ENGLISH.get(scancode as usize) {
-            if shift {
-                c[1]
-            } else {
-                c[0]
+    pub fn get_char(scancode: u8, shift: bool, alt_gr: bool) -> char {
+        if !alt_gr {
+            if let Some(c) = ENGLISH.get(scancode as usize) {
+                if shift {
+                    return c[1];
+                } else {
+                    return c[0];
+                }
             }
-        } else {
-            '\0'
         }
+        '\0'
     }
 }
 pub mod dvorak {
@@ -134,16 +135,17 @@ pub mod dvorak {
         [' ', ' ']
     ];
 
-    pub fn get_char(scancode: u8, shift: bool) -> char {
-        if let Some(c) = DVORAK.get(scancode as usize) {
-            if shift {
-                c[1]
-            } else {
-                c[0]
+    pub fn get_char(scancode: u8, shift: bool, alt_gr: bool) -> char {
+        if !alt_gr {
+            if let Some(c) = DVORAK.get(scancode as usize) {
+                if shift {
+                    return c[1];
+                } else {
+                    return c[0];
+                }
             }
-        } else {
-            '\0'
         }
+        '\0'
     }
 }
 
@@ -209,85 +211,88 @@ pub mod azerty {
         [' ', ' ']
     ];
 
-    pub fn get_char(scancode: u8, shift: bool) -> char {
-        if let Some(c) = AZERTY.get(scancode as usize) {
-            if shift {
-                c[1]
-            } else {
-                c[0]
+    pub fn get_char(scancode: u8, shift: bool, alt_gr: bool) -> char {
+        if !alt_gr {
+            if let Some(c) = AZERTY.get(scancode as usize) {
+                if shift {
+                    return c[1];
+                } else {
+                    return c[0];
+                }
             }
-        } else {
-            '\0'
         }
+        '\0'
     }
 }
 
 pub mod bepo {
-    static BEPO: [[char; 2]; 58] = [
-        ['\0', '\0'],
-        ['\x1B', '\x1B'],
-        ['"', '1'],
-        ['«', '2'],
-        ['»', '3'],
-        ['(', '4'],
-        [')', '5'],
-        ['@', '6'],
-        ['+', '7'],
-        ['-', '8'],
-        ['/', '9'],
-        ['*', '0'],
-        ['=', '°'],
-        ['%', '`'],
-        ['\x7F', '\x7F'],
-        ['\t', '\t'],
-        ['b', 'B'],
-        ['é', 'É'],
-        ['p', 'P'],
-        ['o', 'O'],
-        ['è', 'È'],
-        ['^', '!'],
-        ['v', 'V'],
-        ['d', 'D'],
-        ['l', 'L'],
-        ['j', 'J'],
-        ['z', 'Z'],
-        ['w', 'W'],
-        ['\n', '\n'],
-        ['\0', '\0'],
-        ['a', 'A'],
-        ['u', 'U'],
-        ['i', 'I'],
-        ['e', 'E'],
-        [',', ';'],
-        ['c', 'C'],
-        ['t', 'T'],
-        ['s', 'S'],
-        ['r', 'R'],
-        ['n', 'N'],
-        ['m', 'M'],
-        ['ç', 'Ç'],
-        ['\0', '\0'],
-        ['ê', 'Ê'],
-        ['à', 'À'],
-        ['y', 'Y'],
-        ['x', 'X'],
-        ['.', ':'],
-        ['k', 'K'],
-        ['\'', '?'],
-        ['q', 'Q'],
-        ['g', 'G'],
-        ['h', 'H'],
-        ['f', 'F'],
-        ['\0', '\0'],
-        ['\0', '\0'],
-        ['\0', '\0'],
-        [' ', ' ']
+    static BEPO: [[char; 3]; 58] = [
+        ['\0', '\0', '\0'],
+        ['$', '#', '–'],
+        ['"', '1', '—'],
+        ['«', '2', '<'],
+        ['»', '3', '>'],
+        ['(', '4', '['],
+        [')', '5', ']'],
+        ['@', '6', '^'],
+        ['+', '7', '±'],
+        ['-', '8', '−'],
+        ['/', '9', '÷'],
+        ['*', '0', '×'],
+        ['=', '°', '≠'],
+        ['%', '`', '‰'],
+        ['\x7F', '\x7F', '\0'],
+        ['\t', '\t', '\0'],
+        ['b', 'B', '|'],
+        ['é', 'É', '´'],
+        ['p', 'P', '&'],
+        ['o', 'O', 'œ'],
+        ['è', 'È', '`'],
+        ['^', '!', '¡'],
+        ['v', 'V', 'ˇ'],
+        ['d', 'D', '\0'],
+        ['l', 'L', '\0'],
+        ['j', 'J', '\0'],
+        ['z', 'Z', '\0'],
+        ['w', 'W', '\0'],
+        ['\n', '\n', '\0'],
+        ['\0', '\0', '\0'],
+        ['a', 'A', 'æ'],
+        ['u', 'U', 'ù'],
+        ['i', 'I', '¨'],
+        ['e', 'E', '€'],
+        [',', ';', '’'],
+        ['c', 'C', '©'],
+        ['t', 'T', '\0'],
+        ['s', 'S', '\0'],
+        ['r', 'R', '\0'],
+        ['n', 'N', '\0'],
+        ['m', 'M', '\0'],
+        ['ç', 'Ç', '\0'],
+        ['\0', '\0', '\0'],
+        ['ê', 'Ê', '\0'],
+        ['à', 'À', '\\'],
+        ['y', 'Y', '{'],
+        ['x', 'X', '}'],
+        ['.', ':', '…'],
+        ['k', 'K', '~'],
+        ['\'', '?', '¿'],
+        ['q', 'Q', '\0'],
+        ['g', 'G', '\0'],
+        ['h', 'H', '\0'],
+        ['f', 'F', '\0'],
+        ['\0', '\0', '\0'],
+        ['\0', '\0', '\0'],
+        ['\0', '\0', '\0'],
+        [' ', ' ', '_'],
     ];
 
-    pub fn get_char(scancode: u8, shift: bool) -> char {
+    pub fn get_char(scancode: u8, shift: bool, alt_gr: bool) -> char {
         if let Some(c) = BEPO.get(scancode as usize) {
             if shift {
                 c[1]
+            } else if alt_gr {
+                c[2]
             } else {
                 c[0]
             }
