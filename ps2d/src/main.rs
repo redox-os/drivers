@@ -197,12 +197,13 @@ fn daemon(input: File) {
     let keymap = match env::args().skip(1).next() {
         Some(k) => match k.to_lowercase().as_ref() {
             "dvorak" => (keymap::dvorak::get_char),
-            "english" => (keymap::english::get_char),
+            "us" => (keymap::us::get_char),
+            "gb" => (keymap::gb::get_char),
             "azerty" => (keymap::azerty::get_char),
             "bepo" => (keymap::bepo::get_char),
-            &_ => (keymap::english::get_char)
+            &_ => (keymap::us::get_char)
         },
-        None => (keymap::english::get_char)
+        None => (keymap::us::get_char)
     };
     let ps2d = Arc::new(RefCell::new(Ps2d::new(input, keymap)));
 
