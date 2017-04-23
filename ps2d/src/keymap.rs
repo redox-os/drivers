@@ -1,5 +1,5 @@
-pub mod english {
-    static ENGLISH: [[char; 2]; 58] = [
+pub mod us {
+    static US: [[char; 2]; 58] = [
         ['\0', '\0'],
         ['\x1B', '\x1B'],
         ['1', '!'],
@@ -61,7 +61,7 @@ pub mod english {
     ];
 
     pub fn get_char(scancode: u8, shift: bool) -> char {
-        if let Some(c) = ENGLISH.get(scancode as usize) {
+        if let Some(c) = US.get(scancode as usize) {
             if shift {
                 c[1]
             } else {
