@@ -198,6 +198,7 @@ fn daemon(input: File) {
         Some(k) => match k.to_lowercase().as_ref() {
             "dvorak" => (keymap::dvorak::get_char),
             "us" => (keymap::us::get_char),
+            "gb" => (keymap::gb::get_char),
             "azerty" => (keymap::azerty::get_char),
             "bepo" => (keymap::bepo::get_char),
             &_ => (keymap::us::get_char)
