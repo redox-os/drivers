@@ -1,9 +1,9 @@
-#[derive(Debug, Default, RustcDecodable)]
+#[derive(Debug, Default, Deserialize)]
 pub struct Config {
     pub drivers: Vec<DriverConfig>
 }
 
-#[derive(Debug, Default, RustcDecodable)]
+#[derive(Debug, Default, Deserialize)]
 pub struct DriverConfig {
     pub name: Option<String>,
     pub class: Option<u8>,
