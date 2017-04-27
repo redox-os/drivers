@@ -64,7 +64,7 @@ impl<'pci> PciIter<'pci> {
 impl<'pci> Iterator for PciIter<'pci> {
     type Item = PciBus<'pci>;
     fn next(&mut self) -> Option<Self::Item> {
-        if self.num < 256 {
+        if self.num < 255 { /* TODO: Do not ignore 0xFF bus */
             let bus = PciBus {
                 pci: self.pci,
                 num: self.num as u8

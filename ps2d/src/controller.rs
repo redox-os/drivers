@@ -50,6 +50,7 @@ enum Command {
 #[allow(dead_code)]
 enum KeyboardCommand {
     EnableReporting = 0xF4,
+    SetDefaultsDisable = 0xF5,
     SetDefaults = 0xF6,
     Reset = 0xFF
 }
@@ -64,6 +65,7 @@ enum KeyboardCommandData {
 enum MouseCommand {
     GetDeviceId = 0xF2,
     EnableReporting = 0xF4,
+    SetDefaultsDisable = 0xF5,
     SetDefaults = 0xF6,
     Reset = 0xFF
 }
@@ -100,9 +102,9 @@ impl Ps2 {
         while ! self.status().contains(OUTPUT_FULL) {}
     }
 
-    fn flush_read(&mut self) {
+    fn flush_read(&mut self, message: &str) {
         while self.status().contains(OUTPUT_FULL) {
-            print!("FLUSH: {:X}\n", self.data.read());
+            print!("ps2d: flush {}: {:X}\n", message, self.data.read());
         }
     }
 
@@ -131,28 +133,57 @@ impl Ps2 {
         self.write(config.bits());
     }
 
+    fn keyboard_command_inner(&mut self, command: u8) -> u8 {
+        let mut ret = 0xFE;
+        for i in 0..4 {
+            self.write(command as u8);
+            ret = self.read();
+            if ret == 0xFE {
+                println!("ps2d: retry keyboard command {:X}: {}", command, i);
+            } else {
+                break;
+            }
+        }
+        ret
+    }
+
     fn keyboard_command(&mut self, command: KeyboardCommand) -> u8 {
-        self.write(command as u8);
-        self.read()
+        self.keyboard_command_inner(command as u8)
     }
 
     fn keyboard_command_data(&mut self, command: KeyboardCommandData, data: u8) -> u8 {
-        self.write(command as u8);
-        assert_eq!(self.read(), 0xFA);
+        let res = self.keyboard_command_inner(command as u8);
+        if res != 0xFA {
+            return res;
+        }
         self.write(data as u8);
         self.read()
     }
 
+    fn mouse_command_inner(&mut self, command: u8) -> u8 {
+        let mut ret = 0xFE;
+        for i in 0..4 {
+            self.command(Command::WriteSecond);
+            self.write(command as u8);
+            ret = self.read();
+            if ret == 0xFE {
+                println!("ps2d: retry mouse command {:X}: {}", command, i);
+            } else {
+                break;
+            }
+        }
+        ret
+    }
+
     fn mouse_command(&mut self, command: MouseCommand) -> u8 {
-        self.command(Command::WriteSecond);
-        self.write(command as u8);
-        self.read()
+        self.mouse_command_inner(command as u8)
     }
 
     fn mouse_command_data(&mut self, command: MouseCommandData, data: u8) -> u8 {
-        self.command(Command::WriteSecond);
-        self.write(command as u8);
-        assert_eq!(self.read(), 0xFA);
+        let res = self.mouse_command_inner(command as u8);
+        if res != 0xFA {
+            return res;
+        }
         self.command(Command::WriteSecond);
         self.write(data as u8);
         self.read()
@@ -169,12 +200,15 @@ impl Ps2 {
     }
 
     pub fn init(&mut self) -> bool {
+        // Clear remaining data
+        self.flush_read("init start");
+
         // Disable devices
         self.command(Command::DisableFirst);
         self.command(Command::DisableSecond);
 
         // Clear remaining data
-        self.flush_read();
+        self.flush_read("disable");
 
         // Disable clocks, disable interrupts, and disable translate
         {
@@ -195,35 +229,70 @@ impl Ps2 {
         self.command(Command::EnableFirst);
         self.command(Command::EnableSecond);
 
+        // Clear remaining data
+        self.flush_read("enable");
+
         // Reset keyboard
-        assert_eq!(self.keyboard_command(KeyboardCommand::Reset), 0xFA);
-        assert_eq!(self.read(), 0xAA);
-        self.flush_read();
+        if self.keyboard_command(KeyboardCommand::Reset) == 0xFA {
+            if self.read() != 0xAA {
+                println!("ps2d: keyboard failed self test");
+            }
+        } else {
+            println!("ps2d: keyboard failed to reset");
+        }
+
+        // Clear remaining data
+        self.flush_read("keyboard defaults");
 
         // Set scancode set to 2
-        assert_eq!(self.keyboard_command_data(KeyboardCommandData::ScancodeSet, 2), 0xFA);
-
-        // Reset mouse and set up scroll
-        // TODO: Check for ack
-        assert_eq!(self.mouse_command(MouseCommand::Reset), 0xFA);
-        assert_eq!(self.read(), 0xAA);
-        assert_eq!(self.read(), 0x00);
-        self.flush_read();
-
-        // Enable extra packet on mouse
-        assert_eq!(self.mouse_command_data(MouseCommandData::SetSampleRate, 200), 0xFA);
-        assert_eq!(self.mouse_command_data(MouseCommandData::SetSampleRate, 100), 0xFA);
-        assert_eq!(self.mouse_command_data(MouseCommandData::SetSampleRate, 80), 0xFA);
-        assert_eq!(self.mouse_command(MouseCommand::GetDeviceId), 0xFA);
-        let mouse_id = self.read();
-        let mouse_extra = mouse_id == 3;
-
-        // Set sample rate to maximum
-        assert_eq!(self.mouse_command_data(MouseCommandData::SetSampleRate, 200), 0xFA);
+        let scancode_set = 2;
+        if self.keyboard_command_data(KeyboardCommandData::ScancodeSet, scancode_set) != 0xFA {
+            println!("ps2d: keyboard failed to set scancode set {}", scancode_set);
+        }
 
         // Enable data reporting
-        assert_eq!(self.keyboard_command(KeyboardCommand::EnableReporting), 0xFA);
-        assert_eq!(self.mouse_command(MouseCommand::EnableReporting), 0xFA);
+        if self.keyboard_command(KeyboardCommand::EnableReporting) != 0xFA {
+            println!("ps2d: keyboard failed to enable reporting");
+        }
+
+        // Reset mouse and set up scroll
+        if self.mouse_command(MouseCommand::Reset) == 0xFA {
+            let a = self.read();
+            let b = self.read();
+            if a != 0xAA || b != 0x00 {
+                println!("ps2d: mouse failed self test");
+            }
+        } else {
+            println!("ps2d: mouse failed to reset");
+        }
+
+        // Clear remaining data
+        self.flush_read("mouse defaults");
+
+        // Enable extra packet on mouse
+        if self.mouse_command_data(MouseCommandData::SetSampleRate, 200) != 0xFA
+        || self.mouse_command_data(MouseCommandData::SetSampleRate, 100) != 0xFA
+        || self.mouse_command_data(MouseCommandData::SetSampleRate, 80) != 0xFA {
+            println!("ps2d: mouse failed to enable extra packet");
+        }
+
+        let mouse_extra = if self.mouse_command(MouseCommand::GetDeviceId) == 0xFA {
+            self.read() == 3
+        } else {
+            println!("ps2d: mouse failed to get device id");
+            false
+        };
+
+        // Set sample rate to maximum
+        let sample_rate = 200;
+        if self.mouse_command_data(MouseCommandData::SetSampleRate, sample_rate) != 0xFA {
+            println!("ps2d: mouse failed to set sample rate to {}", sample_rate);
+        }
+
+        // Enable data reporting
+        if self.mouse_command(MouseCommand::EnableReporting) != 0xFA {
+            println!("ps2d: mouse failed to enable reporting");
+        }
 
         // Enable clocks and interrupts
         {
@@ -236,7 +305,8 @@ impl Ps2 {
             self.set_config(config);
         }
 
-        self.flush_read();
+        // Clear remaining data
+        self.flush_read("init finish");
 
         mouse_extra
     }
