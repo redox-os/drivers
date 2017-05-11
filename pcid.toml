@@ -1,0 +1,74 @@
+[[drivers]]
+name = "AHCI storage"
+class = 1
+subclass = 6
+command = ["ahcid", "$NAME", "$BAR5", "$IRQ"]
+
+[[drivers]]
+name = "NVME storage"
+class = 1
+subclass = 8
+command = ["nvmed", "$NAME", "$BAR0", "$IRQ"]
+
+[[drivers]]
+name = "QEMU Graphics Array"
+class = 3
+vendor = 4660
+device = 4369
+command = ["bgad", "$NAME", "$BAR0"]
+
+[[drivers]]
+name = "VirtualBox Graphics Array"
+class = 3
+vendor = 33006
+device = 48879
+command = ["bgad", "$NAME", "$BAR0"]
+
+[[drivers]]
+name = "VirtualBox Guest Device"
+class = 8
+vendor = 33006
+device = 51966
+command = ["vboxd", "$NAME", "$BAR0", "$BAR1", "$IRQ"]
+
+[[drivers]]
+name = "82543GC NIC"
+class = 2
+vendor = 32902
+device = 4100
+command = ["e1000d", "$NAME", "$BAR0", "$IRQ"]
+
+[[drivers]]
+name = "82540EM NIC"
+class = 2
+vendor = 32902
+device = 4110
+command = ["e1000d", "$NAME", "$BAR0", "$IRQ"]
+
+[[drivers]]
+name = "82545EM NIC"
+class = 2
+vendor = 32902
+device = 4111
+command = ["e1000d", "$NAME", "$BAR0", "$IRQ"]
+
+[[drivers]]
+name = "82579V NIC"
+class = 2
+vendor = 32902
+device = 5379
+command = ["e1000d", "$NAME", "$BAR0", "$IRQ"]
+
+[[drivers]]
+name = "RTL8168 NIC"
+class = 2
+vendor = 4332
+device = 33128
+command = ["rtl8168d", "$NAME", "$BAR2", "$IRQ"]
+
+[[drivers]]
+name = "XHCI"
+class = 12
+subclass = 3
+interface = 48
+command = ["xhcid", "$NAME", "$BAR0", "$IRQ"]
