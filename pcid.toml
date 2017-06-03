@@ -55,7 +55,7 @@ command = ["e1000d", "$NAME", "$BAR0", "$IRQ"]
 name = "Intel HD Audio"
 vendor = 32902
 device = 9832
-command = ["/sbin/ihdad", "$NAME", "$BAR0", "$IRQ"]
+command = ["ihdad", "$NAME", "$BAR0", "$IRQ"]
 
 # nvmed
 [[drivers]]
