@@ -49,6 +49,14 @@ vendor = 32902
 device = 5379
 command = ["e1000d", "$NAME", "$BAR0", "$IRQ"]
 
+
+#ihdad
+[[drivers]]
+name = "Intel HD Audio"
+vendor = 32902
+device = 9832
+command = ["/sbin/ihdad", "$NAME", "$BAR0", "$IRQ"]
+
 # nvmed
 [[drivers]]
 name = "NVME storage"
