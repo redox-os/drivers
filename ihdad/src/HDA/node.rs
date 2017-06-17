@@ -4,7 +4,7 @@ use super::common::*;
 
 #[derive(Clone)]
 pub struct HDANode {
-	pub addr: HDANodeAddr,
+	pub addr: WidgetAddr,
 	
 	
 
@@ -35,7 +35,7 @@ pub struct HDANode {
 	// 0x13
 	pub vol_knob:         u8,
 	
-	pub connections:      Vec<HDANodeAddr>,
+	pub connections:      Vec<WidgetAddr>,
 	
 	pub is_widget:        bool,
 
@@ -47,7 +47,7 @@ impl HDANode {
 
 	pub fn new() -> HDANode {
 		HDANode {
-			addr: 0,
+			addr: (0,0),
 			subnode_count: 0,
 			subnode_start: 0,
 			function_group_type: 0,
@@ -60,7 +60,7 @@ impl HDANode {
 
 			config_default: 0,
 			is_widget: false,
-			connections: Vec::<HDANodeAddr>::new(),
+			connections: Vec::<WidgetAddr>::new(),
 		}
 	}
 
@@ -69,7 +69,7 @@ impl HDANode {
 
 	}
 
-	pub fn getDeviceDefault(&self) -> Option<HDADefaultDevice> {
+	pub fn device_default(&self) -> Option<DefaultDevice> {
 		if self.widget_type() != HDAWidgetType::PinComplex {
 			None
 		} else {
@@ -77,32 +77,37 @@ impl HDANode {
 		}
 	}
 	
-	pub fn addr(&self) -> HDANodeAddr {
+	pub fn configuration_default(&self) -> ConfigurationDefault {
+		ConfigurationDefault::from_u32(self.config_default)
+	}
+
+	pub fn addr(&self) -> WidgetAddr {
 		self.addr
 	}
 }
 
 impl fmt::Display for HDANode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if self.addr == 0 {
-		write!(f, "Addr: {:02X}, Root Node.", self.addr)
+        if self.addr == (0,0) {
+		write!(f, "Addr: {:02X}:{:02X}, Root Node.", self.addr.0, self.addr.1)
 	} else if self.is_widget {
 		match self.widget_type() {
 		
 		HDAWidgetType::PinComplex => { 
-			write!(f, "Addr: {:02X}, Type: {:?}: {:?}, Inputs: {:X}: {:?}.", 
-				self.addr, 
+			write!(f, "Addr: {:02X}:{:02X}, Type: {:?}: {:?}, Inputs: {:X}: {:?}.", 
+				self.addr.0,
+				self.addr.1, 
 				self.widget_type(), 
-				self.getDeviceDefault().unwrap(), 
+				self.device_default().unwrap(), 
 				self.conn_list_len, 
 				self.connections) 
 			},
 		
-		  _ => { write!(f, "Addr: {:02X}, Type: {:?}, Inputs: {:X}: {:?}.", self.addr, self.widget_type(), self.conn_list_len, self.connections) },
+		  _ => { write!(f, "Addr: {:02X}:{:02X}, Type: {:?}, Inputs: {:X}: {:?}.", self.addr.0, self.addr.1, self.widget_type(), self.conn_list_len, self.connections) },
 		
 		}
 	} else {
-		write!(f, "Addr: {:02X}, AFG: {}, Widget count {}.", self.addr, self.function_group_type, self.subnode_count)
+		write!(f, "Addr: {:02X}:{:02X}, AFG: {}, Widget count {}.", self.addr.0, self.addr.1, self.function_group_type, self.subnode_count)
 	}
     }
 }

@@ -1,15 +1,17 @@
-use std::{mem, thread, ptr, fmt};
-use std::cmp::max;
+
+
 
 use syscall::MAP_WRITE;
-use syscall::error::{Error, EACCES, EWOULDBLOCK, Result};
+use syscall::error::{Error, EACCES, EWOULDBLOCK, EIO, Result};
 use syscall::flag::O_NONBLOCK;
 use syscall::io::{Dma, Mmio, Io, ReadOnly};
 use syscall::scheme::SchemeMut;
 use std::sync::Arc;
 use std::cell::RefCell;
 use std::result;
-
+use std::cmp::{max, min};
+use std::ptr::copy_nonoverlapping;
+use std::{mem, thread, ptr, fmt};
 
 extern crate syscall;
 
@@ -201,16 +203,54 @@ impl StreamDescriptorRegs {
 			_ => 4 * (chan + 1),
 		}
 	}
+	
+	
 }
 
-pub struct Stream {
-	buff:                   usize,
-	buff_phys:              usize,
-	buff_length:            usize,
-	output_current_block:   usize,
-	block_length:           usize,
-	block_count:            usize,
+pub struct OutputStream {
+	buff:        StreamBuffer,
+
+	desc_regs:  &'static mut StreamDescriptorRegs,
 }
+
+
+impl OutputStream {
+	pub fn new(block_count: usize, block_length: usize, regs: &'static mut StreamDescriptorRegs) -> OutputStream {
+		unsafe {
+			OutputStream {
+				buff: StreamBuffer::new(block_length, block_count).unwrap(),
+				
+				desc_regs: regs,
+			}
+		}
+	}
+		
+	pub fn write_block(&mut self, buf: &[u8]) -> Result<usize> {
+		self.buff.write_block(buf)
+	}
+
+	pub fn block_size(&self) -> usize {
+		self.buff.block_size()
+	}
+	
+	pub fn block_count(&self) -> usize {
+		self.buff.block_count()
+	}
+	
+	pub fn current_block(&self) -> usize {
+		self.buff.current_block()
+	}
+
+	pub fn addr(&self) -> usize {
+		self.buff.addr()
+	}
+
+	pub fn phys(&self) -> usize {
+		self.buff.phys()
+	}
+}
+
+
 
 
 #[repr(packed)]
@@ -252,13 +292,16 @@ pub struct StreamBuffer {
 	phys:   usize,
 	addr:   usize,
 	
-	len: usize,
+	block_cnt: usize,
+	block_len:  usize,
+	
+	cur_pos: usize,
 }
 
 impl StreamBuffer {
-	pub fn new(length: usize) -> result::Result<StreamBuffer, &'static str> {
+	pub fn new(block_length: usize, block_count: usize) -> result::Result<StreamBuffer, &'static str> {
 		let phys = unsafe {
-			syscall::physalloc(length)
+			syscall::physalloc(block_length * block_count)
 		};
 		if !phys.is_ok() {
 			return Err("Could not allocate physical memory for buffer.");
@@ -267,24 +310,25 @@ impl StreamBuffer {
 		let phys_addr = phys.unwrap();
 
 		let addr = unsafe { 
-			syscall::physmap(phys_addr, length, MAP_WRITE)
+			syscall::physmap(phys_addr, block_length * block_count, MAP_WRITE)
 		};
 
 		if !addr.is_ok() {
+			unsafe {syscall::physfree(phys_addr, block_length * block_count);}
 			return Err("Could not map physical memory for buffer.");
-		} else {
-			unsafe {syscall::physfree(phys_addr, length);}
 		}
 		
 		Ok(StreamBuffer {
 			phys:   phys_addr,
 			addr:   addr.unwrap(),
-			len: length,
+			block_len: block_length,
+			block_cnt:  block_count,
+			cur_pos: 0,
 		})
 	}
 
 	pub fn length(&self) -> usize {
-		self.len
+		self.block_len * self.block_cnt
 	}
 	
 	pub fn addr(&self) -> usize {
@@ -295,14 +339,43 @@ impl StreamBuffer {
 		self.phys
 	}
 
+	pub fn block_size(&self) -> usize {
+		self.block_len
+	}
+	
+	pub fn block_count(&self) -> usize {
+		self.block_cnt
+	}
+
+	pub fn current_block(&self) -> usize {
+		self.cur_pos
+	}
+
+	pub fn write_block(&mut self, buf: &[u8]) -> Result<usize> {
+		if buf.len() != self.block_size() {
+			return Err(Error::new(EIO))
+		}
+		let len = min(self.block_size(), buf.len());	
+		
+		
+		print!("Phys: {:X} Virt: {:X} Offset: {:X} Len: {:X}\n", self.phys(), self.addr(), self.current_block() * self.block_size(), len);
+		unsafe {
+			copy_nonoverlapping(buf.as_ptr(), (self.addr() + self.current_block() * self.block_size()) as * mut u8, len);
+		}
+
+		self.cur_pos += 1;
+		self.cur_pos %= self.block_count();
+
+		Ok(len)
+
+	}
 }
-/*
 impl Drop for StreamBuffer {
 	fn drop(&mut self) {
 		unsafe {
 			print!("IHDA: Deallocating buffer.\n");
 			syscall::physunmap(self.addr);
-			syscall::physfree(self.phys, self.len);
+			syscall::physfree(self.phys, self.block_len * self.block_cnt);
 		}
 	}
-}*/
+}
