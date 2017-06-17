@@ -139,6 +139,8 @@ fn main() {
                                         "$BAR4" => bar_arg(4),
                                         "$BAR5" => bar_arg(5),
                                         "$IRQ" => format!("{}", header.interrupt_line),
+                                        "$VENID" => format!("{:>04X}",header.vendor_id),
+                                        "$DEVID" => format!("{:>04X}",header.device_id),
                                         _ => arg.clone()
                                     };
                                     command.arg(&arg);
