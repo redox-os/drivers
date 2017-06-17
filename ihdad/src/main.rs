@@ -6,7 +6,7 @@ extern crate spin;
 extern crate syscall;
 extern crate event;
 
-use std::{env, usize, thread};
+use std::{env, usize, u16, thread};
 use std::fs::File;
 use std::io::{Read, Write, Result};
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
@@ -14,13 +14,26 @@ use syscall::{EVENT_READ, MAP_WRITE, Event, Packet, Scheme, SchemeMut};
 use std::cell::RefCell;
 use std::sync::Arc;
 
+
 use event::EventQueue;
 use syscall::error::EWOULDBLOCK;
 
+
 pub mod HDA;
  
-
 use HDA::IntelHDA;
+
+
+
+
+
+
+/* 
+                 VEND:PROD
+    Virtualbox   8086:2668
+    QEMU ICH9    8086:293E
+    82801H ICH8  8086:284B  
+*/
 
 fn main() {
 	let mut args = env::args().skip(1);
@@ -34,8 +47,17 @@ fn main() {
 	let irq_str = args.next().expect("ihda: no irq provided");
 	let irq = irq_str.parse::<u8>().expect("ihda: failed to parse irq");
 
+
+	let vend_str = args.next().expect("ihda: no vendor id provided");
+	let vend = usize::from_str_radix(&vend_str, 16).expect("ihda: failed to parse vendor id");
+
+	
+	let prod_str = args.next().expect("ihda: no product id provided");
+	let prod = usize::from_str_radix(&prod_str, 16).expect("ihda: failed to parse product id");
+
 	print!("{}", format!(" + ihda {} on: {:X} IRQ: {}\n", name, bar, irq));
 	
+
 	// Daemonize
 	if unsafe { syscall::clone(0).unwrap() } == 0 {
 		
@@ -45,8 +67,10 @@ fn main() {
 
 			let mut irq_file = File::open(format!("irq:{}", irq)).expect("IHDA: failed to open IRQ file");
 			
+			let vend_prod:u32 = ((vend as u32) << 16) | (prod as u32);
 
-			let device = Arc::new(RefCell::new(unsafe { HDA::IntelHDA::new(address).expect("ihdad: failed to allocate device") }));
+
+			let device = Arc::new(RefCell::new(unsafe { HDA::IntelHDA::new(address, vend_prod).expect("ihdad: failed to allocate device") }));
 			let socket_fd = syscall::open(":audio", syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK).expect("IHDA: failed to create audio scheme");
 			let socket = Arc::new(RefCell::new(unsafe { File::from_raw_fd(socket_fd) }));
 		
@@ -95,7 +119,6 @@ fn main() {
 				}
 				Ok(Some(0))
 			}).expect("IHDA: failed to catch events on IRQ file");
-
 			let socket_fd = socket.borrow().as_raw_fd();
 			let socket_packet = socket.clone();
 			event_queue.add(socket_fd, move |_count: usize| -> Result<Option<usize>> {
@@ -114,6 +137,8 @@ fn main() {
 						socket_packet.borrow_mut().write(&mut packet)?;
 					}
 				}
+
+
 				/*
 				let next_read = device.borrow().next_read();
 				if next_read > 0 {
@@ -135,6 +160,7 @@ fn main() {
 					d: event_count
 				}).expect("IHDA: failed to write event");
 			}
+
 
 
 
