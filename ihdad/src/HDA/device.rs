@@ -16,7 +16,8 @@ extern crate syscall;
 
 use syscall::MAP_WRITE;
 use syscall::error::{Error, EACCES, EBADF, Result, EINVAL};
-use syscall::io::{ Mmio, Io};
+use syscall::flag::{SEEK_SET, SEEK_CUR, SEEK_END};
+use syscall::io::{Mmio, Io};
 use syscall::scheme::SchemeMut;
 
 use spin::Mutex;
