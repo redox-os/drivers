@@ -1,7 +1,7 @@
 #![deny(warnings)]
 #![feature(alloc)]
+#![feature(allocator_api)]
 #![feature(asm)]
-#![feature(heap_api)]
 
 extern crate alloc;
 extern crate orbclient;

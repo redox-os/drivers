@@ -1,7 +1,8 @@
 #[cfg(feature="rusttype")]
 extern crate rusttype;
 
-use alloc::heap;
+use alloc::allocator::{Alloc, Layout};
+use alloc::heap::Heap;
 use std::{cmp, slice};
 
 use primitive::{fast_set32, fast_set64, fast_copy};
@@ -41,7 +42,7 @@ impl Display {
     #[cfg(not(feature="rusttype"))]
     pub fn new(width: usize, height: usize, onscreen: usize) -> Display {
         let size = width * height;
-        let offscreen = unsafe { heap::allocate(size * 4, 4096) };
+        let offscreen = unsafe { Heap.alloc(Layout::from_size_align_unchecked(size * 4, 4096)).unwrap() };
         unsafe { fast_set64(offscreen as *mut u64, 0, size/2) };
         Display {
             width: width,
@@ -54,7 +55,7 @@ impl Display {
     #[cfg(feature="rusttype")]
     pub fn new(width: usize, height: usize, onscreen: usize) -> Display {
         let size = width * height;
-        let offscreen = unsafe { heap::allocate(size * 4, 4096) };
+        let offscreen = unsafe { Heap.alloc(Layout::from_size_align_unchecked(size * 4, 4096)).unwrap() };
         unsafe { fast_set64(offscreen as *mut u64, 0, size/2) };
         Display {
             width: width,
@@ -73,7 +74,7 @@ impl Display {
             println!("Resize display to {}, {}", width, height);
 
             let size = width * height;
-            let offscreen = unsafe { heap::allocate(size * 4, 4096) };
+            let offscreen = unsafe { Heap.alloc(Layout::from_size_align_unchecked(size * 4, 4096)).unwrap() };
 
             {
                 let mut old_ptr = self.offscreen.as_ptr();
@@ -106,7 +107,7 @@ impl Display {
             let onscreen = self.onscreen.as_mut_ptr();
             self.onscreen = unsafe { slice::from_raw_parts_mut(onscreen, size) };
 
-            unsafe { heap::deallocate(self.offscreen.as_mut_ptr() as *mut u8, self.offscreen.len() * 4, 4096) };
+            unsafe { Heap.dealloc(self.offscreen.as_mut_ptr() as *mut u8, Layout::from_size_align_unchecked(self.offscreen.len() * 4, 4096)) };
             self.offscreen = unsafe { slice::from_raw_parts_mut(offscreen as *mut u32, size) };
         } else {
             println!("Display is already {}, {}", width, height);
@@ -290,6 +291,6 @@ impl Display {
 
 impl Drop for Display {
     fn drop(&mut self) {
-        unsafe { heap::deallocate(self.offscreen.as_mut_ptr() as *mut u8, self.offscreen.len() * 4, 4096) };
+        unsafe { Heap.dealloc(self.offscreen.as_mut_ptr() as *mut u8, Layout::from_size_align_unchecked(self.offscreen.len() * 4, 4096)) };
     }
 }
