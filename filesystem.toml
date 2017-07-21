@@ -1,24 +1,4 @@
-# ahcid
-[[drivers]]
-name = "AHCI storage"
-class = 1
-subclass = 6
-command = ["ahcid", "$NAME", "$BAR5", "$IRQ"]
-
-# bgad
-[[drivers]]
-name = "QEMU Graphics Array"
-class = 3
-vendor = 4660
-device = 4369
-command = ["bgad", "$NAME", "$BAR0"]
-
-[[drivers]]
-name = "VirtualBox Graphics Array"
-class = 3
-vendor = 33006
-device = 48879
-command = ["bgad", "$NAME", "$BAR0"]
+## Drivers for FS ##
 
 # e1000d
 [[drivers]]
@@ -56,13 +36,6 @@ class = 4
 subclass = 3
 command = ["ihdad", "$NAME", "$BAR0", "$IRQ", "$VENID", "$DEVID"]
 
-# nvmed
-[[drivers]]
-name = "NVME storage"
-class = 1
-subclass = 8
-command = ["nvmed", "$NAME", "$BAR0", "$IRQ"]
-
 # rtl8168d
 [[drivers]]
 name = "RTL8168 NIC"
@@ -70,14 +43,6 @@ class = 2
 vendor = 4332
 device = 33128
 command = ["rtl8168d", "$NAME", "$BAR2", "$IRQ"]
-
-# vboxd
-[[drivers]]
-name = "VirtualBox Guest Device"
-class = 8
-vendor = 33006
-device = 51966
-command = ["vboxd", "$NAME", "$BAR0", "$BAR1", "$IRQ"]
 
 # xhcid
 [[drivers]]
