@@ -83,7 +83,11 @@ impl SchemeMut for Rtl8168 {
         }
     }
 
-    fn dup(&mut self, id: usize, _buf: &[u8]) -> Result<usize> {
+    fn dup(&mut self, id: usize, buf: &[u8]) -> Result<usize> {
+        if ! buf.is_empty() {
+            return Err(Error::new(EINVAL));
+        }
+
         Ok(id)
     }
 

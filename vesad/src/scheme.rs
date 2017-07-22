@@ -114,7 +114,11 @@ impl SchemeMut for DisplayScheme {
         }
     }
 
-    fn dup(&mut self, id: usize, _buf: &[u8]) -> Result<usize> {
+    fn dup(&mut self, id: usize, buf: &[u8]) -> Result<usize> {
+        if ! buf.is_empty() {
+            return Err(Error::new(EINVAL));
+        }
+
         let handle = self.handles.get(&id).map(|handle| handle.clone()).ok_or(Error::new(EBADF))?;
 
         let new_id = self.next_id;
