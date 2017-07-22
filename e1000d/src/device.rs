@@ -1,7 +1,7 @@
 use std::{cmp, mem, ptr, slice, thread, time};
 
 use netutils::setcfg;
-use syscall::error::{Error, EACCES, EWOULDBLOCK, Result};
+use syscall::error::{Error, EACCES, EINVAL, EWOULDBLOCK, Result};
 use syscall::flag::O_NONBLOCK;
 use syscall::io::Dma;
 use syscall::scheme::Scheme;

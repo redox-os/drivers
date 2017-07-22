@@ -1,4 +1,4 @@
-use std::{cmp, mem, ptr, slice, thread, time};
+use std::{ptr, thread, time};
 
 use netutils::setcfg;
 use syscall::error::{Error, EACCES, EINVAL, EIO, EWOULDBLOCK, Result};

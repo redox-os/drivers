@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::{mem, slice, str};
 
 use orbclient::{Event, EventOption};
-use syscall::{Result, Error, EACCES, EBADF, ENOENT, O_NONBLOCK, SchemeMut};
+use syscall::{Result, Error, EACCES, EBADF, EINVAL, ENOENT, O_NONBLOCK, SchemeMut};
 
 use display::Display;
 use screen::{Screen, GraphicScreen, TextScreen};

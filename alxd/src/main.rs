@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+#![allow(non_upper_case_globals)]
 #![allow(unused_parens)]
 #![feature(asm)]
 #![feature(concat_idents)]
