@@ -139,7 +139,7 @@ pub struct Xhci {
     dev_baa: Dma<[u64; 256]>,
     dev_ctxs: Vec<Dma<XhciDeviceContext>>,
     cmds: Dma<[Trb; 256]>,
-    event_rings: Dma<[EventRingSte; 1]>,
+    events: [EventRing; 1],
 }
 
 impl Xhci {
@@ -206,7 +206,9 @@ impl Xhci {
             dev_baa: Dma::zeroed()?,
             dev_ctxs: Vec::new(),
             cmds: Dma::zeroed()?,
-            event_rings: Dma::zeroed()?,
+            events: [
+                EventRing::new()?
+            ],
         };
 
         {
@@ -226,8 +228,11 @@ impl Xhci {
             // Set command ring control register
             xhci.op.crcr.write(xhci.cmds.physical() as u64 | 1);
 
+            println!("  - Write ERST");
             // Set event ring segment table registers
-            //TODO
+            xhci.run.ints[0].erstsz.write(1);
+            xhci.run.ints[0].erstba.write(xhci.events[0].ste.physical() as u64);
+            xhci.run.ints[0].erdp.write(xhci.events[0].trbs.physical() as u64);
 
             println!("  - Start");
             // Set run/stop to 1
@@ -262,16 +267,21 @@ impl Xhci {
 
         self.cmds[0].enable_slot(0, true);
 
-        println!("  - Before");
+        println!("  - Command");
         println!("  - data: {:X}", self.cmds[0].data.read());
         println!("  - status: {:X}", self.cmds[0].status.read());
         println!("  - control: {:X}", self.cmds[0].control.read());
 
         self.dbs[0].write(0);
 
-        println!("  - After");
-        println!("  - data: {:X}", self.cmds[0].data.read());
-        println!("  - status: {:X}", self.cmds[0].status.read());
-        println!("  - control: {:X}", self.cmds[0].control.read());
+        println!("  - Wait for command completion");
+        while self.op.crcr.readf(1 << 3) {
+            println!("  - Waiting for command completion");
+        }
+
+        println!("  - Response");
+        println!("  - data: {:X}", self.events[0].trbs[0].data.read());
+        println!("  - status: {:X}", self.events[0].trbs[0].status.read());
+        println!("  - control: {:X}", self.events[0].trbs[0].control.read());
     }
 }
