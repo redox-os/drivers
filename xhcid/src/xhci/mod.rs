@@ -145,27 +145,33 @@ pub struct Xhci {
 impl Xhci {
     pub fn new(address: usize) -> Result<Xhci> {
         let cap = unsafe { &mut *(address as *mut XhciCap) };
+        println!("  - CAP {:X}", address);
 
         let op_base = address + cap.len.read() as usize;
         let op = unsafe { &mut *(op_base as *mut XhciOp) };
+        println!("  - OP {:X}", op_base);
 
         let max_slots;
         let max_ports;
 
         {
+            println!("  - Wait for ready");
             // Wait until controller is ready
             while op.usb_sts.readf(1 << 11) {
                 println!("  - Waiting for XHCI ready");
             }
 
+            println!("  - Stop");
             // Set run/stop to 0
             op.usb_cmd.writef(1, false);
 
+            println!("  - Wait for not running");
             // Wait until controller not running
             while ! op.usb_sts.readf(1) {
                 println!("  - Waiting for XHCI stopped");
             }
 
+            println!("  - Read max slots");
             // Read maximum slots and ports
             let hcs_params1 = cap.hcs_params1.read();
             max_slots = hcs_params1 & 0xFF;
@@ -173,6 +179,7 @@ impl Xhci {
 
             println!("  - Max Slots: {}, Max Ports {}", max_slots, max_ports);
 
+            println!("  - Set enabled slots");
             // Set enabled slots
             op.config.write(max_slots);
             println!("  - Enabled Slots: {}", op.config.read() & 0xFF);
@@ -180,12 +187,15 @@ impl Xhci {
 
         let port_base = op_base + 0x400;
         let ports = unsafe { slice::from_raw_parts_mut(port_base as *mut XhciPort, max_ports as usize) };
+        println!("  - PORT {:X}", port_base);
 
         let db_base = address + cap.db_offset.read() as usize;
         let dbs = unsafe { slice::from_raw_parts_mut(db_base as *mut XhciDoorbell, 256) };
+        println!("  - DOORBELL {:X}", db_base);
 
         let run_base = address + cap.rts_offset.read() as usize;
         let run = unsafe { &mut *(run_base as *mut XhciRun) };
+        println!("  - RUNTIME {:X}", run_base);
 
         let mut xhci = Xhci {
             cap: cap,
@@ -202,30 +212,38 @@ impl Xhci {
         {
             // Create device context buffers for each slot
             for i in 0..max_slots as usize {
+                println!("  - Setup dev ctx {}", i);
                 let dev_ctx: Dma<XhciDeviceContext> = Dma::zeroed()?;
                 xhci.dev_baa[i] = dev_ctx.physical() as u64;
                 xhci.dev_ctxs.push(dev_ctx);
             }
 
+            println!("  - Write DCBAAP");
             // Set device context address array pointer
             xhci.op.dcbaap.write(xhci.dev_baa.physical() as u64);
 
+            println!("  - Write CRCR");
             // Set command ring control register
             xhci.op.crcr.write(xhci.cmds.physical() as u64 | 1);
 
             // Set event ring segment table registers
             //TODO
 
+            println!("  - Start");
             // Set run/stop to 1
             xhci.op.usb_cmd.writef(1, true);
 
+            println!("  - Wait for running");
             // Wait until controller is running
             while xhci.op.usb_sts.readf(1) {
                 println!("  - Waiting for XHCI running");
             }
 
+            println!("  - Ring doorbell");
             // Ring command doorbell
             xhci.dbs[0].write(0);
+
+            println!("  - XHCI initialized");
         }
 
         Ok(xhci)
@@ -240,22 +258,20 @@ impl Xhci {
             println!("   + XHCI Port {}: {:X}, State {}, Speed {}, Flags {:?}", i, data, state, speed, flags);
         }
 
-        self.cmds[0].no_op_cmd(true);
+        println!("  - Running Enable Slot command");
 
-        println!("Before");
-        println!("USBSTS: {:X}", self.op.usb_sts.read());
-        println!("CRCR: {:X}", self.op.crcr.read());
-        println!("data: {:X}", self.cmds[0].data.read());
-        println!("status: {:X}", self.cmds[0].status.read());
-        println!("control: {:X}", self.cmds[0].control.read());
+        self.cmds[0].enable_slot(0, true);
+
+        println!("  - Before");
+        println!("  - data: {:X}", self.cmds[0].data.read());
+        println!("  - status: {:X}", self.cmds[0].status.read());
+        println!("  - control: {:X}", self.cmds[0].control.read());
 
         self.dbs[0].write(0);
 
-        println!("After");
-        println!("USBSTS: {:X}", self.op.usb_sts.read());
-        println!("CRCR: {:X}", self.op.crcr.read());
-        println!("data: {:X}", self.cmds[0].data.read());
-        println!("status: {:X}", self.cmds[0].status.read());
-        println!("control: {:X}", self.cmds[0].control.read());
+        println!("  - After");
+        println!("  - data: {:X}", self.cmds[0].data.read());
+        println!("  - status: {:X}", self.cmds[0].status.read());
+        println!("  - control: {:X}", self.cmds[0].control.read());
     }
 }
