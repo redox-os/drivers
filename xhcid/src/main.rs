@@ -1,3 +1,5 @@
+#![feature(core_intrinsics)]
+
 #[macro_use]
 extern crate bitflags;
 extern crate syscall;
@@ -22,7 +24,7 @@ fn main() {
     // Daemonize
     if unsafe { syscall::clone(0).unwrap() } == 0 {
         let address = unsafe { syscall::physmap(bar, 4096, syscall::MAP_WRITE).expect("xhcid: failed to map address") };
-        /*
+
         match Xhci::new(address) {
             Ok(mut xhci) => {
                 xhci.init();
@@ -31,7 +33,7 @@ fn main() {
                 println!("xhcid: error: {}", err);
             }
         }
-        */
+
         unsafe { let _ = syscall::physunmap(address); }
     }
 }

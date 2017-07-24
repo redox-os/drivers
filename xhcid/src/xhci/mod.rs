@@ -2,22 +2,11 @@ use std::slice;
 use syscall::error::Result;
 use syscall::io::{Dma, Mmio, Io};
 
-#[repr(packed)]
-struct Trb {
-    pub data: u64,
-    pub status: u32,
-    pub control: u32,
-}
+mod event;
+mod trb;
 
-impl Trb {
-    pub fn from_type(trb_type: u32) -> Self {
-        Trb {
-            data: 0,
-            status: 0,
-            control: (trb_type & 0x3F) << 10,
-        }
-    }
-}
+use self::event::*;
+use self::trb::*;
 
 #[repr(packed)]
 pub struct XhciCap {
@@ -44,6 +33,21 @@ pub struct XhciOp {
     _rsvd2: [Mmio<u32>; 4],
     dcbaap: Mmio<u64>,
     config: Mmio<u32>,
+}
+
+pub struct XhciInterrupter {
+    iman: Mmio<u32>,
+    imod: Mmio<u32>,
+    erstsz: Mmio<u32>,
+    _rsvd: Mmio<u32>,
+    erstba: Mmio<u64>,
+    erdp: Mmio<u64>,
+}
+
+pub struct XhciRun {
+    mfindex: Mmio<u32>,
+    _rsvd: [Mmio<u32>; 7],
+    ints: [XhciInterrupter; 1024],
 }
 
 bitflags! {
@@ -131,9 +135,11 @@ pub struct Xhci {
     op: &'static mut XhciOp,
     ports: &'static mut [XhciPort],
     dbs: &'static mut [XhciDoorbell],
+    run: &'static mut XhciRun,
     dev_baa: Dma<[u64; 256]>,
     dev_ctxs: Vec<Dma<XhciDeviceContext>>,
     cmds: Dma<[Trb; 256]>,
+    event_rings: Dma<[EventRingSte; 1]>,
 }
 
 impl Xhci {
@@ -175,17 +181,22 @@ impl Xhci {
         let port_base = op_base + 0x400;
         let ports = unsafe { slice::from_raw_parts_mut(port_base as *mut XhciPort, max_ports as usize) };
 
-        let db_base = op_base + cap.db_offset.read() as usize;
+        let db_base = address + cap.db_offset.read() as usize;
         let dbs = unsafe { slice::from_raw_parts_mut(db_base as *mut XhciDoorbell, 256) };
+
+        let run_base = address + cap.rts_offset.read() as usize;
+        let run = unsafe { &mut *(run_base as *mut XhciRun) };
 
         let mut xhci = Xhci {
             cap: cap,
             op: op,
             ports: ports,
             dbs: dbs,
+            run: run,
             dev_baa: Dma::zeroed()?,
             dev_ctxs: Vec::new(),
             cmds: Dma::zeroed()?,
+            event_rings: Dma::zeroed()?,
         };
 
         {
@@ -200,7 +211,10 @@ impl Xhci {
             xhci.op.dcbaap.write(xhci.dev_baa.physical() as u64);
 
             // Set command ring control register
-            xhci.op.crcr.write(xhci.cmds.physical() as u64);
+            xhci.op.crcr.write(xhci.cmds.physical() as u64 | 1);
+
+            // Set event ring segment table registers
+            //TODO
 
             // Set run/stop to 1
             xhci.op.usb_cmd.writef(1, true);
@@ -209,6 +223,9 @@ impl Xhci {
             while xhci.op.usb_sts.readf(1) {
                 println!("  - Waiting for XHCI running");
             }
+
+            // Ring command doorbell
+            xhci.dbs[0].write(0);
         }
 
         Ok(xhci)
@@ -222,5 +239,23 @@ impl Xhci {
             let flags = port.flags();
             println!("   + XHCI Port {}: {:X}, State {}, Speed {}, Flags {:?}", i, data, state, speed, flags);
         }
+
+        self.cmds[0].no_op_cmd(true);
+
+        println!("Before");
+        println!("USBSTS: {:X}", self.op.usb_sts.read());
+        println!("CRCR: {:X}", self.op.crcr.read());
+        println!("data: {:X}", self.cmds[0].data.read());
+        println!("status: {:X}", self.cmds[0].status.read());
+        println!("control: {:X}", self.cmds[0].control.read());
+
+        self.dbs[0].write(0);
+
+        println!("After");
+        println!("USBSTS: {:X}", self.op.usb_sts.read());
+        println!("CRCR: {:X}", self.op.crcr.read());
+        println!("data: {:X}", self.cmds[0].data.read());
+        println!("status: {:X}", self.cmds[0].status.read());
+        println!("control: {:X}", self.cmds[0].control.read());
     }
 }
