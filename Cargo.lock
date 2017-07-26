@@ -216,7 +216,7 @@ dependencies = [
 [[package]]
 name = "netutils"
 version = "0.1.0"
-source = "git+https://github.com/redox-os/netutils.git#9d3b8daeb9240fd8b761b8435cbb404bb2c1232b"
+source = "git+https://github.com/redox-os/netutils.git#f5ccf7232353107e46e3d9308a1631633ee0398a"
 dependencies = [
  "hyper 0.10.12 (registry+https://github.com/rust-lang/crates.io-index)",
  "hyper-rustls 0.6.1 (registry+https://github.com/rust-lang/crates.io-index)",
