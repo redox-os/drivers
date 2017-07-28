@@ -96,37 +96,40 @@ impl Xhci {
     }
 
     pub fn init(&mut self, max_slots: u8) {
-        println!("  - Set enabled slots");
         // Set enabled slots
+        println!("  - Set enabled slots to {}", max_slots);
         self.op.config.write(max_slots as u32);
         println!("  - Enabled Slots: {}", self.op.config.read() & 0xFF);
 
-        println!("  - Write DCBAAP");
         // Set device context address array pointer
+        println!("  - Write DCBAAP");
         self.op.dcbaap.write(self.devices.dcbaap());
 
-        println!("  - Write CRCR");
         // Set command ring control register
+        println!("  - Write CRCR");
         self.op.crcr.write(self.cmd.crcr());
 
-        println!("  - Write ERST");
         // Set event ring segment table registers
+        println!("  - Interrupter 0: {:X}", self.run.ints.as_ptr() as usize);
+        println!("  - Write ERSTZ");
         self.run.ints[0].erstsz.write(1);
+        println!("  - Write ERSTBA: {:X}", self.cmd.events.ste.physical() as u64);
         self.run.ints[0].erstba.write(self.cmd.events.ste.physical() as u64);
+        println!("  - Write ERDP");
         self.run.ints[0].erdp.write(self.cmd.events.trbs.physical() as u64);
 
-        println!("  - Start");
         // Set run/stop to 1
+        println!("  - Start");
         self.op.usb_cmd.writef(1, true);
 
-        println!("  - Wait for running");
         // Wait until controller is running
+        println!("  - Wait for running");
         while self.op.usb_sts.readf(1) {
             println!("  - Waiting for XHCI running");
         }
 
-        println!("  - Ring doorbell");
         // Ring command doorbell
+        println!("  - Ring doorbell");
         self.dbs[0].write(0);
 
         println!("  - XHCI initialized");
