@@ -1,5 +1,3 @@
-#![feature(core_intrinsics)]
-
 #[macro_use]
 extern crate bitflags;
 extern crate syscall;
@@ -27,7 +25,7 @@ fn main() {
 
         match Xhci::new(address) {
             Ok(mut xhci) => {
-                xhci.init();
+                xhci.probe();
             },
             Err(err) => {
                 println!("xhcid: error: {}", err);

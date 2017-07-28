@@ -3,6 +3,7 @@ use syscall::io::{Dma, Io, Mmio};
 
 use super::trb::Trb;
 
+#[repr(packed)]
 pub struct EventRingSte {
     pub address: Mmio<u64>,
     pub size: Mmio<u16>,
