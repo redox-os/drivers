@@ -1,5 +1,5 @@
 use syscall::error::Result;
-use syscall::io::Dma;
+use syscall::io::{Dma, Mmio};
 
 #[repr(packed)]
 pub struct SlotContext {
