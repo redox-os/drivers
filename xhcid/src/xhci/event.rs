@@ -6,8 +6,9 @@ use super::trb::Trb;
 #[repr(packed)]
 pub struct EventRingSte {
     pub address: Mmio<u64>,
-    pub size: Mmio<u32>,
-    _rsvd: Mmio<u32>,
+    pub size: Mmio<u16>,
+    _rsvd: Mmio<u16>,
+    _rsvd2: Mmio<u32>,
 }
 
 pub struct EventRing {
@@ -23,7 +24,7 @@ impl EventRing {
         };
 
         ring.ste.address.write(ring.trbs.physical() as u64);
-        ring.ste.size.write(ring.trbs.len() as u32);
+        ring.ste.size.write(ring.trbs.len() as u16);
 
         Ok(ring)
     }

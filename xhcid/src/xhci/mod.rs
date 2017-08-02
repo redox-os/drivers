@@ -111,12 +111,12 @@ impl Xhci {
 
         // Set event ring segment table registers
         println!("  - Interrupter 0: {:X}", self.run.ints.as_ptr() as usize);
+        println!("  - Write ERDP");
+        self.run.ints[0].erdp.write(self.cmd.events.trbs.physical() as u64);
         println!("  - Write ERSTZ");
         self.run.ints[0].erstsz.write(1);
         println!("  - Write ERSTBA: {:X}", self.cmd.events.ste.physical() as u64);
         self.run.ints[0].erstba.write(self.cmd.events.ste.physical() as u64);
-        println!("  - Write ERDP");
-        self.run.ints[0].erdp.write(self.cmd.events.trbs.physical() as u64);
 
         // Set run/stop to 1
         println!("  - Start");
