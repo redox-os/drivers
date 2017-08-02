@@ -14,8 +14,6 @@ pub struct TextScreen {
     pub changed: BTreeSet<usize>,
     pub ctrl: bool,
     pub input: VecDeque<u8>,
-    pub end_of_input: bool,
-    pub cooked: VecDeque<u8>,
     pub requested: usize
 }
 
@@ -27,8 +25,6 @@ impl TextScreen {
             changed: BTreeSet::new(),
             ctrl: false,
             input: VecDeque::new(),
-            end_of_input: false,
-            cooked: VecDeque::new(),
             requested: 0
         }
     }
@@ -117,38 +113,8 @@ impl Screen for TextScreen {
             _ => () //TODO: Mouse in terminal
         }
 
-        if self.console.raw_mode {
-            for &b in buf.iter() {
-                self.input.push_back(b);
-            }
-        } else {
-            for &b in buf.iter() {
-                match b {
-                    b'\x03' => {
-                        self.end_of_input = true;
-                        let _ = self.write(b"^C\n", true);
-                    },
-                    b'\x08' | b'\x7F' => {
-                        if let Some(_c) = self.cooked.pop_back() {
-                            let _ = self.write(b"\x08", true);
-                        }
-                    },
-                    b'\x1B' => {
-                        let _ = self.write(b"^[", true);
-                    },
-                    b'\n' | b'\r' => {
-                        self.cooked.push_back(b);
-                        while let Some(c) = self.cooked.pop_front() {
-                            self.input.push_back(c);
-                        }
-                        let _ = self.write(b"\n", true);
-                    },
-                    _ => {
-                        self.cooked.push_back(b);
-                        let _ = self.write(&[b], true);
-                    }
-                }
-            }
+        for &b in buf.iter() {
+            self.input.push_back(b);
         }
     }
 
@@ -160,17 +126,11 @@ impl Screen for TextScreen {
             i += 1;
         }
 
-        if i == 0 {
-            self.end_of_input = false;
-        }
-
         Ok(i)
     }
 
     fn can_read(&self) -> Option<usize> {
-        if self.end_of_input {
-            Some(0)
-        } else if self.input.is_empty() {
+        if self.input.is_empty() {
             None
         } else {
             Some(self.input.len())
