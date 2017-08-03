@@ -183,7 +183,7 @@ impl Screen for TextScreen {
             self.changed.insert(y);
         }
 
-        if ! self.console.raw_mode && sync {
+        if sync {
             self.sync();
         }
 
