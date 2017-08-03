@@ -246,7 +246,7 @@ dependencies = [
 [[package]]
 name = "netutils"
 version = "0.1.0"
-source = "git+https://github.com/redox-os/netutils.git#cdc0ebd10322ce0e9885da558a9d89d5c5d8abc4"
+source = "git+https://github.com/redox-os/netutils.git#47c0003ae18d23ff63cebe75e22bdc0bdbc069d7"
 dependencies = [
  "hyper 0.10.12 (registry+https://github.com/rust-lang/crates.io-index)",
  "hyper-rustls 0.6.1 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -557,7 +557,7 @@ dependencies = [
 [[package]]
 name = "termion"
 version = "1.5.0"
-source = "git+https://github.com/redox-os/termion.git?branch=redox_termios#cd455e835842831125df0ca23507384f5ae06c8b"
+source = "git+https://github.com/redox-os/termion.git?branch=redox_termios#18e589b9d92e8f93ae75475389e234bbe5deb109"
 dependencies = [
  "libc 0.2.29 (registry+https://github.com/rust-lang/crates.io-index)",
  "redox_syscall 0.1.29 (registry+https://github.com/rust-lang/crates.io-index)",
