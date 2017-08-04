@@ -1,6 +1,6 @@
 use std::slice;
 use syscall::error::Result;
-use syscall::io::Io;
+use syscall::io::{Dma, Io};
 
 mod capability;
 mod command;
@@ -59,6 +59,12 @@ impl Xhci {
                 println!("  - Waiting for XHCI stopped");
             }
 
+            println!("  - Reset");
+            op.usb_cmd.writef(1 << 1, true);
+            while op.usb_sts.readf(1 << 1) {
+                println!("  - Waiting for XHCI reset");
+            }
+
             println!("  - Read max slots");
             // Read maximum slots and ports
             let hcs_params1 = cap.hcs_params1.read();
@@ -111,10 +117,10 @@ impl Xhci {
 
         // Set event ring segment table registers
         println!("  - Interrupter 0: {:X}", self.run.ints.as_ptr() as usize);
-        println!("  - Write ERDP");
-        self.run.ints[0].erdp.write(self.cmd.events.trbs.physical() as u64);
         println!("  - Write ERSTZ");
         self.run.ints[0].erstsz.write(1);
+        println!("  - Write ERDP");
+        self.run.ints[0].erdp.write(self.cmd.events.trbs.physical() as u64);
         println!("  - Write ERSTBA: {:X}", self.cmd.events.ste.physical() as u64);
         self.run.ints[0].erstba.write(self.cmd.events.ste.physical() as u64);
 
@@ -135,34 +141,82 @@ impl Xhci {
         println!("  - XHCI initialized");
     }
 
-    pub fn probe(&mut self) {
+    pub fn probe(&mut self) -> Result<()> {
         for (i, port) in self.ports.iter().enumerate() {
             let data = port.read();
             let state = port.state();
             let speed = port.speed();
             let flags = port.flags();
             println!("   + XHCI Port {}: {:X}, State {}, Speed {}, Flags {:?}", i, data, state, speed, flags);
+
+            if flags.contains(port::PORT_CCS) {
+                println!("  - Running Enable Slot command");
+
+                let db = &mut self.dbs[0];
+                let crcr = &mut self.op.crcr;
+                let mut run = || {
+                    db.write(0);
+                    while crcr.readf(1 << 3) {
+                        println!("  - Waiting for command completion");
+                    }
+                };
+
+                {
+                    let cmd = self.cmd.next_cmd();
+                    cmd.enable_slot(0, true);
+                    println!("  - Command: {}", cmd);
+
+                    run();
+
+                    cmd.reserved(false);
+                }
+
+                let slot;
+                {
+                    let event = self.cmd.next_event();
+                    println!("  - Response: {}", event);
+                    slot = (event.control.read() >> 24) as u8;
+
+                    event.reserved(false);
+                }
+
+                println!(" Slot {}", slot);
+
+                let mut trbs = Dma::<[trb::Trb; 256]>::zeroed()?;
+                let mut input = Dma::<device::InputContext>::zeroed()?;
+                {
+                    input.add_context.write(1 << 1 | 1);
+
+                    input.device.slot.a.write(1 << 27);
+                    input.device.slot.b.write(((i as u32 + 1) & 0xFF) << 16);
+                    println!("{:>08X}", input.device.slot.b.read());
+
+                    input.device.endpoints[0].b.write(4096 << 16 | 4 << 3 | 3 << 1);
+                    input.device.endpoints[0].trh.write((trbs.physical() >> 32) as u32);
+                    input.device.endpoints[0].trl.write(trbs.physical() as u32 | 1);
+                }
+
+                {
+                    let cmd = self.cmd.next_cmd();
+                    cmd.address_device(slot, input.physical(), true);
+                    println!("  - Command: {}", cmd);
+
+                    run();
+
+                    cmd.reserved(false);
+                }
+
+                let address;
+                {
+                    let event = self.cmd.next_event();
+                    println!("  - Response: {}", event);
+                    address = (event.control.read() >> 24) as u8;
+
+                    event.reserved(false);
+                }
+            }
         }
 
-        println!("  - Running Enable Slot command");
-
-        self.cmd.trbs[0].enable_slot(0, true);
-
-        println!("  - Command");
-        println!("  - data: {:X}", self.cmd.trbs[0].data.read());
-        println!("  - status: {:X}", self.cmd.trbs[0].status.read());
-        println!("  - control: {:X}", self.cmd.trbs[0].control.read());
-
-        self.dbs[0].write(0);
-
-        println!("  - Wait for command completion");
-        while self.op.crcr.readf(1 << 3) {
-            println!("  - Waiting for command completion");
-        }
-
-        println!("  - Response");
-        println!("  - data: {:X}", self.cmd.events.trbs[0].data.read());
-        println!("  - status: {:X}", self.cmd.events.trbs[0].status.read());
-        println!("  - control: {:X}", self.cmd.events.trbs[0].control.read());
+        Ok(())
     }
 }

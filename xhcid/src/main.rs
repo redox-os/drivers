@@ -25,13 +25,17 @@ fn main() {
 
         match Xhci::new(address) {
             Ok(mut xhci) => {
-                xhci.probe();
+                if let Err(err) = xhci.probe() {
+                    println!("xhcid: probe error: {}", err);
+                }
             },
             Err(err) => {
-                println!("xhcid: error: {}", err);
+                println!("xhcid: open error: {}", err);
             }
         }
 
         unsafe { let _ = syscall::physunmap(address); }
+
+        let _ = syscall::kill(1, syscall::SIGINT);
     }
 }

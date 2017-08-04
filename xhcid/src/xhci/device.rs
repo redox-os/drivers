@@ -3,12 +3,21 @@ use syscall::io::{Dma, Mmio};
 
 #[repr(packed)]
 pub struct SlotContext {
-    inner: [u8; 32]
+    pub a: Mmio<u32>,
+    pub b: Mmio<u32>,
+    pub c: Mmio<u32>,
+    pub d: Mmio<u32>,
+    _rsvd: [Mmio<u32>; 4],
 }
 
 #[repr(packed)]
 pub struct EndpointContext {
-    inner: [u8; 32]
+    pub a: Mmio<u32>,
+    pub b: Mmio<u32>,
+    pub trl: Mmio<u32>,
+    pub trh: Mmio<u32>,
+    pub c: Mmio<u32>,
+    _rsvd: [Mmio<u32>; 3],
 }
 
 #[repr(packed)]
