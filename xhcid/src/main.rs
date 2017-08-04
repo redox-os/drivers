@@ -35,7 +35,5 @@ fn main() {
         }
 
         unsafe { let _ = syscall::physunmap(address); }
-
-        let _ = syscall::kill(1, syscall::SIGINT);
     }
 }
