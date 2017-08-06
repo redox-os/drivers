@@ -104,7 +104,7 @@ fn main() {
                 }
 
                 Ok(None)
-            }).expect("rtl8168d: failed to catch events on IRQ file");
+            }).expect("rtl8168d: failed to catch events on scheme file");
 
             for event_count in event_queue.trigger_all(0).expect("rtl8168d: failed to trigger events") {
                 socket.borrow_mut().write(&Packet {

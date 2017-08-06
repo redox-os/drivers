@@ -29,7 +29,7 @@ fn main() {
     let irq_str = args.next().expect("e1000d: no irq provided");
     let irq = irq_str.parse::<u8>().expect("e1000d: failed to parse irq");
 
-    print!("{}", format!(" + E1000 {} on: {:X}, IRQ: {}\n", name, bar, irq));
+    print!("{}", format!(" + E1000 {} on: {:X} IRQ: {}\n", name, bar, irq));
 
     // Daemonize
     if unsafe { syscall::clone(0).unwrap() } == 0 {
@@ -100,7 +100,7 @@ fn main() {
                 }
 
                 Ok(None)
-            }).expect("e1000d: failed to catch events on IRQ file");
+            }).expect("e1000d: failed to catch events on scheme file");
 
             for event_count in event_queue.trigger_all(0).expect("e1000d: failed to trigger events") {
                 socket.borrow_mut().write(&Packet {

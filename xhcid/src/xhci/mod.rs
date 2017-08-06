@@ -6,7 +6,7 @@ use usb;
 
 mod capability;
 mod command;
-mod device;
+mod context;
 mod doorbell;
 mod event;
 mod operational;
@@ -16,7 +16,7 @@ mod trb;
 
 use self::capability::CapabilityRegs;
 use self::command::CommandRing;
-use self::device::DeviceList;
+use self::context::{DeviceContextList, InputContext};
 use self::doorbell::Doorbell;
 use self::operational::OperationalRegs;
 use self::port::Port;
@@ -57,6 +57,26 @@ impl<'a> Device<'a> {
         event.reserved(false);
     }
 
+    fn get_device(&mut self) -> Result<usb::DeviceDescriptor> {
+        let mut desc = Dma::<usb::DeviceDescriptor>::zeroed()?;
+        self.get_desc(
+            usb::DescriptorKind::Device,
+            0,
+            &mut desc
+        );
+        Ok(*desc)
+    }
+
+    fn get_config(&mut self, config: u8) -> Result<(usb::ConfigDescriptor, [u8; 4087])> {
+        let mut desc = Dma::<(usb::ConfigDescriptor, [u8; 4087])>::zeroed()?;
+        self.get_desc(
+            usb::DescriptorKind::Configuration,
+            config,
+            &mut desc
+        );
+        Ok(*desc)
+    }
+
     fn get_string(&mut self, index: u8) -> Result<String> {
         let mut sdesc = Dma::<(u8, u8, [u16; 127])>::zeroed()?;
         self.get_desc(
@@ -80,7 +100,7 @@ pub struct Xhci {
     ports: &'static mut [Port],
     dbs: &'static mut [Doorbell],
     run: &'static mut RuntimeRegs,
-    devices: DeviceList,
+    dev_ctx: DeviceContextList,
     cmd: CommandRing,
 }
 
@@ -146,7 +166,7 @@ impl Xhci {
             ports: ports,
             dbs: dbs,
             run: run,
-            devices: DeviceList::new(max_slots)?,
+            dev_ctx: DeviceContextList::new(max_slots)?,
             cmd: CommandRing::new()?,
         };
 
@@ -162,7 +182,7 @@ impl Xhci {
         println!("  - Enabled Slots: {}", self.op.config.read() & 0xFF);
 
         // Set device context address array pointer
-        let dcbaap = self.devices.dcbaap();
+        let dcbaap = self.dev_ctx.dcbaap();
         println!("  - Write DCBAAP: {:X}", dcbaap);
         self.op.dcbaap.write(dcbaap as u64);
 
@@ -173,16 +193,19 @@ impl Xhci {
 
         // Set event ring segment table registers
         println!("  - Interrupter 0: {:X}", self.run.ints.as_ptr() as usize);
-        println!("  - Write ERSTZ");
-        self.run.ints[0].erstsz.write(1);
+        {
+            let erstz = 1;
+            println!("  - Write ERSTZ: {}", erstz);
+            self.run.ints[0].erstsz.write(erstz);
 
-        let erdp = self.cmd.events.trbs.physical();
-        println!("  - Write ERDP: {:X}", erdp);
-        self.run.ints[0].erdp.write(erdp as u64);
+            let erdp = self.cmd.events.trbs.physical();
+            println!("  - Write ERDP: {:X}", erdp);
+            self.run.ints[0].erdp.write(erdp as u64);
 
-        let erstba = self.cmd.events.ste.physical();
-        println!("  - Write ERSTBA: {:X}", erstba);
-        self.run.ints[0].erstba.write(erstba as u64);
+            let erstba = self.cmd.events.ste.physical();
+            println!("  - Write ERSTBA: {:X}", erstba);
+            self.run.ints[0].erstba.write(erstba as u64);
+        }
 
         // Set run/stop to 1
         println!("  - Start");
@@ -234,12 +257,12 @@ impl Xhci {
                 println!("    - Slot {}", slot);
 
                 let mut trbs = Dma::<[trb::Trb; 256]>::zeroed()?;
-                let mut trb_i = 0;
-                let mut input = Dma::<device::InputContext>::zeroed()?;
+
+                let mut input = Dma::<InputContext>::zeroed()?;
                 {
                     input.add_context.write(1 << 1 | 1);
 
-                    input.device.slot.a.write(1 << 27);
+                    input.device.slot.a.write((1 << 27) | (speed << 20));
                     input.device.slot.b.write(((i as u32 + 1) & 0xFF) << 16);
 
                     input.device.endpoints[0].b.write(4096 << 16 | 4 << 3 | 3 << 1);
@@ -264,20 +287,15 @@ impl Xhci {
 
                 let mut dev = Device {
                     trbs: trbs,
-                    trb_i: trb_i,
+                    trb_i: 0,
                     cmd: &mut self.cmd,
                     db: &mut self.dbs[slot as usize],
                 };
 
                 println!("    - Get descriptor");
 
-                let mut ddesc = Dma::<usb::DeviceDescriptor>::zeroed()?;
-                dev.get_desc(
-                    usb::DescriptorKind::Device,
-                    0,
-                    &mut ddesc
-                );
-                println!("      {:?}", *ddesc);
+                let ddesc = dev.get_device()?;
+                println!("      {:?}", ddesc);
 
                 if ddesc.manufacturer_str > 0 {
                     println!("        Manufacturer: {}", dev.get_string(ddesc.manufacturer_str)?);
@@ -292,26 +310,20 @@ impl Xhci {
                 }
 
                 for config in 0..ddesc.configurations {
-                    let mut cdesc = Dma::<(usb::ConfigDescriptor, [u8; 4087])>::zeroed()?;
-                    dev.get_desc(
-                        usb::DescriptorKind::Configuration,
-                        config,
-                        &mut cdesc
-                    );
-                    println!("        {}: {:?}", config, cdesc.0);
+                    let (cdesc, data) = dev.get_config(config)?;
+                    println!("        {}: {:?}", config, cdesc);
 
-                    if cdesc.0.configuration_str > 0 {
-                        println!("          Name: {}", dev.get_string(cdesc.0.configuration_str)?);
+                    if cdesc.configuration_str > 0 {
+                        println!("          Name: {}", dev.get_string(cdesc.configuration_str)?);
                     }
 
-                    if cdesc.0.total_length as usize > mem::size_of::<usb::ConfigDescriptor>() {
-                        let len = cdesc.0.total_length as usize - mem::size_of::<usb::ConfigDescriptor>();
-                        let data = &cdesc.1[..len];
+                    if cdesc.total_length as usize > mem::size_of::<usb::ConfigDescriptor>() {
+                        let len = cdesc.total_length as usize - mem::size_of::<usb::ConfigDescriptor>();
 
                         let mut i = 0;
-                        for interface in 0..cdesc.0.interfaces {
+                        for interface in 0..cdesc.interfaces {
                             let mut idesc = usb::InterfaceDescriptor::default();
-                            if i < data.len() && idesc.copy_from_bytes(&data[i..]).is_ok() {
+                            if i < len && i < data.len() && idesc.copy_from_bytes(&data[i..len]).is_ok() {
                                 i += mem::size_of_val(&idesc);
                                 println!("          {}: {:?}", interface, idesc);
 
@@ -321,7 +333,7 @@ impl Xhci {
 
                                 for endpoint in 0..idesc.endpoints {
                                     let mut edesc = usb::EndpointDescriptor::default();
-                                    if i < data.len() && edesc.copy_from_bytes(&data[i..]).is_ok() {
+                                    if i < len && i < data.len() && edesc.copy_from_bytes(&data[i..len]).is_ok() {
                                         i += mem::size_of_val(&edesc);
                                         println!("            {}: {:?}", endpoint, edesc);
                                     }

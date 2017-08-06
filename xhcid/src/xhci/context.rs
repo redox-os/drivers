@@ -35,13 +35,13 @@ pub struct InputContext {
     pub device: DeviceContext,
 }
 
-pub struct DeviceList {
+pub struct DeviceContextList {
     pub dcbaa: Dma<[u64; 256]>,
     pub contexts: Vec<Dma<DeviceContext>>,
 }
 
-impl DeviceList {
-    pub fn new(max_slots: u8) -> Result<DeviceList> {
+impl DeviceContextList {
+    pub fn new(max_slots: u8) -> Result<DeviceContextList> {
         let mut dcbaa = Dma::<[u64; 256]>::zeroed()?;
         let mut contexts = vec![];
 
@@ -53,7 +53,7 @@ impl DeviceList {
             contexts.push(context);
         }
 
-        Ok(DeviceList {
+        Ok(DeviceContextList {
             dcbaa: dcbaa,
             contexts: contexts
         })
