@@ -206,28 +206,26 @@ impl Xhci {
             if flags.contains(port::PORT_CCS) {
                 //TODO: Link TRB when running to the end of the ring buffer
 
-                println!("  - Enable slot");
+                println!("    - Enable slot");
 
                 let slot;
                 {
                     let (cmd, event) = self.cmd.next();
 
                     cmd.enable_slot(0, true);
-                    println!("  - Command: {}", cmd);
 
                     self.dbs[0].write(0);
 
                     while event.data.read() == 0 {
-                        println!("  - Waiting for event");
+                        println!("    - Waiting for event");
                     }
-                    println!("  - Response: {}", event);
                     slot = (event.control.read() >> 24) as u8;
 
                     cmd.reserved(false);
                     event.reserved(false);
                 }
 
-                println!("  - Slot {}", slot);
+                println!("    - Slot {}", slot);
 
                 let mut trbs = Dma::<[trb::Trb; 256]>::zeroed()?;
                 let mut trb_i = 0;
@@ -237,7 +235,6 @@ impl Xhci {
 
                     input.device.slot.a.write(1 << 27);
                     input.device.slot.b.write(((i as u32 + 1) & 0xFF) << 16);
-                    println!("{:>08X}", input.device.slot.b.read());
 
                     input.device.endpoints[0].b.write(4096 << 16 | 4 << 3 | 3 << 1);
                     input.device.endpoints[0].trh.write((trbs.physical() >> 32) as u32);
@@ -248,14 +245,12 @@ impl Xhci {
                     let (cmd, event) = self.cmd.next();
 
                     cmd.address_device(slot, input.physical(), true);
-                    println!("  - Command: {}", cmd);
 
                     self.dbs[0].write(0);
 
                     while event.data.read() == 0 {
-                        println!("  - Waiting for event");
+                        println!("    - Waiting for event");
                     }
-                    println!("  - Response: {}", event);
 
                     cmd.reserved(false);
                     event.reserved(false);
@@ -268,7 +263,7 @@ impl Xhci {
                     db: &mut self.dbs[slot as usize],
                 };
 
-                println!("  - Get descriptor");
+                println!("    - Get descriptor");
 
                 let mut ddesc = Dma::<usb::DeviceDescriptor>::zeroed()?;
                 dev.get_desc(
@@ -276,18 +271,18 @@ impl Xhci {
                     0,
                     &mut ddesc
                 );
-                println!("{:?}", *ddesc);
+                println!("      {:?}", *ddesc);
 
                 if ddesc.manufacturer_str > 0 {
-                    println!("  Manufacturer: {}", dev.get_string(ddesc.manufacturer_str)?);
+                    println!("        Manufacturer: {}", dev.get_string(ddesc.manufacturer_str)?);
                 }
 
                 if ddesc.product_str > 0 {
-                    println!("  Product: {}", dev.get_string(ddesc.product_str)?);
+                    println!("        Product: {}", dev.get_string(ddesc.product_str)?);
                 }
 
                 if ddesc.serial_str > 0 {
-                    println!("  Serial: {}", dev.get_string(ddesc.serial_str)?);
+                    println!("        Serial: {}", dev.get_string(ddesc.serial_str)?);
                 }
 
                 for config in 0..ddesc.configurations {
@@ -297,10 +292,10 @@ impl Xhci {
                         config,
                         &mut cdesc
                     );
-                    println!("  {}: {:?}", config, cdesc.0);
+                    println!("        {}: {:?}", config, cdesc.0);
 
                     if cdesc.0.configuration_str > 0 {
-                        println!("    Name: {}", dev.get_string(cdesc.0.configuration_str)?);
+                        println!("          Name: {}", dev.get_string(cdesc.0.configuration_str)?);
                     }
 
                     if cdesc.0.total_length as usize > mem::size_of::<usb::ConfigDescriptor>() {
@@ -312,17 +307,17 @@ impl Xhci {
                             let mut idesc = usb::InterfaceDescriptor::default();
                             if i < data.len() && idesc.copy_from_bytes(&data[i..]).is_ok() {
                                 i += mem::size_of_val(&idesc);
-                                println!("    {}: {:?}", interface, idesc);
+                                println!("          {}: {:?}", interface, idesc);
 
                                 if idesc.interface_str > 0 {
-                                    println!("      Name: {}", dev.get_string(idesc.interface_str)?);
+                                    println!("            Name: {}", dev.get_string(idesc.interface_str)?);
                                 }
 
                                 for endpoint in 0..idesc.endpoints {
                                     let mut edesc = usb::EndpointDescriptor::default();
                                     if i < data.len() && edesc.copy_from_bytes(&data[i..]).is_ok() {
                                         i += mem::size_of_val(&edesc);
-                                        println!("      {}: {:?}", endpoint, edesc);
+                                        println!("            {}: {:?}", endpoint, edesc);
                                     }
                                 }
                             }
