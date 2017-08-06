@@ -43,31 +43,29 @@ fn main() {
 
         let address = unsafe { syscall::physmap(bar, 65536, syscall::MAP_WRITE).expect("xhcid: failed to map address") };
         {
-            let mut hci = Xhci::new(address).expect("xhcid: failed to allocate device");
+            let hci = Arc::new(RefCell::new(Xhci::new(address).expect("xhcid: failed to allocate device")));
 
-            hci.probe().expect("xhcid: failed to probe");
+            hci.borrow_mut().probe().expect("xhcid: failed to probe");
 
             let mut event_queue = EventQueue::<()>::new().expect("xhcid: failed to create event queue");
 
             let todo = Arc::new(RefCell::new(Vec::<Packet>::new()));
 
-            //let device_irq = device.clone();
+            let hci_irq = hci.clone();
             let socket_irq = socket.clone();
             let todo_irq = todo.clone();
             event_queue.add(irq_file.as_raw_fd(), move |_count: usize| -> Result<Option<()>> {
-                /*
                 let mut irq = [0; 8];
                 irq_file.read(&mut irq)?;
 
-                let isr = unsafe { device_irq.borrow_mut().irq() };
-                if isr != 0 {
+                if hci_irq.borrow_mut().irq() {
                     irq_file.write(&mut irq)?;
 
                     let mut todo = todo_irq.borrow_mut();
                     let mut i = 0;
                     while i < todo.len() {
                         let a = todo[i].a;
-                        device_irq.borrow_mut().handle(&mut todo[i]);
+                        hci_irq.borrow_mut().handle(&mut todo[i]);
                         if todo[i].a == (-EWOULDBLOCK) as usize {
                             todo[i].a = a;
                             i += 1;
@@ -77,14 +75,13 @@ fn main() {
                         }
                     }
                 }
-                */
+
                 Ok(None)
             }).expect("xhcid: failed to catch events on IRQ file");
 
             let socket_fd = socket.borrow().as_raw_fd();
             let socket_packet = socket.clone();
             event_queue.add(socket_fd, move |_count: usize| -> Result<Option<()>> {
-                /*
                 loop {
                     let mut packet = Packet::default();
                     if socket_packet.borrow_mut().read(&mut packet)? == 0 {
@@ -92,7 +89,7 @@ fn main() {
                     }
 
                     let a = packet.a;
-                    device.borrow_mut().handle(&mut packet);
+                    hci.borrow_mut().handle(&mut packet);
                     if packet.a == (-EWOULDBLOCK) as usize {
                         packet.a = a;
                         todo.borrow_mut().push(packet);
@@ -100,7 +97,6 @@ fn main() {
                         socket_packet.borrow_mut().write(&mut packet)?;
                     }
                 }
-                */
                 Ok(None)
             }).expect("xhcid: failed to catch events on scheme file");
 

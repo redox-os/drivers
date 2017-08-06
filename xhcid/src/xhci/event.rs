@@ -1,6 +1,7 @@
 use syscall::error::Result;
 use syscall::io::{Dma, Io, Mmio};
 
+use super::ring::Ring;
 use super::trb::Trb;
 
 #[repr(packed)]
@@ -13,19 +14,23 @@ pub struct EventRingSte {
 
 pub struct EventRing {
     pub ste: Dma<EventRingSte>,
-    pub trbs: Dma<[Trb; 256]>
+    pub ring: Ring,
 }
 
 impl EventRing {
     pub fn new() -> Result<EventRing> {
         let mut ring = EventRing {
             ste: Dma::zeroed()?,
-            trbs: Dma::zeroed()?
+            ring: Ring::new(false)?,
         };
 
-        ring.ste.address.write(ring.trbs.physical() as u64);
-        ring.ste.size.write(ring.trbs.len() as u16);
+        ring.ste.address.write(ring.ring.trbs.physical() as u64);
+        ring.ste.size.write(ring.ring.trbs.len() as u16);
 
         Ok(ring)
+    }
+
+    pub fn next(&mut self) -> &mut Trb {
+        self.ring.next().0
     }
 }

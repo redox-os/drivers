@@ -47,7 +47,6 @@ impl DeviceContextList {
 
         // Create device context buffers for each slot
         for i in 0..max_slots as usize {
-            println!("  - Setup dev ctx {}", i);
             let context: Dma<DeviceContext> = Dma::zeroed()?;
             dcbaa[i] = context.physical() as u64;
             contexts.push(context);

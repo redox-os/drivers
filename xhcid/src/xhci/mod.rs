@@ -12,6 +12,8 @@ mod event;
 mod operational;
 mod port;
 mod runtime;
+mod ring;
+mod scheme;
 mod trb;
 
 use self::capability::CapabilityRegs;
@@ -20,41 +22,49 @@ use self::context::{DeviceContextList, InputContext};
 use self::doorbell::Doorbell;
 use self::operational::OperationalRegs;
 use self::port::Port;
-use self::runtime::RuntimeRegs;
+use self::ring::Ring;
+use self::runtime::{RuntimeRegs, Interrupter};
 use self::trb::TransferKind;
 
 struct Device<'a> {
-    trbs: Dma<[trb::Trb; 256]>,
-    trb_i: usize,
+    ring: &'a mut Ring,
     cmd: &'a mut CommandRing,
     db: &'a mut Doorbell,
+    int: &'a mut Interrupter,
 }
 
 impl<'a> Device<'a> {
     fn get_desc<T>(&mut self, kind: usb::DescriptorKind, index: u8, desc: &mut Dma<T>) {
         let len = mem::size_of::<T>();
 
-        self.trbs[self.trb_i].setup(
-            usb::Setup::get_descriptor(kind, index, 0, len as u16),
-            TransferKind::In, true
-        );
+        {
+            let (cmd, cycle) = self.ring.next();
+            cmd.setup(
+                usb::Setup::get_descriptor(kind, index, 0, len as u16),
+                TransferKind::In, cycle
+            );
+        }
 
-        self.trbs[self.trb_i + 1].data(desc.physical(), len as u16, true, true);
+        {
+            let (cmd, cycle) = self.ring.next();
+            cmd.data(desc.physical(), len as u16, true, cycle);
+        }
 
-        self.trbs[self.trb_i + 2].status(false, true);
+        {
+            let (cmd, cycle) = self.ring.next();
+            cmd.status(false, cycle);
+        }
 
         self.db.write(1);
 
-        let event = self.cmd.next_event();
-        while event.data.read() == 0 {
-            println!("  - Waiting for event");
+        {
+            let event = self.cmd.next_event();
+            while event.data.read() == 0 {
+                println!("  - Waiting for event");
+            }
         }
 
-        for _i in 0..3 {
-            self.trbs[self.trb_i].reserved(false);
-            self.trb_i += 1;
-        }
-        event.reserved(false);
+        self.int.erdp.write(self.cmd.erdp());
     }
 
     fn get_device(&mut self) -> Result<usb::DeviceDescriptor> {
@@ -198,13 +208,16 @@ impl Xhci {
             println!("  - Write ERSTZ: {}", erstz);
             self.run.ints[0].erstsz.write(erstz);
 
-            let erdp = self.cmd.events.trbs.physical();
+            let erdp = self.cmd.erdp();
             println!("  - Write ERDP: {:X}", erdp);
             self.run.ints[0].erdp.write(erdp as u64);
 
-            let erstba = self.cmd.events.ste.physical();
+            let erstba = self.cmd.erstba();
             println!("  - Write ERSTBA: {:X}", erstba);
             self.run.ints[0].erstba.write(erstba as u64);
+
+            println!("  - Enable interrupts");
+            self.run.ints[0].iman.writef(1 << 1, true);
         }
 
         // Set run/stop to 1
@@ -239,9 +252,9 @@ impl Xhci {
 
                 let slot;
                 {
-                    let (cmd, event) = self.cmd.next();
+                    let (cmd, cycle, event) = self.cmd.next();
 
-                    cmd.enable_slot(0, true);
+                    cmd.enable_slot(0, cycle);
 
                     self.dbs[0].write(0);
 
@@ -254,9 +267,11 @@ impl Xhci {
                     event.reserved(false);
                 }
 
+                self.run.ints[0].erdp.write(self.cmd.erdp());
+
                 println!("    - Slot {}", slot);
 
-                let mut trbs = Dma::<[trb::Trb; 256]>::zeroed()?;
+                let mut ring = Ring::new(true)?;
 
                 let mut input = Dma::<InputContext>::zeroed()?;
                 {
@@ -266,14 +281,15 @@ impl Xhci {
                     input.device.slot.b.write(((i as u32 + 1) & 0xFF) << 16);
 
                     input.device.endpoints[0].b.write(4096 << 16 | 4 << 3 | 3 << 1);
-                    input.device.endpoints[0].trh.write((trbs.physical() >> 32) as u32);
-                    input.device.endpoints[0].trl.write(trbs.physical() as u32 | 1);
+                    let tr = ring.register();
+                    input.device.endpoints[0].trh.write((tr >> 32) as u32);
+                    input.device.endpoints[0].trl.write(tr as u32);
                 }
 
                 {
-                    let (cmd, event) = self.cmd.next();
+                    let (cmd, cycle, event) = self.cmd.next();
 
-                    cmd.address_device(slot, input.physical(), true);
+                    cmd.address_device(slot, input.physical(), cycle);
 
                     self.dbs[0].write(0);
 
@@ -285,11 +301,13 @@ impl Xhci {
                     event.reserved(false);
                 }
 
+                self.run.ints[0].erdp.write(self.cmd.erdp());
+
                 let mut dev = Device {
-                    trbs: trbs,
-                    trb_i: 0,
+                    ring: &mut ring,
                     cmd: &mut self.cmd,
                     db: &mut self.dbs[slot as usize],
+                    int: &mut self.run.ints[0],
                 };
 
                 println!("    - Get descriptor");
@@ -346,5 +364,15 @@ impl Xhci {
         }
 
         Ok(())
+    }
+
+    pub fn irq(&mut self) -> bool {
+        if self.run.ints[0].iman.readf(1) {
+            println!("XHCI Interrupt");
+            self.run.ints[0].iman.writef(1, true);
+            true
+        } else {
+            false
+        }
     }
 }

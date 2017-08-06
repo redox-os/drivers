@@ -111,28 +111,44 @@ pub struct Trb {
 }
 
 impl Trb {
+    pub fn set(&mut self, data: u64, status: u32, control: u32) {
+        self.data.write(data);
+        self.status.write(status);
+        self.control.write(control);
+    }
+
     pub fn reserved(&mut self, cycle: bool) {
-        self.data.write(0);
-        self.status.write(0);
-        self.control.write(
+        self.set(
+            0,
+            0,
             ((TrbType::Reserved as u32) << 10) |
             (cycle as u32)
         );
     }
 
+    pub fn link(&mut self, address: usize, toggle: bool, cycle: bool) {
+        self.set(
+            address as u64,
+            0,
+            ((TrbType::Link as u32) << 10) |
+            ((toggle as u32) << 1) |
+            (cycle as u32)
+        );
+    }
+
     pub fn no_op_cmd(&mut self, cycle: bool) {
-        self.data.write(0);
-        self.status.write(0);
-        self.control.write(
+        self.set(
+            0,
+            0,
             ((TrbType::NoOpCmd as u32) << 10) |
             (cycle as u32)
         );
     }
 
     pub fn enable_slot(&mut self, slot_type: u8, cycle: bool) {
-        self.data.write(0);
-        self.status.write(0);
-        self.control.write(
+        self.set(
+            0,
+            0,
             (((slot_type as u32) & 0x1F) << 16) |
             ((TrbType::EnableSlot as u32) << 10) |
             (cycle as u32)
@@ -140,9 +156,9 @@ impl Trb {
     }
 
     pub fn address_device(&mut self, slot_id: u8, input: usize, cycle: bool) {
-        self.data.write(input as u64);
-        self.status.write(0);
-        self.control.write(
+        self.set(
+            input as u64,
+            0,
             ((slot_id as u32) << 24) |
             ((TrbType::AddressDevice as u32) << 10) |
             (cycle as u32)
@@ -150,9 +166,9 @@ impl Trb {
     }
 
     pub fn setup(&mut self, setup: usb::Setup, transfer: TransferKind, cycle: bool) {
-        self.data.write(unsafe { mem::transmute(setup) });
-        self.status.write((0 << 22) | 8);
-        self.control.write(
+        self.set(
+            unsafe { mem::transmute(setup) },
+            8,
             ((transfer as u32) << 16) |
             ((TrbType::SetupStage as u32) << 10) |
             (1 << 6) |
@@ -161,9 +177,9 @@ impl Trb {
     }
 
     pub fn data(&mut self, buffer: usize, length: u16, input: bool, cycle: bool) {
-        self.data.write(buffer as u64);
-        self.status.write((0 << 22) | length as u32);
-        self.control.write(
+        self.set(
+            buffer as u64,
+            length as u32,
             ((input as u32) << 16) |
             ((TrbType::DataStage as u32) << 10) |
             (cycle as u32)
@@ -171,9 +187,9 @@ impl Trb {
     }
 
     pub fn status(&mut self, input: bool, cycle: bool) {
-        self.data.write(0);
-        self.status.write(0 << 22);
-        self.control.write(
+        self.set(
+            0,
+            0,
             ((input as u32) << 16) |
             ((TrbType::StatusStage as u32) << 10) |
             (1 << 5) |
