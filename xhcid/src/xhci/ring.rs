@@ -35,12 +35,10 @@ impl Ring {
                 self.i = 0;
 
                 if self.link {
-                    println!("Link");
                     let address = self.trbs.physical();
                     self.trbs[i].link(address, true, self.cycle);
                     self.cycle = !self.cycle;
                 } else {
-                    println!("No-link");
                     break;
                 }
             } else {
