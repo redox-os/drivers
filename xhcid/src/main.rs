@@ -1,11 +1,13 @@
 #[macro_use]
 extern crate bitflags;
+extern crate plain;
 extern crate syscall;
 
 use std::env;
 
 use xhci::Xhci;
 
+mod usb;
 mod xhci;
 
 fn main() {
@@ -35,5 +37,7 @@ fn main() {
         }
 
         unsafe { let _ = syscall::physunmap(address); }
+
+        let _ = syscall::kill(1, syscall::SIGINT);
     }
 }

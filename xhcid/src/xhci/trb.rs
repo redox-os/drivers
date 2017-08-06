@@ -1,5 +1,6 @@
-use std::fmt;
+use std::{fmt, mem};
 use syscall::io::{Io, Mmio};
+use usb;
 
 #[repr(u8)]
 pub enum TrbType {
@@ -94,6 +95,14 @@ pub enum TrbCompletionCode {
     /* 224 to 255 are vendor defined information */
 }
 
+#[repr(u8)]
+pub enum TransferKind {
+    NoData,
+    Reserved,
+    Out,
+    In,
+}
+
 #[repr(packed)]
 pub struct Trb {
     pub data: Mmio<u64>,
@@ -102,31 +111,74 @@ pub struct Trb {
 }
 
 impl Trb {
-    pub fn reset(&mut self, param: u64, status: u32, control: u16, trb_type: TrbType, cycle: bool) {
-        let full_control =
-            (control as u32) << 16 |
-            ((trb_type as u32) & 0x3F) << 10 |
-            if cycle { 1 << 0 } else { 0 };
-
-        self.data.write(param);
-        self.status.write(status);
-        self.control.write(full_control);
-    }
-
     pub fn reserved(&mut self, cycle: bool) {
-        self.reset(0, 0, 0, TrbType::Reserved, cycle);
+        self.data.write(0);
+        self.status.write(0);
+        self.control.write(
+            ((TrbType::Reserved as u32) << 10) |
+            (cycle as u32)
+        );
     }
 
     pub fn no_op_cmd(&mut self, cycle: bool) {
-        self.reset(0, 0, 0, TrbType::NoOpCmd, cycle);
+        self.data.write(0);
+        self.status.write(0);
+        self.control.write(
+            ((TrbType::NoOpCmd as u32) << 10) |
+            (cycle as u32)
+        );
     }
 
     pub fn enable_slot(&mut self, slot_type: u8, cycle: bool) {
-        self.reset(0, 0, (slot_type as u16) & 0x1F, TrbType::EnableSlot, cycle);
+        self.data.write(0);
+        self.status.write(0);
+        self.control.write(
+            (((slot_type as u32) & 0x1F) << 16) |
+            ((TrbType::EnableSlot as u32) << 10) |
+            (cycle as u32)
+        );
     }
 
     pub fn address_device(&mut self, slot_id: u8, input: usize, cycle: bool) {
-        self.reset(input as u64, 0, (slot_id as u16) << 8, TrbType::AddressDevice, cycle);
+        self.data.write(input as u64);
+        self.status.write(0);
+        self.control.write(
+            ((slot_id as u32) << 24) |
+            ((TrbType::AddressDevice as u32) << 10) |
+            (cycle as u32)
+        );
+    }
+
+    pub fn setup(&mut self, setup: usb::Setup, transfer: TransferKind, cycle: bool) {
+        self.data.write(unsafe { mem::transmute(setup) });
+        self.status.write((0 << 22) | 8);
+        self.control.write(
+            ((transfer as u32) << 16) |
+            ((TrbType::SetupStage as u32) << 10) |
+            (1 << 6) |
+            (cycle as u32)
+        );
+    }
+
+    pub fn data(&mut self, buffer: usize, length: u16, input: bool, cycle: bool) {
+        self.data.write(buffer as u64);
+        self.status.write((0 << 22) | length as u32);
+        self.control.write(
+            ((input as u32) << 16) |
+            ((TrbType::DataStage as u32) << 10) |
+            (cycle as u32)
+        );
+    }
+
+    pub fn status(&mut self, input: bool, cycle: bool) {
+        self.data.write(0);
+        self.status.write(0 << 22);
+        self.control.write(
+            ((input as u32) << 16) |
+            ((TrbType::StatusStage as u32) << 10) |
+            (1 << 5) |
+            (cycle as u32)
+        );
     }
 }
 
