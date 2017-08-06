@@ -162,21 +162,27 @@ impl Xhci {
         println!("  - Enabled Slots: {}", self.op.config.read() & 0xFF);
 
         // Set device context address array pointer
-        println!("  - Write DCBAAP");
-        self.op.dcbaap.write(self.devices.dcbaap());
+        let dcbaap = self.devices.dcbaap();
+        println!("  - Write DCBAAP: {:X}", dcbaap);
+        self.op.dcbaap.write(dcbaap as u64);
 
         // Set command ring control register
-        println!("  - Write CRCR");
-        self.op.crcr.write(self.cmd.crcr());
+        let crcr = self.cmd.crcr();
+        println!("  - Write CRCR: {:X}", crcr);
+        self.op.crcr.write(crcr as u64);
 
         // Set event ring segment table registers
         println!("  - Interrupter 0: {:X}", self.run.ints.as_ptr() as usize);
         println!("  - Write ERSTZ");
         self.run.ints[0].erstsz.write(1);
-        println!("  - Write ERDP");
-        self.run.ints[0].erdp.write(self.cmd.events.trbs.physical() as u64);
-        println!("  - Write ERSTBA: {:X}", self.cmd.events.ste.physical() as u64);
-        self.run.ints[0].erstba.write(self.cmd.events.ste.physical() as u64);
+
+        let erdp = self.cmd.events.trbs.physical();
+        println!("  - Write ERDP: {:X}", erdp);
+        self.run.ints[0].erdp.write(erdp as u64);
+
+        let erstba = self.cmd.events.ste.physical();
+        println!("  - Write ERSTBA: {:X}", erstba);
+        self.run.ints[0].erstba.write(erstba as u64);
 
         // Set run/stop to 1
         println!("  - Start");
