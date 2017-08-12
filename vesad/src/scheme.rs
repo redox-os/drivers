@@ -133,7 +133,7 @@ impl SchemeMut for DisplayScheme {
         let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
         if let HandleKind::Screen(screen_i) = handle.kind {
-            if let Some(mut screen) = self.screens.get_mut(&screen_i) {
+            if let Some(screen) = self.screens.get_mut(&screen_i) {
                 return screen.event(flags).and(Ok(screen_i));
             }
         }
@@ -182,7 +182,7 @@ impl SchemeMut for DisplayScheme {
         let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
         if let HandleKind::Screen(screen_i) = handle.kind {
-            if let Some(mut screen) = self.screens.get_mut(&screen_i) {
+            if let Some(screen) = self.screens.get_mut(&screen_i) {
                 if screen_i == self.active {
                     screen.sync();
                 }
@@ -197,7 +197,7 @@ impl SchemeMut for DisplayScheme {
         let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
         if let HandleKind::Screen(screen_i) = handle.kind {
-            if let Some(mut screen) = self.screens.get_mut(&screen_i) {
+            if let Some(screen) = self.screens.get_mut(&screen_i) {
                 return screen.read(buf);
             }
         }
@@ -211,7 +211,7 @@ impl SchemeMut for DisplayScheme {
         match handle.kind {
             HandleKind::Input => if buf.len() == 1 && buf[0] >= 0xF4 {
                 let new_active = (buf[0] - 0xF4) as usize + 1;
-                if let Some(mut screen) = self.screens.get_mut(&new_active) {
+                if let Some(screen) = self.screens.get_mut(&new_active) {
                     self.active = new_active;
                     screen.redraw();
                 }
@@ -247,12 +247,12 @@ impl SchemeMut for DisplayScheme {
                     };
 
                     if let Some(new_active) = new_active_opt {
-                        if let Some(mut screen) = self.screens.get_mut(&new_active) {
+                        if let Some(screen) = self.screens.get_mut(&new_active) {
                             self.active = new_active;
                             screen.redraw();
                         }
                     } else {
-                        if let Some(mut screen) = self.screens.get_mut(&self.active) {
+                        if let Some(screen) = self.screens.get_mut(&self.active) {
                             screen.input(event);
                         }
                     }
@@ -260,7 +260,7 @@ impl SchemeMut for DisplayScheme {
 
                 Ok(events.len() * mem::size_of::<Event>())
             },
-            HandleKind::Screen(screen_i) => if let Some(mut screen) = self.screens.get_mut(&screen_i) {
+            HandleKind::Screen(screen_i) => if let Some(screen) = self.screens.get_mut(&screen_i) {
                 screen.write(buf, screen_i == self.active)
             } else {
                 Err(Error::new(EBADF))
@@ -272,7 +272,7 @@ impl SchemeMut for DisplayScheme {
         let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
         if let HandleKind::Screen(screen_i) = handle.kind {
-            if let Some(mut screen) = self.screens.get_mut(&screen_i) {
+            if let Some(screen) = self.screens.get_mut(&screen_i) {
                 return screen.seek(pos, whence);
             }
         }
