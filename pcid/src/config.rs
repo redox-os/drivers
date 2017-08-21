@@ -8,6 +8,7 @@ pub struct DriverConfig {
     pub name: Option<String>,
     pub class: Option<u8>,
     pub subclass: Option<u8>,
+    pub interface: Option<u8>,
     pub vendor: Option<u16>,
     pub device: Option<u16>,
     pub command: Option<Vec<String>>
