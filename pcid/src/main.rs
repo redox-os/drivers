@@ -100,6 +100,10 @@ fn main() {
                             if subclass != header.subclass { continue; }
                         }
 
+                        if let Some(interface) = driver.interface {
+                            if interface != header.interface { continue; }
+                        }
+
                         if let Some(vendor) = driver.vendor {
                             if vendor != header.vendor_id { continue; }
                         }
