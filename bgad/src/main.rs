@@ -1,5 +1,6 @@
 #![deny(warnings)]
 
+extern crate orbclient;
 extern crate syscall;
 
 use std::env;
@@ -35,7 +36,10 @@ fn main() {
         let mut bga = Bga::new();
         print!("{}", format!("   - BGA {}x{}\n", bga.width(), bga.height()));
 
-        let mut scheme = BgaScheme { bga: bga };
+        let mut scheme = BgaScheme {
+            bga: bga,
+            display: File::open("display:input").ok()
+        };
         loop {
             let mut packet = Packet::default();
             socket.read(&mut packet).expect("bgad: failed to read events from bga scheme");

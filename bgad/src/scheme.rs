@@ -1,12 +1,15 @@
+use orbclient;
+use std::fs::File;
+use std::io::Write;
 use std::str;
-
 use syscall::{Error, Result, SchemeMut, EACCES, EINVAL, MODE_CHR};
 use syscall::data::Stat;
 
 use bga::Bga;
 
 pub struct BgaScheme {
-    pub bga: Bga
+    pub bga: Bga,
+    pub display: Option<File>,
 }
 
 impl SchemeMut for BgaScheme {
@@ -55,6 +58,13 @@ impl SchemeMut for BgaScheme {
         };
 
         self.bga.set_size(width, height);
+
+        if let Some(ref mut display) = self.display {
+            let _ = display.write(&orbclient::ResizeEvent {
+                width: width as u32,
+                height: height as u32,
+            }.to_event());
+        }
 
         Ok(buf.len())
     }

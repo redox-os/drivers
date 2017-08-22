@@ -63,6 +63,7 @@ dependencies = [
 name = "bgad"
 version = "0.1.0"
 dependencies = [
+ "orbclient 0.3.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "redox_syscall 0.1.30 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 

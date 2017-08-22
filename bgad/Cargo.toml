@@ -3,4 +3,5 @@ name = "bgad"
 version = "0.1.0"
 
 [dependencies]
+orbclient = "0.3"
 redox_syscall = "0.1"
