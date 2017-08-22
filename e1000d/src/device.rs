@@ -281,9 +281,8 @@ impl Intel8254x {
 
     pub unsafe fn init(&mut self) {
         self.flag(CTRL, CTRL_RST, true);
-        thread::sleep(time::Duration::new(0, 1000));
         while self.read(CTRL) & CTRL_RST == CTRL_RST {
-            thread::yield_now();
+            print!("   - Waiting for reset: {:X}\n", self.read(CTRL));
         }
 
         // Enable auto negotiate, link, clear reset, do not Invert Loss-Of Signal
@@ -360,9 +359,8 @@ impl Intel8254x {
         // TIPG Packet Gap
         // TODO ...
 
-        print!("   - Waiting for link up\n");
         while self.read(STATUS) & 2 != 2 {
-            thread::yield_now();
+            print!("   - Waiting for link up: {:X}\n", self.read(STATUS));
         }
         print!("   - Link is up with speed {}\n", match (self.read(STATUS) >> 6) & 0b11 {
             0b00 => "10 Mb/s",
