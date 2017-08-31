@@ -1,7 +1,6 @@
 #![deny(warnings)]
 #![feature(asm)]
 
-extern crate bitflags;
 extern crate spin;
 extern crate syscall;
 
