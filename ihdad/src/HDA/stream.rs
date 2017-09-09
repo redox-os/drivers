@@ -52,16 +52,16 @@ pub enum BitsPerSample {
 	Bits16 = 1,
 	Bits20 = 2,
 	Bits24 = 3,
-	Bits32 = 4,	
+	Bits32 = 4,
 }
 
 
 
 pub fn format_to_u16(sr: &SampleRate, bps: BitsPerSample, channels:u8) -> u16{
-	
+
 
 	// 3.3.41
-	
+
 	let base:u16 = match sr.base {
 		BaseRate::BR44_1 => { 1 << 14},
 		BaseRate::BR48   => { 0 },
@@ -76,7 +76,7 @@ pub fn format_to_u16(sr: &SampleRate, bps: BitsPerSample, channels:u8) -> u16{
 	let chan = ((channels - 1) & 0xF) as u16;
 
 	let val:u16 = base | mult | div | bits | chan;
-	
+
 	val
 
 }
@@ -95,7 +95,7 @@ pub struct StreamDescriptorRegs {
 	format:             Mmio<u16>,
 	resv2:              Mmio<u32>,
 	buff_desc_list_lo:  Mmio<u32>,
-	buff_desc_list_hi:  Mmio<u32>, 
+	buff_desc_list_hi:  Mmio<u32>,
 
 }
 
@@ -112,7 +112,7 @@ impl StreamDescriptorRegs {
 	pub fn control(&self) -> u32 {
 		let mut ctrl = self.ctrl_lo.read() as u32;
 		ctrl |= (self.ctrl_hi.read() as u32) << 16;
-		ctrl	
+		ctrl
 	}
 
 	pub fn set_control(&mut self, control:u32) {
@@ -121,10 +121,10 @@ impl StreamDescriptorRegs {
 	}
 
 	pub fn set_pcm_format(&mut self, sr: &SampleRate, bps: BitsPerSample, channels:u8) {
-		
+
 
 		// 3.3.41
-		
+
 		let val = format_to_u16(sr,bps,channels);
 		self.format.write(val);
 
@@ -151,11 +151,11 @@ impl StreamDescriptorRegs {
 		let val = self.control() & !(1 << 1);
 		self.set_control(val);
 	}
-	
+
 	pub fn stream_number(&self) -> u8 {
 		((self.control() >> 20) & 0xF) as u8
 	}
-	
+
 	pub fn set_stream_number(&mut self, stream_number: u8) {
 		let val = (self.control() & 0x00FFFF ) | (((stream_number & 0xF ) as u32) << 20);
 		self.set_control(val);
@@ -194,7 +194,7 @@ impl StreamDescriptorRegs {
 
 	// get sample size in bytes
 	pub fn sample_size(&self) -> usize {
-		let format = self.format.read();	
+		let format = self.format.read();
 		let chan = (format & 0xF) as usize;
 		let bits = ((format >> 4) & 0xF) as usize;
 		match bits {
@@ -203,8 +203,8 @@ impl StreamDescriptorRegs {
 			_ => 4 * (chan + 1),
 		}
 	}
-	
-	
+
+
 }
 
 pub struct OutputStream {
@@ -219,12 +219,12 @@ impl OutputStream {
 		unsafe {
 			OutputStream {
 				buff: StreamBuffer::new(block_length, block_count).unwrap(),
-				
+
 				desc_regs: regs,
 			}
 		}
 	}
-		
+
 	pub fn write_block(&mut self, buf: &[u8]) -> Result<usize> {
 		self.buff.write_block(buf)
 	}
@@ -232,11 +232,11 @@ impl OutputStream {
 	pub fn block_size(&self) -> usize {
 		self.buff.block_size()
 	}
-	
+
 	pub fn block_count(&self) -> usize {
 		self.buff.block_count()
 	}
-	
+
 	pub fn current_block(&self) -> usize {
 		self.buff.current_block()
 	}
@@ -291,36 +291,43 @@ impl BufferDescriptorListEntry {
 pub struct StreamBuffer {
 	phys:   usize,
 	addr:   usize,
-	
+
 	block_cnt: usize,
 	block_len:  usize,
-	
+
 	cur_pos: usize,
 }
 
 impl StreamBuffer {
 	pub fn new(block_length: usize, block_count: usize) -> result::Result<StreamBuffer, &'static str> {
-		let phys = unsafe {
+		let phys = match unsafe {
 			syscall::physalloc(block_length * block_count)
-		};
-		if !phys.is_ok() {
-			return Err("Could not allocate physical memory for buffer.");
-		}
-
-		let phys_addr = phys.unwrap();
-
-		let addr = unsafe { 
-			syscall::physmap(phys_addr, block_length * block_count, MAP_WRITE)
+		} {
+			Ok(phys) => phys,
+			Err(err) => {
+				return Err("Could not allocate physical memory for buffer.");
+			}
 		};
 
-		if !addr.is_ok() {
-			unsafe {syscall::physfree(phys_addr, block_length * block_count);}
-			return Err("Could not map physical memory for buffer.");
+		let addr = match unsafe {
+			syscall::physmap(phys, block_length * block_count, MAP_WRITE)
+		} {
+			Ok(addr) => addr,
+			Err(err) => {
+				unsafe {
+					syscall::physfree(phys, block_length * block_count);
+				}
+				return Err("Could not map physical memory for buffer.");
+			}
+		};
+
+		unsafe {
+			ptr::write_bytes(addr as *mut u8, 0, block_length * block_count);
 		}
-		
+
 		Ok(StreamBuffer {
-			phys:   phys_addr,
-			addr:   addr.unwrap(),
+			phys:   phys,
+			addr:   addr,
 			block_len: block_length,
 			block_cnt:  block_count,
 			cur_pos: 0,
@@ -330,7 +337,7 @@ impl StreamBuffer {
 	pub fn length(&self) -> usize {
 		self.block_len * self.block_cnt
 	}
-	
+
 	pub fn addr(&self) -> usize {
 		self.addr
 	}
@@ -342,7 +349,7 @@ impl StreamBuffer {
 	pub fn block_size(&self) -> usize {
 		self.block_len
 	}
-	
+
 	pub fn block_count(&self) -> usize {
 		self.block_cnt
 	}
@@ -355,9 +362,9 @@ impl StreamBuffer {
 		if buf.len() != self.block_size() {
 			return Err(Error::new(EIO))
 		}
-		let len = min(self.block_size(), buf.len());	
-		
-		
+		let len = min(self.block_size(), buf.len());
+
+
 		print!("Phys: {:X} Virt: {:X} Offset: {:X} Len: {:X}\n", self.phys(), self.addr(), self.current_block() * self.block_size(), len);
 		unsafe {
 			copy_nonoverlapping(buf.as_ptr(), (self.addr() + self.current_block() * self.block_size()) as * mut u8, len);
