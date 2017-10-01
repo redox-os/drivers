@@ -15,6 +15,7 @@ use self::nvme::Nvme;
 
 mod nvme;
 
+/*
 fn create_scheme_fallback<'a>(name: &'a str, fallback: &'a str) -> Result<(&'a str, RawFd)> {
     if let Ok(fd) = syscall::open(&format!(":{}", name), syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK) {
         Ok((name, fd))
@@ -23,6 +24,7 @@ fn create_scheme_fallback<'a>(name: &'a str, fallback: &'a str) -> Result<(&'a s
                 .map(|fd| (fallback, fd))
     }
 }
+*/
 
 fn main() {
     let mut args = env::args().skip(1);

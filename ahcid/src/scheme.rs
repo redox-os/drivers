@@ -12,23 +12,25 @@ use ahci::disk::Disk;
 #[derive(Clone)]
 enum Handle {
     List(Vec<u8>, usize),
-    Disk(Arc<Mutex<Disk>>, usize)
+    Disk(Arc<Mutex<Disk>>, usize, usize)
 }
 
 pub struct DiskScheme {
+    scheme_name: String,
     disks: Box<[Arc<Mutex<Disk>>]>,
     handles: Mutex<BTreeMap<usize, Handle>>,
     next_id: AtomicUsize
 }
 
 impl DiskScheme {
-    pub fn new(disks: Vec<Disk>) -> DiskScheme {
+    pub fn new(scheme_name: String, disks: Vec<Disk>) -> DiskScheme {
         let mut disk_arcs = vec![];
         for disk in disks {
             disk_arcs.push(Arc::new(Mutex::new(disk)));
         }
 
         DiskScheme {
+            scheme_name: scheme_name,
             disks: disk_arcs.into_boxed_slice(),
             handles: Mutex::new(BTreeMap::new()),
             next_id: AtomicUsize::new(0)
@@ -59,7 +61,7 @@ impl Scheme for DiskScheme {
 
                 if let Some(disk) = self.disks.get(i) {
                     let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-                    self.handles.lock().insert(id, Handle::Disk(disk.clone(), 0));
+                    self.handles.lock().insert(id, Handle::Disk(disk.clone(), 0, i));
                     Ok(id)
                 } else {
                     Err(Error::new(ENOENT))
@@ -94,7 +96,7 @@ impl Scheme for DiskScheme {
                 stat.st_size = handle.len() as u64;
                 Ok(0)
             },
-            Handle::Disk(ref handle, _) => {
+            Handle::Disk(ref handle, _, _) => {
                 stat.st_mode = MODE_FILE;
                 stat.st_size = handle.lock().size();
                 Ok(0)
@@ -102,14 +104,39 @@ impl Scheme for DiskScheme {
         }
     }
 
-    fn fpath(&self, _id: usize, buf: &mut [u8]) -> Result<usize> {
-        //TODO: Get path
+    fn fpath(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
+        let handles = self.handles.lock();
+        let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+
         let mut i = 0;
-        let scheme_path = b"disk:";
-        while i < buf.len() && i < scheme_path.len() {
-            buf[i] = scheme_path[i];
+
+        let scheme_name = self.scheme_name.as_bytes();
+        let mut j = 0;
+        while i < buf.len() && j < scheme_name.len() {
+            buf[i] = scheme_name[j];
+            i += 1;
+            j += 1;
+        }
+
+        if i < buf.len() {
+            buf[i] = b':';
             i += 1;
         }
+
+        match *handle {
+            Handle::List(_, _) => (),
+            Handle::Disk(_, _, number) => {
+                let number_str = format!("{}", number);
+                let number_bytes = number_str.as_bytes();
+                j = 0;
+                while i < buf.len() && j < number_bytes.len() {
+                    buf[i] = number_bytes[j];
+                    i += 1;
+                    j += 1;
+                }
+            }
+        }
+
         Ok(i)
     }
 
@@ -121,7 +148,7 @@ impl Scheme for DiskScheme {
                 *size += count;
                 Ok(count)
             },
-            Handle::Disk(ref mut handle, ref mut size) => {
+            Handle::Disk(ref mut handle, ref mut size, _) => {
                 let mut disk = handle.lock();
                 let count = disk.read((*size as u64)/512, buf)?;
                 *size += count;
@@ -136,7 +163,7 @@ impl Scheme for DiskScheme {
             Handle::List(_, _) => {
                 Err(Error::new(EBADF))
             },
-            Handle::Disk(ref mut handle, ref mut size) => {
+            Handle::Disk(ref mut handle, ref mut size, _) => {
                 let mut disk = handle.lock();
                 let count = disk.write((*size as u64)/512, buf)?;
                 *size += count;
@@ -159,7 +186,7 @@ impl Scheme for DiskScheme {
 
                 Ok(*size)
             },
-            Handle::Disk(ref mut handle, ref mut size) => {
+            Handle::Disk(ref mut handle, ref mut size, _) => {
                 let len = handle.lock().size() as usize;
                 *size = match whence {
                     SEEK_SET => cmp::min(len, pos),

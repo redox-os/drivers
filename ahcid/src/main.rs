@@ -7,22 +7,13 @@ extern crate syscall;
 use std::{env, usize};
 use std::fs::File;
 use std::io::{Read, Write};
-use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
-use syscall::{EVENT_READ, MAP_WRITE, Event, Packet, Result, Scheme};
+use std::os::unix::io::{AsRawFd, FromRawFd};
+use syscall::{EVENT_READ, MAP_WRITE, Event, Packet, Scheme};
 
 use scheme::DiskScheme;
 
 pub mod ahci;
 pub mod scheme;
-
-fn create_scheme_fallback<'a>(name: &'a str, fallback: &'a str) -> Result<(&'a str, RawFd)> {
-    if let Ok(fd) = syscall::open(&format!(":{}", name), syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK) {
-        Ok((name, fd))
-    } else {
-        syscall::open(&format!(":{}", fallback), syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK)
-                .map(|fd| (fallback, fd))
-    }
-}
 
 fn main() {
     let mut args = env::args().skip(1);
@@ -42,7 +33,11 @@ fn main() {
     if unsafe { syscall::clone(0).unwrap() } == 0 {
         let address = unsafe { syscall::physmap(bar, 4096, MAP_WRITE).expect("ahcid: failed to map address") };
         {
-            let (_scheme_name, socket_fd) = create_scheme_fallback("disk", &name).expect("ahcid: failed to create disk scheme");
+            let scheme_name = format!("disk/{}", name);
+            let socket_fd = syscall::open(
+                &format!(":{}", scheme_name),
+                syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK
+            ).expect("ahcid: failed to create disk scheme");
             let mut socket = unsafe { File::from_raw_fd(socket_fd) };
             syscall::fevent(socket_fd, EVENT_READ).expect("ahcid: failed to fevent disk scheme");
 
@@ -52,7 +47,7 @@ fn main() {
 
             let mut event_file = File::open("event:").expect("ahcid: failed to open event file");
 
-            let scheme = DiskScheme::new(ahci::disks(address, &name));
+            let scheme = DiskScheme::new(scheme_name, ahci::disks(address, &name));
             loop {
                 let mut event = Event::default();
                 if event_file.read(&mut event).expect("ahcid: failed to read event file") == 0 {
