@@ -62,6 +62,8 @@ fn main() {
 
             let mut scheme = DisplayScheme::new(width, height, onscreen, &spec);
 
+            syscall::setrens(0, 0).expect("vesad: failed to enter null namespace");
+
             let mut blocked = Vec::new();
             loop {
                 let mut packet = Packet::default();

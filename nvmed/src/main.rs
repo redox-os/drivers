@@ -58,6 +58,9 @@ fn main() {
             let mut event_file = File::open("event:").expect("nvmed: failed to open event file");
 
             let scheme = DiskScheme::new(nvme::disks(address, &name));
+
+            syscall::setrens(0, 0).expect("nvmed: failed to enter null namespace");
+
             loop {
                 let mut event = Event::default();
                 if event_file.read(&mut event).expect("nvmed: failed to read event file") == 0 {

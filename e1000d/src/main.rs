@@ -36,18 +36,21 @@ fn main() {
         let socket_fd = syscall::open(":network", syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK).expect("e1000d: failed to create network scheme");
         let socket = Arc::new(RefCell::new(unsafe { File::from_raw_fd(socket_fd) }));
 
+        let mut irq_file = File::open(format!("irq:{}", irq)).expect("e1000d: failed to open IRQ file");
+
         let address = unsafe { syscall::physmap(bar, 128*1024, MAP_WRITE).expect("e1000d: failed to map address") };
         {
             let device = Arc::new(unsafe { device::Intel8254x::new(address).expect("e1000d: failed to allocate device") });
 
             let mut event_queue = EventQueue::<usize>::new().expect("e1000d: failed to create event queue");
 
+            syscall::setrens(0, 0).expect("e1000d: failed to enter null namespace");
+
             let todo = Arc::new(RefCell::new(Vec::<Packet>::new()));
 
             let device_irq = device.clone();
             let socket_irq = socket.clone();
             let todo_irq = todo.clone();
-            let mut irq_file = File::open(format!("irq:{}", irq)).expect("e1000d: failed to open IRQ file");
             event_queue.add(irq_file.as_raw_fd(), move |_count: usize| -> Result<Option<usize>> {
                 let mut irq = [0; 8];
                 irq_file.read(&mut irq)?;

@@ -40,6 +40,9 @@ fn main() {
             bga: bga,
             display: File::open("display:input").ok()
         };
+
+        syscall::setrens(0, 0).expect("bgad: failed to enter null namespace");
+
         loop {
             let mut packet = Packet::default();
             socket.read(&mut packet).expect("bgad: failed to read events from bga scheme");

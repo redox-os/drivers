@@ -20,7 +20,7 @@ use syscall::error::EWOULDBLOCK;
 
 
 pub mod HDA;
- 
+
 use HDA::IntelHDA;
 
 
@@ -28,11 +28,11 @@ use HDA::IntelHDA;
 
 
 
-/* 
+/*
                  VEND:PROD
     Virtualbox   8086:2668
     QEMU ICH9    8086:293E
-    82801H ICH8  8086:284B  
+    82801H ICH8  8086:284B
 */
 
 fn main() {
@@ -47,54 +47,43 @@ fn main() {
 	let irq_str = args.next().expect("ihda: no irq provided");
 	let irq = irq_str.parse::<u8>().expect("ihda: failed to parse irq");
 
-
 	let vend_str = args.next().expect("ihda: no vendor id provided");
 	let vend = usize::from_str_radix(&vend_str, 16).expect("ihda: failed to parse vendor id");
 
-	
 	let prod_str = args.next().expect("ihda: no product id provided");
 	let prod = usize::from_str_radix(&prod_str, 16).expect("ihda: failed to parse product id");
 
 	print!("{}", format!(" + ihda {} on: {:X} IRQ: {}\n", name, bar, irq));
-	
 
 	// Daemonize
 	if unsafe { syscall::clone(0).unwrap() } == 0 {
-		
-
 		let address = unsafe { syscall::physmap(bar, 0x4000, MAP_WRITE).expect("ihdad: failed to map address") };
 		{
-
 			let mut irq_file = File::open(format!("irq:{}", irq)).expect("IHDA: failed to open IRQ file");
-			
-			let vend_prod:u32 = ((vend as u32) << 16) | (prod as u32);
 
+			let vend_prod:u32 = ((vend as u32) << 16) | (prod as u32);
 
 			let device = Arc::new(RefCell::new(unsafe { HDA::IntelHDA::new(address, vend_prod).expect("ihdad: failed to allocate device") }));
 			let socket_fd = syscall::open(":audio", syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK).expect("IHDA: failed to create audio scheme");
 			let socket = Arc::new(RefCell::new(unsafe { File::from_raw_fd(socket_fd) }));
-		
-			
-			
 
-			
 			let mut event_queue = EventQueue::<usize>::new().expect("IHDA: Could not create event queue.");
-			
+
+            syscall::setrens(0, 0).expect("ihdad: failed to enter null namespace");
+
 			let todo = Arc::new(RefCell::new(Vec::<Packet>::new()));
-			
-			
+
 			let todo_irq = todo.clone();
 			let device_irq = device.clone();
 			let socket_irq = socket.clone();
 			let device_loop = device.clone();
-			
 
 			event_queue.add(irq_file.as_raw_fd(), move |_count: usize| -> Result<Option<usize>> {
 				let mut irq = [0; 8];
 				irq_file.read(&mut irq)?;
-				
+
 				let _irq = unsafe { device_irq.borrow_mut().irq()};
-				
+
 				if _irq {
 					irq_file.write(&mut irq)?;
 
@@ -161,10 +150,7 @@ fn main() {
 				}).expect("IHDA: failed to write event");
 			}
 
-
-
-
-			loop {	
+			loop {
 				{
 					//device_loop.borrow_mut().handle_interrupts();
 				}
@@ -186,5 +172,3 @@ fn main() {
 		unsafe { let _ = syscall::physunmap(address); }
 	}
 }
-
-

@@ -269,11 +269,17 @@ fn daemon(input: File) {
         },
         None => (keymap::us::get_char)
     };
+
+    let mut key_irq = File::open("irq:1").expect("ps2d: failed to open irq:1");
+
+    let mut mouse_irq = File::open("irq:12").expect("ps2d: failed to open irq:12");
+
     let ps2d = Arc::new(RefCell::new(Ps2d::new(input, keymap)));
 
     let mut event_queue = EventQueue::<()>::new().expect("ps2d: failed to create event queue");
 
-    let mut key_irq = File::open("irq:1").expect("ps2d: failed to open irq:1");
+    syscall::setrens(0, 0).expect("ps2d: failed to enter null namespace");
+
     let key_ps2d = ps2d.clone();
     event_queue.add(key_irq.as_raw_fd(), move |_count: usize| -> Result<Option<()>> {
         let mut irq = [0; 8];
@@ -284,7 +290,6 @@ fn daemon(input: File) {
         Ok(None)
     }).expect("ps2d: failed to poll irq:1");
 
-    let mut mouse_irq = File::open("irq:12").expect("ps2d: failed to open irq:12");
     let mouse_ps2d = ps2d;
     event_queue.add(mouse_irq.as_raw_fd(), move |_count: usize| -> Result<Option<()>> {
         let mut irq = [0; 8];
