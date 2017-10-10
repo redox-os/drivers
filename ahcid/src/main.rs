@@ -48,6 +48,9 @@ fn main() {
             let mut event_file = File::open("event:").expect("ahcid: failed to open event file");
 
             let scheme = DiskScheme::new(scheme_name, ahci::disks(address, &name));
+
+            syscall::setrens(0, 0).expect("ahcid: failed to enter null namespace");
+
             loop {
                 let mut event = Event::default();
                 if event_file.read(&mut event).expect("ahcid: failed to read event file") == 0 {

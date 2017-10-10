@@ -49,6 +49,8 @@ fn main() {
 
             let mut event_queue = EventQueue::<()>::new().expect("xhcid: failed to create event queue");
 
+            syscall::setrens(0, 0).expect("xhcid: failed to enter null namespace");
+
             let todo = Arc::new(RefCell::new(Vec::<Packet>::new()));
 
             let hci_irq = hci.clone();

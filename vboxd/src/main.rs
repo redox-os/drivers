@@ -238,6 +238,8 @@ fn main() {
 
             let mut event_queue = EventQueue::<()>::new().expect("vboxd: failed to create event queue");
 
+            syscall::setrens(0, 0).expect("vboxd: failed to enter null namespace");
+
             let mut bga = Bga::new();
             let get_mouse = VboxGetMouse::new().expect("vboxd: failed to map GetMouse");
             let display_change = VboxDisplayChange::new().expect("vboxd: failed to map DisplayChange");
