@@ -1,6 +1,7 @@
 extern crate ransid;
 
 use std::collections::{BTreeSet, VecDeque};
+use std::ptr;
 
 use orbclient::{Event, EventOption};
 use syscall::error::*;
@@ -32,17 +33,17 @@ impl TextScreen {
 
 impl Screen for TextScreen {
     fn width(&self) -> usize {
-        self.console.w
+        self.console.state.w
     }
 
     fn height(&self) -> usize {
-        self.console.h
+        self.console.state.h
     }
 
     fn resize(&mut self, width: usize, height: usize) {
         self.display.resize(width, height);
-        self.console.w = width / 8;
-        self.console.h = height / 16;
+        self.console.state.w = width / 8;
+        self.console.state.h = height / 16;
     }
 
     fn event(&mut self, flags: usize) -> Result<usize> {
@@ -138,9 +139,9 @@ impl Screen for TextScreen {
     }
 
     fn write(&mut self, buf: &[u8], sync: bool) -> Result<usize> {
-        if self.console.cursor && self.console.x < self.console.w && self.console.y < self.console.h {
-            let x = self.console.x;
-            let y = self.console.y;
+        if self.console.state.cursor && self.console.state.x < self.console.state.w && self.console.state.y < self.console.state.h {
+            let x = self.console.state.x;
+            let y = self.console.state.y;
             self.display.invert(x * 8, y * 16, 8, 16);
             self.changed.insert(y);
         }
@@ -152,33 +153,59 @@ impl Screen for TextScreen {
             self.console.write(buf, |event| {
                 match event {
                     ransid::Event::Char { x, y, c, color, bold, .. } => {
-                        display.char(x * 8, y * 16, c, color.data, bold, false);
+                        display.char(x * 8, y * 16, c, color.as_rgb(), bold, false);
                         changed.insert(y);
                     },
                     ransid::Event::Input { data } => {
                         input.extend(data);
                     },
                     ransid::Event::Rect { x, y, w, h, color } => {
-                        display.rect(x * 8, y * 16, w * 8, h * 16, color.data);
+                        display.rect(x * 8, y * 16, w * 8, h * 16, color.as_rgb());
                         for y2 in y..y + h {
                             changed.insert(y2);
                         }
                     },
                     ransid::Event::ScreenBuffer { .. } => (),
-                    ransid::Event::Scroll { rows, color } => {
-                        display.scroll(rows * 16, color.data);
-                        for y in 0..display.height/16 {
-                            changed.insert(y);
+                    ransid::Event::Move {from_x, from_y, to_x, to_y, w, h } => {
+                        println!("Move {}, {} to {}, {} size {}, {}", from_x, from_y, to_x, to_y, w, h);
+
+                        let width = display.width;
+                        let pixels = &mut display.offscreen;
+
+                        for raw_y in 0..h {
+                            let y = if from_y > to_y {
+                                raw_y
+                            } else {
+                                h - raw_y - 1
+                            };
+
+                            for pixel_y in 0..16 {
+                                {
+                                    let off_from = ((from_y + y) * 16 + pixel_y) * width + from_x * 8;
+                                    let off_to = ((to_y + y) * 16 + pixel_y) * width + to_x * 8;
+                                    let len = w * 8;
+
+                                    if off_from + len <= pixels.len() && off_to + len <= pixels.len() {
+                                        unsafe {
+                                            let data_ptr = pixels.as_mut_ptr() as *mut u32;
+                                            ptr::copy(data_ptr.offset(off_from as isize), data_ptr.offset(off_to as isize), len);
+                                        }
+                                    }
+                                }
+                            }
+
+                            changed.insert(to_y + y);
                         }
                     },
+                    ransid::Event::Resize { .. } => (),
                     ransid::Event::Title { .. } => ()
                 }
             });
         }
 
-        if self.console.cursor && self.console.x < self.console.w && self.console.y < self.console.h {
-            let x = self.console.x;
-            let y = self.console.y;
+        if self.console.state.cursor && self.console.state.x < self.console.state.w && self.console.state.y < self.console.state.h {
+            let x = self.console.state.x;
+            let y = self.console.state.y;
             self.display.invert(x * 8, y * 16, 8, 16);
             self.changed.insert(y);
         }

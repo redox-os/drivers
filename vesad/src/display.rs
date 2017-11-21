@@ -245,21 +245,6 @@ impl Display {
         }
     }
 
-    /// Scroll display
-    pub fn scroll(&mut self, rows: usize, color: u32) {
-        let width = self.width;
-        let height = self.height;
-        if rows > 0 && rows < height {
-            let off1 = rows * width;
-            let off2 = height * width - off1;
-            unsafe {
-                let data_ptr = self.offscreen.as_mut_ptr() as *mut u32;
-                fast_copy(data_ptr as *mut u8, data_ptr.offset(off1 as isize) as *const u8, off2 as usize * 4);
-                fast_set32(data_ptr.offset(off2 as isize), color, off1 as usize);
-            }
-        }
-    }
-
     /// Copy from offscreen to onscreen
     pub fn sync(&mut self, x: usize, y: usize, w: usize, h: usize) {
         let start_y = cmp::min(self.height, y);
