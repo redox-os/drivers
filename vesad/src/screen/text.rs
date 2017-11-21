@@ -167,8 +167,6 @@ impl Screen for TextScreen {
                     },
                     ransid::Event::ScreenBuffer { .. } => (),
                     ransid::Event::Move {from_x, from_y, to_x, to_y, w, h } => {
-                        println!("Move {}, {} to {}, {} size {}, {}", from_x, from_y, to_x, to_y, w, h);
-
                         let width = display.width;
                         let pixels = &mut display.offscreen;
 
