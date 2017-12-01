@@ -38,14 +38,18 @@ fn main() {
     for bus in pci.buses() {
         for dev in bus.devs() {
             for func in dev.funcs() {
-                if let Some(header) = unsafe func.header() {
+                if let Some(header) = func.header() {
                     let pci_class = PciClass::from(header.class);
 
-                    let mut string = format!("PCI {:>02X}/{:>02X}/{:>02X} {:>04X}:{:>04X} {:>02X}.{:>02X}.{:>02X}.{:>02X} {:?}",
-                            bus.num, dev.num, func.num,
-                            header.vendor_id, header.device_id,
-                            header.class, header.subclass, header.interface, header.revision,
-                            pci_class);
+                    let mut string;
+
+                    unsafe {
+                        string = format!("PCI {:>02X}/{:>02X}/{:>02X} {:>04X}:{:>04X} {:>02X}.{:>02X}.{:>02X}.{:>02X} {:?}",
+                                bus.num, dev.num, func.num,
+                                header.vendor_id, header.device_id,
+                                header.class, header.subclass, header.interface, header.revision,
+                                pci_class);
+                    }
 
                     match pci_class {
                         PciClass::Storage => match header.subclass {
@@ -78,14 +82,16 @@ fn main() {
                         _ => ()
                     }
 
-                    for i in 0..header.bars.len() {
-                        match PciBar::from(header.bars[i]) {
-                            PciBar::None => (),
-                            PciBar::Memory(address) => string.push_str(&format!(" {}={:>08X}", i, address)),
-                            PciBar::Port(address) => string.push_str(&format!(" {}={:>04X}", i, address))
+                    unsafe {
+                        for i in 0..header.bars.len() {
+                            match PciBar::from(header.bars[i]) {
+                                PciBar::None => (),
+                                PciBar::Memory(address) => string.push_str(&format!(" {}={:>08X}", i, address)),
+                                PciBar::Port(address) => string.push_str(&format!(" {}={:>04X}", i, address))
+                            }
                         }
                     }
-
+                    
                     string.push('\n');
 
                     print!("{}", string);
@@ -124,27 +130,31 @@ fn main() {
                                 let mut command = Command::new(program);
                                 for arg in args {
                                     let bar_arg = |i| -> String {
-                                        match PciBar::from(header.bars[i]) {
-                                            PciBar::None => String::new(),
-                                            PciBar::Memory(address) => format!("{:>08X}", address),
-                                            PciBar::Port(address) => format!("{:>04X}", address)
+                                        unsafe {
+                                           match PciBar::from(header.bars[i]) {
+                                                PciBar::None => String::new(),
+                                                PciBar::Memory(address) => format!("{:>08X}", address),
+                                                PciBar::Port(address) => format!("{:>04X}", address)
+                                            } 
                                         }
                                     };
-                                    let arg = match arg.as_str() {
-                                        "$BUS" => format!("{:>02X}", bus.num),
-                                        "$DEV" => format!("{:>02X}", dev.num),
-                                        "$FUNC" => format!("{:>02X}", func.num),
-                                        "$NAME" => format!("pci-{:>02X}.{:>02X}.{:>02X}", bus.num, dev.num, func.num),
-                                        "$BAR0" => bar_arg(0),
-                                        "$BAR1" => bar_arg(1),
-                                        "$BAR2" => bar_arg(2),
-                                        "$BAR3" => bar_arg(3),
-                                        "$BAR4" => bar_arg(4),
-                                        "$BAR5" => bar_arg(5),
-                                        "$IRQ" => format!("{}", header.interrupt_line),
-                                        "$VENID" => format!("{:>04X}",header.vendor_id),
-                                        "$DEVID" => format!("{:>04X}",header.device_id),
-                                        _ => arg.clone()
+                                    let arg = unsafe {
+                                        match arg.as_str() {
+                                            "$BUS" => format!("{:>02X}", bus.num),
+                                            "$DEV" => format!("{:>02X}", dev.num),
+                                            "$FUNC" => format!("{:>02X}", func.num),
+                                            "$NAME" => format!("pci-{:>02X}.{:>02X}.{:>02X}", bus.num, dev.num, func.num),
+                                            "$BAR0" => bar_arg(0),
+                                            "$BAR1" => bar_arg(1),
+                                            "$BAR2" => bar_arg(2),
+                                            "$BAR3" => bar_arg(3),
+                                            "$BAR4" => bar_arg(4),
+                                            "$BAR5" => bar_arg(5),
+                                            "$IRQ" => format!("{}", header.interrupt_line),
+                                            "$VENID" => format!("{:>04X}",header.vendor_id),
+                                            "$DEVID" => format!("{:>04X}",header.device_id),
+                                            _ => arg.clone()
+                                        }
                                     };
                                     command.arg(&arg);
                                 }
