@@ -41,15 +41,13 @@ fn main() {
                 if let Some(header) = func.header() {
                     let pci_class = PciClass::from(header.class);
 
-                    let mut string;
-
-                    unsafe {
-                        string = format!("PCI {:>02X}/{:>02X}/{:>02X} {:>04X}:{:>04X} {:>02X}.{:>02X}.{:>02X}.{:>02X} {:?}",
+                    let mut string = unsafe {
+                        format!("PCI {:>02X}/{:>02X}/{:>02X} {:>04X}:{:>04X} {:>02X}.{:>02X}.{:>02X}.{:>02X} {:?}",
                                 bus.num, dev.num, func.num,
                                 header.vendor_id, header.device_id,
                                 header.class, header.subclass, header.interface, header.revision,
-                                pci_class);
-                    }
+                                pci_class)
+                    };
 
                     match pci_class {
                         PciClass::Storage => match header.subclass {
