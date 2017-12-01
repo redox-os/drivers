@@ -38,7 +38,7 @@ fn main() {
     for bus in pci.buses() {
         for dev in bus.devs() {
             for func in dev.funcs() {
-                if let Some(header) = func.header() {
+                if let Some(header) = unsafe func.header() {
                     let pci_class = PciClass::from(header.class);
 
                     let mut string = format!("PCI {:>02X}/{:>02X}/{:>02X} {:>04X}:{:>04X} {:>02X}.{:>02X}.{:>02X}.{:>02X} {:?}",
