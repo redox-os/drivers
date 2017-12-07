@@ -1,7 +1,7 @@
 use std::ops::{Deref, DerefMut};
 use std::{slice, mem};
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 #[repr(packed)]
 pub struct PciHeader {
     pub vendor_id: u16,
