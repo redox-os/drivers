@@ -7,23 +7,23 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use spin::Mutex;
 use syscall::{Error, EACCES, EBADF, EINVAL, EISDIR, ENOENT, Result, Scheme, Stat, MODE_DIR, MODE_FILE, O_DIRECTORY, O_STAT, SEEK_CUR, SEEK_END, SEEK_SET};
 
-use ahci::disk::Disk;
+use ahci::Disk;
 
 #[derive(Clone)]
 enum Handle {
     List(Vec<u8>, usize),
-    Disk(Arc<Mutex<Disk>>, usize, usize)
+    Disk(Arc<Mutex<Box<Disk>>>, usize, usize)
 }
 
 pub struct DiskScheme {
     scheme_name: String,
-    disks: Box<[Arc<Mutex<Disk>>]>,
+    disks: Box<[Arc<Mutex<Box<Disk>>>]>,
     handles: Mutex<BTreeMap<usize, Handle>>,
     next_id: AtomicUsize
 }
 
 impl DiskScheme {
-    pub fn new(scheme_name: String, disks: Vec<Disk>) -> DiskScheme {
+    pub fn new(scheme_name: String, disks: Vec<Box<Disk>>) -> DiskScheme {
         let mut disk_arcs = vec![];
         for disk in disks {
             disk_arcs.push(Arc::new(Mutex::new(disk)));

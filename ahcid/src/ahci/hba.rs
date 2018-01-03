@@ -10,6 +10,8 @@ use super::fis::{FisType, FisRegH2D};
 const ATA_CMD_READ_DMA_EXT: u8 = 0x25;
 const ATA_CMD_WRITE_DMA_EXT: u8 = 0x35;
 const ATA_CMD_IDENTIFY: u8 = 0xEC;
+const ATA_CMD_IDENTIFY_PACKET: u8 = 0xA1;
+const ATA_CMD_PACKET: u8 = 0xA0;
 const ATA_DEV_BUSY: u8 = 0x80;
 const ATA_DEV_DRQ: u8 = 0x08;
 
@@ -129,6 +131,15 @@ impl HbaPort {
     }
 
     pub unsafe fn identify(&mut self, clb: &mut Dma<[HbaCmdHeader; 32]>, ctbas: &mut [Dma<HbaCmdTable>; 32]) -> Option<u64> {
+        self.identify_inner(ATA_CMD_IDENTIFY, clb, ctbas)
+    }
+
+    pub unsafe fn identify_packet(&mut self, clb: &mut Dma<[HbaCmdHeader; 32]>, ctbas: &mut [Dma<HbaCmdTable>; 32]) -> Option<u64> {
+        self.identify_inner(ATA_CMD_IDENTIFY_PACKET, clb, ctbas)
+    }
+
+    // Shared between identify() and identify_packet()
+    unsafe fn identify_inner(&mut self, cmd: u8, clb: &mut Dma<[HbaCmdHeader; 32]>, ctbas: &mut [Dma<HbaCmdTable>; 32]) -> Option<u64> {
         self.is.write(u32::MAX);
 
         let dest: Dma<[u16; 256]> = Dma::new([0; 256]).unwrap();
@@ -152,7 +163,7 @@ impl HbaPort {
 
                 cmdfis.fis_type.write(FisType::RegH2D as u8);
                 cmdfis.pm.write(1 << 7);
-                cmdfis.command.write(ATA_CMD_IDENTIFY);
+                cmdfis.command.write(cmd);
                 cmdfis.device.write(0);
                 cmdfis.countl.write(1);
                 cmdfis.counth.write(0);
@@ -335,6 +346,67 @@ impl HbaPort {
             Err(Error::new(EIO))
         }
     }
+
+    /// Send ATAPI packet
+    pub fn packet(&mut self, cmd: &[u8; 16], size: u32, clb: &mut Dma<[HbaCmdHeader; 32]>, ctbas: &mut [Dma<HbaCmdTable>; 32], buf: &mut Dma<[u8; 256 * 512]>) -> Result<()> {
+        self.is.write(u32::MAX);
+
+        if let Some(slot) = self.slot() {
+            let cmdheader = &mut clb[slot as usize];
+            cmdheader.cfl.write(((size_of::<FisRegH2D>() / size_of::<u32>()) as u8) | (1 << 5));
+            cmdheader.prdtl.write(1);
+
+            {
+                let cmdtbl = &mut ctbas[slot as usize];
+                unsafe { ptr::write_bytes(cmdtbl.deref_mut() as *mut HbaCmdTable as *mut u8, 0, size_of::<HbaCmdTable>()) };
+
+                let prdt_entry = &mut cmdtbl.prdt_entry[0];
+                prdt_entry.dba.write(buf.physical() as u64);
+                prdt_entry.dbc.write(size - 1);
+            }
+
+            {
+                let cmdfis = unsafe { &mut *(ctbas[slot as usize].cfis.as_mut_ptr() as *mut FisRegH2D) };
+
+                cmdfis.fis_type.write(FisType::RegH2D as u8);
+                cmdfis.pm.write(1 << 7);
+                cmdfis.command.write(ATA_CMD_PACKET);
+                cmdfis.device.write(0);
+                cmdfis.lba1.write(0);
+                cmdfis.lba2.write(0);
+                cmdfis.featurel.write(1);
+                cmdfis.featureh.write(0);
+            }
+
+            let acmd = unsafe { &mut *(ctbas[slot as usize].acmd.as_mut_ptr() as *mut [u8; 16]) };
+            *acmd = *cmd;
+
+            while self.tfd.readf((ATA_DEV_BUSY | ATA_DEV_DRQ) as u32) {
+                thread::yield_now();
+            }
+
+            self.ci.writef(1 << slot, true);
+
+            self.start();
+
+            while (self.ci.readf(1 << slot) || self.tfd.readf(0x80)) && self.is.read() & HBA_PORT_IS_ERR == 0 {
+                thread::yield_now();
+            }
+
+            self.stop();
+
+            if self.is.read() & HBA_PORT_IS_ERR != 0 {
+                print!("{}", format!("ERROR IS {:X} TFD {:X} SERR {:X}\n", self.is.read(), self.tfd.read(), self.serr.read()));
+                return Err(Error::new(EIO));
+            }
+
+            Ok(())
+
+        } else {
+            print!("No Command Slots\n");
+            Err(Error::new(EIO))
+        }
+    }
 }
 
 #[repr(packed)]
@@ -384,7 +456,7 @@ pub struct HbaCmdTable {
     cfis: [Mmio<u8>; 64], // Command FIS
 
     // 0x40
-    _acmd: [Mmio<u8>; 16], // ATAPI command, 12 or 16 bytes
+    acmd: [Mmio<u8>; 16], // ATAPI command, 12 or 16 bytes
 
     // 0x50
     _rsv: [Mmio<u8>; 48], // Reserved
