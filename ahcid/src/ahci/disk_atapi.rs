@@ -50,6 +50,19 @@ impl DiskATAPI {
             buf: buf
         })
     }
+
+    fn read_capacity(&mut self) -> Result<(u32, u32)> {
+        // TODO: only query when needed (disk changed)
+
+        let mut cmd = [0; 16];
+        cmd[0] = SCSI_READ_CAPACITY;
+        self.port.packet(&cmd, 8, &mut self.clb, &mut self.ctbas, &mut self.buf)?;
+
+        let blk_count = BigEndian::read_u32(&self.buf[0..4]);
+        let blk_size = BigEndian::read_u32(&self.buf[4..8]);
+
+        Ok((blk_count, blk_size))
+    }
 }
 
 impl Disk for DiskATAPI {
@@ -58,16 +71,10 @@ impl Disk for DiskATAPI {
     }
 
     fn size(&mut self) -> u64 {
-        let mut cmd = [0; 16];
-        cmd[0] = SCSI_READ_CAPACITY;
-        if let Err(_) = self.port.packet(&cmd, 8, &mut self.clb, &mut self.ctbas, &mut self.buf) {
-            return 0; // XXX
+        match self.read_capacity() {
+            Ok((blk_count, blk_size)) => (blk_count as u64) * (blk_size as u64),
+            Err(_) => 0 // XXX
         }
-
-        let blk_count = BigEndian::read_u32(&self.buf[0..4]);
-        let blk_size = BigEndian::read_u32(&self.buf[4..8]);
-
-        (blk_count as u64) * (blk_size as u64)
     }
 
     fn read(&mut self, _block: u64, _buffer: &mut [u8]) -> Result<usize> {
