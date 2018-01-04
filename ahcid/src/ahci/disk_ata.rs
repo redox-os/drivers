@@ -62,18 +62,14 @@ impl Disk for DiskATA {
 
         let mut sector: usize = 0;
         while sectors - sector >= 255 {
-            if let Err(err) = self.port.ata_dma(block + sector as u64, 255, false, &mut self.clb, &mut self.ctbas, &mut self.buf) {
-                return Err(err);
-            }
+            self.port.ata_dma(block + sector as u64, 255, false, &mut self.clb, &mut self.ctbas, &mut self.buf)?;
 
             unsafe { ptr::copy(self.buf.as_ptr(), buffer.as_mut_ptr().offset(sector as isize * 512), 255 * 512); }
 
             sector += 255;
         }
         if sector < sectors {
-            if let Err(err) = self.port.ata_dma(block + sector as u64, sectors - sector, false, &mut self.clb, &mut self.ctbas, &mut self.buf) {
-                return Err(err);
-            }
+            self.port.ata_dma(block + sector as u64, sectors - sector, false, &mut self.clb, &mut self.ctbas, &mut self.buf)?;
 
             unsafe { ptr::copy(self.buf.as_ptr(), buffer.as_mut_ptr().offset(sector as isize * 512), (sectors - sector) * 512); }
 
@@ -107,5 +103,9 @@ impl Disk for DiskATA {
         }
 
         Ok(sector * 512)
+    }
+
+    fn block_length(&mut self) -> Result<u32> {
+        Ok(512)
     }
 }

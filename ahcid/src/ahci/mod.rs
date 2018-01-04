@@ -15,6 +15,7 @@ pub trait Disk {
     fn size(&mut self) -> u64;
     fn read(&mut self, block: u64, buffer: &mut [u8]) -> Result<usize>;
     fn write(&mut self, block: u64, buffer: &[u8]) -> Result<usize>;
+    fn block_length(&mut self) -> Result<u32>;
 }
 
 pub fn disks(base: usize, name: &str) -> Vec<Box<Disk>> {

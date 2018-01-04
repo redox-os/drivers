@@ -150,7 +150,8 @@ impl Scheme for DiskScheme {
             },
             Handle::Disk(ref mut handle, ref mut size, _) => {
                 let mut disk = handle.lock();
-                let count = disk.read((*size as u64)/512, buf)?;
+                let blk_len = disk.block_length()?;
+                let count = disk.read((*size as u64)/(blk_len as u64), buf)?;
                 *size += count;
                 Ok(count)
             }
@@ -165,7 +166,8 @@ impl Scheme for DiskScheme {
             },
             Handle::Disk(ref mut handle, ref mut size, _) => {
                 let mut disk = handle.lock();
-                let count = disk.write((*size as u64)/512, buf)?;
+                let blk_len = disk.block_length()?;
+                let count = disk.write((*size as u64)/(blk_len as u64), buf)?;
                 *size += count;
                 Ok(count)
             }
