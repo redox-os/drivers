@@ -3,6 +3,7 @@
 
 extern crate spin;
 extern crate syscall;
+extern crate byteorder;
 
 use std::{env, usize};
 use std::fs::File;
