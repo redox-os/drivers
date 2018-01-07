@@ -140,54 +140,24 @@ impl HbaPort {
 
     // Shared between identify() and identify_packet()
     unsafe fn identify_inner(&mut self, cmd: u8, clb: &mut Dma<[HbaCmdHeader; 32]>, ctbas: &mut [Dma<HbaCmdTable>; 32]) -> Option<u64> {
-        self.is.write(u32::MAX);
 
         let dest: Dma<[u16; 256]> = Dma::new([0; 256]).unwrap();
 
-        if let Some(slot) = self.slot() {
-            let cmdheader = &mut clb[slot as usize];
-            cmdheader.cfl.write(((size_of::<FisRegH2D>() / size_of::<u32>()) as u8));
+        let res = self.ata_dma(clb, ctbas, |cmdheader, cmdfis, prdt_entries, _acmd| {
             cmdheader.prdtl.write(1);
 
-            {
-                let cmdtbl = &mut ctbas[slot as usize];
-                ptr::write_bytes(cmdtbl.deref_mut() as *mut HbaCmdTable as *mut u8, 0, size_of::<HbaCmdTable>());
+            let prdt_entry = &mut prdt_entries[0];
+            prdt_entry.dba.write(dest.physical() as u64);
+            prdt_entry.dbc.write(512 | 1);
 
-                let prdt_entry = &mut cmdtbl.prdt_entry[0];
-                prdt_entry.dba.write(dest.physical() as u64);
-                prdt_entry.dbc.write(512 | 1);
-            }
+            cmdfis.pm.write(1 << 7);
+            cmdfis.command.write(cmd);
+            cmdfis.device.write(0);
+            cmdfis.countl.write(1);
+            cmdfis.counth.write(0);
+        });
 
-            {
-                let cmdfis = &mut *(ctbas[slot as usize].cfis.as_mut_ptr() as *mut FisRegH2D);
-
-                cmdfis.fis_type.write(FisType::RegH2D as u8);
-                cmdfis.pm.write(1 << 7);
-                cmdfis.command.write(cmd);
-                cmdfis.device.write(0);
-                cmdfis.countl.write(1);
-                cmdfis.counth.write(0);
-            }
-
-            while self.tfd.readf((ATA_DEV_BUSY | ATA_DEV_DRQ) as u32) {
-                thread::yield_now();
-            }
-
-            self.ci.writef(1 << slot, true);
-
-            self.start();
-
-            while (self.ci.readf(1 << slot) || self.tfd.readf(0x80)) && self.is.read() & HBA_PORT_IS_ERR == 0 {
-                thread::yield_now();
-            }
-
-            self.stop();
-
-            if self.is.read() & HBA_PORT_IS_ERR != 0 {
-                print!("{}", format!("ERROR IS {:X} TFD {:X} SERR {:X}\n", self.is.read(), self.tfd.read(), self.serr.read()));
-                return None;
-            }
-
+        if res.is_ok() {
             let mut serial = String::new();
             for word in 10..20 {
                 let d = dest[word];
@@ -248,82 +218,105 @@ impl HbaPort {
         }
     }
 
-    pub fn ata_dma(&mut self, block: u64, sectors: usize, write: bool, clb: &mut Dma<[HbaCmdHeader; 32]>, ctbas: &mut [Dma<HbaCmdTable>; 32], buf: &mut Dma<[u8; 256 * 512]>) -> Result<usize> {
+    pub fn dma_read_write(&mut self, block: u64, sectors: usize, write: bool, clb: &mut Dma<[HbaCmdHeader; 32]>, ctbas: &mut [Dma<HbaCmdTable>; 32], buf: &mut Dma<[u8; 256 * 512]>) -> Result<usize> {
         if write {
             //print!("{}", format!("AHCI {:X} DMA BLOCK: {:X} SECTORS: {} WRITE: {}\n", (self as *mut HbaPort) as usize, block, sectors, write));
         }
 
         assert!(sectors > 0 && sectors < 256);
 
-        self.is.write(u32::MAX);
-
-        if let Some(slot) = self.slot() {
+        let res = self.ata_dma(clb, ctbas, |cmdheader, cmdfis, prdt_entries, _acmd| {
             if write {
-                //print!("{}", format!("SLOT {}\n", slot));
+                let cfl = cmdheader.cfl.read();
+                cmdheader.cfl.write(cfl | 1 << 7 | 1 << 6)
             }
-
-            let cmdheader = &mut clb[slot as usize];
-
-            cmdheader.cfl.write(((size_of::<FisRegH2D>() / size_of::<u32>()) as u8) | if write { 1 << 7 | 1 << 6 } else { 0 });
 
             cmdheader.prdtl.write(1);
 
-            {
-                let cmdtbl = &mut ctbas[slot as usize];
-                unsafe { ptr::write_bytes(cmdtbl.deref_mut() as *mut HbaCmdTable as *mut u8, 0, size_of::<HbaCmdTable>()) };
+            let prdt_entry = &mut prdt_entries[0];
+            prdt_entry.dba.write(buf.physical() as u64);
+            prdt_entry.dbc.write(((sectors * 512) as u32) | 1);
 
-                let prdt_entry = &mut cmdtbl.prdt_entry[0];
-                prdt_entry.dba.write(buf.physical() as u64);
-                prdt_entry.dbc.write(((sectors * 512) as u32) | 1);
-            }
-
-            {
-                let cmdfis = unsafe { &mut *(ctbas[slot as usize].cfis.as_mut_ptr() as *mut FisRegH2D) };
-
-                cmdfis.fis_type.write(FisType::RegH2D as u8);
-                cmdfis.pm.write(1 << 7);
-                if write {
-                    cmdfis.command.write(ATA_CMD_WRITE_DMA_EXT);
-                } else {
-                    cmdfis.command.write(ATA_CMD_READ_DMA_EXT);
-                }
-
-                cmdfis.lba0.write(block as u8);
-                cmdfis.lba1.write((block >> 8) as u8);
-                cmdfis.lba2.write((block >> 16) as u8);
-
-                cmdfis.device.write(1 << 6);
-
-                cmdfis.lba3.write((block >> 24) as u8);
-                cmdfis.lba4.write((block >> 32) as u8);
-                cmdfis.lba5.write((block >> 40) as u8);
-
-                cmdfis.countl.write(sectors as u8);
-                cmdfis.counth.write((sectors >> 8) as u8);
-            }
-
+            cmdfis.pm.write(1 << 7);
             if write {
-                //print!("WAIT ATA_DEV_BUSY | ATA_DEV_DRQ\n");
+                cmdfis.command.write(ATA_CMD_WRITE_DMA_EXT);
+            } else {
+                cmdfis.command.write(ATA_CMD_READ_DMA_EXT);
             }
+
+            cmdfis.lba0.write(block as u8);
+            cmdfis.lba1.write((block >> 8) as u8);
+            cmdfis.lba2.write((block >> 16) as u8);
+
+            cmdfis.device.write(1 << 6);
+
+            cmdfis.lba3.write((block >> 24) as u8);
+            cmdfis.lba4.write((block >> 32) as u8);
+            cmdfis.lba5.write((block >> 40) as u8);
+
+            cmdfis.countl.write(sectors as u8);
+            cmdfis.counth.write((sectors >> 8) as u8);
+        });
+
+        res.and(Ok(sectors * 512))
+    }
+
+    /// Send ATAPI packet
+    pub fn packet(&mut self, cmd: &[u8; 16], size: u32, clb: &mut Dma<[HbaCmdHeader; 32]>, ctbas: &mut [Dma<HbaCmdTable>; 32], buf: &mut Dma<[u8; 256 * 512]>) -> Result<()> {
+        self.ata_dma(clb, ctbas, |cmdheader, cmdfis, prdt_entries, acmd| {
+            let cfl = cmdheader.cfl.read();
+            cmdheader.cfl.write(cfl | 1 << 5);
+
+            cmdheader.prdtl.write(1);
+
+            let prdt_entry = &mut prdt_entries[0];
+            prdt_entry.dba.write(buf.physical() as u64);
+            prdt_entry.dbc.write(size - 1);
+
+            cmdfis.pm.write(1 << 7);
+            cmdfis.command.write(ATA_CMD_PACKET);
+            cmdfis.device.write(0);
+            cmdfis.lba1.write(0);
+            cmdfis.lba2.write(0);
+            cmdfis.featurel.write(1);
+            cmdfis.featureh.write(0);
+
+            unsafe { ptr::write_volatile(acmd.as_mut_ptr() as *mut [u8; 16], *cmd) };
+        })
+    }
+
+    fn ata_dma<F>(&mut self, clb: &mut Dma<[HbaCmdHeader; 32]>, ctbas: &mut [Dma<HbaCmdTable>; 32], callback: F) -> Result<()>
+              where F: FnOnce(&mut HbaCmdHeader, &mut FisRegH2D, &mut [HbaPrdtEntry; 65536], &mut [Mmio<u8>; 16]) {
+
+        self.is.write(u32::MAX);
+
+        if let Some(slot) = self.slot() {
+            {
+                let cmdheader = &mut clb[slot as usize];
+                cmdheader.cfl.write(((size_of::<FisRegH2D>() / size_of::<u32>()) as u8));
+
+                let cmdtbl = &mut ctbas[slot as usize];
+                unsafe { ptr::write_bytes(cmdtbl.deref_mut() as *mut HbaCmdTable as *mut u8, 0, size_of::<HbaCmdTable>()); }
+
+                let cmdfis = unsafe { &mut *(cmdtbl.cfis.as_mut_ptr() as *mut FisRegH2D) };
+                cmdfis.fis_type.write(FisType::RegH2D as u8);
+
+                let prdt_entry = unsafe { &mut *(&mut cmdtbl.prdt_entry as *mut _) };
+                let acmd = unsafe { &mut *(&mut cmdtbl.acmd as *mut _) };
+
+                callback(cmdheader, cmdfis, prdt_entry, acmd)
+            }
+
             while self.tfd.readf((ATA_DEV_BUSY | ATA_DEV_DRQ) as u32) {
                 thread::yield_now();
             }
 
-            if write {
-                //print!("{}", format!("WRITE CI {:X} in {:X}\n", 1 << slot, self.ci.read()));
-            }
             self.ci.writef(1 << slot, true);
 
             self.start();
 
-            if write {
-                //print!("{}", format!("WAIT CI {:X} in {:X}\n", 1 << slot, self.ci.read()));
-            }
             while (self.ci.readf(1 << slot) || self.tfd.readf(0x80)) && self.is.read() & HBA_PORT_IS_ERR == 0 {
                 thread::yield_now();
-                if write {
-                    //print!("{}", format!("WAIT CI {:X} TFD {:X} IS {:X} CMD {:X} SERR {:X}\n", self.ci.read(), self.tfd.read(), self.is.read(), self.cmd.read(), self.serr.read()));
-                }
             }
 
             self.stop();
@@ -334,74 +327,10 @@ impl HbaPort {
                         self.ssts.read(), self.sctl.read(), self.serr.read(), self.sact.read(),
                         self.ci.read(), self.sntf.read(), self.fbs.read()));
                 self.is.write(u32::MAX);
-                return Err(Error::new(EIO));
+                Err(Error::new(EIO))
+            } else {
+                Ok(())
             }
-
-            if write {
-                //print!("{}", format!("SUCCESS {}\n", sectors));
-            }
-            Ok(sectors * 512)
-        } else {
-            print!("No Command Slots\n");
-            Err(Error::new(EIO))
-        }
-    }
-
-    /// Send ATAPI packet
-    pub fn packet(&mut self, cmd: &[u8; 16], size: u32, clb: &mut Dma<[HbaCmdHeader; 32]>, ctbas: &mut [Dma<HbaCmdTable>; 32], buf: &mut Dma<[u8; 256 * 512]>) -> Result<()> {
-        self.is.write(u32::MAX);
-
-        if let Some(slot) = self.slot() {
-            let cmdheader = &mut clb[slot as usize];
-            cmdheader.cfl.write(((size_of::<FisRegH2D>() / size_of::<u32>()) as u8) | (1 << 5));
-            cmdheader.prdtl.write(1);
-
-            {
-                let cmdtbl = &mut ctbas[slot as usize];
-                unsafe { ptr::write_bytes(cmdtbl.deref_mut() as *mut HbaCmdTable as *mut u8, 0, size_of::<HbaCmdTable>()) };
-
-                let prdt_entry = &mut cmdtbl.prdt_entry[0];
-                prdt_entry.dba.write(buf.physical() as u64);
-                prdt_entry.dbc.write(size - 1);
-            }
-
-            {
-                let cmdfis = unsafe { &mut *(ctbas[slot as usize].cfis.as_mut_ptr() as *mut FisRegH2D) };
-
-                cmdfis.fis_type.write(FisType::RegH2D as u8);
-                cmdfis.pm.write(1 << 7);
-                cmdfis.command.write(ATA_CMD_PACKET);
-                cmdfis.device.write(0);
-                cmdfis.lba1.write(0);
-                cmdfis.lba2.write(0);
-                cmdfis.featurel.write(1);
-                cmdfis.featureh.write(0);
-            }
-
-            let acmd = unsafe { &mut *(ctbas[slot as usize].acmd.as_mut_ptr() as *mut [u8; 16]) };
-            *acmd = *cmd;
-
-            while self.tfd.readf((ATA_DEV_BUSY | ATA_DEV_DRQ) as u32) {
-                thread::yield_now();
-            }
-
-            self.ci.writef(1 << slot, true);
-
-            self.start();
-
-            while (self.ci.readf(1 << slot) || self.tfd.readf(0x80)) && self.is.read() & HBA_PORT_IS_ERR == 0 {
-                thread::yield_now();
-            }
-
-            self.stop();
-
-            if self.is.read() & HBA_PORT_IS_ERR != 0 {
-                print!("{}", format!("ERROR IS {:X} TFD {:X} SERR {:X}\n", self.is.read(), self.tfd.read(), self.serr.read()));
-                return Err(Error::new(EIO));
-            }
-
-            Ok(())
-
         } else {
             print!("No Command Slots\n");
             Err(Error::new(EIO))
