@@ -293,7 +293,7 @@ impl HbaPort {
         if let Some(slot) = self.slot() {
             {
                 let cmdheader = &mut clb[slot as usize];
-                cmdheader.cfl.write(((size_of::<FisRegH2D>() / size_of::<u32>()) as u8));
+                cmdheader.cfl.write((size_of::<FisRegH2D>() / size_of::<u32>()) as u8);
 
                 let cmdtbl = &mut ctbas[slot as usize];
                 unsafe { ptr::write_bytes(cmdtbl.deref_mut() as *mut HbaCmdTable as *mut u8, 0, size_of::<HbaCmdTable>()); }
