@@ -102,7 +102,7 @@ impl Screen for GraphicScreen {
         let size = self.display.offscreen.len();
 
         self.seek = match whence {
-            SEEK_SET => cmp::min(size, (pos/4)),
+            SEEK_SET => cmp::min(size, pos/4),
             SEEK_CUR => cmp::max(0, cmp::min(size as isize, self.seek as isize + (pos/4) as isize)) as usize,
             SEEK_END => cmp::max(0, cmp::min(size as isize, size as isize + (pos/4) as isize)) as usize,
             _ => return Err(Error::new(EINVAL))
