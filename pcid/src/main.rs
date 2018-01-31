@@ -128,10 +128,12 @@ fn main() {
                                 let mut command = Command::new(program);
                                 for arg in args {
                                     let bar_arg = |i| -> String {
-                                        match PciBar::from(header.bars[i]) {
-                                            PciBar::None => String::new(),
-                                            PciBar::Memory(address) => format!("{:>08X}", address),
-                                            PciBar::Port(address) => format!("{:>04X}", address)
+                                        unsafe {
+                                            match PciBar::from(header.bars[i]) {
+                                                PciBar::None => String::new(),
+                                                PciBar::Memory(address) => format!("{:>08X}", address),
+                                                PciBar::Port(address) => format!("{:>04X}", address)
+                                            }
                                         }
                                     };
                                     let arg = unsafe {
