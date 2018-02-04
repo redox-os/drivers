@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 #[derive(Debug, Default, Deserialize)]
 pub struct Config {
     pub drivers: Vec<DriverConfig>
@@ -11,5 +13,6 @@ pub struct DriverConfig {
     pub interface: Option<u8>,
     pub vendor: Option<u16>,
     pub device: Option<u16>,
+    pub device_id_range: Option<Range<u16>>,
     pub command: Option<Vec<String>>
 }

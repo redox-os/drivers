@@ -115,6 +115,11 @@ fn main() {
                             if device != header.device_id { continue; }
                         }
 
+                        if let Some(ref device_id_range) = driver.device_id_range {
+                            if header.device_id < device_id_range.start  ||
+                               device_id_range.end <= header.device_id { continue; }
+                        }
+
                         if let Some(ref args) = driver.command {
                             // Enable bus mastering, memory space, and I/O space
                             unsafe {
@@ -149,6 +154,7 @@ fn main() {
                                             "$IRQ" => format!("{}", header.interrupt_line),
                                             "$VENID" => format!("{:>04X}",header.vendor_id),
                                             "$DEVID" => format!("{:>04X}",header.device_id),
+                                            "$SUBSYSID" => format!("{:>04X}",header.subsystem_id),
                                             _ => arg.clone()
                                         }
                                     };
