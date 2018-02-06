@@ -105,7 +105,8 @@ impl Screen for TextScreen {
                             };
 
                             if c != '\0' {
-                                buf.extend_from_slice(&[c as u8]);
+                                let mut b = [0; 4];
+                                buf.extend_from_slice(c.encode_utf8(&mut b).as_bytes());
                             }
                         }
                     }
