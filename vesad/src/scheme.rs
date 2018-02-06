@@ -236,6 +236,8 @@ impl SchemeMut for DisplayScheme {
                         },
                         EventOption::Resize(resize_event) => {
                             println!("Resizing to {}, {}", resize_event.width, resize_event.height);
+                            self.width = resize_event.width as usize;
+                            self.height = resize_event.height as usize;
                             for (screen_i, screen) in self.screens.iter_mut() {
                                 screen.resize(resize_event.width as usize, resize_event.height as usize);
                                 if *screen_i == self.active {
