@@ -119,11 +119,11 @@ fn handle_parsed_header(config: &Config, pci: &Pci, bus_num: u8,
                         "$BAR2" if header.header_type() == PciHeaderType::GENERAL =>
                             format!("{}", header.get_bar(2)),
                         "$BAR3" if header.header_type() == PciHeaderType::GENERAL =>
-                            format!("{}", header.get_bar(2)),
+                            format!("{}", header.get_bar(3)),
                         "$BAR4" if header.header_type() == PciHeaderType::GENERAL =>
-                            format!("{}", header.get_bar(2)),
+                            format!("{}", header.get_bar(4)),
                         "$BAR5" if header.header_type() == PciHeaderType::GENERAL =>
-                            format!("{}", header.get_bar(2)),
+                            format!("{}", header.get_bar(5)),
                         "$IRQ" => format!("{}", header.interrupt_line()),
                         "$VENID" => format!("{:>04X}", header.vendor_id()),
                         "$DEVID" => format!("{:>04X}", header.device_id()),
