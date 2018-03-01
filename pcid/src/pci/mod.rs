@@ -3,14 +3,14 @@ pub use self::bus::{PciBus, PciBusIter};
 pub use self::class::PciClass;
 pub use self::dev::{PciDev, PciDevIter};
 pub use self::func::PciFunc;
-pub use self::header::PciHeader;
+pub use self::header::{PciHeader, PciHeaderError, PciHeaderType};
 
 mod bar;
 mod bus;
 mod class;
 mod dev;
 mod func;
-mod header;
+pub mod header;
 
 pub struct Pci;
 
@@ -28,10 +28,10 @@ impl Pci {
         let address = 0x80000000 | ((bus as u32) << 16) | ((dev as u32) << 11) | ((func as u32) << 8) | ((offset as u32) & 0xFC);
         let value: u32;
         asm!("mov dx, 0xCF8
-            out dx, eax
-            mov dx, 0xCFC
-            in eax, dx"
-            : "={eax}"(value) : "{eax}"(address) : "dx" : "intel", "volatile");
+              out dx, eax
+              mov dx, 0xCFC
+              in eax, dx"
+             : "={eax}"(value) : "{eax}"(address) : "dx" : "intel", "volatile");
         value
     }
 
@@ -39,11 +39,11 @@ impl Pci {
     pub unsafe fn write(&self, bus: u8, dev: u8, func: u8, offset: u8, value: u32) {
         let address = 0x80000000 | ((bus as u32) << 16) | ((dev as u32) << 11) | ((func as u32) << 8) | ((offset as u32) & 0xFC);
         asm!("mov dx, 0xCF8
-            out dx, eax"
-            : : "{eax}"(address) : "dx" : "intel", "volatile");
+              out dx, eax"
+             : : "{eax}"(address) : "dx" : "intel", "volatile");
         asm!("mov dx, 0xCFC
-            out dx, eax"
-            : : "{eax}"(value) : "dx" : "intel", "volatile");
+              out dx, eax"
+             : : "{eax}"(value) : "dx" : "intel", "volatile");
     }
 }
 

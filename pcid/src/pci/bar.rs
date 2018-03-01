@@ -1,8 +1,19 @@
-#[derive(Debug)]
+use std::fmt;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PciBar {
     None,
     Memory(u32),
     Port(u16)
+}
+
+impl PciBar {
+    pub fn is_none(&self) -> bool {
+        match self {
+            &PciBar::None => true,
+            _ => false,
+        }
+    }
 }
 
 impl From<u32> for PciBar {
@@ -13,6 +24,16 @@ impl From<u32> for PciBar {
             PciBar::Memory(bar & 0xFFFFFFF0)
         } else {
             PciBar::Port((bar & 0xFFFC) as u16)
+        }
+    }
+}
+
+impl fmt::Display for PciBar {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            &PciBar::Memory(address) => write!(f, "{:>08X}", address),
+            &PciBar::Port(address) => write!(f, "{:>04X}", address),
+            &PciBar::None => write!(f, "None")
         }
     }
 }
