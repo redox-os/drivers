@@ -59,6 +59,8 @@ fn main() {
                 if isr != 0 {
                     irq_file.write(&mut irq)?;
 
+                    print!("{}", format!("rtl8168d: IRQ: {:X}\n", isr));
+
                     let mut todo = todo_irq.borrow_mut();
                     let mut i = 0;
                     while i < todo.len() {

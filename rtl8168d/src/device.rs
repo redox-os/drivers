@@ -66,10 +66,12 @@ struct Td {
 
 pub struct Rtl8168 {
     regs: &'static mut Regs,
-    receive_buffer: [Dma<[Mmio<u8>; 0x1FF8]>; 16],
-    receive_ring: Dma<[Rd; 16]>,
+    receive_buffer: [Dma<[Mmio<u8>; 0x1FF8]>; 64],
+    receive_ring: Dma<[Rd; 64]>,
+    receive_i: usize,
     transmit_buffer: [Dma<[Mmio<u8>; 7552]>; 16],
     transmit_ring: Dma<[Td; 16]>,
+    transmit_i: usize,
     transmit_buffer_h: [Dma<[Mmio<u8>; 7552]>; 1],
     transmit_ring_h: Dma<[Td; 1]>
 }
@@ -92,23 +94,30 @@ impl SchemeMut for Rtl8168 {
     }
 
     fn read(&mut self, id: usize, buf: &mut [u8]) -> Result<usize> {
-        for (rd_i, rd) in self.receive_ring.iter_mut().enumerate() {
-            if ! rd.ctrl.readf(OWN) {
-                let rd_len = rd.ctrl.read() & 0x3FFF;
+        if self.receive_i >= self.receive_ring.len() {
+            self.receive_i = 0;
+        }
 
-                let data = &self.receive_buffer[rd_i as usize];
+        let rd = &mut self.receive_ring[self.receive_i];
+        if ! rd.ctrl.readf(OWN) {
+            let rd_len = rd.ctrl.read() & 0x3FFF;
 
-                let mut i = 0;
-                while i < buf.len() && i < rd_len as usize {
-                    buf[i] = data[i].read();
-                    i += 1;
-                }
+            let data = &self.receive_buffer[self.receive_i];
 
-                let eor = rd.ctrl.read() & EOR;
-                rd.ctrl.write(OWN | eor | data.len() as u32);
-
-                return Ok(i);
+            let mut i = 0;
+            while i < buf.len() && i < rd_len as usize {
+                buf[i] = data[i].read();
+                i += 1;
             }
+
+            let eor = rd.ctrl.read() & EOR;
+            rd.ctrl.write(OWN | eor | data.len() as u32);
+
+            print!("{}", format!("rtl8168d: read {}: {}\n", self.receive_i, i));
+
+            self.receive_i += 1;
+
+            return Ok(i);
         }
 
         if id & O_NONBLOCK == O_NONBLOCK {
@@ -120,28 +129,34 @@ impl SchemeMut for Rtl8168 {
 
     fn write(&mut self, _id: usize, buf: &[u8]) -> Result<usize> {
         loop {
-            for (td_i, td) in self.transmit_ring.iter_mut().enumerate() {
-                if ! td.ctrl.readf(OWN) {
+            if self.transmit_i >= self.transmit_ring.len() {
+                self.transmit_i = 0;
+            }
 
-                    let mut data = &mut self.transmit_buffer[td_i as usize];
+            let td = &mut self.transmit_ring[self.transmit_i];
+            if ! td.ctrl.readf(OWN) {
+                let data = &mut self.transmit_buffer[self.transmit_i];
 
-                    let mut i = 0;
-                    while i < buf.len() && i < data.len() {
-                        data[i].write(buf[i]);
-                        i += 1;
-                    }
-
-                    let eor = td.ctrl.read() & EOR;
-                    td.ctrl.write(OWN | eor | FS | LS | i as u32);
-
-                    self.regs.tppoll.writef(1 << 6, true); //Notify of normal priority packet
-
-                    while self.regs.tppoll.readf(1 << 6) {
-                        thread::yield_now();
-                    }
-
-                    return Ok(i);
+                let mut i = 0;
+                while i < buf.len() && i < data.len() {
+                    data[i].write(buf[i]);
+                    i += 1;
                 }
+
+                let eor = td.ctrl.read() & EOR;
+                td.ctrl.write(OWN | eor | FS | LS | i as u32);
+
+                self.regs.tppoll.writef(1 << 6, true); //Notify of normal priority packet
+
+                while self.regs.tppoll.readf(1 << 6) {
+                    thread::yield_now();
+                }
+
+                print!("{}", format!("rtl8168d: write {}: {}\n", self.transmit_i, i));
+
+                self.transmit_i += 1;
+
+                return Ok(i);
             }
 
             thread::yield_now();
@@ -181,13 +196,27 @@ impl Rtl8168 {
             receive_buffer: [Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
                             Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
                             Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
+                            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
+                            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
+                            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
+                            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
+                            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
+                            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
+                            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
+                            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
+                            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
+                            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
+                            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
+                            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
                             Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?],
             receive_ring: Dma::zeroed()?,
+            receive_i: 0,
             transmit_buffer: [Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
                             Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
                             Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
                             Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?],
             transmit_ring: Dma::zeroed()?,
+            transmit_i: 0,
             transmit_buffer_h: [Dma::zeroed()?],
             transmit_ring_h: Dma::zeroed()?
         };
@@ -239,7 +268,7 @@ impl Rtl8168 {
             rd.buffer.write(data.physical() as u64);
             rd.ctrl.write(OWN | data.len() as u32);
         }
-        if let Some(mut rd) = self.receive_ring.last_mut() {
+        if let Some(rd) = self.receive_ring.last_mut() {
             rd.ctrl.writef(EOR, true);
         }
 
@@ -247,7 +276,7 @@ impl Rtl8168 {
         for i in 0..self.transmit_ring.len() {
             self.transmit_ring[i].buffer.write(self.transmit_buffer[i].physical() as u64);
         }
-        if let Some(mut td) = self.transmit_ring.last_mut() {
+        if let Some(td) = self.transmit_ring.last_mut() {
             td.ctrl.writef(EOR, true);
         }
 
@@ -255,7 +284,7 @@ impl Rtl8168 {
         for i in 0..self.transmit_ring_h.len() {
             self.transmit_ring_h[i].buffer.write(self.transmit_buffer_h[i].physical() as u64);
         }
-        if let Some(mut td) = self.transmit_ring_h.last_mut() {
+        if let Some(td) = self.transmit_ring_h.last_mut() {
             td.ctrl.writef(EOR, true);
         }
 
