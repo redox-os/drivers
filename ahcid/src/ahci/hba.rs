@@ -140,7 +140,6 @@ impl HbaPort {
 
     // Shared between identify() and identify_packet()
     unsafe fn identify_inner(&mut self, cmd: u8, clb: &mut Dma<[HbaCmdHeader; 32]>, ctbas: &mut [Dma<HbaCmdTable>; 32]) -> Option<u64> {
-
         let dest: Dma<[u16; 256]> = Dma::new([0; 256]).unwrap();
 
         let res = self.ata_dma(clb, ctbas, |cmdheader, cmdfis, prdt_entries, _acmd| {

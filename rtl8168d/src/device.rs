@@ -113,8 +113,6 @@ impl SchemeMut for Rtl8168 {
             let eor = rd.ctrl.read() & EOR;
             rd.ctrl.write(OWN | eor | data.len() as u32);
 
-            print!("{}", format!("rtl8168d: read {}: {}\n", self.receive_i, i));
-
             self.receive_i += 1;
 
             return Ok(i);
@@ -151,8 +149,6 @@ impl SchemeMut for Rtl8168 {
                 while self.regs.tppoll.readf(1 << 6) {
                     thread::yield_now();
                 }
-
-                print!("{}", format!("rtl8168d: write {}: {}\n", self.transmit_i, i));
 
                 self.transmit_i += 1;
 
