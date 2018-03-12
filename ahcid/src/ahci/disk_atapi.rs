@@ -63,7 +63,8 @@ impl DiskATAPI {
         cmd[0] = SCSI_READ_CAPACITY;
         self.port.packet(&cmd, 8, &mut self.clb, &mut self.ctbas, &mut self.buf)?;
 
-        let blk_count = BigEndian::read_u32(&self.buf[0..4]);
+        // Instead of a count, contains number of last LBA, so add 1
+        let blk_count = BigEndian::read_u32(&self.buf[0..4]) + 1;
         let blk_size = BigEndian::read_u32(&self.buf[4..8]);
 
         Ok((blk_count, blk_size))
