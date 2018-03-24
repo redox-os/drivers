@@ -12,13 +12,13 @@ use primitive::{fast_set32, fast_set64, fast_copy};
 use self::rusttype::{Font, FontCollection, Scale, point};
 
 #[cfg(feature="rusttype")]
-static FONT: &'static [u8] = include_bytes!("../res/VT323-Regular.ttf");
+static FONT: &'static [u8] = include_bytes!("../res/DOS437/Perfect DOS VGA 437 Win.ttf");
 #[cfg(feature="rusttype")]
-static FONT_BOLD: &'static [u8] = include_bytes!("../res/VT323-Regular.ttf");
+static FONT_BOLD: &'static [u8] = include_bytes!("../res/DOS437/Perfect DOS VGA 437 Win.ttf");
 #[cfg(feature="rusttype")]
-static FONT_BOLD_ITALIC: &'static [u8] = include_bytes!("../res/VT323-Regular.ttf");
+static FONT_BOLD_ITALIC: &'static [u8] = include_bytes!("../res/DOS437/Perfect DOS VGA 437 Win.ttf");
 #[cfg(feature="rusttype")]
-static FONT_ITALIC: &'static [u8] = include_bytes!("../res/VT323-Regular.ttf");
+static FONT_ITALIC: &'static [u8] = include_bytes!("../res/DOS437/Perfect DOS VGA 437 Win.ttf");
 
 /// A display
 pub struct Display {
