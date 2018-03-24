@@ -20,8 +20,11 @@ pub struct TextScreen {
 
 impl TextScreen {
     pub fn new(display: Display) -> TextScreen {
+        let mut console = ransid::Console::new(display.width/8, display.height/16);
+        console.foreground_default = ransid::Color::Ansi(11);
+        console.background_default = ransid::Color::Ansi(12);
         TextScreen {
-            console: ransid::Console::new(display.width/8, display.height/16),
+            console: console,
             display: display,
             changed: BTreeSet::new(),
             ctrl: false,
