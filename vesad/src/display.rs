@@ -14,13 +14,13 @@ use self::rusttype::{Font, FontCollection, Scale, point};
 use orbclient::FONT;
 
 #[cfg(feature="rusttype")]
-static FONT: &'static [u8] = include_bytes!("../../../res/fonts/DejaVuSansMono.ttf");
+static FONT: &'static [u8] = include_bytes!("../res/VT323-Regular.ttf");
 #[cfg(feature="rusttype")]
-static FONT_BOLD: &'static [u8] = include_bytes!("../../../res/fonts/DejaVuSansMono-Bold.ttf");
+static FONT_BOLD: &'static [u8] = include_bytes!("../res/VT323-Regular.ttf");
 #[cfg(feature="rusttype")]
-static FONT_BOLD_ITALIC: &'static [u8] = include_bytes!("../../../res/fonts/DejaVuSansMono-BoldOblique.ttf");
+static FONT_BOLD_ITALIC: &'static [u8] = include_bytes!("../res/VT323-Regular.ttf");
 #[cfg(feature="rusttype")]
-static FONT_ITALIC: &'static [u8] = include_bytes!("../../../res/fonts/DejaVuSansMono-Oblique.ttf");
+static FONT_ITALIC: &'static [u8] = include_bytes!("../res/VT323-Regular.ttf");
 
 /// A display
 pub struct Display {

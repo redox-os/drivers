@@ -9,4 +9,4 @@ rusttype = { version = "0.2", optional = true }
 redox_syscall = "0.1"
 
 [features]
-default = []
+default = ["rusttype"]
