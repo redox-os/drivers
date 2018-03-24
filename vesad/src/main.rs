@@ -2,6 +2,7 @@
 #![feature(alloc)]
 #![feature(allocator_api)]
 #![feature(asm)]
+#![feature(nll)]
 
 extern crate alloc;
 extern crate orbclient;

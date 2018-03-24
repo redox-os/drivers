@@ -3,15 +3,13 @@ extern crate rusttype;
 
 use alloc::allocator::{Alloc, Layout};
 use alloc::heap::Heap;
+use orbclient;
 use std::{cmp, slice};
 
 use primitive::{fast_set32, fast_set64, fast_copy};
 
 #[cfg(feature="rusttype")]
 use self::rusttype::{Font, FontCollection, Scale, point};
-
-#[cfg(not(feature="rusttype"))]
-use orbclient::FONT;
 
 #[cfg(feature="rusttype")]
 static FONT: &'static [u8] = include_bytes!("../res/VT323-Regular.ttf");
@@ -171,16 +169,14 @@ impl Display {
         }
     }
 
-    /// Draw a character
-    #[cfg(not(feature="rusttype"))]
-    pub fn char(&mut self, x: usize, y: usize, character: char, color: u32, _bold: bool, _italic: bool) {
+    fn char_unifont(&mut self, x: usize, y: usize, character: char, color: u32) {
         if x + 8 <= self.width && y + 16 <= self.height {
             let mut dst = self.offscreen.as_mut_ptr() as usize + (y * self.width + x) * 4;
 
             let font_i = 16 * (character as usize);
-            if font_i + 16 <= FONT.len() {
+            if font_i + 16 <= orbclient::FONT.len() {
                 for row in 0..16 {
-                    let row_data = FONT[font_i + row];
+                    let row_data = orbclient::FONT[font_i + row];
                     for col in 0..8 {
                         if (row_data >> (7 - col)) & 1 == 1 {
                             unsafe { *((dst + col * 4) as *mut u32)  = color; }
@@ -190,6 +186,12 @@ impl Display {
                 }
             }
         }
+    }
+
+    /// Draw a character
+    #[cfg(not(feature="rusttype"))]
+    pub fn char(&mut self, x: usize, y: usize, character: char, color: u32, _bold: bool, _italic: bool) {
+        self.char_unifont(x, y, character, color);
     }
 
     /// Draw a character
@@ -209,7 +211,7 @@ impl Display {
             &self.font
         };
 
-        if let Some(glyph) = font.glyph(character){
+        if let Some(glyph) = font.glyph(character) {
             let scale = Scale::uniform(16.0);
             let v_metrics = font.v_metrics(scale);
             let point = point(0.0, v_metrics.ascent);
@@ -241,7 +243,11 @@ impl Display {
                         }
                     }
                 });
+            } else {
+                self.char_unifont(x, y, character, color);
             }
+        } else {
+            self.char_unifont(x, y, character, color);
         }
     }
 
