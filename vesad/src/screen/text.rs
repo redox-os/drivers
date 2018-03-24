@@ -118,9 +118,7 @@ impl Screen for TextScreen {
             _ => () //TODO: Mouse in terminal
         }
 
-        for &b in buf.iter() {
-            self.input.push_back(b);
-        }
+        self.input.extend(buf);
     }
 
     fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
