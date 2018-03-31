@@ -5,6 +5,7 @@ use std::fs::File;
 use std::io::Read;
 use std::ptr;
 
+use hound::WavReader;
 use orbclient::{self, Event, EventOption, KeyEvent};
 use syscall::error::*;
 
@@ -14,15 +15,11 @@ use screen::Screen;
 
 fn play(name: &str) {
     let path = format!("file:/sfx/{}.wav", name);
-    match File::open(&path) {
-        Ok(mut file) => {
-            let mut data = Vec::new();
-            match file.read_to_end(&mut data) {
-                Ok(_) => audio::queue(&data),
-                Err(err) => {
-                    eprintln!("failed to read {}: {}", path, err);
-                }
-            }
+
+    match WavReader::open(&path) {
+        Ok(mut wav) => {
+            let data: Vec<i16> = wav.into_samples::<i16>().map(|x| x.unwrap_or(0)).collect();
+            audio::queue(&data);
         },
         Err(err) => {
             eprintln!("failed to open {}: {}", path, err);
@@ -71,89 +68,89 @@ fn announce(key_event: KeyEvent) {
             orbclient::K_9 => play("9"),
 
             // Tick/tilde key
-            orbclient::K_TICK => play(""),
+            orbclient::K_TICK => play("GraveAccent_Tilde"),
             // Minus/underline key
-            orbclient::K_MINUS => play(""),
+            orbclient::K_MINUS => play("Hyphen_Minus"),
             // Equals/plus key
-            orbclient::K_EQUALS => play(""),
+            orbclient::K_EQUALS => play("Equals"),
             // Backslash/pipe key
-            orbclient::K_BACKSLASH => play(""),
+            orbclient::K_BACKSLASH => play("BackSlash"),
             // Bracket open key
-            orbclient::K_BRACE_OPEN => play(""),
+            orbclient::K_BRACE_OPEN => play("LeftSquareBracket"),
             // Bracket close key
-            orbclient::K_BRACE_CLOSE => play(""),
+            orbclient::K_BRACE_CLOSE => play("RightSquareBracket"),
             // Semicolon key
-            orbclient::K_SEMICOLON => play(""),
+            orbclient::K_SEMICOLON => play("SemiColon"),
             // Quote key
-            orbclient::K_QUOTE => play(""),
+            orbclient::K_QUOTE => play("Apostrophe"),
             // Comma key
-            orbclient::K_COMMA => play(""),
+            orbclient::K_COMMA => play("Comma"),
             // Period key
-            orbclient::K_PERIOD => play(""),
+            orbclient::K_PERIOD => play("Period"),
             // Slash key
-            orbclient::K_SLASH => play(""),
+            orbclient::K_SLASH => play("ForwardSlash"),
             // Backspace key
-            orbclient::K_BKSP => play(""),
+            orbclient::K_BKSP => play("Backspace"),
             // Space key
-            orbclient::K_SPACE => play(""),
+            orbclient::K_SPACE => play("Space"),
             // Tab key
-            orbclient::K_TAB => play(""),
+            orbclient::K_TAB => play("Tab"),
             // Capslock
-            orbclient::K_CAPS => play(""),
+            orbclient::K_CAPS => play("CapsLock"),
             // Left shift
-            orbclient::K_LEFT_SHIFT => play(""),
+            orbclient::K_LEFT_SHIFT => play("LeftShift"),
             // Right shift
-            orbclient::K_RIGHT_SHIFT => play(""),
+            orbclient::K_RIGHT_SHIFT => play("LeftShift"),
             // Control key
-            orbclient::K_CTRL => play(""),
+            orbclient::K_CTRL => play("LeftControl"),
             // Alt key
-            orbclient::K_ALT => play(""),
+            orbclient::K_ALT => play("LeftAlt"),
             // Enter key
-            orbclient::K_ENTER => play(""),
+            orbclient::K_ENTER => play("Enter"),
             // Escape key
-            orbclient::K_ESC => play(""),
+            orbclient::K_ESC => play("Escape"),
             // F1 key
-            orbclient::K_F1 => play(""),
+            orbclient::K_F1 => play("F1"),
             // F2 key
-            orbclient::K_F2 => play(""),
+            orbclient::K_F2 => play("F2"),
             // F3 key
-            orbclient::K_F3 => play(""),
+            orbclient::K_F3 => play("F3"),
             // F4 key
-            orbclient::K_F4 => play(""),
+            orbclient::K_F4 => play("F4"),
             // F5 key
-            orbclient::K_F5 => play(""),
+            orbclient::K_F5 => play("F5"),
             // F6 key
-            orbclient::K_F6 => play(""),
+            orbclient::K_F6 => play("F6"),
             // F7 key
-            orbclient::K_F7 => play(""),
+            orbclient::K_F7 => play("F7"),
             // F8 key
-            orbclient::K_F8 => play(""),
+            orbclient::K_F8 => play("F8"),
             // F9 key
-            orbclient::K_F9 => play(""),
+            orbclient::K_F9 => play("F9"),
             // F10 key
-            orbclient::K_F10 => play(""),
+            orbclient::K_F10 => play("F10"),
             // Home key
-            orbclient::K_HOME => play(""),
+            orbclient::K_HOME => play("Home"),
             // Up key
-            orbclient::K_UP => play(""),
+            orbclient::K_UP => play("Up"),
             // Page up key
-            orbclient::K_PGUP => play(""),
+            orbclient::K_PGUP => play("PageUp"),
             // Left key
-            orbclient::K_LEFT => play(""),
+            orbclient::K_LEFT => play("Left"),
             // Right key
-            orbclient::K_RIGHT => play(""),
+            orbclient::K_RIGHT => play("Right"),
             // End key
-            orbclient::K_END => play(""),
+            orbclient::K_END => play("End"),
             // Down key
-            orbclient::K_DOWN => play(""),
+            orbclient::K_DOWN => play("Down"),
             // Page down key
-            orbclient::K_PGDN => play(""),
+            orbclient::K_PGDN => play("PageDown"),
             // Delete key
-            orbclient::K_DEL => play(""),
+            orbclient::K_DEL => play("Delete"),
             // F11 key
-            orbclient::K_F11 => play(""),
+            orbclient::K_F11 => play("F11"),
             // F12 key
-            orbclient::K_F12 => play(""),
+            orbclient::K_F12 => play("F12"),
 
             _ => ()
         }

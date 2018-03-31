@@ -3,16 +3,50 @@ use std::io::Write;
 use std::sync::Mutex;
 use std::{thread, time};
 
-lazy_static! {
-    static ref DATA: Mutex<(usize, [[u8; 16384]; 64])> = Mutex::new((0, [[0; 16384]; 64]));
+struct Data {
+    i: usize,
+    buffers: Vec<Box<[u8; 16384]>>,
 }
 
-pub fn queue(buf: &[u8]) {
-    let mut data = DATA.lock().unwrap();
-    for i in 0..buf.len() {
-        let data_0 = data.0;
-        data.1[(data_0 + (i + 16383)/16384) % 64][i % 16384] += buf[i];
+impl Data {
+    fn new() -> Data {
+        let mut buffers = Vec::new();
+        for _i in 0..64 {
+            buffers.push(Box::new([0; 16384]));
+        }
+
+        Data {
+            i: 0,
+            buffers: buffers,
+        }
     }
+
+    fn queue(&mut self, buf: &[i16]) {
+        let mut i = 0;
+        for &sample in buf.iter() {
+            self.buffers[(self.i + (i + 16383)/16384) % 64][i % 16384] += sample as u8;
+            i += 1;
+            self.buffers[(self.i + (i + 16383)/16384) % 64][i % 16384] += (sample >> 8) as u8;
+            i += 1;
+        }
+    }
+
+    fn unqueue(&mut self, buf: &mut [u8; 16384]) {
+        for i in 0..buf.len() {
+            buf[i] = self.buffers[self.i][i];
+            self.buffers[self.i][i] = 0;
+        }
+        self.i = (self.i + 1) % 64;
+    }
+}
+
+lazy_static! {
+    static ref DATA: Mutex<Data> = Mutex::new(Data::new());
+}
+
+pub fn queue(buf: &[i16]) {
+    let mut data = DATA.lock().unwrap();
+    data.queue(buf);
 }
 
 pub fn thread() {
@@ -29,16 +63,11 @@ pub fn thread() {
         }
     };
 
-    let mut buf = vec![0; 16384];
+    let mut buf = [0; 16384];
     loop {
         {
             let mut data = DATA.lock().unwrap();
-            for i in 0..buf.len() {
-                let data_0 = data.0;
-                buf[i] = data.1[data_0][i];
-                data.1[data_0][i] = 0;
-            }
-            data.0 = (data.0 + 1) % 64;
+            data.unqueue(&mut buf);
         }
         audio.write(&buf).unwrap();
     }

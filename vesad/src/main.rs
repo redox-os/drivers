@@ -1,10 +1,11 @@
-#![deny(warnings)]
+//#![deny(warnings)]
 #![feature(alloc)]
 #![feature(allocator_api)]
 #![feature(asm)]
 #![feature(nll)]
 
 extern crate alloc;
+extern crate hound;
 #[macro_use]
 extern crate lazy_static;
 extern crate orbclient;

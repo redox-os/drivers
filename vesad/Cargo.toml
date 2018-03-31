@@ -3,6 +3,7 @@ name = "vesad"
 version = "0.1.0"
 
 [dependencies]
+hound = "3.3"
 lazy_static = "1.0"
 orbclient = "0.3"
 ransid = "0.4"
