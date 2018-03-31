@@ -365,7 +365,7 @@ impl StreamBuffer {
 		let len = min(self.block_size(), buf.len());
 
 
-		print!("Phys: {:X} Virt: {:X} Offset: {:X} Len: {:X}\n", self.phys(), self.addr(), self.current_block() * self.block_size(), len);
+		// print!("Phys: {:X} Virt: {:X} Offset: {:X} Len: {:X}\n", self.phys(), self.addr(), self.current_block() * self.block_size(), len);
 		unsafe {
 			copy_nonoverlapping(buf.as_ptr(), (self.addr() + self.current_block() * self.block_size()) as * mut u8, len);
 		}
