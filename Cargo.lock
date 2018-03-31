@@ -721,6 +721,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 name = "vesad"
 version = "0.1.0"
 dependencies = [
+ "lazy_static 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "orbclient 0.3.13 (registry+https://github.com/rust-lang/crates.io-index)",
  "ransid 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "redox_syscall 0.1.37 (registry+https://github.com/rust-lang/crates.io-index)",

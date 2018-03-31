@@ -5,6 +5,8 @@
 #![feature(nll)]
 
 extern crate alloc;
+#[macro_use]
+extern crate lazy_static;
 extern crate orbclient;
 extern crate syscall;
 
@@ -17,6 +19,7 @@ use mode_info::VBEModeInfo;
 use primitive::fast_set64;
 use scheme::DisplayScheme;
 
+pub mod audio;
 pub mod display;
 pub mod mode_info;
 pub mod primitive;
@@ -53,6 +56,8 @@ fn main() {
     if physbaseptr > 0 {
         // Daemonize
         if unsafe { syscall::clone(0).unwrap() } == 0 {
+            ::std::thread::spawn(audio::thread);
+
             let mut socket = File::create(":display").expect("vesad: failed to create display scheme");
 
             let size = width * height;
@@ -62,8 +67,6 @@ fn main() {
             unsafe { fast_set64(onscreen as *mut u64, 0, size/2) };
 
             let mut scheme = DisplayScheme::new(width, height, onscreen, &spec);
-
-            syscall::setrens(0, 0).expect("vesad: failed to enter null namespace");
 
             let mut blocked = Vec::new();
             loop {

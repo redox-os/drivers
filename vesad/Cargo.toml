@@ -3,6 +3,7 @@ name = "vesad"
 version = "0.1.0"
 
 [dependencies]
+lazy_static = "1.0"
 orbclient = "0.3"
 ransid = "0.4"
 rusttype = { version = "0.2", optional = true }

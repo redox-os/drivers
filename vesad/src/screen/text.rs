@@ -1,13 +1,164 @@
 extern crate ransid;
 
 use std::collections::{BTreeSet, VecDeque};
+use std::fs::File;
+use std::io::Read;
 use std::ptr;
 
-use orbclient::{Event, EventOption};
+use orbclient::{self, Event, EventOption, KeyEvent};
 use syscall::error::*;
 
+use audio;
 use display::Display;
 use screen::Screen;
+
+fn play(name: &str) {
+    let path = format!("file:/sfx/{}.wav", name);
+    match File::open(&path) {
+        Ok(mut file) => {
+            let mut data = Vec::new();
+            match file.read_to_end(&mut data) {
+                Ok(_) => audio::queue(&data),
+                Err(err) => {
+                    eprintln!("failed to read {}: {}", path, err);
+                }
+            }
+        },
+        Err(err) => {
+            eprintln!("failed to open {}: {}", path, err);
+        }
+    }
+}
+
+fn announce(key_event: KeyEvent) {
+    if key_event.pressed {
+        match key_event.scancode {
+            orbclient::K_A => play("A"),
+            orbclient::K_B => play("B"),
+            orbclient::K_C => play("C"),
+            orbclient::K_D => play("D"),
+            orbclient::K_E => play("E"),
+            orbclient::K_F => play("F"),
+            orbclient::K_G => play("G"),
+            orbclient::K_H => play("H"),
+            orbclient::K_I => play("I"),
+            orbclient::K_J => play("J"),
+            orbclient::K_K => play("K"),
+            orbclient::K_L => play("L"),
+            orbclient::K_M => play("M"),
+            orbclient::K_N => play("N"),
+            orbclient::K_O => play("O"),
+            orbclient::K_P => play("P"),
+            orbclient::K_Q => play("Q"),
+            orbclient::K_R => play("R"),
+            orbclient::K_S => play("S"),
+            orbclient::K_T => play("T"),
+            orbclient::K_U => play("U"),
+            orbclient::K_V => play("V"),
+            orbclient::K_W => play("W"),
+            orbclient::K_X => play("X"),
+            orbclient::K_Y => play("Y"),
+            orbclient::K_Z => play("Z"),
+            orbclient::K_0 => play("0"),
+            orbclient::K_1 => play("1"),
+            orbclient::K_2 => play("2"),
+            orbclient::K_3 => play("3"),
+            orbclient::K_4 => play("4"),
+            orbclient::K_5 => play("5"),
+            orbclient::K_6 => play("6"),
+            orbclient::K_7 => play("7"),
+            orbclient::K_8 => play("8"),
+            orbclient::K_9 => play("9"),
+
+            // Tick/tilde key
+            orbclient::K_TICK => play(""),
+            // Minus/underline key
+            orbclient::K_MINUS => play(""),
+            // Equals/plus key
+            orbclient::K_EQUALS => play(""),
+            // Backslash/pipe key
+            orbclient::K_BACKSLASH => play(""),
+            // Bracket open key
+            orbclient::K_BRACE_OPEN => play(""),
+            // Bracket close key
+            orbclient::K_BRACE_CLOSE => play(""),
+            // Semicolon key
+            orbclient::K_SEMICOLON => play(""),
+            // Quote key
+            orbclient::K_QUOTE => play(""),
+            // Comma key
+            orbclient::K_COMMA => play(""),
+            // Period key
+            orbclient::K_PERIOD => play(""),
+            // Slash key
+            orbclient::K_SLASH => play(""),
+            // Backspace key
+            orbclient::K_BKSP => play(""),
+            // Space key
+            orbclient::K_SPACE => play(""),
+            // Tab key
+            orbclient::K_TAB => play(""),
+            // Capslock
+            orbclient::K_CAPS => play(""),
+            // Left shift
+            orbclient::K_LEFT_SHIFT => play(""),
+            // Right shift
+            orbclient::K_RIGHT_SHIFT => play(""),
+            // Control key
+            orbclient::K_CTRL => play(""),
+            // Alt key
+            orbclient::K_ALT => play(""),
+            // Enter key
+            orbclient::K_ENTER => play(""),
+            // Escape key
+            orbclient::K_ESC => play(""),
+            // F1 key
+            orbclient::K_F1 => play(""),
+            // F2 key
+            orbclient::K_F2 => play(""),
+            // F3 key
+            orbclient::K_F3 => play(""),
+            // F4 key
+            orbclient::K_F4 => play(""),
+            // F5 key
+            orbclient::K_F5 => play(""),
+            // F6 key
+            orbclient::K_F6 => play(""),
+            // F7 key
+            orbclient::K_F7 => play(""),
+            // F8 key
+            orbclient::K_F8 => play(""),
+            // F9 key
+            orbclient::K_F9 => play(""),
+            // F10 key
+            orbclient::K_F10 => play(""),
+            // Home key
+            orbclient::K_HOME => play(""),
+            // Up key
+            orbclient::K_UP => play(""),
+            // Page up key
+            orbclient::K_PGUP => play(""),
+            // Left key
+            orbclient::K_LEFT => play(""),
+            // Right key
+            orbclient::K_RIGHT => play(""),
+            // End key
+            orbclient::K_END => play(""),
+            // Down key
+            orbclient::K_DOWN => play(""),
+            // Page down key
+            orbclient::K_PGDN => play(""),
+            // Delete key
+            orbclient::K_DEL => play(""),
+            // F11 key
+            orbclient::K_F11 => play(""),
+            // F12 key
+            orbclient::K_F12 => play(""),
+
+            _ => ()
+        }
+    }
+}
 
 pub struct TextScreen {
     pub console: ransid::Console,
@@ -63,6 +214,7 @@ impl Screen for TextScreen {
 
         match event.to_option() {
             EventOption::Key(key_event) => {
+                announce(key_event);
                 if key_event.scancode == 0x1D {
                     self.ctrl = key_event.pressed;
                 } else if key_event.pressed {
