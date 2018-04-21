@@ -1,4 +1,3 @@
-#![deny(warnings)]
 #![feature(asm)]
 #![feature(iterator_step_by)]
 
@@ -97,9 +96,21 @@ fn handle_parsed_header(config: &Config, pci: &Pci, bus_num: u8,
         if let Some(ref args) = driver.command {
             // Enable bus mastering, memory space, and I/O space
             unsafe {
-                let cmd = pci.read(bus_num, dev_num, func_num, 0x04);
-                println!("PCI CMD: {:>02X}", cmd);
-                pci.write(bus_num, dev_num, func_num, 0x04, cmd | 7);
+                let mut data = pci.read(bus_num, dev_num, func_num, 0x04);
+                data |= 7;
+                pci.write(bus_num, dev_num, func_num, 0x04, data);
+            }
+
+            // Set IRQ line to 9 if not set
+            let mut irq;
+            unsafe {
+                let mut data = pci.read(bus_num, dev_num, func_num, 0x3C);
+                irq = (data & 0xFF) as u8;
+                if irq == 0xFF {
+                    irq = 9;
+                }
+                data = (data & 0xFFFFFF00) | irq as u32;
+                pci.write(bus_num, dev_num, func_num, 0x3C, data);
             }
 
             // TODO: find a better way to pass the header data down to the
@@ -124,7 +135,7 @@ fn handle_parsed_header(config: &Config, pci: &Pci, bus_num: u8,
                             format!("{}", header.get_bar(4)),
                         "$BAR5" if header.header_type() == PciHeaderType::GENERAL =>
                             format!("{}", header.get_bar(5)),
-                        "$IRQ" => format!("{}", header.interrupt_line()),
+                        "$IRQ" => format!("{}", irq),
                         "$VENID" => format!("{:>04X}", header.vendor_id()),
                         "$DEVID" => format!("{:>04X}", header.device_id()),
                         _ => arg.clone()
