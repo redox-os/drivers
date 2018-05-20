@@ -92,7 +92,7 @@ fn main() {
                 }
 
                 for (handle_id, handle) in scheme.handles.iter() {
-                    if handle.flags & EVENT_READ != 0 {
+                    if handle.events & EVENT_READ != 0 {
                         if let Some(count) = scheme.can_read(*handle_id) {
                             let event_packet = Packet {
                                 id: 0,
