@@ -51,7 +51,7 @@ fn main() {
             let device_irq = device.clone();
             let socket_irq = socket.clone();
             let todo_irq = todo.clone();
-            event_queue.add(irq_file.as_raw_fd(), move |_count: usize| -> Result<Option<usize>> {
+            event_queue.add(irq_file.as_raw_fd(), move |_event| -> Result<Option<usize>> {
                 let mut irq = [0; 8];
                 irq_file.read(&mut irq)?;
 
@@ -83,7 +83,7 @@ fn main() {
 
             let socket_fd = socket.borrow().as_raw_fd();
             let socket_packet = socket.clone();
-            event_queue.add(socket_fd, move |_count: usize| -> Result<Option<usize>> {
+            event_queue.add(socket_fd, move |_event| -> Result<Option<usize>> {
                 loop {
                     let mut packet = Packet::default();
                     if socket_packet.borrow_mut().read(&mut packet)? == 0 {
@@ -108,7 +108,10 @@ fn main() {
                 Ok(None)
             }).expect("rtl8168d: failed to catch events on scheme file");
 
-            for event_count in event_queue.trigger_all(0).expect("rtl8168d: failed to trigger events") {
+            for event_count in event_queue.trigger_all(event::Event {
+                fd: 0,
+                flags: 0,
+            }).expect("rtl8168d: failed to trigger events") {
                 socket.borrow_mut().write(&Packet {
                     id: 0,
                     pid: 0,

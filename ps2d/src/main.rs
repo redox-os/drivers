@@ -52,7 +52,7 @@ fn daemon(input: File) {
     syscall::setrens(0, 0).expect("ps2d: failed to enter null namespace");
 
     let key_ps2d = ps2d.clone();
-    event_queue.add(key_irq.as_raw_fd(), move |_count: usize| -> Result<Option<()>> {
+    event_queue.add(key_irq.as_raw_fd(), move |_event| -> Result<Option<()>> {
         let mut irq = [0; 8];
         if key_irq.read(&mut irq)? >= irq.len() {
             key_ps2d.borrow_mut().irq();
@@ -62,7 +62,7 @@ fn daemon(input: File) {
     }).expect("ps2d: failed to poll irq:1");
 
     let mouse_ps2d = ps2d;
-    event_queue.add(mouse_irq.as_raw_fd(), move |_count: usize| -> Result<Option<()>> {
+    event_queue.add(mouse_irq.as_raw_fd(), move |_event| -> Result<Option<()>> {
         let mut irq = [0; 8];
         if mouse_irq.read(&mut irq)? >= irq.len() {
             mouse_ps2d.borrow_mut().irq();
@@ -71,7 +71,10 @@ fn daemon(input: File) {
         Ok(None)
     }).expect("ps2d: failed to poll irq:12");
 
-    event_queue.trigger_all(0).expect("ps2d: failed to trigger events");
+    event_queue.trigger_all(event::Event {
+        fd: 0,
+        flags: 0,
+    }).expect("ps2d: failed to trigger events");
 
     event_queue.run().expect("ps2d: failed to handle events");
 }

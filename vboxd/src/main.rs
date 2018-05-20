@@ -5,7 +5,7 @@ extern crate orbclient;
 extern crate syscall;
 
 use event::EventQueue;
-use std::{env, mem, slice};
+use std::{env, mem};
 use std::os::unix::io::AsRawFd;
 use std::fs::File;
 use std::io::{Result, Read, Write};
@@ -219,7 +219,7 @@ fn main() {
         let mut port = Pio::<u32>::new(bar0 as u16);
         let address = unsafe { syscall::physmap(bar1, 4096, MAP_WRITE).expect("vboxd: failed to map address") };
         {
-            let mut vmmdev = unsafe { &mut *(address as *mut VboxVmmDev) };
+            let vmmdev = unsafe { &mut *(address as *mut VboxVmmDev) };
 
             let mut guest_info = VboxGuestInfo::new().expect("vboxd: failed to map GuestInfo");
             guest_info.version.write(VBOX_VMMDEV_VERSION);
@@ -244,7 +244,7 @@ fn main() {
             let get_mouse = VboxGetMouse::new().expect("vboxd: failed to map GetMouse");
             let display_change = VboxDisplayChange::new().expect("vboxd: failed to map DisplayChange");
             let ack_events = VboxAckEvents::new().expect("vboxd: failed to map AckEvents");
-            event_queue.add(irq_file.as_raw_fd(), move |_count: usize| -> Result<Option<()>> {
+            event_queue.add(irq_file.as_raw_fd(), move |_event| -> Result<Option<()>> {
                 let mut irq = [0; 8];
                 if irq_file.read(&mut irq)? >= irq.len() {
                     let host_events = vmmdev.host_events.read();
@@ -286,7 +286,10 @@ fn main() {
                 Ok(None)
             }).expect("vboxd: failed to poll irq");
 
-            event_queue.trigger_all(0).expect("vboxd: failed to trigger events");
+            event_queue.trigger_all(event::Event {
+                fd: 0,
+                flags: 0
+            }).expect("vboxd: failed to trigger events");
 
             event_queue.run().expect("vboxd: failed to run event loop");
         }

@@ -8,7 +8,7 @@ extern crate byteorder;
 use std::{env, usize};
 use std::fs::File;
 use std::io::{Read, Write};
-use std::os::unix::io::{AsRawFd, FromRawFd};
+use std::os::unix::io::FromRawFd;
 use syscall::{EVENT_READ, MAP_WRITE, Event, Packet, Scheme};
 
 use scheme::DiskScheme;
@@ -40,13 +40,26 @@ fn main() {
                 syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK
             ).expect("ahcid: failed to create disk scheme");
             let mut socket = unsafe { File::from_raw_fd(socket_fd) };
-            syscall::fevent(socket_fd, EVENT_READ).expect("ahcid: failed to fevent disk scheme");
 
-            let mut irq_file = File::open(&format!("irq:{}", irq)).expect("ahcid: failed to open irq file");
-            let irq_fd = irq_file.as_raw_fd();
-            syscall::fevent(irq_fd, EVENT_READ).expect("ahcid: failed to fevent irq file");
+            let irq_fd = syscall::open(
+                &format!("irq:{}", irq),
+                syscall::O_RDWR | syscall::O_NONBLOCK
+            ).expect("ahcid: failed to open irq file");
+            let mut irq_file = unsafe { File::from_raw_fd(irq_fd) };
 
             let mut event_file = File::open("event:").expect("ahcid: failed to open event file");
+
+            event_file.write(&Event {
+                id: socket_fd,
+                flags: EVENT_READ,
+                data: 0
+            }).expect("ahcid: failed to event disk scheme");
+
+            event_file.write(&Event {
+                id: irq_fd,
+                flags: EVENT_READ,
+                data: 0
+            }).expect("ahcid: failed to event irq scheme");
 
             let scheme = DiskScheme::new(scheme_name, ahci::disks(address, &name));
 
