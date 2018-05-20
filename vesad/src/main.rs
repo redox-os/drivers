@@ -94,18 +94,20 @@ fn main() {
                 for (handle_id, handle) in scheme.handles.iter() {
                     if handle.events & EVENT_READ != 0 {
                         if let Some(count) = scheme.can_read(*handle_id) {
-                            let event_packet = Packet {
-                                id: 0,
-                                pid: 0,
-                                uid: 0,
-                                gid: 0,
-                                a: syscall::number::SYS_FEVENT,
-                                b: *handle_id,
-                                c: EVENT_READ,
-                                d: count
-                            };
+                            if count > 0 {
+                                let event_packet = Packet {
+                                    id: 0,
+                                    pid: 0,
+                                    uid: 0,
+                                    gid: 0,
+                                    a: syscall::number::SYS_FEVENT,
+                                    b: *handle_id,
+                                    c: EVENT_READ,
+                                    d: count
+                                };
 
-                            socket.write(&event_packet).expect("vesad: failed to write display event");
+                                socket.write(&event_packet).expect("vesad: failed to write display event");
+                            }
                         }
                     }
                 }

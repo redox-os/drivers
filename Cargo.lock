@@ -262,7 +262,7 @@ dependencies = [
 [[package]]
 name = "netutils"
 version = "0.1.0"
-source = "git+https://github.com/redox-os/netutils.git#7eda176e6b4e2edbcc0616247598ec5e87bfe8e8"
+source = "git+https://github.com/redox-os/netutils.git#f1861a0caa73c5351a3594cc39a677af709b8cbe"
 dependencies = [
  "arg_parser 0.1.0 (git+https://github.com/redox-os/arg-parser.git)",
  "extra 0.1.0 (git+https://github.com/redox-os/libextra.git)",
@@ -469,7 +469,7 @@ dependencies = [
 [[package]]
 name = "redox_event"
 version = "0.1.0"
-source = "git+https://github.com/redox-os/event.git#f2448cdafefa5a8deb304d7ea09faf3feb5ff328"
+source = "git+https://github.com/redox-os/event.git#e9bf8ee4622cb82af2a10032ed711174b2188afd"
 dependencies = [
  "redox_syscall 0.1.37 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
