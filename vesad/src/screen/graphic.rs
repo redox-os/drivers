@@ -13,7 +13,6 @@ pub struct GraphicScreen {
     pub display: Display,
     pub seek: usize,
     pub input: VecDeque<Event>,
-    pub requested: usize
 }
 
 impl GraphicScreen {
@@ -22,7 +21,6 @@ impl GraphicScreen {
             display: display,
             seek: 0,
             input: VecDeque::new(),
-            requested: 0
         }
     }
 }
@@ -43,11 +41,6 @@ impl Screen for GraphicScreen {
             width: width as u32,
             height: height as u32,
         }.to_event());
-    }
-
-    fn event(&mut self, flags: usize) -> Result<usize> {
-        self.requested = flags;
-        Ok(0)
     }
 
     fn map(&self, offset: usize, size: usize) -> Result<usize> {

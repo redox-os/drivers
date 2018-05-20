@@ -15,7 +15,6 @@ pub struct TextScreen {
     pub changed: BTreeSet<usize>,
     pub ctrl: bool,
     pub input: VecDeque<u8>,
-    pub requested: usize
 }
 
 impl TextScreen {
@@ -26,7 +25,6 @@ impl TextScreen {
             changed: BTreeSet::new(),
             ctrl: false,
             input: VecDeque::new(),
-            requested: 0
         }
     }
 }
@@ -44,11 +42,6 @@ impl Screen for TextScreen {
         self.display.resize(width, height);
         self.console.state.w = width / 8;
         self.console.state.h = height / 16;
-    }
-
-    fn event(&mut self, flags: usize) -> Result<usize> {
-        self.requested = flags;
-        Ok(0)
     }
 
     fn map(&self, _offset: usize, _size: usize) -> Result<usize> {

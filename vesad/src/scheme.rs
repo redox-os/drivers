@@ -8,15 +8,16 @@ use display::Display;
 use screen::{Screen, GraphicScreen, TextScreen};
 
 #[derive(Clone)]
-enum HandleKind {
+pub enum HandleKind {
     Input,
     Screen(usize),
 }
 
 #[derive(Clone)]
-struct Handle {
-    kind: HandleKind,
-    flags: usize,
+pub struct Handle {
+    pub kind: HandleKind,
+    pub flags: usize,
+    pub events: usize,
 }
 
 pub struct DisplayScheme {
@@ -25,7 +26,7 @@ pub struct DisplayScheme {
     active: usize,
     pub screens: BTreeMap<usize, Box<Screen>>,
     next_id: usize,
-    handles: BTreeMap<usize, Handle>,
+    pub handles: BTreeMap<usize, Handle>,
 }
 
 impl DisplayScheme {
@@ -81,7 +82,8 @@ impl SchemeMut for DisplayScheme {
 
                 self.handles.insert(id, Handle {
                     kind: HandleKind::Input,
-                    flags: flags
+                    flags: flags,
+                    events: 0,
                 });
 
                 Ok(id)
@@ -104,7 +106,8 @@ impl SchemeMut for DisplayScheme {
 
                 self.handles.insert(id, Handle {
                     kind: HandleKind::Screen(screen_i),
-                    flags: flags
+                    flags: flags,
+                    events: 0,
                 });
 
                 Ok(id)
@@ -130,15 +133,14 @@ impl SchemeMut for DisplayScheme {
     }
 
     fn fevent(&mut self, id: usize, flags: usize) -> Result<usize> {
-        let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
+        let handle = self.handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
-        if let HandleKind::Screen(screen_i) = handle.kind {
-            if let Some(screen) = self.screens.get_mut(&screen_i) {
-                return screen.event(flags).and(Ok(screen_i));
-            }
+        if let HandleKind::Screen(_screen_i) = handle.kind {
+            handle.events = flags;
+            Ok(id)
+        } else {
+            Err(Error::new(EBADF))
         }
-
-        Err(Error::new(EBADF))
     }
 
     fn fmap(&mut self, id: usize, offset: usize, size: usize) -> Result<usize> {
