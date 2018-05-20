@@ -81,7 +81,7 @@ fn main() {
                 Ok(None)
             }).expect("rtl8168d: failed to catch events on IRQ file");
 
-            let socket_fd = socket.borrow().as_raw_fd();
+            let device_packet = device.clone();
             let socket_packet = socket.clone();
             event_queue.add(socket_fd, move |_event| -> Result<Option<usize>> {
                 loop {
@@ -91,7 +91,7 @@ fn main() {
                     }
 
                     let a = packet.a;
-                    device.borrow_mut().handle(&mut packet);
+                    device_packet.borrow_mut().handle(&mut packet);
                     if packet.a == (-EWOULDBLOCK) as usize {
                         packet.a = a;
                         todo.borrow_mut().push(packet);
@@ -100,7 +100,7 @@ fn main() {
                     }
                 }
 
-                let next_read = device.borrow().next_read();
+                let next_read = device_packet.borrow().next_read();
                 if next_read > 0 {
                     return Ok(Some(next_read));
                 }
@@ -108,35 +108,31 @@ fn main() {
                 Ok(None)
             }).expect("rtl8168d: failed to catch events on scheme file");
 
+            let send_events = |event_count| {
+                for (handle_id, _handle) in device.borrow().handles.iter() {
+                    socket.borrow_mut().write(&Packet {
+                        id: 0,
+                        pid: 0,
+                        uid: 0,
+                        gid: 0,
+                        a: syscall::number::SYS_FEVENT,
+                        b: *handle_id,
+                        c: syscall::flag::EVENT_READ,
+                        d: event_count
+                    }).expect("e1000d: failed to write event");
+                }
+            };
+
             for event_count in event_queue.trigger_all(event::Event {
                 fd: 0,
                 flags: 0,
             }).expect("rtl8168d: failed to trigger events") {
-                socket.borrow_mut().write(&Packet {
-                    id: 0,
-                    pid: 0,
-                    uid: 0,
-                    gid: 0,
-                    a: syscall::number::SYS_FEVENT,
-                    b: 0,
-                    c: syscall::flag::EVENT_READ,
-                    d: event_count
-                }).expect("rtl8168d: failed to write event");
+                send_events(event_count);
             }
 
             loop {
                 let event_count = event_queue.run().expect("rtl8168d: failed to handle events");
-
-                socket.borrow_mut().write(&Packet {
-                    id: 0,
-                    pid: 0,
-                    uid: 0,
-                    gid: 0,
-                    a: syscall::number::SYS_FEVENT,
-                    b: 0,
-                    c: syscall::flag::EVENT_READ,
-                    d: event_count
-                }).expect("rtl8168d: failed to write event");
+                send_events(event_count);
             }
         }
         unsafe { let _ = syscall::physunmap(address); }

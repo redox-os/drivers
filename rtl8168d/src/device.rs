@@ -1,7 +1,8 @@
 use std::{mem, thread};
+use std::collections::BTreeMap;
 
 use netutils::setcfg;
-use syscall::error::{Error, EACCES, EINVAL, EWOULDBLOCK, Result};
+use syscall::error::{Error, EACCES, EBADF, EINVAL, EWOULDBLOCK, Result};
 use syscall::flag::O_NONBLOCK;
 use syscall::io::{Dma, Mmio, Io, ReadOnly};
 use syscall::scheme::SchemeMut;
@@ -73,13 +74,17 @@ pub struct Rtl8168 {
     transmit_ring: Dma<[Td; 16]>,
     transmit_i: usize,
     transmit_buffer_h: [Dma<[Mmio<u8>; 7552]>; 1],
-    transmit_ring_h: Dma<[Td; 1]>
+    transmit_ring_h: Dma<[Td; 1]>,
+    next_id: usize,
+    pub handles: BTreeMap<usize, usize>
 }
 
 impl SchemeMut for Rtl8168 {
     fn open(&mut self, _path: &[u8], flags: usize, uid: u32, _gid: u32) -> Result<usize> {
         if uid == 0 {
-            Ok(flags)
+            self.next_id += 1;
+            self.handles.insert(self.next_id, flags);
+            Ok(self.next_id)
         } else {
             Err(Error::new(EACCES))
         }
@@ -90,10 +95,18 @@ impl SchemeMut for Rtl8168 {
             return Err(Error::new(EINVAL));
         }
 
-        Ok(id)
+        let flags = {
+            let flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
+            *flags
+        };
+        self.next_id += 1;
+        self.handles.insert(self.next_id, flags);
+        Ok(self.next_id)
     }
 
     fn read(&mut self, id: usize, buf: &mut [u8]) -> Result<usize> {
+        let flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
+
         if self.receive_i >= self.receive_ring.len() {
             self.receive_i = 0;
         }
@@ -118,14 +131,16 @@ impl SchemeMut for Rtl8168 {
             return Ok(i);
         }
 
-        if id & O_NONBLOCK == O_NONBLOCK {
+        if flags & O_NONBLOCK == O_NONBLOCK {
             Ok(0)
         } else {
             Err(Error::new(EWOULDBLOCK))
         }
     }
 
-    fn write(&mut self, _id: usize, buf: &[u8]) -> Result<usize> {
+    fn write(&mut self, id: usize, buf: &[u8]) -> Result<usize> {
+        let _flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
+
         loop {
             if self.transmit_i >= self.transmit_ring.len() {
                 self.transmit_i = 0;
@@ -159,15 +174,30 @@ impl SchemeMut for Rtl8168 {
         }
     }
 
-    fn fevent(&mut self, _id: usize, _flags: usize) -> Result<usize> {
+    fn fevent(&mut self, id: usize, _flags: usize) -> Result<usize> {
+        let _flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
+        Ok(id)
+    }
+
+    fn fpath(&mut self, id: usize, buf: &mut [u8]) -> Result<usize> {
+        let _flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
+
+        let mut i = 0;
+        let scheme_path = b"network:";
+        while i < buf.len() && i < scheme_path.len() {
+            buf[i] = scheme_path[i];
+            i += 1;
+        }
+        Ok(i)
+    }
+
+    fn fsync(&mut self, id: usize) -> Result<usize> {
+        let _flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
         Ok(0)
     }
 
-    fn fsync(&mut self, _id: usize) -> Result<usize> {
-        Ok(0)
-    }
-
-    fn close(&mut self, _id: usize) -> Result<usize> {
+    fn close(&mut self, id: usize) -> Result<usize> {
+        self.handles.remove(&id).ok_or(Error::new(EBADF))?;
         Ok(0)
     }
 }
@@ -214,7 +244,9 @@ impl Rtl8168 {
             transmit_ring: Dma::zeroed()?,
             transmit_i: 0,
             transmit_buffer_h: [Dma::zeroed()?],
-            transmit_ring_h: Dma::zeroed()?
+            transmit_ring_h: Dma::zeroed()?,
+            next_id: 0,
+            handles: BTreeMap::new()
         };
 
         module.init();
