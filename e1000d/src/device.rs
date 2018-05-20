@@ -1,10 +1,11 @@
-use std::{cmp, mem, ptr, slice, thread, time};
+use std::{cmp, mem, ptr, slice, thread};
+use std::collections::BTreeMap;
 
 use netutils::setcfg;
-use syscall::error::{Error, EACCES, EINVAL, EWOULDBLOCK, Result};
+use syscall::error::{Error, EACCES, EBADF, EINVAL, EWOULDBLOCK, Result};
 use syscall::flag::O_NONBLOCK;
 use syscall::io::Dma;
-use syscall::scheme::Scheme;
+use syscall::scheme::SchemeMut;
 
 const CTRL: u32 = 0x00;
 const CTRL_LRST: u32 = 1 << 3;
@@ -98,29 +99,41 @@ pub struct Intel8254x {
     receive_buffer: [Dma<[u8; 16384]>; 16],
     receive_ring: Dma<[Rd; 16]>,
     transmit_buffer: [Dma<[u8; 16384]>; 16],
-    transmit_ring: Dma<[Td; 16]>
+    transmit_ring: Dma<[Td; 16]>,
+    next_id: usize,
+    pub handles: BTreeMap<usize, usize>,
 }
 
-impl Scheme for Intel8254x {
-    fn open(&self, _path: &[u8], flags: usize, uid: u32, _gid: u32) -> Result<usize> {
+impl SchemeMut for Intel8254x {
+    fn open(&mut self, _path: &[u8], flags: usize, uid: u32, _gid: u32) -> Result<usize> {
         if uid == 0 {
-            Ok(flags)
+            self.next_id += 1;
+            self.handles.insert(self.next_id, flags);
+            Ok(self.next_id)
         } else {
             Err(Error::new(EACCES))
         }
     }
 
-    fn dup(&self, id: usize, buf: &[u8]) -> Result<usize> {
+    fn dup(&mut self, id: usize, buf: &[u8]) -> Result<usize> {
         if ! buf.is_empty() {
             return Err(Error::new(EINVAL));
         }
 
-        Ok(id)
+        let flags = {
+            let flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
+            *flags
+        };
+        self.next_id += 1;
+        self.handles.insert(self.next_id, flags);
+        Ok(self.next_id)
     }
 
-    fn read(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
-        let head = unsafe { self.read(RDH) };
-        let mut tail = unsafe { self.read(RDT) };
+    fn read(&mut self, id: usize, buf: &mut [u8]) -> Result<usize> {
+        let flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
+
+        let head = unsafe { self.read_reg(RDH) };
+        let mut tail = unsafe { self.read_reg(RDT) };
 
         tail += 1;
         if tail >= self.receive_ring.len() as u32 {
@@ -140,23 +153,25 @@ impl Scheme for Intel8254x {
                     i += 1;
                 }
 
-                unsafe { self.write(RDT, tail) };
+                unsafe { self.write_reg(RDT, tail) };
 
                 return Ok(i);
             }
         }
 
-        if id & O_NONBLOCK == O_NONBLOCK {
+        if flags & O_NONBLOCK == O_NONBLOCK {
             Ok(0)
         } else {
             Err(Error::new(EWOULDBLOCK))
         }
     }
 
-    fn write(&self, _id: usize, buf: &[u8]) -> Result<usize> {
+    fn write(&mut self, id: usize, buf: &[u8]) -> Result<usize> {
+        let _flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
+
         loop {
-            let head = unsafe { self.read(TDH) };
-            let mut tail = unsafe { self.read(TDT) };
+            let head = unsafe { self.read_reg(TDH) };
+            let mut tail = unsafe { self.read_reg(TDT) };
             let old_tail = tail;
 
             tail += 1;
@@ -183,7 +198,7 @@ impl Scheme for Intel8254x {
                     i += 1;
                 }
 
-                unsafe { self.write(TDT, tail) };
+                unsafe { self.write_reg(TDT, tail) };
 
                 while td.status == 0 {
                     thread::yield_now();
@@ -194,11 +209,14 @@ impl Scheme for Intel8254x {
         }
     }
 
-    fn fevent(&self, _id: usize, _flags: usize) -> Result<usize> {
-        Ok(0)
+    fn fevent(&mut self, id: usize, _flags: usize) -> Result<usize> {
+        let _flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
+        Ok(id)
     }
 
-    fn fpath(&self, _id: usize, buf: &mut [u8]) -> Result<usize> {
+    fn fpath(&mut self, id: usize, buf: &mut [u8]) -> Result<usize> {
+        let _flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
+
         let mut i = 0;
         let scheme_path = b"network:";
         while i < buf.len() && i < scheme_path.len() {
@@ -208,11 +226,13 @@ impl Scheme for Intel8254x {
         Ok(i)
     }
 
-    fn fsync(&self, _id: usize) -> Result<usize> {
+    fn fsync(&mut self, id: usize) -> Result<usize> {
+        let _flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
         Ok(0)
     }
 
-    fn close(&self, _id: usize) -> Result<usize> {
+    fn close(&mut self, id: usize) -> Result<usize> {
+        self.handles.remove(&id).ok_or(Error::new(EBADF))?;
         Ok(0)
     }
 }
@@ -230,7 +250,9 @@ impl Intel8254x {
                             Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
                             Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
                             Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?],
-            transmit_ring: Dma::zeroed()?
+            transmit_ring: Dma::zeroed()?,
+            next_id: 0,
+            handles: BTreeMap::new()
         };
 
         module.init();
@@ -239,13 +261,13 @@ impl Intel8254x {
     }
 
     pub unsafe fn irq(&self) -> bool {
-        let icr = self.read(ICR);
+        let icr = self.read_reg(ICR);
         icr != 0
     }
 
     pub fn next_read(&self) -> usize {
-        let head = unsafe { self.read(RDH) };
-        let mut tail = unsafe { self.read(RDT) };
+        let head = unsafe { self.read_reg(RDH) };
+        let mut tail = unsafe { self.read_reg(RDT) };
 
         tail += 1;
         if tail >= self.receive_ring.len() as u32 {
@@ -262,27 +284,27 @@ impl Intel8254x {
         0
     }
 
-    pub unsafe fn read(&self, register: u32) -> u32 {
+    pub unsafe fn read_reg(&self, register: u32) -> u32 {
         ptr::read_volatile((self.base + register as usize) as *mut u32)
     }
 
-    pub unsafe fn write(&self, register: u32, data: u32) -> u32 {
+    pub unsafe fn write_reg(&self, register: u32, data: u32) -> u32 {
         ptr::write_volatile((self.base + register as usize) as *mut u32, data);
         ptr::read_volatile((self.base + register as usize) as *mut u32)
     }
 
     pub unsafe fn flag(&self, register: u32, flag: u32, value: bool) {
         if value {
-            self.write(register, self.read(register) | flag);
+            self.write_reg(register, self.read_reg(register) | flag);
         } else {
-            self.write(register, self.read(register) & (0xFFFFFFFF - flag));
+            self.write_reg(register, self.read_reg(register) & !flag);
         }
     }
 
     pub unsafe fn init(&mut self) {
         self.flag(CTRL, CTRL_RST, true);
-        while self.read(CTRL) & CTRL_RST == CTRL_RST {
-            print!("   - Waiting for reset: {:X}\n", self.read(CTRL));
+        while self.read_reg(CTRL) & CTRL_RST == CTRL_RST {
+            print!("   - Waiting for reset: {:X}\n", self.read_reg(CTRL));
         }
 
         // Enable auto negotiate, link, clear reset, do not Invert Loss-Of Signal
@@ -290,18 +312,18 @@ impl Intel8254x {
         self.flag(CTRL, CTRL_LRST | CTRL_PHY_RST | CTRL_ILOS, false);
 
         // No flow control
-        self.write(FCAH, 0);
-        self.write(FCAL, 0);
-        self.write(FCT, 0);
-        self.write(FCTTV, 0);
+        self.write_reg(FCAH, 0);
+        self.write_reg(FCAL, 0);
+        self.write_reg(FCT, 0);
+        self.write_reg(FCTTV, 0);
 
         // Do not use VLANs
         self.flag(CTRL, CTRL_VME, false);
 
         // TODO: Clear statistical counters
 
-        let mac_low = self.read(RAL0);
-        let mac_high = self.read(RAH0);
+        let mac_low = self.read_reg(RAL0);
+        let mac_high = self.read_reg(RAH0);
         let mac = [mac_low as u8,
                     (mac_low >> 8) as u8,
                     (mac_low >> 16) as u8,
@@ -320,24 +342,24 @@ impl Intel8254x {
             self.receive_ring[i].buffer = self.receive_buffer[i].physical() as u64;
         }
 
-        self.write(RDBAH, (self.receive_ring.physical() >> 32) as u32);
-        self.write(RDBAL, self.receive_ring.physical() as u32);
-        self.write(RDLEN, (self.receive_ring.len() * mem::size_of::<Rd>()) as u32);
-        self.write(RDH, 0);
-        self.write(RDT, self.receive_ring.len() as u32 - 1);
+        self.write_reg(RDBAH, (self.receive_ring.physical() >> 32) as u32);
+        self.write_reg(RDBAL, self.receive_ring.physical() as u32);
+        self.write_reg(RDLEN, (self.receive_ring.len() * mem::size_of::<Rd>()) as u32);
+        self.write_reg(RDH, 0);
+        self.write_reg(RDT, self.receive_ring.len() as u32 - 1);
 
         // Transmit Buffer
         for i in 0..self.transmit_ring.len() {
             self.transmit_ring[i].buffer = self.transmit_buffer[i].physical() as u64;
         }
 
-        self.write(TDBAH, (self.transmit_ring.physical() >> 32) as u32);
-        self.write(TDBAL, self.transmit_ring.physical() as u32);
-        self.write(TDLEN, (self.transmit_ring.len() * mem::size_of::<Td>()) as u32);
-        self.write(TDH, 0);
-        self.write(TDT, 0);
+        self.write_reg(TDBAH, (self.transmit_ring.physical() >> 32) as u32);
+        self.write_reg(TDBAL, self.transmit_ring.physical() as u32);
+        self.write_reg(TDLEN, (self.transmit_ring.len() * mem::size_of::<Td>()) as u32);
+        self.write_reg(TDH, 0);
+        self.write_reg(TDT, 0);
 
-        self.write(IMS, IMS_RXT | IMS_RX | IMS_RXDMT | IMS_RXSEQ); // | IMS_LSC | IMS_TXQE | IMS_TXDW
+        self.write_reg(IMS, IMS_RXT | IMS_RX | IMS_RXDMT | IMS_RXSEQ); // | IMS_LSC | IMS_TXQE | IMS_TXDW
 
         self.flag(RCTL, RCTL_EN, true);
         self.flag(RCTL, RCTL_UPE, true);
@@ -359,10 +381,10 @@ impl Intel8254x {
         // TIPG Packet Gap
         // TODO ...
 
-        while self.read(STATUS) & 2 != 2 {
-            print!("   - Waiting for link up: {:X}\n", self.read(STATUS));
+        while self.read_reg(STATUS) & 2 != 2 {
+            print!("   - Waiting for link up: {:X}\n", self.read_reg(STATUS));
         }
-        print!("   - Link is up with speed {}\n", match (self.read(STATUS) >> 6) & 0b11 {
+        print!("   - Link is up with speed {}\n", match (self.read_reg(STATUS) >> 6) & 0b11 {
             0b00 => "10 Mb/s",
             0b01 => "100 Mb/s",
             _ => "1000 Mb/s",

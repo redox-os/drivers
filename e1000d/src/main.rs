@@ -12,7 +12,7 @@ use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::sync::Arc;
 
 use event::EventQueue;
-use syscall::{Packet, Scheme, MAP_WRITE};
+use syscall::{Packet, SchemeMut, MAP_WRITE};
 use syscall::error::EWOULDBLOCK;
 
 pub mod device;
@@ -40,7 +40,7 @@ fn main() {
 
         let address = unsafe { syscall::physmap(bar, 128*1024, MAP_WRITE).expect("e1000d: failed to map address") };
         {
-            let device = Arc::new(unsafe { device::Intel8254x::new(address).expect("e1000d: failed to allocate device") });
+            let device = Arc::new(RefCell::new(unsafe { device::Intel8254x::new(address).expect("e1000d: failed to allocate device") }));
 
             let mut event_queue = EventQueue::<usize>::new().expect("e1000d: failed to create event queue");
 
@@ -54,14 +54,14 @@ fn main() {
             event_queue.add(irq_file.as_raw_fd(), move |_event| -> Result<Option<usize>> {
                 let mut irq = [0; 8];
                 irq_file.read(&mut irq)?;
-                if unsafe { device_irq.irq() } {
+                if unsafe { device_irq.borrow().irq() } {
                     irq_file.write(&mut irq)?;
 
                     let mut todo = todo_irq.borrow_mut();
                     let mut i = 0;
                     while i < todo.len() {
                         let a = todo[i].a;
-                        device_irq.handle(&mut todo[i]);
+                        device_irq.borrow_mut().handle(&mut todo[i]);
                         if todo[i].a == (-EWOULDBLOCK) as usize {
                             todo[i].a = a;
                             i += 1;
@@ -71,7 +71,7 @@ fn main() {
                         }
                     }
 
-                    let next_read = device_irq.next_read();
+                    let next_read = device_irq.borrow().next_read();
                     if next_read > 0 {
                         return Ok(Some(next_read));
                     }
@@ -79,6 +79,7 @@ fn main() {
                 Ok(None)
             }).expect("e1000d: failed to catch events on IRQ file");
 
+            let device_packet = device.clone();
             let socket_packet = socket.clone();
             event_queue.add(socket_fd, move |_event| -> Result<Option<usize>> {
                 loop {
@@ -88,7 +89,7 @@ fn main() {
                     }
 
                     let a = packet.a;
-                    device.handle(&mut packet);
+                    device_packet.borrow_mut().handle(&mut packet);
                     if packet.a == (-EWOULDBLOCK) as usize {
                         packet.a = a;
                         todo.borrow_mut().push(packet);
@@ -97,7 +98,7 @@ fn main() {
                     }
                 }
 
-                let next_read = device.next_read();
+                let next_read = device_packet.borrow().next_read();
                 if next_read > 0 {
                     return Ok(Some(next_read));
                 }
@@ -105,35 +106,31 @@ fn main() {
                 Ok(None)
             }).expect("e1000d: failed to catch events on scheme file");
 
+            let send_events = |event_count| {
+                for (handle_id, _handle) in device.borrow().handles.iter() {
+                    socket.borrow_mut().write(&Packet {
+                        id: 0,
+                        pid: 0,
+                        uid: 0,
+                        gid: 0,
+                        a: syscall::number::SYS_FEVENT,
+                        b: *handle_id,
+                        c: syscall::flag::EVENT_READ,
+                        d: event_count
+                    }).expect("e1000d: failed to write event");
+                }
+            };
+
             for event_count in event_queue.trigger_all(event::Event {
                 fd: 0,
                 flags: 0,
             }).expect("e1000d: failed to trigger events") {
-                socket.borrow_mut().write(&Packet {
-                    id: 0,
-                    pid: 0,
-                    uid: 0,
-                    gid: 0,
-                    a: syscall::number::SYS_FEVENT,
-                    b: 0,
-                    c: syscall::flag::EVENT_READ,
-                    d: event_count
-                }).expect("e1000d: failed to write event");
+                send_events(event_count);
             }
 
             loop {
                 let event_count = event_queue.run().expect("e1000d: failed to handle events");
-
-                socket.borrow_mut().write(&Packet {
-                    id: 0,
-                    pid: 0,
-                    uid: 0,
-                    gid: 0,
-                    a: syscall::number::SYS_FEVENT,
-                    b: 0,
-                    c: syscall::flag::EVENT_READ,
-                    d: event_count
-                }).expect("e1000d: failed to write event");
+                send_events(event_count);
             }
         }
         unsafe { let _ = syscall::physunmap(address); }
