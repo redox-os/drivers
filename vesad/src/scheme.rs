@@ -18,6 +18,7 @@ pub struct Handle {
     pub kind: HandleKind,
     pub flags: usize,
     pub events: usize,
+    pub notified_read: bool
 }
 
 pub struct DisplayScheme {
@@ -57,14 +58,11 @@ impl DisplayScheme {
         if let Some(handle) = self.handles.get(&id) {
             if let HandleKind::Screen(screen_i) = handle.kind {
                 if let Some(screen) = self.screens.get(&screen_i) {
-                    match screen.can_read() {
-                        Some(count) => return Some(count),
-                        None => if handle.flags & O_NONBLOCK == O_NONBLOCK {
-                            return Some(0);
-                        } else {
-                            return None;
-                        }
-                    }
+                    screen.can_read().or(if handle.flags & O_NONBLOCK == O_NONBLOCK {
+                        Some(0)
+                    } else {
+                        None
+                    });
                 }
             }
         }
@@ -84,6 +82,7 @@ impl SchemeMut for DisplayScheme {
                     kind: HandleKind::Input,
                     flags: flags,
                     events: 0,
+                    notified_read: false
                 });
 
                 Ok(id)
@@ -108,6 +107,7 @@ impl SchemeMut for DisplayScheme {
                     kind: HandleKind::Screen(screen_i),
                     flags: flags,
                     events: 0,
+                    notified_read: false
                 });
 
                 Ok(id)
@@ -134,6 +134,8 @@ impl SchemeMut for DisplayScheme {
 
     fn fevent(&mut self, id: usize, flags: usize) -> Result<usize> {
         let handle = self.handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+
+        handle.notified_read = false;
 
         if let HandleKind::Screen(_screen_i) = handle.kind {
             handle.events = flags;

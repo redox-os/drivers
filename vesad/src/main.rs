@@ -14,7 +14,7 @@ use syscall::{physmap, physunmap, Packet, SchemeMut, EVENT_READ, MAP_WRITE, MAP_
 
 use mode_info::VBEModeInfo;
 use primitive::fast_set64;
-use scheme::DisplayScheme;
+use scheme::{DisplayScheme, HandleKind};
 
 pub mod display;
 pub mod mode_info;
@@ -91,24 +91,37 @@ fn main() {
                     }
                 }
 
-                for (handle_id, handle) in scheme.handles.iter() {
-                    if handle.events & EVENT_READ != 0 {
-                        if let Some(count) = scheme.can_read(*handle_id) {
-                            if count > 0 {
-                                let event_packet = Packet {
-                                    id: 0,
-                                    pid: 0,
-                                    uid: 0,
-                                    gid: 0,
-                                    a: syscall::number::SYS_FEVENT,
-                                    b: *handle_id,
-                                    c: EVENT_READ,
-                                    d: count
-                                };
+                for (handle_id, handle) in scheme.handles.iter_mut() {
+                    if handle.events & EVENT_READ == 0 {
+                        continue;
+                    }
 
-                                socket.write(&event_packet).expect("vesad: failed to write display event");
-                            }
+                    // Can't use scheme.can_read() because we borrow handles as mutable.
+                    // (and because it'd treat O_NONBLOCK sockets differently)
+                    let count = if let HandleKind::Screen(screen_i) = handle.kind {
+                        scheme.screens.get(&screen_i)
+                            .and_then(|screen| screen.can_read())
+                            .unwrap_or(0)
+                    } else { 0 };
+
+                    if count > 0 {
+                        if !handle.notified_read {
+                            handle.notified_read = true;
+                            let event_packet = Packet {
+                                id: 0,
+                                pid: 0,
+                                uid: 0,
+                                gid: 0,
+                                a: syscall::number::SYS_FEVENT,
+                                b: *handle_id,
+                                c: EVENT_READ,
+                                d: count
+                            };
+
+                            socket.write(&event_packet).expect("vesad: failed to write display event");
                         }
+                    } else {
+                        handle.notified_read = false;
                     }
                 }
             }
