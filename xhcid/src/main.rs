@@ -4,7 +4,7 @@ extern crate event;
 extern crate plain;
 extern crate syscall;
 
-use event::EventQueue;
+use event::{Event, EventQueue};
 use std::cell::RefCell;
 use std::env;
 use std::fs::File;
@@ -56,7 +56,7 @@ fn main() {
             let hci_irq = hci.clone();
             let socket_irq = socket.clone();
             let todo_irq = todo.clone();
-            event_queue.add(irq_file.as_raw_fd(), move |_count: usize| -> Result<Option<()>> {
+            event_queue.add(irq_file.as_raw_fd(), move |_| -> Result<Option<()>> {
                 let mut irq = [0; 8];
                 irq_file.read(&mut irq)?;
 
@@ -83,7 +83,7 @@ fn main() {
 
             let socket_fd = socket.borrow().as_raw_fd();
             let socket_packet = socket.clone();
-            event_queue.add(socket_fd, move |_count: usize| -> Result<Option<()>> {
+            event_queue.add(socket_fd, move |_| -> Result<Option<()>> {
                 loop {
                     let mut packet = Packet::default();
                     if socket_packet.borrow_mut().read(&mut packet)? == 0 {
@@ -102,7 +102,10 @@ fn main() {
                 Ok(None)
             }).expect("xhcid: failed to catch events on scheme file");
 
-            event_queue.trigger_all(0).expect("xhcid: failed to trigger events");
+            event_queue.trigger_all(Event {
+                fd: 0,
+                flags: 0
+            }).expect("xhcid: failed to trigger events");
 
             event_queue.run().expect("xhcid: failed to handle events");
         }
