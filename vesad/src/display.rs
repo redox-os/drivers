@@ -1,8 +1,7 @@
 #[cfg(feature="rusttype")]
 extern crate rusttype;
 
-use alloc::allocator::{Alloc, Layout};
-use alloc::heap::Global;
+use std::alloc::{Alloc, Global, Layout};
 use std::{cmp, slice};
 use std::ptr::NonNull;
 
@@ -108,7 +107,7 @@ impl Display {
             let onscreen = self.onscreen.as_mut_ptr();
             self.onscreen = unsafe { slice::from_raw_parts_mut(onscreen, size) };
 
-            unsafe { Global.dealloc(NonNull::new_unchecked(self.offscreen.as_mut_ptr() as *mut u8).as_opaque(), Layout::from_size_align_unchecked(self.offscreen.len() * 4, 4096)) };
+            unsafe { Global.dealloc(NonNull::new_unchecked(self.offscreen.as_mut_ptr() as *mut u8), Layout::from_size_align_unchecked(self.offscreen.len() * 4, 4096)) };
             self.offscreen = unsafe { slice::from_raw_parts_mut(offscreen as *mut u32, size) };
         } else {
             println!("Display is already {}, {}", width, height);
@@ -277,6 +276,6 @@ impl Display {
 
 impl Drop for Display {
     fn drop(&mut self) {
-        unsafe { Global.dealloc(NonNull::new_unchecked(self.offscreen.as_mut_ptr() as *mut u8).as_opaque(), Layout::from_size_align_unchecked(self.offscreen.len() * 4, 4096)) };
+        unsafe { Global.dealloc(NonNull::new_unchecked(self.offscreen.as_mut_ptr() as *mut u8), Layout::from_size_align_unchecked(self.offscreen.len() * 4, 4096)) };
     }
 }

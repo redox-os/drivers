@@ -1,9 +1,7 @@
 #![deny(warnings)]
-#![feature(alloc)]
 #![feature(allocator_api)]
 #![feature(asm)]
 
-extern crate alloc;
 extern crate orbclient;
 extern crate syscall;
 
