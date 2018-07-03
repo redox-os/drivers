@@ -4,6 +4,7 @@ version = "0.1.0"
 
 [dependencies]
 bitflags = "0.7"
-orbclient = "0.3"
+orbclient = { path = "/home/ploppz/code/redox/orbclient"}
 redox_event = { git = "https://gitlab.redox-os.org/redox-os/event.git" }
 redox_syscall = "0.1"
+byteorder = "1.2.3"

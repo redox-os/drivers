@@ -1,21 +1,25 @@
 #![deny(warnings)]
 #![feature(asm)]
+#![feature(try_from)]
 
 #[macro_use]
 extern crate bitflags;
 extern crate event;
 extern crate orbclient;
 extern crate syscall;
+extern crate byteorder;
 
-use std::{env, process};
+use std::process;
 use std::cell::RefCell;
 use std::fs::File;
 use std::io::{Read, Write, Result};
-use std::os::unix::io::AsRawFd;
+use std::os::unix::io::{AsRawFd, RawFd, FromRawFd};
 use std::sync::Arc;
 
 use event::EventQueue;
 use syscall::iopl;
+use syscall::{Packet, O_RDWR, O_CREAT, O_NONBLOCK, SchemeMut};
+
 
 use state::Ps2d;
 
@@ -28,7 +32,11 @@ fn daemon(input: File) {
     unsafe {
         iopl(3).expect("ps2d: failed to get I/O permission");
     }
+    let scheme_fd = syscall::open(":ps2", O_RDWR | O_CREAT | O_NONBLOCK).expect("failed to open :ps2") as RawFd;
+    let mut scheme_file = unsafe { File::from_raw_fd(scheme_fd) };
 
+    // TODO do something with this. Take path or something
+    /*
     let keymap = match env::args().skip(1).next() {
         Some(k) => match k.to_lowercase().as_ref() {
             "dvorak" => (keymap::dvorak::get_char),
@@ -40,12 +48,13 @@ fn daemon(input: File) {
         },
         None => (keymap::us::get_char)
     };
+    */
 
     let mut key_irq = File::open("irq:1").expect("ps2d: failed to open irq:1");
 
     let mut mouse_irq = File::open("irq:12").expect("ps2d: failed to open irq:12");
 
-    let ps2d = Arc::new(RefCell::new(Ps2d::new(input, keymap)));
+    let ps2d = Arc::new(RefCell::new(Ps2d::new(input)));
 
     let mut event_queue = EventQueue::<()>::new().expect("ps2d: failed to create event queue");
 
@@ -61,7 +70,7 @@ fn daemon(input: File) {
         Ok(None)
     }).expect("ps2d: failed to poll irq:1");
 
-    let mouse_ps2d = ps2d;
+    let mouse_ps2d = ps2d.clone();
     event_queue.add(mouse_irq.as_raw_fd(), move |_event| -> Result<Option<()>> {
         let mut irq = [0; 8];
         if mouse_irq.read(&mut irq)? >= irq.len() {
@@ -70,6 +79,19 @@ fn daemon(input: File) {
         }
         Ok(None)
     }).expect("ps2d: failed to poll irq:12");
+
+    let scheme_ps2d = ps2d;
+    event_queue.add(scheme_fd, move |_event| {
+        loop {
+            let mut packet = Packet::default();
+            if scheme_file.read(&mut packet).expect("ps2d: failed to read ps2 scheme") == 0 {
+                break;
+            }
+            scheme_ps2d.borrow_mut().handle(&mut packet);
+            scheme_file.write(&packet).unwrap();
+        }
+        Ok(None)
+    }).expect("s2d: failed to poll scheme");
 
     event_queue.trigger_all(event::Event {
         fd: 0,

@@ -1,12 +1,22 @@
-use orbclient::{KeyEvent, MouseEvent, ButtonEvent, ScrollEvent};
-use std::cmp;
-use std::fs::File;
+use orbclient::{KeyEvent, MouseEvent, ButtonEvent, ScrollEvent, K_ALT_GR, K_NUM_0, K_NUM_1, K_NUM_4, K_NUM_7};
+use std::{u8, cmp};
 use std::io::Write;
 use std::os::unix::io::AsRawFd;
-use syscall;
+use std::convert::TryFrom;
+
+use keymap::Keymap;
+use byteorder::{BigEndian, ByteOrder};
 
 use controller::Ps2;
 use vm;
+
+use std::default::Default;
+use std::fs::File;
+use syscall;
+use syscall::{Result, Error, EBADF, EINVAL, ENOENT, SchemeMut};
+use syscall::flag::{SEEK_SET, SEEK_CUR, SEEK_END};
+
+use ::keymap::{N_MOD_COMBOS, MAX_KEYCODE};
 
 bitflags! {
     flags MousePacketFlags: u8 {
@@ -21,7 +31,17 @@ bitflags! {
     }
 }
 
-pub struct Ps2d<F: Fn(u8,bool) -> char>  {
+// Some scancodes (whatever is useful in the Ps2d impl)
+const SC_ALT: u8 = 0x38;
+const SC_NUM_7: u8 = 0x47;
+const SC_NUM_9: u8 = 0x49;
+const SC_NUM_4: u8 = 0x4b;
+const SC_NUM_6: u8 = 0x4d;
+const SC_NUM_1: u8 = 0x4f;
+const SC_NUM_3: u8 = 0x51;
+const SC_NUM_0: u8 = 0x52;
+
+pub struct Ps2d  {
     ps2: Ps2,
     vmmouse: bool,
     input: File,
@@ -29,6 +49,7 @@ pub struct Ps2d<F: Fn(u8,bool) -> char>  {
     height: u32,
     lshift: bool,
     rshift: bool,
+    alt_gr: bool,
     mouse_x: i32,
     mouse_y: i32,
     mouse_left: bool,
@@ -37,12 +58,18 @@ pub struct Ps2d<F: Fn(u8,bool) -> char>  {
     packets: [u8; 4],
     packet_i: usize,
     extra_packet: bool,
-    //Keymap function
-    get_char: F
+    keymap: Keymap,
+    // state to switch to PS/2 Scan Code Set 2
+    scancode_set_2: bool,
+    num_lock: bool,
+
+    // Scheme (at the moment only keymap)
+    open: bool,
+    pos: usize,
 }
 
-impl<F: Fn(u8,bool) -> char> Ps2d<F> {
-    pub fn new(input: File, keymap: F) -> Self {
+impl Ps2d {
+    pub fn new(input: File) -> Self {
         let mut ps2 = Ps2::new();
         let extra_packet = ps2.init();
 
@@ -56,6 +83,7 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
             height: 0,
             lshift: false,
             rshift: false,
+            alt_gr: false,
             mouse_x: 0,
             mouse_y: 0,
             mouse_left: false,
@@ -64,7 +92,12 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
             packets: [0; 4],
             packet_i: 0,
             extra_packet: extra_packet,
-            get_char: keymap
+            keymap: Keymap::default(),
+            scancode_set_2: false,
+            num_lock: true,
+
+            open: false,
+            pos: 0,
         };
 
         ps2d.resize();
@@ -84,32 +117,59 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
 
     pub fn irq(&mut self) {
         while let Some((keyboard, data)) = self.ps2.next() {
-            self.handle(keyboard, data);
+            self.handle_input(keyboard, data);
         }
     }
 
-    pub fn handle(&mut self, keyboard: bool, data: u8) {
+    fn handle_input(&mut self, keyboard: bool, data: u8) {
         // TODO: Improve efficiency
         self.resize();
 
         if keyboard {
-            let (scancode, pressed) = if data >= 0x80 {
-                (data - 0x80, false)
+            if data == 0xE0 {
+                self.scancode_set_2 = true;
             } else {
-                (data, true)
-            };
+                let (scancode, pressed) = if data >= 0x80 {
+                    (data - 0x80, false)
+                } else {
+                    (data, true)
+                };
 
-            if scancode == 0x2A {
-                self.lshift = pressed;
-            } else if scancode == 0x36 {
-                self.rshift = pressed;
+                if scancode == 0x2A {
+                    self.lshift = pressed;
+                } else if scancode == 0x36 {
+                    self.rshift = pressed;
+                }
+
+                let keycode = if self.scancode_set_2 {
+                    self.scancode_set_2 = false;
+                    if scancode == SC_ALT {
+                        self.alt_gr = pressed;
+                        K_ALT_GR
+                    } else {
+                        scancode
+                    }
+                } else {
+                    // Num Lock => convert numpad to numbers, ELSE passthrough
+                    if self.num_lock {
+                        match scancode {
+                            c @ SC_NUM_7...SC_NUM_9 => c - SC_NUM_7 + K_NUM_7,
+                            c @ SC_NUM_4...SC_NUM_6 => c - SC_NUM_4 + K_NUM_4,
+                            c @ SC_NUM_1...SC_NUM_3 => c - SC_NUM_1 + K_NUM_1,
+                            SC_NUM_0 => K_NUM_0,
+                            _ => scancode,
+                        }
+                    } else {
+                        scancode
+                    }
+                };
+
+                self.input.write(&KeyEvent {
+                    character: self.keymap.get_char(keycode, self.lshift || self.rshift, self.alt_gr),
+                    scancode: keycode,
+                    pressed: pressed
+                }.to_event()).expect("ps2d: failed to write key event");
             }
-
-            self.input.write(&KeyEvent {
-                character: (self.get_char)(scancode, self.lshift || self.rshift),
-                scancode: scancode,
-                pressed: pressed
-            }.to_event()).expect("ps2d: failed to write key event");
         } else if self.vmmouse {
             for _i in 0..256 {
         		let (status, _, _, _, _, _) = unsafe { vm::cmd(vm::ABSPOINTER_STATUS, 0) };
@@ -241,3 +301,92 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
         }
     }
 }
+
+// TODO:
+// - check if file is open or not? Depends whether all uids can write or not
+impl SchemeMut for Ps2d {
+    #[allow(unused_variables)]
+    fn open(&mut self, path: &[u8], flags: usize, uid: u32, _gid: u32) -> Result<usize> {
+        if path == b"keymap" {
+            self.open = true;
+            Ok(0)
+        } else {
+            Err(Error::new(ENOENT))
+        }
+    }
+
+    #[allow(unused_variables)]
+    fn read(&mut self, id: usize, buf: &mut [u8]) -> Result<usize> {
+        let until = cmp::min(self.pos*4 + buf.len(), MAX_KEYCODE*N_MOD_COMBOS*4);
+        let len = until - self.pos;
+        if len % 4 != 0 {
+            return Err(Error::new(EINVAL));
+        }
+        for i in 0 .. len/4 {
+            let u = u32::from(self.keymap.get_char_at(self.pos));
+            BigEndian::write_u32(&mut buf[i*4..], u);
+            self.pos += 1;
+        }
+        Ok(len)
+        // Err(Error::new(EBADF))
+    }
+
+    #[allow(unused_variables)]
+    fn write(&mut self, id: usize, buf: &[u8]) -> Result<usize> {
+        let until = cmp::min(self.pos*4 + buf.len(), MAX_KEYCODE*N_MOD_COMBOS*4);
+        let len = until - self.pos*4;
+        if len % 4 != 0 {
+            return Err(Error::new(EINVAL));
+        }
+        for i in 0 .. len/4 {
+            let u: u32 = BigEndian::read_u32(&buf[i*4..]);
+            let c: char = <char as TryFrom<u32>>::try_from(u).map_err(|_| Error::new(EINVAL))?;
+            self.keymap.set_char_at(self.pos, c);
+            self.pos += 1;
+        }
+
+        Ok(len)
+    }
+
+    #[allow(unused_variables)]
+    fn seek(&mut self, id: usize, pos: usize, whence: usize) -> Result<usize> {
+        // NOTE: Maybe a bit strange with all the `4`s. To the outside, the position is in bytes,
+        // but here internally, self.pos is in chars (4 bytes). We only allow positioning on a
+        // number divisible by 4.
+        let new_pos = match whence {
+            SEEK_SET => pos,
+            SEEK_CUR => self.pos*4 + pos,
+            SEEK_END => N_MOD_COMBOS * MAX_KEYCODE*4 - 4 - pos,
+            _ => return Err(Error::new(EINVAL)),
+        };
+        if new_pos % 4 != 0 {
+            Err(Error::new(EINVAL))
+        } else {
+            self.pos = new_pos / 4;
+            Ok(0)
+        }
+    }
+
+    #[allow(unused_variables)]
+    fn fmap(&mut self, id: usize, offset: usize, size: usize) -> Result<usize> {
+        Err(Error::new(EBADF))
+    }
+
+    #[allow(unused_variables)]
+    fn fpath(&mut self, id: usize, buf: &mut [u8]) -> Result<usize> {
+        let path = b"ps2:keymap";
+        let mut i = 0;
+        while i < buf.len() && i < path.len() {
+            buf[i] = path[i];
+            i += 1;
+        }
+        Ok(i)
+    }
+
+    #[allow(unused_variables)]
+    fn close(&mut self, id: usize) -> Result<usize> {
+        self.open = false;
+        Ok(0)
+    }
+}
+
