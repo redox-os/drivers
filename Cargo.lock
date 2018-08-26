@@ -101,11 +101,11 @@ dependencies = [
 
 [[package]]
 name = "crossbeam-deque"
-version = "0.5.1"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "crossbeam-epoch 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "crossbeam-utils 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "crossbeam-utils 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -146,6 +146,11 @@ dependencies = [
 [[package]]
 name = "crossbeam-utils"
 version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "crossbeam-utils"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
@@ -289,6 +294,15 @@ version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
+name = "lock_api"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "owning_ref 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "scopeguard 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
 name = "log"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -325,7 +339,7 @@ dependencies = [
 [[package]]
 name = "mio"
 version = "0.6.15"
-source = "git+https://gitlab.redox-os.org/redox-os/mio#cc0fc26c55b0005da1c275dc4a0115420ecfb14c"
+source = "git+https://gitlab.redox-os.org/redox-os/mio#2092161d53366c07a064888ccb0d41d359383701"
 dependencies = [
  "fuchsia-zircon 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "fuchsia-zircon-sys 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -337,8 +351,18 @@ dependencies = [
  "miow 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "net2 0.2.33 (registry+https://github.com/rust-lang/crates.io-index)",
  "redox_syscall 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
- "slab 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "slab 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "winapi 0.2.8 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "mio-uds"
+version = "0.6.6"
+source = "git+https://gitlab.redox-os.org/redox-os/mio-uds#2936ef82070ea0c4aa8a7360455b8c512d8c88c0"
+dependencies = [
+ "iovec 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "libc 0.2.42 (registry+https://github.com/rust-lang/crates.io-index)",
+ "mio 0.6.15 (git+https://gitlab.redox-os.org/redox-os/mio)",
 ]
 
 [[package]]
@@ -379,8 +403,8 @@ dependencies = [
  "redox_syscall 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
  "redox_termios 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "termion 1.5.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "tokio 0.1.7 (git+https://gitlab.redox-os.org/redox-os/tokio)",
- "tokio-reactor 0.1.2 (git+https://gitlab.redox-os.org/redox-os/tokio)",
+ "tokio 0.1.8 (git+https://gitlab.redox-os.org/redox-os/tokio)",
+ "tokio-reactor 0.1.4 (git+https://gitlab.redox-os.org/redox-os/tokio)",
 ]
 
 [[package]]
@@ -455,6 +479,34 @@ dependencies = [
  "redox_syscall 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
  "sdl2 0.31.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "time 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "owning_ref"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "stable_deref_trait 1.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "parking_lot"
+version = "0.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "lock_api 0.1.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "parking_lot_core 0.2.14 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "parking_lot_core"
+version = "0.2.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "libc 0.2.42 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rand 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "smallvec 0.6.5 (registry+https://github.com/rust-lang/crates.io-index)",
+ "winapi 0.3.5 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -703,12 +755,25 @@ dependencies = [
 
 [[package]]
 name = "slab"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "smallvec"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "unreachable 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
+]
 
 [[package]]
 name = "spin"
 version = "0.4.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "stable_deref_trait"
+version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
@@ -751,63 +816,66 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "0.1.7"
-source = "git+https://gitlab.redox-os.org/redox-os/tokio#12c80a60c2ac2f7c3ff62d0fd2dc98f99c91b378"
+version = "0.1.8"
+source = "git+https://gitlab.redox-os.org/redox-os/tokio#1a12087013a68747f6f59460ea95bd597b898dab"
 dependencies = [
+ "bytes 0.4.9 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures 0.1.23 (registry+https://github.com/rust-lang/crates.io-index)",
  "mio 0.6.15 (git+https://gitlab.redox-os.org/redox-os/mio)",
- "tokio-current-thread 0.1.0 (git+https://gitlab.redox-os.org/redox-os/tokio)",
- "tokio-executor 0.1.2 (git+https://gitlab.redox-os.org/redox-os/tokio)",
- "tokio-fs 0.1.2 (git+https://gitlab.redox-os.org/redox-os/tokio)",
- "tokio-io 0.1.7 (git+https://gitlab.redox-os.org/redox-os/tokio)",
- "tokio-reactor 0.1.2 (git+https://gitlab.redox-os.org/redox-os/tokio)",
- "tokio-tcp 0.1.0 (git+https://gitlab.redox-os.org/redox-os/tokio)",
- "tokio-threadpool 0.1.5 (git+https://gitlab.redox-os.org/redox-os/tokio)",
- "tokio-timer 0.2.4 (git+https://gitlab.redox-os.org/redox-os/tokio)",
- "tokio-udp 0.1.1 (git+https://gitlab.redox-os.org/redox-os/tokio)",
+ "tokio-codec 0.1.0 (git+https://gitlab.redox-os.org/redox-os/tokio)",
+ "tokio-current-thread 0.1.1 (git+https://gitlab.redox-os.org/redox-os/tokio)",
+ "tokio-executor 0.1.4 (git+https://gitlab.redox-os.org/redox-os/tokio)",
+ "tokio-fs 0.1.3 (git+https://gitlab.redox-os.org/redox-os/tokio)",
+ "tokio-io 0.1.8 (git+https://gitlab.redox-os.org/redox-os/tokio)",
+ "tokio-reactor 0.1.4 (git+https://gitlab.redox-os.org/redox-os/tokio)",
+ "tokio-tcp 0.1.1 (git+https://gitlab.redox-os.org/redox-os/tokio)",
+ "tokio-threadpool 0.1.6 (git+https://gitlab.redox-os.org/redox-os/tokio)",
+ "tokio-timer 0.2.6 (git+https://gitlab.redox-os.org/redox-os/tokio)",
+ "tokio-udp 0.1.2 (git+https://gitlab.redox-os.org/redox-os/tokio)",
+ "tokio-uds 0.2.1 (git+https://gitlab.redox-os.org/redox-os/tokio)",
 ]
 
 [[package]]
 name = "tokio-codec"
 version = "0.1.0"
-source = "git+https://gitlab.redox-os.org/redox-os/tokio#12c80a60c2ac2f7c3ff62d0fd2dc98f99c91b378"
+source = "git+https://gitlab.redox-os.org/redox-os/tokio#1a12087013a68747f6f59460ea95bd597b898dab"
 dependencies = [
  "bytes 0.4.9 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures 0.1.23 (registry+https://github.com/rust-lang/crates.io-index)",
- "tokio-io 0.1.7 (git+https://gitlab.redox-os.org/redox-os/tokio)",
+ "tokio-io 0.1.8 (git+https://gitlab.redox-os.org/redox-os/tokio)",
 ]
 
 [[package]]
 name = "tokio-current-thread"
-version = "0.1.0"
-source = "git+https://gitlab.redox-os.org/redox-os/tokio#12c80a60c2ac2f7c3ff62d0fd2dc98f99c91b378"
+version = "0.1.1"
+source = "git+https://gitlab.redox-os.org/redox-os/tokio#1a12087013a68747f6f59460ea95bd597b898dab"
 dependencies = [
  "futures 0.1.23 (registry+https://github.com/rust-lang/crates.io-index)",
- "tokio-executor 0.1.2 (git+https://gitlab.redox-os.org/redox-os/tokio)",
+ "tokio-executor 0.1.4 (git+https://gitlab.redox-os.org/redox-os/tokio)",
 ]
 
 [[package]]
 name = "tokio-executor"
-version = "0.1.2"
-source = "git+https://gitlab.redox-os.org/redox-os/tokio#12c80a60c2ac2f7c3ff62d0fd2dc98f99c91b378"
+version = "0.1.4"
+source = "git+https://gitlab.redox-os.org/redox-os/tokio#1a12087013a68747f6f59460ea95bd597b898dab"
 dependencies = [
  "futures 0.1.23 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
 name = "tokio-fs"
-version = "0.1.2"
-source = "git+https://gitlab.redox-os.org/redox-os/tokio#12c80a60c2ac2f7c3ff62d0fd2dc98f99c91b378"
+version = "0.1.3"
+source = "git+https://gitlab.redox-os.org/redox-os/tokio#1a12087013a68747f6f59460ea95bd597b898dab"
 dependencies = [
  "futures 0.1.23 (registry+https://github.com/rust-lang/crates.io-index)",
- "tokio-io 0.1.7 (git+https://gitlab.redox-os.org/redox-os/tokio)",
- "tokio-threadpool 0.1.5 (git+https://gitlab.redox-os.org/redox-os/tokio)",
+ "tokio-io 0.1.8 (git+https://gitlab.redox-os.org/redox-os/tokio)",
+ "tokio-threadpool 0.1.6 (git+https://gitlab.redox-os.org/redox-os/tokio)",
 ]
 
 [[package]]
 name = "tokio-io"
-version = "0.1.7"
-source = "git+https://gitlab.redox-os.org/redox-os/tokio#12c80a60c2ac2f7c3ff62d0fd2dc98f99c91b378"
+version = "0.1.8"
+source = "git+https://gitlab.redox-os.org/redox-os/tokio#1a12087013a68747f6f59460ea95bd597b898dab"
 dependencies = [
  "bytes 0.4.9 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures 0.1.23 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -816,65 +884,87 @@ dependencies = [
 
 [[package]]
 name = "tokio-reactor"
-version = "0.1.2"
-source = "git+https://gitlab.redox-os.org/redox-os/tokio#12c80a60c2ac2f7c3ff62d0fd2dc98f99c91b378"
+version = "0.1.4"
+source = "git+https://gitlab.redox-os.org/redox-os/tokio#1a12087013a68747f6f59460ea95bd597b898dab"
 dependencies = [
+ "crossbeam-utils 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures 0.1.23 (registry+https://github.com/rust-lang/crates.io-index)",
+ "lazy_static 1.0.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "mio 0.6.15 (git+https://gitlab.redox-os.org/redox-os/mio)",
- "slab 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "tokio-executor 0.1.2 (git+https://gitlab.redox-os.org/redox-os/tokio)",
- "tokio-io 0.1.7 (git+https://gitlab.redox-os.org/redox-os/tokio)",
+ "num_cpus 1.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "parking_lot 0.6.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "slab 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tokio-executor 0.1.4 (git+https://gitlab.redox-os.org/redox-os/tokio)",
+ "tokio-io 0.1.8 (git+https://gitlab.redox-os.org/redox-os/tokio)",
 ]
 
 [[package]]
 name = "tokio-tcp"
-version = "0.1.0"
-source = "git+https://gitlab.redox-os.org/redox-os/tokio#12c80a60c2ac2f7c3ff62d0fd2dc98f99c91b378"
+version = "0.1.1"
+source = "git+https://gitlab.redox-os.org/redox-os/tokio#1a12087013a68747f6f59460ea95bd597b898dab"
 dependencies = [
  "bytes 0.4.9 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures 0.1.23 (registry+https://github.com/rust-lang/crates.io-index)",
  "iovec 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "mio 0.6.15 (git+https://gitlab.redox-os.org/redox-os/mio)",
- "tokio-io 0.1.7 (git+https://gitlab.redox-os.org/redox-os/tokio)",
- "tokio-reactor 0.1.2 (git+https://gitlab.redox-os.org/redox-os/tokio)",
+ "tokio-io 0.1.8 (git+https://gitlab.redox-os.org/redox-os/tokio)",
+ "tokio-reactor 0.1.4 (git+https://gitlab.redox-os.org/redox-os/tokio)",
 ]
 
 [[package]]
 name = "tokio-threadpool"
-version = "0.1.5"
-source = "git+https://gitlab.redox-os.org/redox-os/tokio#12c80a60c2ac2f7c3ff62d0fd2dc98f99c91b378"
+version = "0.1.6"
+source = "git+https://gitlab.redox-os.org/redox-os/tokio#1a12087013a68747f6f59460ea95bd597b898dab"
 dependencies = [
- "crossbeam-deque 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "crossbeam-utils 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "crossbeam-deque 0.6.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "crossbeam-utils 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures 0.1.23 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "num_cpus 1.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "rand 0.5.4 (registry+https://github.com/rust-lang/crates.io-index)",
- "tokio-executor 0.1.2 (git+https://gitlab.redox-os.org/redox-os/tokio)",
+ "tokio-executor 0.1.4 (git+https://gitlab.redox-os.org/redox-os/tokio)",
 ]
 
 [[package]]
 name = "tokio-timer"
-version = "0.2.4"
-source = "git+https://gitlab.redox-os.org/redox-os/tokio#12c80a60c2ac2f7c3ff62d0fd2dc98f99c91b378"
+version = "0.2.6"
+source = "git+https://gitlab.redox-os.org/redox-os/tokio#1a12087013a68747f6f59460ea95bd597b898dab"
 dependencies = [
+ "crossbeam-utils 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures 0.1.23 (registry+https://github.com/rust-lang/crates.io-index)",
- "tokio-executor 0.1.2 (git+https://gitlab.redox-os.org/redox-os/tokio)",
+ "slab 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tokio-executor 0.1.4 (git+https://gitlab.redox-os.org/redox-os/tokio)",
 ]
 
 [[package]]
 name = "tokio-udp"
-version = "0.1.1"
-source = "git+https://gitlab.redox-os.org/redox-os/tokio#12c80a60c2ac2f7c3ff62d0fd2dc98f99c91b378"
+version = "0.1.2"
+source = "git+https://gitlab.redox-os.org/redox-os/tokio#1a12087013a68747f6f59460ea95bd597b898dab"
 dependencies = [
  "bytes 0.4.9 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures 0.1.23 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "mio 0.6.15 (git+https://gitlab.redox-os.org/redox-os/mio)",
  "tokio-codec 0.1.0 (git+https://gitlab.redox-os.org/redox-os/tokio)",
- "tokio-io 0.1.7 (git+https://gitlab.redox-os.org/redox-os/tokio)",
- "tokio-reactor 0.1.2 (git+https://gitlab.redox-os.org/redox-os/tokio)",
+ "tokio-io 0.1.8 (git+https://gitlab.redox-os.org/redox-os/tokio)",
+ "tokio-reactor 0.1.4 (git+https://gitlab.redox-os.org/redox-os/tokio)",
+]
+
+[[package]]
+name = "tokio-uds"
+version = "0.2.1"
+source = "git+https://gitlab.redox-os.org/redox-os/tokio#1a12087013a68747f6f59460ea95bd597b898dab"
+dependencies = [
+ "bytes 0.4.9 (registry+https://github.com/rust-lang/crates.io-index)",
+ "futures 0.1.23 (registry+https://github.com/rust-lang/crates.io-index)",
+ "iovec 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "libc 0.2.42 (registry+https://github.com/rust-lang/crates.io-index)",
+ "log 0.4.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "mio 0.6.15 (git+https://gitlab.redox-os.org/redox-os/mio)",
+ "mio-uds 0.6.6 (git+https://gitlab.redox-os.org/redox-os/mio-uds)",
+ "tokio-io 0.1.8 (git+https://gitlab.redox-os.org/redox-os/tokio)",
+ "tokio-reactor 0.1.4 (git+https://gitlab.redox-os.org/redox-os/tokio)",
 ]
 
 [[package]]
@@ -922,6 +1012,14 @@ version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
+name = "unreachable"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "void 1.0.2 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
 name = "untrusted"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -964,6 +1062,11 @@ dependencies = [
  "redox_syscall 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
  "rusttype 0.2.3 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
+
+[[package]]
+name = "void"
+version = "1.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "vte"
@@ -1053,11 +1156,12 @@ dependencies = [
 "checksum cfg-if 0.1.4 (registry+https://github.com/rust-lang/crates.io-index)" = "efe5c877e17a9c717a0bf3613b2709f723202c4e4675cc8f12926ded29bcb17e"
 "checksum cloudabi 0.0.3 (registry+https://github.com/rust-lang/crates.io-index)" = "ddfc5b9aa5d4507acaf872de71051dfd0e309860e88966e1051e462a077aac4f"
 "checksum crossbeam-deque 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)" = "f739f8c5363aca78cfb059edf753d8f0d36908c348f3d8d1503f03d8b75d9cf3"
-"checksum crossbeam-deque 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)" = "ce1357a7a2ad69ff9f090ee8641b5b94c622138bb2c3eae16ad7917a8e35a801"
+"checksum crossbeam-deque 0.6.1 (registry+https://github.com/rust-lang/crates.io-index)" = "3486aefc4c0487b9cb52372c97df0a48b8c249514af1ee99703bf70d2f2ceda1"
 "checksum crossbeam-epoch 0.3.1 (registry+https://github.com/rust-lang/crates.io-index)" = "927121f5407de9956180ff5e936fe3cf4324279280001cd56b669d28ee7e9150"
 "checksum crossbeam-epoch 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)" = "285987a59c4d91388e749850e3cb7b3a92299668528caaacd08005b8f238c0ea"
 "checksum crossbeam-utils 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)" = "2760899e32a1d58d5abb31129f8fae5de75220bc2176e77ff7c627ae45c918d9"
 "checksum crossbeam-utils 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)" = "ea52fab26a99d96cdff39d0ca75c9716125937f5dba2ab83923aaaf5928f684a"
+"checksum crossbeam-utils 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)" = "677d453a17e8bd2b913fa38e8b9cf04bcdbb5be790aa294f2389661d72036015"
 "checksum extra 0.1.0 (git+https://gitlab.redox-os.org/redox-os/libextra.git)" = "<none>"
 "checksum fuchsia-zircon 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)" = "2e9763c69ebaae630ba35f74888db465e49e259ba1bc0eda7d06f4a067615d82"
 "checksum fuchsia-zircon-sys 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)" = "3dcaa9ae7725d12cdb85b3ad99a434db70b468c09ded17e012d86b5c1010f7a7"
@@ -1075,12 +1179,14 @@ dependencies = [
 "checksum lazycell 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)" = "d33a48d0365c96081958cc663eef834975cb1e8d8bea3378513fc72bdbf11e50"
 "checksum libc 0.2.42 (registry+https://github.com/rust-lang/crates.io-index)" = "b685088df2b950fccadf07a7187c8ef846a959c142338a48f9dc0b94517eb5f1"
 "checksum linked-hash-map 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)" = "70fb39025bc7cdd76305867c4eccf2f2dcf6e9a57f5b21a93e1c2d86cd03ec9e"
+"checksum lock_api 0.1.3 (registry+https://github.com/rust-lang/crates.io-index)" = "949826a5ccf18c1b3a7c3d57692778d21768b79e46eb9dd07bfc4c2160036c54"
 "checksum log 0.3.9 (registry+https://github.com/rust-lang/crates.io-index)" = "e19e8d5c34a3e0e2223db8e060f9e8264aeeb5c5fc64a4ee9965c062211c024b"
 "checksum log 0.4.3 (registry+https://github.com/rust-lang/crates.io-index)" = "61bd98ae7f7b754bc53dca7d44b604f733c6bba044ea6f41bc8d89272d8161d2"
 "checksum matches 0.1.7 (registry+https://github.com/rust-lang/crates.io-index)" = "835511bab37c34c47da5cb44844bea2cfde0236db0b506f90ea4224482c9774a"
 "checksum memoffset 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)" = "0f9dc261e2b62d7a622bf416ea3c5245cdd5d9a7fcc428c0d06804dfce1775b3"
 "checksum mime 0.2.6 (registry+https://github.com/rust-lang/crates.io-index)" = "ba626b8a6de5da682e1caa06bdb42a335aee5a84db8e5046a3e8ab17ba0a3ae0"
 "checksum mio 0.6.15 (git+https://gitlab.redox-os.org/redox-os/mio)" = "<none>"
+"checksum mio-uds 0.6.6 (git+https://gitlab.redox-os.org/redox-os/mio-uds)" = "<none>"
 "checksum miow 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)" = "8c1f2f3b1cf331de6896aabf6e9d55dca90356cc9960cca7eaaf408a355ae919"
 "checksum net2 0.2.33 (registry+https://github.com/rust-lang/crates.io-index)" = "42550d9fb7b6684a6d404d9fa7250c2eb2646df731d1c06afc06dcee9e1bcf88"
 "checksum netutils 0.1.0 (git+https://gitlab.redox-os.org/redox-os/netutils.git)" = "<none>"
@@ -1092,6 +1198,9 @@ dependencies = [
 "checksum num-traits 0.2.5 (registry+https://github.com/rust-lang/crates.io-index)" = "630de1ef5cc79d0cdd78b7e33b81f083cbfe90de0f4b2b2f07f905867c70e9fe"
 "checksum num_cpus 1.8.0 (registry+https://github.com/rust-lang/crates.io-index)" = "c51a3322e4bca9d212ad9a158a02abc6934d005490c054a2778df73a70aa0a30"
 "checksum orbclient 0.3.16 (registry+https://github.com/rust-lang/crates.io-index)" = "09b950dc49039b2ae191344ccac56de00887e62af3ac71d6346536d1d9695ff8"
+"checksum owning_ref 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)" = "cdf84f41639e037b484f93433aa3897863b561ed65c6e59c7073d7c561710f37"
+"checksum parking_lot 0.6.3 (registry+https://github.com/rust-lang/crates.io-index)" = "69376b761943787ebd5cc85a5bc95958651a22609c5c1c2b65de21786baec72b"
+"checksum parking_lot_core 0.2.14 (registry+https://github.com/rust-lang/crates.io-index)" = "4db1a8ccf734a7bce794cc19b3df06ed87ab2f3907036b693c68f56b4d4537fa"
 "checksum pbr 1.0.1 (git+https://github.com/a8m/pb)" = "<none>"
 "checksum percent-encoding 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)" = "31010dd2e1ac33d5b46a5b413495239882813e0369f8ed8a5e266f173602f831"
 "checksum plain 0.2.3 (registry+https://github.com/rust-lang/crates.io-index)" = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
@@ -1117,23 +1226,26 @@ dependencies = [
 "checksum sdl2-sys 0.31.0 (registry+https://github.com/rust-lang/crates.io-index)" = "5c543ce8a6e33a30cb909612eeeb22e693848211a84558d5a00bb11e791b7ab7"
 "checksum serde 1.0.70 (registry+https://github.com/rust-lang/crates.io-index)" = "0c3adf19c07af6d186d91dae8927b83b0553d07ca56cbf7f2f32560455c91920"
 "checksum serde_derive 1.0.70 (registry+https://github.com/rust-lang/crates.io-index)" = "3525a779832b08693031b8ecfb0de81cd71cfd3812088fafe9a7496789572124"
-"checksum slab 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)" = "fdeff4cd9ecff59ec7e3744cbca73dfe5ac35c2aedb2cfba8a1c715a18912e9d"
+"checksum slab 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)" = "5f9776d6b986f77b35c6cf846c11ad986ff128fe0b2b63a3628e3755e8d3102d"
+"checksum smallvec 0.6.5 (registry+https://github.com/rust-lang/crates.io-index)" = "153ffa32fd170e9944f7e0838edf824a754ec4c1fc64746fcc9fe1f8fa602e5d"
 "checksum spin 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)" = "14db77c5b914df6d6173dda9a3b3f5937bd802934fa5edaf934df06a3491e56f"
+"checksum stable_deref_trait 1.1.1 (registry+https://github.com/rust-lang/crates.io-index)" = "dba1a27d3efae4351c8051072d619e3ade2820635c3958d826bfea39d59b54c8"
 "checksum stb_truetype 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)" = "52ce2b38abdd11cffbc68928810248e0dd003fea489a88a404dc1ba7ae2d5538"
 "checksum syn 0.14.5 (registry+https://github.com/rust-lang/crates.io-index)" = "4bad7abdf6633f07c7046b90484f1d9dc055eca39f8c991177b1046ce61dba9a"
 "checksum termion 1.5.1 (registry+https://github.com/rust-lang/crates.io-index)" = "689a3bdfaab439fd92bc87df5c4c78417d3cbe537487274e9b0b2dce76e92096"
 "checksum time 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)" = "d825be0eb33fda1a7e68012d51e9c7f451dc1a69391e7fdc197060bb8c56667b"
-"checksum tokio 0.1.7 (git+https://gitlab.redox-os.org/redox-os/tokio)" = "<none>"
+"checksum tokio 0.1.8 (git+https://gitlab.redox-os.org/redox-os/tokio)" = "<none>"
 "checksum tokio-codec 0.1.0 (git+https://gitlab.redox-os.org/redox-os/tokio)" = "<none>"
-"checksum tokio-current-thread 0.1.0 (git+https://gitlab.redox-os.org/redox-os/tokio)" = "<none>"
-"checksum tokio-executor 0.1.2 (git+https://gitlab.redox-os.org/redox-os/tokio)" = "<none>"
-"checksum tokio-fs 0.1.2 (git+https://gitlab.redox-os.org/redox-os/tokio)" = "<none>"
-"checksum tokio-io 0.1.7 (git+https://gitlab.redox-os.org/redox-os/tokio)" = "<none>"
-"checksum tokio-reactor 0.1.2 (git+https://gitlab.redox-os.org/redox-os/tokio)" = "<none>"
-"checksum tokio-tcp 0.1.0 (git+https://gitlab.redox-os.org/redox-os/tokio)" = "<none>"
-"checksum tokio-threadpool 0.1.5 (git+https://gitlab.redox-os.org/redox-os/tokio)" = "<none>"
-"checksum tokio-timer 0.2.4 (git+https://gitlab.redox-os.org/redox-os/tokio)" = "<none>"
-"checksum tokio-udp 0.1.1 (git+https://gitlab.redox-os.org/redox-os/tokio)" = "<none>"
+"checksum tokio-current-thread 0.1.1 (git+https://gitlab.redox-os.org/redox-os/tokio)" = "<none>"
+"checksum tokio-executor 0.1.4 (git+https://gitlab.redox-os.org/redox-os/tokio)" = "<none>"
+"checksum tokio-fs 0.1.3 (git+https://gitlab.redox-os.org/redox-os/tokio)" = "<none>"
+"checksum tokio-io 0.1.8 (git+https://gitlab.redox-os.org/redox-os/tokio)" = "<none>"
+"checksum tokio-reactor 0.1.4 (git+https://gitlab.redox-os.org/redox-os/tokio)" = "<none>"
+"checksum tokio-tcp 0.1.1 (git+https://gitlab.redox-os.org/redox-os/tokio)" = "<none>"
+"checksum tokio-threadpool 0.1.6 (git+https://gitlab.redox-os.org/redox-os/tokio)" = "<none>"
+"checksum tokio-timer 0.2.6 (git+https://gitlab.redox-os.org/redox-os/tokio)" = "<none>"
+"checksum tokio-udp 0.1.2 (git+https://gitlab.redox-os.org/redox-os/tokio)" = "<none>"
+"checksum tokio-uds 0.2.1 (git+https://gitlab.redox-os.org/redox-os/tokio)" = "<none>"
 "checksum toml 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)" = "a0263c6c02c4db6c8f7681f9fd35e90de799ebd4cfdeab77a38f4ff6b3d8c0d9"
 "checksum traitobject 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)" = "efd1f82c56340fdf16f2a953d7bda4f8fdffba13d93b00844c25572110b26079"
 "checksum typeable 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)" = "1410f6f91f21d1612654e7cc69193b0334f909dcf2c790c4826254fbb86f8887"
@@ -1141,10 +1253,12 @@ dependencies = [
 "checksum unicode-bidi 0.3.4 (registry+https://github.com/rust-lang/crates.io-index)" = "49f2bd0c6468a8230e1db229cff8029217cf623c767ea5d60bfbd42729ea54d5"
 "checksum unicode-normalization 0.1.7 (registry+https://github.com/rust-lang/crates.io-index)" = "6a0180bc61fc5a987082bfa111f4cc95c4caff7f9799f3e46df09163a937aa25"
 "checksum unicode-xid 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)" = "fc72304796d0818e357ead4e000d19c9c174ab23dc11093ac919054d20a6a7fc"
+"checksum unreachable 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)" = "382810877fe448991dfc7f0dd6e3ae5d58088fd0ea5e35189655f84e6814fa56"
 "checksum untrusted 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)" = "f392d7819dbe58833e26872f5f6f0d68b7bbbe90fc3667e98731c4a15ad9a7ae"
 "checksum url 1.7.1 (registry+https://github.com/rust-lang/crates.io-index)" = "2a321979c09843d272956e73700d12c4e7d3d92b2ee112b31548aef0d4efc5a6"
 "checksum utf8parse 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)" = "a15ea87f3194a3a454c78d79082b4f5e85f6956ddb6cb86bbfbe4892aa3c0323"
 "checksum version_check 0.1.4 (registry+https://github.com/rust-lang/crates.io-index)" = "7716c242968ee87e5542f8021178248f267f295a5c4803beae8b8b7fd9bc6051"
+"checksum void 1.0.2 (registry+https://github.com/rust-lang/crates.io-index)" = "6a02e4885ed3bc0f2de90ea6dd45ebcbb66dacffe03547fadbb0eeae2770887d"
 "checksum vte 0.3.2 (registry+https://github.com/rust-lang/crates.io-index)" = "a01634c75db59478405de08d8567c40c578bba80c565217ee709934b551720d8"
 "checksum webpki 0.14.0 (registry+https://github.com/rust-lang/crates.io-index)" = "e499345fc4c6b7c79a5b8756d4592c4305510a13512e79efafe00dfbd67bbac6"
 "checksum webpki-roots 0.11.0 (registry+https://github.com/rust-lang/crates.io-index)" = "5bfb3f50499f21ad2317f442845e3b5805b007f1e728f59885c99e61b8c181a7"
