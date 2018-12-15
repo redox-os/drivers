@@ -992,7 +992,7 @@ impl SchemeMut for IntelHDA {
 
 		// TODO:
 		if uid == 0 {
-			Ok(flags)
+			Ok(0)
 		} else {
 			Err(Error::new(EACCES))
 		}
@@ -1030,4 +1030,16 @@ impl SchemeMut for IntelHDA {
         	handles.remove(&_id).ok_or(Error::new(EBADF)).and(Ok(0))
     	}
 
+    fn fpath(&mut self, id: usize, buf: &mut [u8]) -> Result<usize> {
+        //let mut handles = self.handles.lock();
+        //let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+
+        let mut i = 0;
+        let scheme_path = b"audio:";
+        while i < buf.len() && i < scheme_path.len() {
+            buf[i] = scheme_path[i];
+            i += 1;
+        }
+        Ok(i)
+    }
 }
