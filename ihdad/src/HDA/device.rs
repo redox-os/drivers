@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 extern crate syscall;
 
 
-use syscall::MAP_WRITE;
+use syscall::PHYSMAP_WRITE;
 use syscall::error::{Error, EACCES, EBADF, Result, EINVAL};
 use syscall::flag::{SEEK_SET, SEEK_CUR, SEEK_END};
 use syscall::io::{Mmio, Io};
@@ -184,7 +184,7 @@ impl IntelHDA {
 
 		
 		let buff_desc_virt = unsafe { 
-			syscall::physmap(buff_desc_phys, 0x1000, MAP_WRITE)
+			syscall::physmap(buff_desc_phys, 0x1000, PHYSMAP_WRITE)
 				.expect("ihdad: failed to map address for buffer descriptor list.") 
 		};
 
@@ -201,7 +201,7 @@ impl IntelHDA {
 		};
 
 		
-		let cmd_buff_virt = unsafe { syscall::physmap(cmd_buff_address, 0x1000, MAP_WRITE).expect("ihdad: failed to map address for CORB/RIRB buff") };
+		let cmd_buff_virt = unsafe { syscall::physmap(cmd_buff_address, 0x1000, PHYSMAP_WRITE).expect("ihdad: failed to map address for CORB/RIRB buff") };
 
 		print!("Virt: {:016X}, Phys: {:016X}\n", cmd_buff_virt, cmd_buff_address);
 		let mut module = IntelHDA {

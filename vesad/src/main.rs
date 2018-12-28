@@ -8,7 +8,7 @@ extern crate syscall;
 use std::env;
 use std::fs::File;
 use std::io::{Read, Write};
-use syscall::{physmap, physunmap, Packet, SchemeMut, EVENT_READ, MAP_WRITE, MAP_WRITE_COMBINE};
+use syscall::{physmap, physunmap, Packet, SchemeMut, EVENT_READ, PHYSMAP_WRITE, PHYSMAP_WRITE_COMBINE};
 
 use mode_info::VBEModeInfo;
 use primitive::fast_set64;
@@ -55,7 +55,7 @@ fn main() {
             let size = width * height;
             //TODO: Remap on resize
             let largest_size = 8 * 1024 * 1024;
-            let onscreen = unsafe { physmap(physbaseptr, largest_size * 4, MAP_WRITE | MAP_WRITE_COMBINE).expect("vesad: failed to map VBE LFB") };
+            let onscreen = unsafe { physmap(physbaseptr, largest_size * 4, PHYSMAP_WRITE | PHYSMAP_WRITE_COMBINE).expect("vesad: failed to map VBE LFB") };
             unsafe { fast_set64(onscreen as *mut u64, 0, size/2) };
 
             let mut scheme = DisplayScheme::new(width, height, onscreen, &spec);

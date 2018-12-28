@@ -10,7 +10,7 @@ use std::{env, usize, u16, thread};
 use std::fs::File;
 use std::io::{Read, Write, Result};
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
-use syscall::{EVENT_READ, MAP_WRITE, Event, Packet, Scheme, SchemeMut};
+use syscall::{EVENT_READ, PHYSMAP_WRITE, Event, Packet, Scheme, SchemeMut};
 use std::cell::RefCell;
 use std::sync::Arc;
 
@@ -52,7 +52,7 @@ fn main() {
 
 	// Daemonize
 	if unsafe { syscall::clone(0).unwrap() } == 0 {
-		let address = unsafe { syscall::physmap(bar, 0x4000, MAP_WRITE).expect("ihdad: failed to map address") };
+		let address = unsafe { syscall::physmap(bar, 0x4000, PHYSMAP_WRITE).expect("ihdad: failed to map address") };
 		{
 			let mut irq_file = File::open(format!("irq:{}", irq)).expect("IHDA: failed to open IRQ file");
 

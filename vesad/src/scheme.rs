@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::{mem, slice, str};
 
 use orbclient::{Event, EventOption};
-use syscall::{Result, Error, EACCES, EBADF, EINVAL, ENOENT, O_NONBLOCK, SchemeMut};
+use syscall::{Result, Error, EACCES, EBADF, EINVAL, ENOENT, O_NONBLOCK, Map, SchemeMut};
 
 use display::Display;
 use screen::{Screen, GraphicScreen, TextScreen};
@@ -145,12 +145,12 @@ impl SchemeMut for DisplayScheme {
         }
     }
 
-    fn fmap(&mut self, id: usize, offset: usize, size: usize) -> Result<usize> {
+    fn fmap(&mut self, id: usize, map: &Map) -> Result<usize> {
         let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
         if let HandleKind::Screen(screen_i) = handle.kind {
             if let Some(screen) = self.screens.get(&screen_i) {
-                return screen.map(offset, size);
+                return screen.map(map.offset, map.size);
             }
         }
 

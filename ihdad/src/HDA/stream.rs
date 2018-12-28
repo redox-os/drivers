@@ -1,7 +1,7 @@
 
 
 
-use syscall::MAP_WRITE;
+use syscall::PHYSMAP_WRITE;
 use syscall::error::{Error, EACCES, EWOULDBLOCK, EIO, Result};
 use syscall::flag::O_NONBLOCK;
 use syscall::io::{Dma, Mmio, Io, ReadOnly};
@@ -310,7 +310,7 @@ impl StreamBuffer {
 		};
 
 		let addr = match unsafe {
-			syscall::physmap(phys, block_length * block_count, MAP_WRITE)
+			syscall::physmap(phys, block_length * block_count, PHYSMAP_WRITE)
 		} {
 			Ok(addr) => addr,
 			Err(err) => {
