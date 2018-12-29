@@ -15,6 +15,3 @@ pub use self::stream::BufferDescriptorListEntry;
 pub use self::stream::BitsPerSample;
 pub use self::stream::StreamBuffer;
 pub use self::device::IntelHDA;
-
-
-

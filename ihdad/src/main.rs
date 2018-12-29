@@ -6,22 +6,17 @@ extern crate spin;
 extern crate syscall;
 extern crate event;
 
-use std::{env, usize, u16, thread};
+use std::{env, usize};
 use std::fs::File;
 use std::io::{Read, Write, Result};
-use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
-use syscall::{EVENT_READ, PHYSMAP_WRITE, Event, Packet, Scheme, SchemeMut};
+use std::os::unix::io::{AsRawFd, FromRawFd};
+use syscall::{PHYSMAP_WRITE, Packet, SchemeBlockMut};
 use std::cell::RefCell;
 use std::sync::Arc;
 
-
 use event::EventQueue;
-use syscall::error::EWOULDBLOCK;
 
-
-pub mod HDA;
-
-use HDA::IntelHDA;
+pub mod hda;
 
 /*
                  VEND:PROD
@@ -58,8 +53,8 @@ fn main() {
 
 			let vend_prod:u32 = ((vend as u32) << 16) | (prod as u32);
 
-			let device = Arc::new(RefCell::new(unsafe { HDA::IntelHDA::new(address, vend_prod).expect("ihdad: failed to allocate device") }));
-			let socket_fd = syscall::open(":audio", syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK).expect("IHDA: failed to create audio scheme");
+			let device = Arc::new(RefCell::new(unsafe { hda::IntelHDA::new(address, vend_prod).expect("ihdad: failed to allocate device") }));
+			let socket_fd = syscall::open(":hda", syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK).expect("IHDA: failed to create hda scheme");
 			let socket = Arc::new(RefCell::new(unsafe { File::from_raw_fd(socket_fd) }));
 
 			let mut event_queue = EventQueue::<usize>::new().expect("IHDA: Could not create event queue.");
@@ -71,35 +66,32 @@ fn main() {
 			let todo_irq = todo.clone();
 			let device_irq = device.clone();
 			let socket_irq = socket.clone();
-			let device_loop = device.clone();
 
 			event_queue.add(irq_file.as_raw_fd(), move |_event| -> Result<Option<usize>> {
 				let mut irq = [0; 8];
 				irq_file.read(&mut irq)?;
 
-				let _irq = unsafe { device_irq.borrow_mut().irq()};
-
-				if _irq {
+				if unsafe { device_irq.borrow_mut().irq() } {
 					irq_file.write(&mut irq)?;
 
 					let mut todo = todo_irq.borrow_mut();
 					let mut i = 0;
 					while i < todo.len() {
-						let a = todo[i].a;
-						device_irq.borrow_mut().handle(&mut todo[i]);
-						if todo[i].a == (-EWOULDBLOCK) as usize {
-							todo[i].a = a;
-							i += 1;
-						} else {
-							socket_irq.borrow_mut().write(&mut todo[i])?;
-							todo.remove(i);
+						if let Some(a) = device_irq.borrow_mut().handle(&mut todo[i]) {
+		                    let mut packet = todo.remove(i);
+		                    packet.a = a;
+							socket_irq.borrow_mut().write(&packet)?;
+		                } else {
+		                    i += 1;
 						}
 					}
+
 					/*
 					let next_read = device_irq.next_read();
 					if next_read > 0 {
 						return Ok(Some(next_read));
-					}*/
+					}
+					*/
 				}
 				Ok(Some(0))
 			}).expect("IHDA: failed to catch events on IRQ file");
@@ -112,22 +104,20 @@ fn main() {
 						break;
 					}
 
-					let a = packet.a;
-					device.borrow_mut().handle(&mut packet);
-					if packet.a == (-EWOULDBLOCK) as usize {
+					if let Some(a) = device.borrow_mut().handle(&mut packet) {
 						packet.a = a;
-						todo.borrow_mut().push(packet);
+						socket_packet.borrow_mut().write(&packet)?;
 					} else {
-						socket_packet.borrow_mut().write(&mut packet)?;
+						todo.borrow_mut().push(packet);
 					}
 				}
-
 
 				/*
 				let next_read = device.borrow().next_read();
 				if next_read > 0 {
 					return Ok(Some(next_read));
-				}*/
+				}
+				*/
 
 				Ok(None)
 			}).expect("IHDA: failed to catch events on IRQ file");

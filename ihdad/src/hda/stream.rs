@@ -1,17 +1,10 @@
-
-
-
 use syscall::PHYSMAP_WRITE;
-use syscall::error::{Error, EACCES, EWOULDBLOCK, EIO, Result};
-use syscall::flag::O_NONBLOCK;
-use syscall::io::{Dma, Mmio, Io, ReadOnly};
-use syscall::scheme::SchemeMut;
-use std::sync::Arc;
-use std::cell::RefCell;
+use syscall::error::{Error, EIO, Result};
+use syscall::io::{Mmio, Io};
 use std::result;
-use std::cmp::{max, min};
+use std::cmp::min;
 use std::ptr::copy_nonoverlapping;
-use std::{mem, thread, ptr, fmt};
+use std::ptr;
 
 extern crate syscall;
 
@@ -177,7 +170,7 @@ impl StreamDescriptorRegs {
 	pub fn set_interrupt_on_completion(&mut self, enable:bool) {
 		let mut ctrl = self.control();
 		if enable {
-			ctrl |= (1 << 2);
+			ctrl |= 1 << 2;
 		} else {
 			ctrl &= !(1 << 2);
 		}
@@ -286,8 +279,6 @@ impl BufferDescriptorListEntry {
 	}
 }
 
-
-
 pub struct StreamBuffer {
 	phys:   usize,
 	addr:   usize,
@@ -365,7 +356,7 @@ impl StreamBuffer {
 		let len = min(self.block_size(), buf.len());
 
 
-		print!("Phys: {:X} Virt: {:X} Offset: {:X} Len: {:X}\n", self.phys(), self.addr(), self.current_block() * self.block_size(), len);
+		//print!("Phys: {:X} Virt: {:X} Offset: {:X} Len: {:X}\n", self.phys(), self.addr(), self.current_block() * self.block_size(), len);
 		unsafe {
 			copy_nonoverlapping(buf.as_ptr(), (self.addr() + self.current_block() * self.block_size()) as * mut u8, len);
 		}
@@ -381,8 +372,9 @@ impl Drop for StreamBuffer {
 	fn drop(&mut self) {
 		unsafe {
 			print!("IHDA: Deallocating buffer.\n");
-			syscall::physunmap(self.addr);
-			syscall::physfree(self.phys, self.block_len * self.block_cnt);
+			if syscall::physunmap(self.addr).is_ok() {
+				let _ = syscall::physfree(self.phys, self.block_len * self.block_cnt);
+			}
 		}
 	}
 }

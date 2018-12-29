@@ -1,50 +1,43 @@
-
-use std::{mem, thread, ptr, fmt};
+use std::{mem, fmt};
 use super::common::*;
 
 #[derive(Clone)]
 pub struct HDANode {
 	pub addr: WidgetAddr,
-	
-	
 
 	// 0x4
 	pub subnode_count: u16,
 	pub subnode_start: u16,
-	
+
 	// 0x5
 	pub function_group_type: u8,
-
 
 	// 0x9
 	pub capabilities:     u32,
 
 	// 0xC
 	pub pin_caps:         u32,
-	
+
 	// 0xD
 	pub in_amp: 	  u32,
-	
+
 	// 0xE
 	pub conn_list_len:    u8,
-	
 
 	// 0x12
 	pub out_amp:          u32,
 
 	// 0x13
 	pub vol_knob:         u8,
-	
+
 	pub connections:      Vec<WidgetAddr>,
-	
+
 	pub is_widget:        bool,
 
 	pub config_default:   u32,
 }
 
-
 impl HDANode {
-
 	pub fn new() -> HDANode {
 		HDANode {
 			addr: (0,0),
@@ -76,7 +69,7 @@ impl HDANode {
 			Some(unsafe { mem::transmute( ((self.config_default >> 20) & 0xF) as u8 )} )
 		}
 	}
-	
+
 	pub fn configuration_default(&self) -> ConfigurationDefault {
 		ConfigurationDefault::from_u32(self.config_default)
 	}
@@ -89,29 +82,23 @@ impl HDANode {
 impl fmt::Display for HDANode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if self.addr == (0,0) {
-		write!(f, "Addr: {:02X}:{:02X}, Root Node.", self.addr.0, self.addr.1)
-	} else if self.is_widget {
-		match self.widget_type() {
-		
-		HDAWidgetType::PinComplex => { 
-			write!(f, "Addr: {:02X}:{:02X}, Type: {:?}: {:?}, Inputs: {:X}: {:?}.", 
-				self.addr.0,
-				self.addr.1, 
-				self.widget_type(), 
-				self.device_default().unwrap(), 
-				self.conn_list_len, 
-				self.connections) 
-			},
-		
-		  _ => { write!(f, "Addr: {:02X}:{:02X}, Type: {:?}, Inputs: {:X}: {:?}.", self.addr.0, self.addr.1, self.widget_type(), self.conn_list_len, self.connections) },
-		
+			write!(f, "Addr: {:02X}:{:02X}, Root Node.", self.addr.0, self.addr.1)
+		} else if self.is_widget {
+			match self.widget_type() {
+				HDAWidgetType::PinComplex => write!(
+					f,
+					"Addr: {:02X}:{:02X}, Type: {:?}: {:?}, Inputs: {:X}: {:?}.",
+					self.addr.0,
+					self.addr.1,
+					self.widget_type(),
+					self.device_default().unwrap(),
+					self.conn_list_len,
+					self.connections
+				),
+			  	_ => write!(f, "Addr: {:02X}:{:02X}, Type: {:?}, Inputs: {:X}: {:?}.", self.addr.0, self.addr.1, self.widget_type(), self.conn_list_len, self.connections),
+			}
+		} else {
+			write!(f, "Addr: {:02X}:{:02X}, AFG: {}, Widget count {}.", self.addr.0, self.addr.1, self.function_group_type, self.subnode_count)
 		}
-	} else {
-		write!(f, "Addr: {:02X}:{:02X}, AFG: {}, Widget count {}.", self.addr.0, self.addr.1, self.function_group_type, self.subnode_count)
-	}
     }
 }
-
-
-
-
