@@ -17,6 +17,41 @@ use syscall::error::EWOULDBLOCK;
 
 pub mod device;
 
+fn handle_update(socket: &mut File, device: &mut device::Intel8254x, todo: &mut Vec<Packet>) -> Result<()> {
+    // Handle any blocked packets
+    let mut i = 0;
+    while i < todo.len() {
+        let a = todo[i].a;
+        device.handle(&mut todo[i]);
+        if todo[i].a == (-EWOULDBLOCK) as usize {
+            todo[i].a = a;
+            i += 1;
+        } else {
+            socket.write(&mut todo[i])?;
+            todo.remove(i);
+        }
+    }
+
+    // Check that the socket is empty
+    loop {
+        let mut packet = Packet::default();
+        if socket.read(&mut packet)? == 0 {
+            break;
+        }
+
+        let a = packet.a;
+        device.handle(&mut packet);
+        if packet.a == (-EWOULDBLOCK) as usize {
+            packet.a = a;
+            todo.push(packet);
+        } else {
+            socket.write(&mut packet)?;
+        }
+    }
+
+    Ok(())
+}
+
 fn main() {
     let mut args = env::args().skip(1);
 
@@ -57,19 +92,7 @@ fn main() {
                 if unsafe { device_irq.borrow().irq() } {
                     irq_file.write(&mut irq)?;
 
-                    let mut todo = todo_irq.borrow_mut();
-                    let mut i = 0;
-                    while i < todo.len() {
-                        let a = todo[i].a;
-                        device_irq.borrow_mut().handle(&mut todo[i]);
-                        if todo[i].a == (-EWOULDBLOCK) as usize {
-                            todo[i].a = a;
-                            i += 1;
-                        } else {
-                            socket_irq.borrow_mut().write(&mut todo[i])?;
-                            todo.remove(i);
-                        }
-                    }
+                    handle_update(&mut socket_irq.borrow_mut(), &mut device_irq.borrow_mut(), &mut todo_irq.borrow_mut())?;
 
                     let next_read = device_irq.borrow().next_read();
                     if next_read > 0 {
@@ -82,21 +105,7 @@ fn main() {
             let device_packet = device.clone();
             let socket_packet = socket.clone();
             event_queue.add(socket_fd, move |_event| -> Result<Option<usize>> {
-                loop {
-                    let mut packet = Packet::default();
-                    if socket_packet.borrow_mut().read(&mut packet)? == 0 {
-                        break;
-                    }
-
-                    let a = packet.a;
-                    device_packet.borrow_mut().handle(&mut packet);
-                    if packet.a == (-EWOULDBLOCK) as usize {
-                        packet.a = a;
-                        todo.borrow_mut().push(packet);
-                    } else {
-                        socket_packet.borrow_mut().write(&mut packet)?;
-                    }
-                }
+                handle_update(&mut socket_packet.borrow_mut(), &mut device_packet.borrow_mut(), &mut todo.borrow_mut());
 
                 let next_read = device_packet.borrow().next_read();
                 if next_read > 0 {
