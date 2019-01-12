@@ -13,18 +13,19 @@ pub mod hba;
 pub trait Disk {
     fn id(&self) -> usize;
     fn size(&mut self) -> u64;
-    fn read(&mut self, block: u64, buffer: &mut [u8]) -> Result<usize>;
-    fn write(&mut self, block: u64, buffer: &[u8]) -> Result<usize>;
+    fn read(&mut self, block: u64, buffer: &mut [u8]) -> Result<Option<usize>>;
+    fn write(&mut self, block: u64, buffer: &[u8]) -> Result<Option<usize>>;
     fn block_length(&mut self) -> Result<u32>;
 }
 
-pub fn disks(base: usize, name: &str) -> Vec<Box<Disk>> {
-    unsafe { &mut *(base as *mut HbaMem) }.init();
-    let pi = unsafe { &mut *(base as *mut HbaMem) }.pi.read();
-    let ret: Vec<Box<Disk>> = (0..32)
+pub fn disks(base: usize, name: &str) -> (&'static mut HbaMem, Vec<Box<Disk>>) {
+    let hba_mem = unsafe { &mut *(base as *mut HbaMem) };
+    hba_mem.init();
+    let pi = hba_mem.pi.read();
+    let disks: Vec<Box<Disk>> = (0..hba_mem.ports.len())
           .filter(|&i| pi & 1 << i as i32 == 1 << i as i32)
           .filter_map(|i| {
-              let port = &mut unsafe { &mut *(base as *mut HbaMem) }.ports[i];
+              let port = unsafe { &mut *hba_mem.ports.as_mut_ptr().add(i) };
               let port_type = port.probe();
               print!("{}", format!("{}-{}: {:?}\n", name, i, port_type));
 
@@ -54,5 +55,5 @@ pub fn disks(base: usize, name: &str) -> Vec<Box<Disk>> {
           })
           .collect();
 
-    ret
+    (hba_mem, disks)
 }

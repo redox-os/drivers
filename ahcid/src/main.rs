@@ -1,7 +1,5 @@
-#![deny(warnings)]
-#![feature(asm)]
+//#![deny(warnings)]
 
-extern crate spin;
 extern crate syscall;
 extern crate byteorder;
 
@@ -9,7 +7,7 @@ use std::{env, usize};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::os::unix::io::FromRawFd;
-use syscall::{EVENT_READ, PHYSMAP_WRITE, Event, Packet, Scheme};
+use syscall::{EVENT_READ, PHYSMAP_WRITE, Event, Packet, SchemeBlockMut};
 
 use scheme::DiskScheme;
 
@@ -49,6 +47,8 @@ fn main() {
 
             let mut event_file = File::open("event:").expect("ahcid: failed to open event file");
 
+            syscall::setrens(0, 0).expect("ahcid: failed to enter null namespace");
+
             event_file.write(&Event {
                 id: socket_fd,
                 flags: EVENT_READ,
@@ -61,10 +61,10 @@ fn main() {
                 data: 0
             }).expect("ahcid: failed to event irq scheme");
 
-            let scheme = DiskScheme::new(scheme_name, ahci::disks(address, &name));
+            let (hba_mem, disks) = ahci::disks(address, &name);
+            let mut scheme = DiskScheme::new(scheme_name, hba_mem, disks);
 
-            syscall::setrens(0, 0).expect("ahcid: failed to enter null namespace");
-
+            let mut todo = Vec::new();
             loop {
                 let mut event = Event::default();
                 if event_file.read(&mut event).expect("ahcid: failed to read event file") == 0 {
@@ -76,14 +76,42 @@ fn main() {
                         if socket.read(&mut packet).expect("ahcid: failed to read disk scheme") == 0 {
                             break;
                         }
-                        scheme.handle(&mut packet);
-                        socket.write(&mut packet).expect("ahcid: failed to write disk scheme");
+
+                        if let Some(a) = scheme.handle(&packet) {
+                            packet.a = a;
+                            socket.write(&mut packet).expect("ahcid: failed to write disk scheme");
+                        } else {
+                            todo.push(packet);
+                        }
                     }
+
+                    // let mut i = 0;
+                    // while i < todo.len() {
+                    //     if let Some(a) = scheme.handle(&todo[i]) {
+                    //         let mut packet = todo.remove(i);
+                    //         packet.a = a;
+                    //         socket.write(&mut packet).expect("ahcid: failed to write disk scheme");
+                    //     } else {
+                    //         i += 1;
+                    //     }
+                    // }
                 } else if event.id == irq_fd {
                     let mut irq = [0; 8];
                     if irq_file.read(&mut irq).expect("ahcid: failed to read irq file") >= irq.len() {
-                        //TODO : Test for IRQ
-                        //irq_file.write(&irq).expect("ahcid: failed to write irq file");
+                        if scheme.irq() {
+                            irq_file.write(&irq).expect("ahcid: failed to write irq file");
+
+                            let mut i = 0;
+                            while i < todo.len() {
+                                if let Some(a) = scheme.handle(&todo[i]) {
+                                    let mut packet = todo.remove(i);
+                                    packet.a = a;
+                                    socket.write(&mut packet).expect("ahcid: failed to write disk scheme");
+                                } else {
+                                    i += 1;
+                                }
+                            }
+                        }
                     }
                 } else {
                     println!("Unknown event {}", event.id);

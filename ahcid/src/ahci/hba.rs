@@ -116,7 +116,7 @@ impl HbaPort {
         self.fb[1].write((fb.physical() >> 32) as u32);
         let is = self.is.read();
         self.is.write(is);
-        self.ie.write(0);
+        self.ie.write(0b10111);
         let serr = self.serr.read();
         self.serr.write(serr);
 
@@ -142,7 +142,7 @@ impl HbaPort {
     unsafe fn identify_inner(&mut self, cmd: u8, clb: &mut Dma<[HbaCmdHeader; 32]>, ctbas: &mut [Dma<HbaCmdTable>; 32]) -> Option<u64> {
         let dest: Dma<[u16; 256]> = Dma::new([0; 256]).unwrap();
 
-        let res = self.ata_dma(clb, ctbas, |cmdheader, cmdfis, prdt_entries, _acmd| {
+        let slot = self.ata_start(clb, ctbas, |cmdheader, cmdfis, prdt_entries, _acmd| {
             cmdheader.prdtl.write(1);
 
             let prdt_entry = &mut prdt_entries[0];
@@ -154,9 +154,9 @@ impl HbaPort {
             cmdfis.device.write(0);
             cmdfis.countl.write(1);
             cmdfis.counth.write(0);
-        });
+        })?;
 
-        if res.is_ok() {
+        if self.ata_stop(slot).is_ok() {
             let mut serial = String::new();
             for word in 10..20 {
                 let d = dest[word];
@@ -217,14 +217,12 @@ impl HbaPort {
         }
     }
 
-    pub fn dma_read_write(&mut self, block: u64, sectors: usize, write: bool, clb: &mut Dma<[HbaCmdHeader; 32]>, ctbas: &mut [Dma<HbaCmdTable>; 32], buf: &mut Dma<[u8; 256 * 512]>) -> Result<usize> {
-        if write {
-            //print!("{}", format!("AHCI {:X} DMA BLOCK: {:X} SECTORS: {} WRITE: {}\n", (self as *mut HbaPort) as usize, block, sectors, write));
-        }
+    pub fn ata_dma(&mut self, block: u64, sectors: usize, write: bool, clb: &mut Dma<[HbaCmdHeader; 32]>, ctbas: &mut [Dma<HbaCmdTable>; 32], buf: &mut Dma<[u8; 256 * 512]>) -> Option<u32> {
+        // print!("{}", format!("AHCI {:X} DMA BLOCK: {:X} SECTORS: {} WRITE: {}\n", (self as *mut HbaPort) as usize, block, sectors, write));
 
         assert!(sectors > 0 && sectors < 256);
 
-        let res = self.ata_dma(clb, ctbas, |cmdheader, cmdfis, prdt_entries, _acmd| {
+        self.ata_start(clb, ctbas, |cmdheader, cmdfis, prdt_entries, _acmd| {
             if write {
                 let cfl = cmdheader.cfl.read();
                 cmdheader.cfl.write(cfl | 1 << 7 | 1 << 6)
@@ -255,14 +253,12 @@ impl HbaPort {
 
             cmdfis.countl.write(sectors as u8);
             cmdfis.counth.write((sectors >> 8) as u8);
-        });
-
-        res.and(Ok(sectors * 512))
+        })
     }
 
     /// Send ATAPI packet
-    pub fn packet(&mut self, cmd: &[u8; 16], size: u32, clb: &mut Dma<[HbaCmdHeader; 32]>, ctbas: &mut [Dma<HbaCmdTable>; 32], buf: &mut Dma<[u8; 256 * 512]>) -> Result<()> {
-        self.ata_dma(clb, ctbas, |cmdheader, cmdfis, prdt_entries, acmd| {
+    pub fn atapi_dma(&mut self, cmd: &[u8; 16], size: u32, clb: &mut Dma<[HbaCmdHeader; 32]>, ctbas: &mut [Dma<HbaCmdTable>; 32], buf: &mut Dma<[u8; 256 * 512]>) -> Result<()> {
+        let slot = self.ata_start(clb, ctbas, |cmdheader, cmdfis, prdt_entries, acmd| {
             let cfl = cmdheader.cfl.read();
             cmdheader.cfl.write(cfl | 1 << 5);
 
@@ -281,12 +277,14 @@ impl HbaPort {
             cmdfis.featureh.write(0);
 
             unsafe { ptr::write_volatile(acmd.as_mut_ptr() as *mut [u8; 16], *cmd) };
-        })
+        }).ok_or(Error::new(EIO))?;
+        self.ata_stop(slot)
     }
 
-    fn ata_dma<F>(&mut self, clb: &mut Dma<[HbaCmdHeader; 32]>, ctbas: &mut [Dma<HbaCmdTable>; 32], callback: F) -> Result<()>
+    pub fn ata_start<F>(&mut self, clb: &mut Dma<[HbaCmdHeader; 32]>, ctbas: &mut [Dma<HbaCmdTable>; 32], callback: F) -> Option<u32>
               where F: FnOnce(&mut HbaCmdHeader, &mut FisRegH2D, &mut [HbaPrdtEntry; 65536], &mut [Mmio<u8>; 16]) {
 
+        //TODO: Should probably remove
         self.is.write(u32::MAX);
 
         if let Some(slot) = self.slot() {
@@ -312,27 +310,31 @@ impl HbaPort {
 
             self.ci.writef(1 << slot, true);
 
+            //TODO: Should probably remove
             self.start();
 
-            while (self.ci.readf(1 << slot) || self.tfd.readf(0x80)) && self.is.read() & HBA_PORT_IS_ERR == 0 {
-                thread::yield_now();
-            }
-
-            self.stop();
-
-            if self.is.read() & HBA_PORT_IS_ERR != 0 {
-                print!("{}", format!("ERROR IS {:X} IE {:X} CMD {:X} TFD {:X}\nSSTS {:X} SCTL {:X} SERR {:X} SACT {:X}\nCI {:X} SNTF {:X} FBS {:X}\n",
-                        self.is.read(), self.ie.read(), self.cmd.read(), self.tfd.read(),
-                        self.ssts.read(), self.sctl.read(), self.serr.read(), self.sact.read(),
-                        self.ci.read(), self.sntf.read(), self.fbs.read()));
-                self.is.write(u32::MAX);
-                Err(Error::new(EIO))
-            } else {
-                Ok(())
-            }
+            Some(slot)
         } else {
-            print!("No Command Slots\n");
+            None
+        }
+    }
+
+    pub fn ata_stop(&mut self, slot: u32) -> Result<()> {
+        while (self.ci.readf(1 << slot) || self.tfd.readf(0x80)) && self.is.read() & HBA_PORT_IS_ERR == 0 {
+            thread::yield_now();
+        }
+
+        self.stop();
+
+        if self.is.read() & HBA_PORT_IS_ERR != 0 {
+            print!("{}", format!("ERROR IS {:X} IE {:X} CMD {:X} TFD {:X}\nSSTS {:X} SCTL {:X} SERR {:X} SACT {:X}\nCI {:X} SNTF {:X} FBS {:X}\n",
+                    self.is.read(), self.ie.read(), self.cmd.read(), self.tfd.read(),
+                    self.ssts.read(), self.sctl.read(), self.serr.read(), self.sact.read(),
+                    self.ci.read(), self.sntf.read(), self.fbs.read()));
+            self.is.write(u32::MAX);
             Err(Error::new(EIO))
+        } else {
+            Ok(())
         }
     }
 }

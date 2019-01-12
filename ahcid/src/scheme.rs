@@ -2,44 +2,63 @@ use std::collections::BTreeMap;
 use std::{cmp, str};
 use std::fmt::Write;
 use std::io::Read;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use spin::Mutex;
-use syscall::{Error, EACCES, EBADF, EINVAL, EISDIR, ENOENT, Result, Scheme, Stat, MODE_DIR, MODE_FILE, O_DIRECTORY, O_STAT, SEEK_CUR, SEEK_END, SEEK_SET};
+use syscall::{
+    Error, EACCES, EBADF, EINVAL, EISDIR, ENOENT, Result,
+    Io, SchemeBlockMut, Stat, MODE_DIR, MODE_FILE, O_DIRECTORY,
+    O_STAT, SEEK_CUR, SEEK_END, SEEK_SET};
 
 use ahci::Disk;
+use ahci::hba::HbaMem;
 
 #[derive(Clone)]
 enum Handle {
     List(Vec<u8>, usize),
-    Disk(Arc<Mutex<Box<Disk>>>, usize, usize)
+    Disk(usize, usize)
 }
 
 pub struct DiskScheme {
     scheme_name: String,
-    disks: Box<[Arc<Mutex<Box<Disk>>>]>,
-    handles: Mutex<BTreeMap<usize, Handle>>,
-    next_id: AtomicUsize
+    hba_mem: &'static mut HbaMem,
+    disks: Box<[Box<Disk>]>,
+    handles: BTreeMap<usize, Handle>,
+    next_id: usize
 }
 
 impl DiskScheme {
-    pub fn new(scheme_name: String, disks: Vec<Box<Disk>>) -> DiskScheme {
-        let mut disk_arcs = vec![];
-        for disk in disks {
-            disk_arcs.push(Arc::new(Mutex::new(disk)));
-        }
-
+    pub fn new(scheme_name: String, hba_mem: &'static mut HbaMem, disks: Vec<Box<Disk>>) -> DiskScheme {
         DiskScheme {
             scheme_name: scheme_name,
-            disks: disk_arcs.into_boxed_slice(),
-            handles: Mutex::new(BTreeMap::new()),
-            next_id: AtomicUsize::new(0)
+            hba_mem: hba_mem,
+            disks: disks.into_boxed_slice(),
+            handles: BTreeMap::new(),
+            next_id: 0
         }
     }
 }
 
-impl Scheme for DiskScheme {
-    fn open(&self, path: &[u8], flags: usize, uid: u32, _gid: u32) -> Result<usize> {
+impl DiskScheme {
+    pub fn irq(&mut self) -> bool {
+        let pi = self.hba_mem.pi.read();
+        let is = self.hba_mem.is.read();
+        let pi_is = pi & is;
+
+        for i in 0..self.hba_mem.ports.len() {
+            if pi_is & 1 << i > 0 {
+                let port = &mut self.hba_mem.ports[i];
+                let is = port.is.read();
+                //println!("IRQ Port {}: {:#>08x}", i, is);
+                //TODO: Handle requests for only this port here
+                port.is.write(is);
+            }
+        }
+
+        self.hba_mem.is.write(is);
+        is != 0
+    }
+}
+
+impl SchemeBlockMut for DiskScheme {
+    fn open(&mut self, path: &[u8], flags: usize, uid: u32, _gid: u32) -> Result<Option<usize>> {
         if uid == 0 {
             let path_str = str::from_utf8(path).or(Err(Error::new(ENOENT)))?.trim_matches('/');
             if path_str.is_empty() {
@@ -50,19 +69,21 @@ impl Scheme for DiskScheme {
                         write!(list, "{}\n", i).unwrap();
                     }
 
-                    let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-                    self.handles.lock().insert(id, Handle::List(list.into_bytes(), 0));
-                    Ok(id)
+                    let id = self.next_id;
+                    self.next_id += 1;
+                    self.handles.insert(id, Handle::List(list.into_bytes(), 0));
+                    Ok(Some(id))
                 } else {
                     Err(Error::new(EISDIR))
                 }
             } else {
                 let i = path_str.parse::<usize>().or(Err(Error::new(ENOENT)))?;
 
-                if let Some(disk) = self.disks.get(i) {
-                    let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-                    self.handles.lock().insert(id, Handle::Disk(disk.clone(), 0, i));
-                    Ok(id)
+                if self.disks.get(i).is_some() {
+                    let id = self.next_id;
+                    self.next_id += 1;
+                    self.handles.insert(id, Handle::Disk(i, 0));
+                    Ok(Some(id))
                 } else {
                     Err(Error::new(ENOENT))
                 }
@@ -72,41 +93,40 @@ impl Scheme for DiskScheme {
         }
     }
 
-    fn dup(&self, id: usize, buf: &[u8]) -> Result<usize> {
+    fn dup(&mut self, id: usize, buf: &[u8]) -> Result<Option<usize>> {
         if ! buf.is_empty() {
             return Err(Error::new(EINVAL));
         }
 
-        let mut handles = self.handles.lock();
         let new_handle = {
-            let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+            let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
             handle.clone()
         };
 
-        let new_id = self.next_id.fetch_add(1, Ordering::SeqCst);
-        handles.insert(new_id, new_handle);
-        Ok(new_id)
+        let new_id = self.next_id;
+        self.next_id += 1;
+        self.handles.insert(new_id, new_handle);
+        Ok(Some(new_id))
     }
 
-    fn fstat(&self, id: usize, stat: &mut Stat) -> Result<usize> {
-        let handles = self.handles.lock();
-        match *handles.get(&id).ok_or(Error::new(EBADF))? {
-            Handle::List(ref handle, _) => {
+    fn fstat(&mut self, id: usize, stat: &mut Stat) -> Result<Option<usize>> {
+        match *self.handles.get(&id).ok_or(Error::new(EBADF))? {
+            Handle::List(ref data, _) => {
                 stat.st_mode = MODE_DIR;
-                stat.st_size = handle.len() as u64;
-                Ok(0)
+                stat.st_size = data.len() as u64;
+                Ok(Some(0))
             },
-            Handle::Disk(ref handle, _, _) => {
+            Handle::Disk(number, _) => {
+                let mut disk = self.disks.get_mut(number).ok_or(Error::new(EBADF))?;
                 stat.st_mode = MODE_FILE;
-                stat.st_size = handle.lock().size();
-                Ok(0)
+                stat.st_size = disk.size();
+                Ok(Some(0))
             }
         }
     }
 
-    fn fpath(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
-        let handles = self.handles.lock();
-        let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+    fn fpath(&mut self, id: usize, buf: &mut [u8]) -> Result<Option<usize>> {
+        let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
         let mut i = 0;
 
@@ -125,7 +145,7 @@ impl Scheme for DiskScheme {
 
         match *handle {
             Handle::List(_, _) => (),
-            Handle::Disk(_, _, number) => {
+            Handle::Disk(number, _) => {
                 let number_str = format!("{}", number);
                 let number_bytes = number_str.as_bytes();
                 j = 0;
@@ -137,46 +157,49 @@ impl Scheme for DiskScheme {
             }
         }
 
-        Ok(i)
+        Ok(Some(i))
     }
 
-    fn read(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
-        let mut handles = self.handles.lock();
-        match *handles.get_mut(&id).ok_or(Error::new(EBADF))? {
+    fn read(&mut self, id: usize, buf: &mut [u8]) -> Result<Option<usize>> {
+        match *self.handles.get_mut(&id).ok_or(Error::new(EBADF))? {
             Handle::List(ref mut handle, ref mut size) => {
                 let count = (&handle[*size..]).read(buf).unwrap();
                 *size += count;
-                Ok(count)
+                Ok(Some(count))
             },
-            Handle::Disk(ref mut handle, ref mut size, _) => {
-                let mut disk = handle.lock();
+            Handle::Disk(number, ref mut size) => {
+                let mut disk = self.disks.get_mut(number).ok_or(Error::new(EBADF))?;
                 let blk_len = disk.block_length()?;
-                let count = disk.read((*size as u64)/(blk_len as u64), buf)?;
-                *size += count;
-                Ok(count)
+                if let Some(count) = disk.read((*size as u64)/(blk_len as u64), buf)? {
+                    *size += count;
+                    Ok(Some(count))
+                } else {
+                    Ok(None)
+                }
             }
         }
     }
 
-    fn write(&self, id: usize, buf: &[u8]) -> Result<usize> {
-        let mut handles = self.handles.lock();
-        match *handles.get_mut(&id).ok_or(Error::new(EBADF))? {
+    fn write(&mut self, id: usize, buf: &[u8]) -> Result<Option<usize>> {
+        match *self.handles.get_mut(&id).ok_or(Error::new(EBADF))? {
             Handle::List(_, _) => {
                 Err(Error::new(EBADF))
             },
-            Handle::Disk(ref mut handle, ref mut size, _) => {
-                let mut disk = handle.lock();
+            Handle::Disk(number, ref mut size) => {
+                let mut disk = self.disks.get_mut(number).ok_or(Error::new(EBADF))?;
                 let blk_len = disk.block_length()?;
-                let count = disk.write((*size as u64)/(blk_len as u64), buf)?;
-                *size += count;
-                Ok(count)
+                if let Some(count) = disk.write((*size as u64)/(blk_len as u64), buf)? {
+                    *size += count;
+                    Ok(Some(count))
+                } else {
+                    Ok(None)
+                }
             }
         }
     }
 
-    fn seek(&self, id: usize, pos: usize, whence: usize) -> Result<usize> {
-        let mut handles = self.handles.lock();
-        match *handles.get_mut(&id).ok_or(Error::new(EBADF))? {
+    fn seek(&mut self, id: usize, pos: usize, whence: usize) -> Result<Option<usize>> {
+        match *self.handles.get_mut(&id).ok_or(Error::new(EBADF))? {
             Handle::List(ref mut handle, ref mut size) => {
                 let len = handle.len() as usize;
                 *size = match whence {
@@ -186,10 +209,11 @@ impl Scheme for DiskScheme {
                     _ => return Err(Error::new(EINVAL))
                 };
 
-                Ok(*size)
+                Ok(Some(*size))
             },
-            Handle::Disk(ref mut handle, ref mut size, _) => {
-                let len = handle.lock().size() as usize;
+            Handle::Disk(number, ref mut size) => {
+                let mut disk = self.disks.get_mut(number).ok_or(Error::new(EBADF))?;
+                let len = disk.size() as usize;
                 *size = match whence {
                     SEEK_SET => cmp::min(len, pos),
                     SEEK_CUR => cmp::max(0, cmp::min(len as isize, *size as isize + pos as isize)) as usize,
@@ -197,13 +221,12 @@ impl Scheme for DiskScheme {
                     _ => return Err(Error::new(EINVAL))
                 };
 
-                Ok(*size)
+                Ok(Some(*size))
             }
         }
     }
 
-    fn close(&self, id: usize) -> Result<usize> {
-        let mut handles = self.handles.lock();
-        handles.remove(&id).ok_or(Error::new(EBADF)).and(Ok(0))
+    fn close(&mut self, id: usize) -> Result<Option<usize>> {
+        self.handles.remove(&id).ok_or(Error::new(EBADF)).and(Ok(Some(0)))
     }
 }

@@ -5,7 +5,7 @@ use std::ptr;
 use byteorder::{ByteOrder, BigEndian};
 
 use syscall::io::Dma;
-use syscall::error::{Result, ENOSYS, Error};
+use syscall::error::{Result, EBADF, Error};
 
 use super::hba::{HbaPort, HbaCmdTable, HbaCmdHeader};
 use super::Disk;
@@ -61,7 +61,7 @@ impl DiskATAPI {
 
         let mut cmd = [0; 16];
         cmd[0] = SCSI_READ_CAPACITY;
-        self.port.packet(&cmd, 8, &mut self.clb, &mut self.ctbas, &mut self.buf)?;
+        self.port.atapi_dma(&cmd, 8, &mut self.clb, &mut self.ctbas, &mut self.buf)?;
 
         // Instead of a count, contains number of last LBA, so add 1
         let blk_count = BigEndian::read_u32(&self.buf[0..4]) + 1;
@@ -83,9 +83,9 @@ impl Disk for DiskATAPI {
         }
     }
 
-    fn read(&mut self, block: u64, buffer: &mut [u8]) -> Result<usize> {
+    fn read(&mut self, block: u64, buffer: &mut [u8]) -> Result<Option<usize>> {
         // TODO: Handle audio CDs, which use special READ CD command
- 
+
         let blk_len = self.block_length()?;
         let sectors = buffer.len() as u32 / blk_len;
 
@@ -102,7 +102,7 @@ impl Disk for DiskATAPI {
         let buf_size = buf_len * blk_len;
         while sectors - sector >= buf_len {
             let cmd = read10_cmd(block as u32 + sector, buf_len as u16);
-            self.port.packet(&cmd, buf_size, &mut self.clb, &mut self.ctbas, &mut self.buf)?;
+            self.port.atapi_dma(&cmd, buf_size, &mut self.clb, &mut self.ctbas, &mut self.buf)?;
 
             unsafe { ptr::copy(self.buf.as_ptr(), buffer.as_mut_ptr().offset(sector as isize * blk_len as isize), buf_size as usize); }
 
@@ -110,20 +110,20 @@ impl Disk for DiskATAPI {
         }
         if sector < sectors {
             let cmd = read10_cmd(block as u32 + sector, (sectors - sector) as u16);
-            self.port.packet(&cmd, buf_size, &mut self.clb, &mut self.ctbas, &mut self.buf)?;
+            self.port.atapi_dma(&cmd, buf_size, &mut self.clb, &mut self.ctbas, &mut self.buf)?;
 
             unsafe { ptr::copy(self.buf.as_ptr(), buffer.as_mut_ptr().offset(sector as isize * blk_len as isize), ((sectors - sector) * blk_len) as usize); }
 
             sector += sectors - sector;
         }
 
-        Ok((sector * blk_len) as usize)
+        Ok(Some((sector * blk_len) as usize))
     }
 
-    fn write(&mut self, _block: u64, _buffer: &[u8]) -> Result<usize> {
-        Err(Error::new(ENOSYS)) // TODO: Implement writting
+    fn write(&mut self, _block: u64, _buffer: &[u8]) -> Result<Option<usize>> {
+        Err(Error::new(EBADF)) // TODO: Implement writing
     }
-    
+
     fn block_length(&mut self) -> Result<u32> {
         Ok(self.read_capacity()?.1)
     }
