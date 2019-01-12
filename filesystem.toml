@@ -30,11 +30,11 @@ device = 5379
 command = ["e1000d", "$NAME", "$BAR0", "$IRQ"]
 
 # ihdad
-# [[drivers]]
-# name = "Intel HD Audio"
-# class = 4
-# subclass = 3
-# command = ["ihdad", "$NAME", "$BAR0", "$IRQ", "$VENID", "$DEVID"]
+[[drivers]]
+name = "Intel HD Audio"
+class = 4
+subclass = 3
+command = ["ihdad", "$NAME", "$BAR0", "$IRQ", "$VENID", "$DEVID"]
 
 # rtl8168d
 [[drivers]]
