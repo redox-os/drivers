@@ -93,7 +93,7 @@ fn main() {
 					}
 					*/
 				}
-				Ok(Some(0))
+				Ok(None)
 			}).expect("IHDA: failed to catch events on IRQ file");
 			let socket_fd = socket.borrow().as_raw_fd();
 			let socket_packet = socket.clone();
