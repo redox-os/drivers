@@ -5,7 +5,7 @@ use netutils::setcfg;
 use syscall::error::{Error, EACCES, EBADF, EINVAL, EWOULDBLOCK, Result};
 use syscall::flag::O_NONBLOCK;
 use syscall::io::Dma;
-use syscall::scheme::SchemeMut;
+use syscall::scheme::SchemeBlockMut;
 
 const CTRL: u32 = 0x00;
 const CTRL_LRST: u32 = 1 << 3;
@@ -104,18 +104,18 @@ pub struct Intel8254x {
     pub handles: BTreeMap<usize, usize>,
 }
 
-impl SchemeMut for Intel8254x {
-    fn open(&mut self, _path: &[u8], flags: usize, uid: u32, _gid: u32) -> Result<usize> {
+impl SchemeBlockMut for Intel8254x {
+    fn open(&mut self, _path: &[u8], flags: usize, uid: u32, _gid: u32) -> Result<Option<usize>> {
         if uid == 0 {
             self.next_id += 1;
             self.handles.insert(self.next_id, flags);
-            Ok(self.next_id)
+            Ok(Some(self.next_id))
         } else {
             Err(Error::new(EACCES))
         }
     }
 
-    fn dup(&mut self, id: usize, buf: &[u8]) -> Result<usize> {
+    fn dup(&mut self, id: usize, buf: &[u8]) -> Result<Option<usize>> {
         if ! buf.is_empty() {
             return Err(Error::new(EINVAL));
         }
@@ -126,10 +126,10 @@ impl SchemeMut for Intel8254x {
         };
         self.next_id += 1;
         self.handles.insert(self.next_id, flags);
-        Ok(self.next_id)
+        Ok(Some(self.next_id))
     }
 
-    fn read(&mut self, id: usize, buf: &mut [u8]) -> Result<usize> {
+    fn read(&mut self, id: usize, buf: &mut [u8]) -> Result<Option<usize>> {
         let flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
         let head = unsafe { self.read_reg(RDH) };
@@ -155,18 +155,18 @@ impl SchemeMut for Intel8254x {
 
                 unsafe { self.write_reg(RDT, tail) };
 
-                return Ok(i);
+                return Ok(Some(i));
             }
         }
 
         if flags & O_NONBLOCK == O_NONBLOCK {
-            Ok(0)
-        } else {
             Err(Error::new(EWOULDBLOCK))
+        } else {
+            Ok(None)
         }
     }
 
-    fn write(&mut self, id: usize, buf: &[u8]) -> Result<usize> {
+    fn write(&mut self, id: usize, buf: &[u8]) -> Result<Option<usize>> {
         let _flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
         loop {
@@ -204,17 +204,17 @@ impl SchemeMut for Intel8254x {
                     thread::yield_now();
                 }
 
-                return Ok(i);
+                return Ok(Some(i));
             }
         }
     }
 
-    fn fevent(&mut self, id: usize, _flags: usize) -> Result<usize> {
+    fn fevent(&mut self, id: usize, _flags: usize) -> Result<Option<usize>> {
         let _flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
-        Ok(id)
+        Ok(Some(id))
     }
 
-    fn fpath(&mut self, id: usize, buf: &mut [u8]) -> Result<usize> {
+    fn fpath(&mut self, id: usize, buf: &mut [u8]) -> Result<Option<usize>> {
         let _flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
         let mut i = 0;
@@ -223,17 +223,17 @@ impl SchemeMut for Intel8254x {
             buf[i] = scheme_path[i];
             i += 1;
         }
-        Ok(i)
+        Ok(Some(i))
     }
 
-    fn fsync(&mut self, id: usize) -> Result<usize> {
+    fn fsync(&mut self, id: usize) -> Result<Option<usize>> {
         let _flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
-        Ok(0)
+        Ok(Some(0))
     }
 
-    fn close(&mut self, id: usize) -> Result<usize> {
+    fn close(&mut self, id: usize) -> Result<Option<usize>> {
         self.handles.remove(&id).ok_or(Error::new(EBADF))?;
-        Ok(0)
+        Ok(Some(0))
     }
 }
 

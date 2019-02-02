@@ -12,7 +12,7 @@ use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::sync::Arc;
 
 use event::EventQueue;
-use syscall::{Packet, SchemeMut, PHYSMAP_WRITE};
+use syscall::{Packet, SchemeBlockMut, PHYSMAP_WRITE};
 use syscall::error::EWOULDBLOCK;
 
 pub mod device;
@@ -21,14 +21,12 @@ fn handle_update(socket: &mut File, device: &mut device::Intel8254x, todo: &mut 
     // Handle any blocked packets
     let mut i = 0;
     while i < todo.len() {
-        let a = todo[i].a;
-        device.handle(&mut todo[i]);
-        if todo[i].a == (-EWOULDBLOCK) as usize {
-            todo[i].a = a;
-            i += 1;
+        if let Some(a) = device.handle(&todo[i]) {
+            let mut packet = todo.remove(i);
+            packet.a = a;
+            socket.write(&packet)?;
         } else {
-            socket.write(&mut todo[i])?;
-            todo.remove(i);
+            i += 1;
         }
     }
 
@@ -39,13 +37,11 @@ fn handle_update(socket: &mut File, device: &mut device::Intel8254x, todo: &mut 
             break;
         }
 
-        let a = packet.a;
-        device.handle(&mut packet);
-        if packet.a == (-EWOULDBLOCK) as usize {
+        if let Some(a) = device.handle(&packet) {
             packet.a = a;
-            todo.push(packet);
+            socket.write(&packet)?;
         } else {
-            socket.write(&mut packet)?;
+            todo.push(packet);
         }
     }
 
