@@ -84,23 +84,13 @@ fn main() {
                             todo.push(packet);
                         }
                     }
-
-                    // let mut i = 0;
-                    // while i < todo.len() {
-                    //     if let Some(a) = scheme.handle(&todo[i]) {
-                    //         let mut packet = todo.remove(i);
-                    //         packet.a = a;
-                    //         socket.write(&mut packet).expect("ahcid: failed to write disk scheme");
-                    //     } else {
-                    //         i += 1;
-                    //     }
-                    // }
                 } else if event.id == irq_fd {
                     let mut irq = [0; 8];
                     if irq_file.read(&mut irq).expect("ahcid: failed to read irq file") >= irq.len() {
                         if scheme.irq() {
                             irq_file.write(&irq).expect("ahcid: failed to write irq file");
 
+                            // Handle todos in order to finish previous packets if possible
                             let mut i = 0;
                             while i < todo.len() {
                                 if let Some(a) = scheme.handle(&todo[i]) {
@@ -115,6 +105,18 @@ fn main() {
                     }
                 } else {
                     println!("Unknown event {}", event.id);
+                }
+
+                // Handle todos to start new packets if possible
+                let mut i = 0;
+                while i < todo.len() {
+                    if let Some(a) = scheme.handle(&todo[i]) {
+                        let mut packet = todo.remove(i);
+                        packet.a = a;
+                        socket.write(&mut packet).expect("ahcid: failed to write disk scheme");
+                    } else {
+                        i += 1;
+                    }
                 }
             }
         }

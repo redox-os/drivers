@@ -67,59 +67,80 @@ impl DiskATA {
             BufferKind::Write(ref buffer) => (true, buffer.as_ptr() as usize, buffer.len()/512),
         };
 
-        let mut request = match self.request_opt.take() {
-            Some(request) => if address == request.address && total_sectors == request.total_sectors {
-                // Keep servicing current request
-                request
-            } else {
-                // Have to wait for another request to finish
-                self.request_opt = Some(request);
-                return Ok(None);
-            },
-            None => {
-                // Create new request
-                Request {
-                    address,
-                    total_sectors,
-                    sector: 0,
-                    running_opt: None,
+        //TODO: Go back to interrupt magic
+        let use_interrupts = false;
+        loop {
+            let mut request = match self.request_opt.take() {
+                Some(request) => if address == request.address && total_sectors == request.total_sectors {
+                    // Keep servicing current request
+                    request
+                } else {
+                    // Have to wait for another request to finish
+                    self.request_opt = Some(request);
+                    return Ok(None);
+                },
+                None => {
+                    // Create new request
+                    Request {
+                        address,
+                        total_sectors,
+                        sector: 0,
+                        running_opt: None,
+                    }
                 }
-            }
-        };
-
-        // Finish a previously running request
-        if let Some(running) = request.running_opt.take() {
-            self.port.ata_stop(running.0)?;
-
-            if let BufferKind::Read(ref mut buffer) = buffer_kind {
-                unsafe { ptr::copy(self.buf.as_ptr(), buffer.as_mut_ptr().add(request.sector * 512), running.1 * 512); }
-            }
-
-            request.sector += running.1;
-        }
-
-        if request.sector < request.total_sectors {
-            // Start a new request
-            let sectors = if request.total_sectors - request.sector >= 255 {
-                255
-            } else {
-                request.total_sectors - request.sector
             };
 
-            if let BufferKind::Write(ref buffer) = buffer_kind {
-                unsafe { ptr::copy(buffer.as_ptr().add(request.sector * 512), self.buf.as_mut_ptr(), sectors * 512); }
+            // Finish a previously running request
+            if let Some(running) = request.running_opt.take() {
+                if self.port.ata_running(running.0) {
+                    // Continue waiting for request
+                    request.running_opt = Some(running);
+                    self.request_opt = Some(request);
+                    if use_interrupts {
+                        return Ok(None);
+                    } else {
+                        ::std::thread::yield_now();
+                        continue;
+                    }
+                }
+
+                self.port.ata_stop(running.0)?;
+
+                if let BufferKind::Read(ref mut buffer) = buffer_kind {
+                    unsafe { ptr::copy(self.buf.as_ptr(), buffer.as_mut_ptr().add(request.sector * 512), running.1 * 512); }
+                }
+
+                request.sector += running.1;
             }
 
-            if let Some(slot) = self.port.ata_dma(block + request.sector as u64, sectors, write, &mut self.clb, &mut self.ctbas, &mut self.buf) {
-                request.running_opt = Some((slot, sectors));
+            if request.sector < request.total_sectors {
+                // Start a new request
+                let sectors = if request.total_sectors - request.sector >= 255 {
+                    255
+                } else {
+                    request.total_sectors - request.sector
+                };
+
+                if let BufferKind::Write(ref buffer) = buffer_kind {
+                    unsafe { ptr::copy(buffer.as_ptr().add(request.sector * 512), self.buf.as_mut_ptr(), sectors * 512); }
+                }
+
+                if let Some(slot) = self.port.ata_dma(block + request.sector as u64, sectors, write, &mut self.clb, &mut self.ctbas, &mut self.buf) {
+                    request.running_opt = Some((slot, sectors));
+                }
+
+                self.request_opt = Some(request);
+
+                if use_interrupts {
+                    return Ok(None);
+                } else {
+                    ::std::thread::yield_now();
+                    continue;
+                }
+            } else {
+                // Done
+                return Ok(Some(request.sector * 512));
             }
-
-            self.request_opt = Some(request);
-
-            Ok(None)
-        } else {
-            // Done
-            Ok(Some(request.sector * 512))
         }
     }
 }

@@ -319,8 +319,12 @@ impl HbaPort {
         }
     }
 
+    pub fn ata_running(&self, slot: u32) -> bool {
+        (self.ci.readf(1 << slot) || self.tfd.readf(0x80)) && self.is.read() & HBA_PORT_IS_ERR == 0
+    }
+
     pub fn ata_stop(&mut self, slot: u32) -> Result<()> {
-        while (self.ci.readf(1 << slot) || self.tfd.readf(0x80)) && self.is.read() & HBA_PORT_IS_ERR == 0 {
+        while self.ata_running(slot) {
             thread::yield_now();
         }
 
