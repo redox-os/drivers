@@ -211,7 +211,7 @@ impl SchemeBlockMut for Intel8254x {
 
     fn fevent(&mut self, id: usize, _flags: usize) -> Result<Option<usize>> {
         let _flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
-        Ok(Some(id))
+        Ok(Some(0))
     }
 
     fn fpath(&mut self, id: usize, buf: &mut [u8]) -> Result<Option<usize>> {

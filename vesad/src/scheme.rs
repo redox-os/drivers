@@ -139,7 +139,7 @@ impl SchemeMut for DisplayScheme {
 
         if let HandleKind::Screen(_screen_i) = handle.kind {
             handle.events = flags;
-            Ok(id)
+            Ok(0)
         } else {
             Err(Error::new(EBADF))
         }

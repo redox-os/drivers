@@ -176,7 +176,7 @@ impl SchemeMut for Rtl8168 {
 
     fn fevent(&mut self, id: usize, _flags: usize) -> Result<usize> {
         let _flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
-        Ok(id)
+        Ok(0)
     }
 
     fn fpath(&mut self, id: usize, buf: &mut [u8]) -> Result<usize> {
