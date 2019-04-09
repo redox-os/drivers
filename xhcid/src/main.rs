@@ -12,6 +12,7 @@ use std::io::{Result, Read, Write};
 use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::sync::Arc;
 use syscall::data::Packet;
+use syscall::flag::{PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
 use syscall::error::EWOULDBLOCK;
 use syscall::scheme::SchemeMut;
 
@@ -41,7 +42,7 @@ fn main() {
 
         let mut irq_file = File::open(format!("irq:{}", irq)).expect("xhcid: failed to open IRQ file");
 
-        let address = unsafe { syscall::physmap(bar, 65536, syscall::PHYSMAP_WRITE).expect("xhcid: failed to map address") };
+        let address = unsafe { syscall::physmap(bar, 65536, PHYSMAP_WRITE | PHYSMAP_NO_CACHE).expect("xhcid: failed to map address") };
         {
             let hci = Arc::new(RefCell::new(Xhci::new(address).expect("xhcid: failed to allocate device")));
 

@@ -12,7 +12,7 @@ use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::sync::Arc;
 
 use event::EventQueue;
-use syscall::{Packet, SchemeMut, PHYSMAP_WRITE};
+use syscall::{Packet, SchemeMut, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
 use syscall::error::EWOULDBLOCK;
 
 pub mod device;
@@ -38,7 +38,7 @@ fn main() {
 
         let mut irq_file = File::open(format!("irq:{}", irq)).expect("rtl8168d: failed to open IRQ file");
 
-        let address = unsafe { syscall::physmap(bar, 256, PHYSMAP_WRITE).expect("rtl8168d: failed to map address") };
+        let address = unsafe { syscall::physmap(bar, 256, PHYSMAP_WRITE | PHYSMAP_NO_CACHE).expect("rtl8168d: failed to map address") };
         {
             let device = Arc::new(RefCell::new(unsafe { device::Rtl8168::new(address).expect("rtl8168d: failed to allocate device") }));
 

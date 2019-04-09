@@ -7,7 +7,7 @@ use std::{env, usize};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::os::unix::io::FromRawFd;
-use syscall::{EVENT_READ, PHYSMAP_WRITE, Event, Packet, SchemeBlockMut};
+use syscall::{EVENT_READ, PHYSMAP_NO_CACHE, PHYSMAP_WRITE, Event, Packet, SchemeBlockMut};
 
 use scheme::DiskScheme;
 
@@ -30,7 +30,7 @@ fn main() {
 
     // Daemonize
     if unsafe { syscall::clone(0).unwrap() } == 0 {
-        let address = unsafe { syscall::physmap(bar, 4096, PHYSMAP_WRITE).expect("ahcid: failed to map address") };
+        let address = unsafe { syscall::physmap(bar, 4096, PHYSMAP_WRITE | PHYSMAP_NO_CACHE).expect("ahcid: failed to map address") };
         {
             let scheme_name = format!("disk/{}", name);
             let socket_fd = syscall::open(

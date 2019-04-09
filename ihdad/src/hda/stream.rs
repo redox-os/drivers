@@ -1,4 +1,4 @@
-use syscall::PHYSMAP_WRITE;
+use syscall::{PHYSMAP_WRITE, PHYSMAP_NO_CACHE};
 use syscall::error::{Error, EIO, Result};
 use syscall::io::{Mmio, Io};
 use std::result;
@@ -301,7 +301,7 @@ impl StreamBuffer {
 		};
 
 		let addr = match unsafe {
-			syscall::physmap(phys, block_length * block_count, PHYSMAP_WRITE)
+			syscall::physmap(phys, block_length * block_count, PHYSMAP_WRITE | PHYSMAP_NO_CACHE)
 		} {
 			Ok(addr) => addr,
 			Err(err) => {

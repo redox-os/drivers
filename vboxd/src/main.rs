@@ -9,7 +9,7 @@ use std::{env, mem};
 use std::os::unix::io::AsRawFd;
 use std::fs::File;
 use std::io::{Result, Read, Write};
-use syscall::flag::PHYSMAP_WRITE;
+use syscall::flag::{PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
 use syscall::io::{Dma, Io, Mmio, Pio};
 use syscall::iopl;
 
@@ -217,7 +217,7 @@ fn main() {
         let mut irq_file = File::open(format!("irq:{}", irq)).expect("vboxd: failed to open IRQ file");
 
         let mut port = Pio::<u32>::new(bar0 as u16);
-        let address = unsafe { syscall::physmap(bar1, 4096, PHYSMAP_WRITE).expect("vboxd: failed to map address") };
+        let address = unsafe { syscall::physmap(bar1, 4096, PHYSMAP_WRITE | PHYSMAP_NO_CACHE).expect("vboxd: failed to map address") };
         {
             let vmmdev = unsafe { &mut *(address as *mut VboxVmmDev) };
 

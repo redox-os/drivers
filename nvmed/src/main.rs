@@ -9,7 +9,7 @@ use std::{env, usize};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
-use syscall::{EVENT_READ, PHYSMAP_WRITE, Event, Packet, Result, Scheme};
+use syscall::{EVENT_READ, PHYSMAP_NO_CACHE, PHYSMAP_WRITE, Event, Packet, Result, Scheme};
 
 use self::nvme::Nvme;
 
@@ -42,7 +42,7 @@ fn main() {
 
     // Daemonize
     if unsafe { syscall::clone(0).unwrap() } == 0 {
-        let address = unsafe { syscall::physmap(bar, 4096, PHYSMAP_WRITE).expect("nvmed: failed to map address") };
+        let address = unsafe { syscall::physmap(bar, 4096, PHYSMAP_WRITE | PHYSMAP_NO_CACHE).expect("nvmed: failed to map address") };
         {
             let mut nvme = Nvme::new(address);
             nvme.init();
