@@ -6,7 +6,7 @@ extern crate byteorder;
 use std::{env, usize};
 use std::fs::File;
 use std::io::{Read, Write};
-use std::os::unix::io::FromRawFd;
+use std::os::unix::io::{FromRawFd, RawFd};
 use syscall::{EVENT_READ, PHYSMAP_NO_CACHE, PHYSMAP_WRITE, Event, Packet, SchemeBlockMut};
 
 use scheme::DiskScheme;
@@ -37,13 +37,13 @@ fn main() {
                 &format!(":{}", scheme_name),
                 syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK
             ).expect("ahcid: failed to create disk scheme");
-            let mut socket = unsafe { File::from_raw_fd(socket_fd) };
+            let mut socket = unsafe { File::from_raw_fd(socket_fd as RawFd) };
 
             let irq_fd = syscall::open(
                 &format!("irq:{}", irq),
                 syscall::O_RDWR | syscall::O_NONBLOCK
             ).expect("ahcid: failed to open irq file");
-            let mut irq_file = unsafe { File::from_raw_fd(irq_fd) };
+            let mut irq_file = unsafe { File::from_raw_fd(irq_fd as RawFd) };
 
             let mut event_file = File::open("event:").expect("ahcid: failed to open event file");
 

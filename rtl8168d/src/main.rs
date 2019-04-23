@@ -8,7 +8,7 @@ use std::cell::RefCell;
 use std::env;
 use std::fs::File;
 use std::io::{Read, Write, Result};
-use std::os::unix::io::{AsRawFd, FromRawFd};
+use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::sync::Arc;
 
 use event::EventQueue;
@@ -34,7 +34,7 @@ fn main() {
     // Daemonize
     if unsafe { syscall::clone(0).unwrap() } == 0 {
         let socket_fd = syscall::open(":network", syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK).expect("rtl8168d: failed to create network scheme");
-        let socket = Arc::new(RefCell::new(unsafe { File::from_raw_fd(socket_fd) }));
+        let socket = Arc::new(RefCell::new(unsafe { File::from_raw_fd(socket_fd as RawFd) }));
 
         let mut irq_file = File::open(format!("irq:{}", irq)).expect("rtl8168d: failed to open IRQ file");
 
@@ -83,7 +83,7 @@ fn main() {
 
             let device_packet = device.clone();
             let socket_packet = socket.clone();
-            event_queue.add(socket_fd, move |_event| -> Result<Option<usize>> {
+            event_queue.add(socket_fd as RawFd, move |_event| -> Result<Option<usize>> {
                 loop {
                     let mut packet = Packet::default();
                     if socket_packet.borrow_mut().read(&mut packet)? == 0 {

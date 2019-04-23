@@ -13,3 +13,12 @@ members = [
     "vesad",
     "xhcid"
 ]
+
+[patch.crates-io]
+libc = { git = "https://gitlab.redox-os.org/redox-os/liblibc.git", branch = "redox-unix" }
+mio = { git = "https://gitlab.redox-os.org/redox-os/mio" }
+net2 = { git = "https://gitlab.redox-os.org/redox-os/net2-rs.git", branch = "redox-unix" }
+pbr = { git = "https://gitlab.redox-os.org/redox-os/pb.git", branch = "redox-unix" }
+ring = { git = "https://gitlab.redox-os.org/redox-os/ring.git", branch = "redox-unix" }
+time = { git = "https://gitlab.redox-os.org/redox-os/time.git", branch = "redox-unix" }
+#untrusted = { git = "https://github.com/briansmith/untrusted", tag = "ring-master" }

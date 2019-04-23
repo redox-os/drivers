@@ -9,7 +9,7 @@ extern crate event;
 use std::{env, usize};
 use std::fs::File;
 use std::io::{Read, Write, Result};
-use std::os::unix::io::{AsRawFd, FromRawFd};
+use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use syscall::{PHYSMAP_NO_CACHE, PHYSMAP_WRITE, Packet, SchemeBlockMut};
 use std::cell::RefCell;
 use std::sync::Arc;
@@ -55,7 +55,7 @@ fn main() {
 
 			let device = Arc::new(RefCell::new(unsafe { hda::IntelHDA::new(address, vend_prod).expect("ihdad: failed to allocate device") }));
 			let socket_fd = syscall::open(":hda", syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK).expect("IHDA: failed to create hda scheme");
-			let socket = Arc::new(RefCell::new(unsafe { File::from_raw_fd(socket_fd) }));
+			let socket = Arc::new(RefCell::new(unsafe { File::from_raw_fd(socket_fd as RawFd) }));
 
 			let mut event_queue = EventQueue::<usize>::new().expect("IHDA: Could not create event queue.");
 
