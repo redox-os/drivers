@@ -507,6 +507,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "pcspkrd"
+version = "0.1.0"
+dependencies = [
+ "redox_syscall 0.1.51 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
 name = "percent-encoding"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

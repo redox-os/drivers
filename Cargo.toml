@@ -7,6 +7,7 @@ members = [
     "ihdad",
     "nvmed",
     "pcid",
+    "pcspkrd",
     "ps2d",
     "rtl8168d",
     "vboxd",
