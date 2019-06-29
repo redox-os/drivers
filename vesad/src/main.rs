@@ -10,9 +10,9 @@ use std::fs::File;
 use std::io::{Read, Write};
 use syscall::{physmap, physunmap, Packet, SchemeMut, EVENT_READ, PHYSMAP_WRITE, PHYSMAP_WRITE_COMBINE};
 
-use mode_info::VBEModeInfo;
-use primitive::fast_set64;
-use scheme::{DisplayScheme, HandleKind};
+use crate::mode_info::VBEModeInfo;
+use crate::primitive::fast_set64;
+use crate::scheme::{DisplayScheme, HandleKind};
 
 pub mod display;
 pub mod mode_info;

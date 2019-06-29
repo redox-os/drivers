@@ -13,7 +13,7 @@ use syscall::flag::{PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
 use syscall::io::{Dma, Io, Mmio, Pio};
 use syscall::iopl;
 
-use bga::Bga;
+use crate::bga::Bga;
 
 mod bga;
 

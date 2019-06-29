@@ -17,7 +17,7 @@ use std::sync::Arc;
 use event::EventQueue;
 use syscall::iopl;
 
-use state::Ps2d;
+use crate::state::Ps2d;
 
 mod controller;
 mod keymap;

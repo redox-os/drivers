@@ -9,7 +9,7 @@ use std::io::{Read, Write};
 use std::os::unix::io::{FromRawFd, RawFd};
 use syscall::{EVENT_READ, PHYSMAP_NO_CACHE, PHYSMAP_WRITE, Event, Packet, SchemeBlockMut};
 
-use scheme::DiskScheme;
+use crate::scheme::DiskScheme;
 
 pub mod ahci;
 pub mod scheme;

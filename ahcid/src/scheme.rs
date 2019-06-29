@@ -7,8 +7,8 @@ use syscall::{
     Io, SchemeBlockMut, Stat, MODE_DIR, MODE_FILE, O_DIRECTORY,
     O_STAT, SEEK_CUR, SEEK_END, SEEK_SET};
 
-use ahci::Disk;
-use ahci::hba::HbaMem;
+use crate::ahci::Disk;
+use crate::ahci::hba::HbaMem;
 
 #[derive(Clone)]
 enum Handle {
@@ -19,13 +19,13 @@ enum Handle {
 pub struct DiskScheme {
     scheme_name: String,
     hba_mem: &'static mut HbaMem,
-    disks: Box<[Box<Disk>]>,
+    disks: Box<[Box<dyn Disk>]>,
     handles: BTreeMap<usize, Handle>,
     next_id: usize
 }
 
 impl DiskScheme {
-    pub fn new(scheme_name: String, hba_mem: &'static mut HbaMem, disks: Vec<Box<Disk>>) -> DiskScheme {
+    pub fn new(scheme_name: String, hba_mem: &'static mut HbaMem, disks: Vec<Box<dyn Disk>>) -> DiskScheme {
         DiskScheme {
             scheme_name: scheme_name,
             hba_mem: hba_mem,
@@ -117,7 +117,7 @@ impl SchemeBlockMut for DiskScheme {
                 Ok(Some(0))
             },
             Handle::Disk(number, _) => {
-                let mut disk = self.disks.get_mut(number).ok_or(Error::new(EBADF))?;
+                let disk = self.disks.get_mut(number).ok_or(Error::new(EBADF))?;
                 stat.st_mode = MODE_FILE;
                 stat.st_size = disk.size();
                 Ok(Some(0))
@@ -168,7 +168,7 @@ impl SchemeBlockMut for DiskScheme {
                 Ok(Some(count))
             },
             Handle::Disk(number, ref mut size) => {
-                let mut disk = self.disks.get_mut(number).ok_or(Error::new(EBADF))?;
+                let disk = self.disks.get_mut(number).ok_or(Error::new(EBADF))?;
                 let blk_len = disk.block_length()?;
                 if let Some(count) = disk.read((*size as u64)/(blk_len as u64), buf)? {
                     *size += count;
@@ -186,7 +186,7 @@ impl SchemeBlockMut for DiskScheme {
                 Err(Error::new(EBADF))
             },
             Handle::Disk(number, ref mut size) => {
-                let mut disk = self.disks.get_mut(number).ok_or(Error::new(EBADF))?;
+                let disk = self.disks.get_mut(number).ok_or(Error::new(EBADF))?;
                 let blk_len = disk.block_length()?;
                 if let Some(count) = disk.write((*size as u64)/(blk_len as u64), buf)? {
                     *size += count;
@@ -212,7 +212,7 @@ impl SchemeBlockMut for DiskScheme {
                 Ok(Some(*size))
             },
             Handle::Disk(number, ref mut size) => {
-                let mut disk = self.disks.get_mut(number).ok_or(Error::new(EBADF))?;
+                let disk = self.disks.get_mut(number).ok_or(Error::new(EBADF))?;
                 let len = disk.size() as usize;
                 *size = match whence {
                     SEEK_SET => cmp::min(len, pos),

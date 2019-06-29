@@ -5,7 +5,7 @@ use std::str;
 use syscall::{Error, Result, SchemeMut, EACCES, EINVAL, MODE_CHR};
 use syscall::data::Stat;
 
-use bga::Bga;
+use crate::bga::Bga;
 
 pub struct BgaScheme {
     pub bga: Bga,

@@ -1,6 +1,6 @@
 use std::{fmt, mem};
 use syscall::io::{Io, Mmio};
-use usb;
+use crate::usb;
 
 #[repr(u8)]
 pub enum TrbType {
