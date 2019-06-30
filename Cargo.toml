@@ -5,6 +5,7 @@ members = [
     "bgad",
     "e1000d",
     "ihdad",
+    "ixgbed",
     "nvmed",
     "pcid",
     "pcspkrd",

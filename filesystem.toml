@@ -1,5 +1,13 @@
 ## Drivers for FS ##
 
+# ixgbed
+[[drivers]]
+name = "Intel 10G X550T NIC"
+class = 2
+vendor = 32902
+device = 5475
+command = ["ixgbed", "$NAME", "$BAR0", "$IRQ"]
+
 # e1000d
 [[drivers]]
 name = "82543GC NIC"
