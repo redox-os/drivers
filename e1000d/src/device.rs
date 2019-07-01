@@ -55,7 +55,7 @@ const RDT: u32 = 0x2818;
 const RAL0: u32 = 0x5400;
 const RAH0: u32 = 0x5404;
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 #[repr(packed)]
 struct Rd {
     buffer: u64,
@@ -78,7 +78,7 @@ const TDLEN: u32 = 0x3808;
 const TDH: u32 = 0x3810;
 const TDT: u32 = 0x3818;
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 #[repr(packed)]
 struct Td {
     buffer: u64,
@@ -190,7 +190,7 @@ impl SchemeBlockMut for Intel8254x {
 
                 td.length = (cmp::min(buf.len(), 0x3FFF)) as u16;
 
-                let mut data = unsafe { slice::from_raw_parts_mut(self.transmit_buffer[old_tail as usize].as_ptr() as *mut u8, td.length as usize) };
+                let data = unsafe { slice::from_raw_parts_mut(self.transmit_buffer[old_tail as usize].as_ptr() as *mut u8, td.length as usize) };
 
                 let mut i = 0;
                 while i < buf.len() && i < data.len() {

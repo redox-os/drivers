@@ -16,7 +16,7 @@ use syscall::flag::{PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
 use syscall::error::EWOULDBLOCK;
 use syscall::scheme::SchemeMut;
 
-use xhci::Xhci;
+use crate::xhci::Xhci;
 
 mod usb;
 mod xhci;

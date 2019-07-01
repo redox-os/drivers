@@ -2,7 +2,7 @@ use plain::Plain;
 use std::{mem, slice};
 use syscall::error::Result;
 use syscall::io::{Dma, Io};
-use usb;
+use crate::usb;
 
 mod capability;
 mod command;

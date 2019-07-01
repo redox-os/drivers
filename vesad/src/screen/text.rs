@@ -6,8 +6,8 @@ use std::ptr;
 use orbclient::{Event, EventOption};
 use syscall::error::*;
 
-use display::Display;
-use screen::Screen;
+use crate::display::Display;
+use crate::screen::Screen;
 
 pub struct TextScreen {
     pub console: ransid::Console,
@@ -92,8 +92,8 @@ impl Screen for TextScreen {
                         },
                         _ => {
                             let c = match key_event.character {
-                                c @ 'A' ... 'Z' if self.ctrl => ((c as u8 - b'A') + b'\x01') as char,
-                                c @ 'a' ... 'z' if self.ctrl => ((c as u8 - b'a') + b'\x01') as char,
+                                c @ 'A' ..= 'Z' if self.ctrl => ((c as u8 - b'A') + b'\x01') as char,
+                                c @ 'a' ..= 'z' if self.ctrl => ((c as u8 - b'a') + b'\x01') as char,
                                 c => c
                             };
 

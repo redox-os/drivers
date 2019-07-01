@@ -6,9 +6,9 @@ extern crate spin;
 extern crate syscall;
 
 use std::{env, usize};
-use std::fs::File;
-use std::io::{Read, Write};
-use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
+
+
+
 use syscall::{EVENT_READ, PHYSMAP_NO_CACHE, PHYSMAP_WRITE, Event, Packet, Result, Scheme};
 
 use self::nvme::Nvme;

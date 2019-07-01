@@ -5,8 +5,8 @@ use std::io::Write;
 use std::os::unix::io::AsRawFd;
 use syscall;
 
-use controller::Ps2;
-use vm;
+use crate::controller::Ps2;
+use crate::vm;
 
 bitflags! {
     flags MousePacketFlags: u8 {

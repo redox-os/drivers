@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use event::EventQueue;
 use syscall::{Packet, SchemeBlockMut, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
-use syscall::error::EWOULDBLOCK;
+
 
 pub mod device;
 

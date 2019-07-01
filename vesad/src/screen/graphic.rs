@@ -5,9 +5,9 @@ use orbclient::{Event, ResizeEvent};
 use syscall::error::*;
 use syscall::flag::{SEEK_SET, SEEK_CUR, SEEK_END};
 
-use display::Display;
-use primitive::fast_copy;
-use screen::Screen;
+use crate::display::Display;
+use crate::primitive::fast_copy;
+use crate::screen::Screen;
 
 pub struct GraphicScreen {
     pub display: Display,
