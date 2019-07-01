@@ -8,7 +8,7 @@ extern crate syscall;
 extern crate toml;
 
 use std::env;
-use std::fs::File;
+use std::fs::{File, metadata, read_dir};
 use std::io::Read;
 use std::process::Command;
 use syscall::iopl;
@@ -161,11 +161,28 @@ fn main() {
 
     let mut args = env::args().skip(1);
     if let Some(config_path) = args.next() {
-        if let Ok(mut config_file) = File::open(&config_path) {
-            let mut config_data = String::new();
-            if let Ok(_) = config_file.read_to_string(&mut config_data) {
-                config = toml::from_str(&config_data).unwrap_or(Config::default());
+        if metadata(&config_path).unwrap().is_file() {
+            if let Ok(mut config_file) = File::open(&config_path) {
+                let mut config_data = String::new();
+                if let Ok(_) = config_file.read_to_string(&mut config_data) {
+                    config = toml::from_str(&config_data).unwrap_or(Config::default());
+                }
             }
+        } else {
+            let paths = read_dir(&config_path).unwrap();
+
+            let mut config_data = String::new();
+
+            for path in paths {
+                if let Ok(mut config_file) = File::open(&path.unwrap().path()) {
+                    let mut tmp = String::new();
+                    if let Ok(_) = config_file.read_to_string(&mut tmp) {
+                        config_data.push_str(&tmp);
+                    }
+                }
+            }
+
+            config = toml::from_str(&config_data).unwrap_or(Config::default());
         }
     }
 
