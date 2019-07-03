@@ -1,0 +1,6 @@
+[[drivers]]
+name = "RTL8168 NIC"
+class = 2
+ids = { 0x10ec = [0x8168] }
+command = ["rtl8168d", "$NAME", "$BAR2", "$IRQ"]
+
