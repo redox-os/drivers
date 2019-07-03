@@ -1,49 +1,5 @@
 ## Drivers for FS ##
 
-# e1000d
-[[drivers]]
-name = "82543GC NIC"
-class = 2
-vendor = 32902
-device = 4100
-command = ["e1000d", "$NAME", "$BAR0", "$IRQ"]
-
-[[drivers]]
-name = "82540EM NIC"
-class = 2
-vendor = 32902
-device = 4110
-command = ["e1000d", "$NAME", "$BAR0", "$IRQ"]
-
-[[drivers]]
-name = "82545EM NIC"
-class = 2
-vendor = 32902
-device = 4111
-command = ["e1000d", "$NAME", "$BAR0", "$IRQ"]
-
-[[drivers]]
-name = "82579V NIC"
-class = 2
-vendor = 32902
-device = 5379
-command = ["e1000d", "$NAME", "$BAR0", "$IRQ"]
-
-# ihdad
-[[drivers]]
-name = "Intel HD Audio"
-class = 4
-subclass = 3
-command = ["ihdad", "$NAME", "$BAR0", "$IRQ", "$VENID", "$DEVID"]
-
-# rtl8168d
-[[drivers]]
-name = "RTL8168 NIC"
-class = 2
-vendor = 4332
-device = 33128
-command = ["rtl8168d", "$NAME", "$BAR2", "$IRQ"]
-
 # xhcid
 # [[drivers]]
 # name = "XHCI"

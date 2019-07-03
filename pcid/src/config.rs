@@ -11,6 +11,7 @@ pub struct DriverConfig {
     pub class: Option<u8>,
     pub subclass: Option<u8>,
     pub interface: Option<u8>,
+    pub ids: Option<BTreeMap<String, Vec<u16>>>,
     pub vendor: Option<u16>,
     pub device: Option<u16>,
     pub device_id_range: Option<Range<u16>>,
