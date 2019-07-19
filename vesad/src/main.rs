@@ -65,7 +65,10 @@ fn main() {
             let mut blocked = Vec::new();
             loop {
                 let mut packet = Packet::default();
-                socket.read(&mut packet).expect("vesad: failed to read display scheme");
+                if socket.read(&mut packet).expect("vesad: failed to read display scheme") == 0 {
+                    //TODO: Handle blocked
+                    break;
+                }
 
                 // If it is a read packet, and there is no data, block it. Otherwise, handle packet
                 if packet.a == syscall::number::SYS_READ && packet.d > 0 && scheme.can_read(packet.b).is_none() {
