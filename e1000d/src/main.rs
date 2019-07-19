@@ -146,6 +146,7 @@ fn main() {
             loop {
                 let event_count = event_queue.run().expect("e1000d: failed to handle events");
                 if event_count == 0 {
+                    //TODO: Handle todo
                     break;
                 }
                 send_events(event_count);
