@@ -5,9 +5,9 @@ extern crate byteorder;
 
 use std::{env, usize};
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::os::unix::io::{FromRawFd, RawFd};
-use syscall::{EVENT_READ, PHYSMAP_NO_CACHE, PHYSMAP_WRITE, Event, Packet, SchemeBlockMut};
+use syscall::{ENODEV, EVENT_READ, PHYSMAP_NO_CACHE, PHYSMAP_WRITE, Error, Event, Packet, SchemeBlockMut};
 
 use crate::scheme::DiskScheme;
 
@@ -64,8 +64,9 @@ fn main() {
             let (hba_mem, disks) = ahci::disks(address, &name);
             let mut scheme = DiskScheme::new(scheme_name, hba_mem, disks);
 
+            let mut mounted = true;
             let mut todo = Vec::new();
-            loop {
+            while mounted {
                 let mut event = Event::default();
                 if event_file.read(&mut event).expect("ahcid: failed to read event file") == 0 {
                     break;
@@ -73,8 +74,17 @@ fn main() {
                 if event.id == socket_fd {
                     loop {
                         let mut packet = Packet::default();
-                        if socket.read(&mut packet).expect("ahcid: failed to read disk scheme") == 0 {
-                            break;
+                        match socket.read(&mut packet) {
+                            Ok(0) => {
+                                mounted = false;
+                                break;
+                            },
+                            Ok(_) => (),
+                            Err(err) => if err.kind() == ErrorKind::WouldBlock {
+                                break;
+                            } else {
+                                panic!("ahcid: failed to read disk scheme: {}", err);
+                            }
                         }
 
                         if let Some(a) = scheme.handle(&packet) {
@@ -113,9 +123,16 @@ fn main() {
                     if let Some(a) = scheme.handle(&todo[i]) {
                         let mut packet = todo.remove(i);
                         packet.a = a;
-                        socket.write(&mut packet).expect("ahcid: failed to write disk scheme");
+                        socket.write(&packet).expect("ahcid: failed to write disk scheme");
                     } else {
                         i += 1;
+                    }
+                }
+
+                if ! mounted {
+                    for mut packet in todo.drain(..) {
+                        packet.a = Error::mux(Err(Error::new(ENODEV)));
+                        socket.write(&packet).expect("ahcid: failed to write disk scheme");
                     }
                 }
             }
