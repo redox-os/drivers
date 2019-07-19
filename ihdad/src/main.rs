@@ -8,7 +8,7 @@ extern crate event;
 
 use std::{env, usize};
 use std::fs::File;
-use std::io::{Read, Write, Result};
+use std::io::{ErrorKind, Read, Write, Result};
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use syscall::{PHYSMAP_NO_CACHE, PHYSMAP_WRITE, Packet, SchemeBlockMut};
 use std::cell::RefCell;
@@ -100,8 +100,14 @@ fn main() {
 			event_queue.add(socket_fd, move |_event| -> Result<Option<usize>> {
 				loop {
 					let mut packet = Packet::default();
-					if socket_packet.borrow_mut().read(&mut packet)? == 0 {
-						break;
+					match socket_packet.borrow_mut().read(&mut packet) {
+			            Ok(0) => return Ok(Some(0)),
+			            Ok(_) => (),
+			            Err(err) => if err.kind() == ErrorKind::WouldBlock {
+			                break;
+			            } else {
+			                return Err(err);
+			            }
 					}
 
 					if let Some(a) = device.borrow_mut().handle(&mut packet) {
@@ -143,6 +149,10 @@ fn main() {
 					//device_loop.borrow_mut().handle_interrupts();
 				}
 				let event_count = event_queue.run().expect("IHDA: failed to handle events");
+				if event_count == 0 {
+					//TODO: Handle todo
+					break;
+				}
 
 				socket.borrow_mut().write(&Packet {
 					id: 0,
