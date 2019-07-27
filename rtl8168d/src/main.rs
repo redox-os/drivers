@@ -7,7 +7,7 @@ extern crate syscall;
 use std::cell::RefCell;
 use std::env;
 use std::fs::File;
-use std::io::{Read, Write, Result};
+use std::io::{self, Read, Write, Result};
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::sync::Arc;
 
@@ -86,8 +86,14 @@ fn main() {
             event_queue.add(socket_fd as RawFd, move |_event| -> Result<Option<usize>> {
                 loop {
                     let mut packet = Packet::default();
-                    if socket_packet.borrow_mut().read(&mut packet)? == 0 {
-                        break;
+                    match socket_packet.borrow_mut().read(&mut packet) {
+                        Ok(0) => return Ok(Some(0)),
+                        Ok(_) => (),
+                        Err(err) => if err.kind() == io::ErrorKind::WouldBlock {
+                            break;
+                        } else {
+                            return Err(err);
+                        }
                     }
 
                     let a = packet.a;
@@ -132,6 +138,9 @@ fn main() {
 
             loop {
                 let event_count = event_queue.run().expect("rtl8168d: failed to handle events");
+                if event_count == 0 {
+                    break;
+                }
                 send_events(event_count);
             }
         }
