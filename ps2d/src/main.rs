@@ -1,4 +1,3 @@
-#![deny(warnings)]
 #![feature(asm)]
 
 #[macro_use]
