@@ -36,6 +36,7 @@ fn daemon(input: File) {
             "gb" => (keymap::gb::get_char),
             "azerty" => (keymap::azerty::get_char),
             "bepo" => (keymap::bepo::get_char),
+            "it" => (keymap::it::get_char),
             &_ => (keymap::us::get_char)
         },
         None => (keymap::us::get_char)
