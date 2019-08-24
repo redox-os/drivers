@@ -135,7 +135,7 @@ impl NvmeCmd {
             dptr: [ptr as u64, (count as u64) << 9],
             cdw10: lba as u32,
             cdw11: (lba >> 32) as u32,
-            cdw12: count as u32,
+            cdw12: count.saturating_sub(1) as u32, //TODO: Prevent count of 0
             cdw13: 0,
             cdw14: 0,
             cdw15: 0,
@@ -153,7 +153,7 @@ impl NvmeCmd {
             dptr: [ptr as u64, (count as u64) << 9],
             cdw10: lba as u32,
             cdw11: (lba >> 32) as u32,
-            cdw12: count as u32,
+            cdw12: count.saturating_sub(1) as u32, //TODO: Prevent count of 0
             cdw13: 0,
             cdw14: 0,
             cdw15: 0,
@@ -301,6 +301,9 @@ impl Nvme {
         println!("  - Disable");
         self.regs.cc.writef(1, false);
 
+        println!("  - Mask all interrupts");
+        self.regs.intms.write(0xFFFFFFFF);
+
         for (qid, queue) in self.completion_queues.iter().enumerate() {
             let data = &queue.data;
             println!("    - completion queue {}: {:X}, {}", qid, data.physical(), data.len());
@@ -341,7 +344,9 @@ impl Nvme {
                 let qid = 0;
                 let queue = &mut self.submission_queues[qid];
                 let cid = queue.i as u16;
-                let entry = NvmeCmd::identify_controller(cid, data.physical());
+                let entry = NvmeCmd::identify_controller(
+                    cid, data.physical()
+                );
                 let tail = queue.submit(entry);
                 self.submission_queue_tail(qid as u16, tail as u16);
             }
@@ -393,7 +398,9 @@ impl Nvme {
                 let qid = 0;
                 let queue = &mut self.submission_queues[qid];
                 let cid = queue.i as u16;
-                let entry = NvmeCmd::identify_namespace_list(cid, data.physical(), 0);
+                let entry = NvmeCmd::identify_namespace_list(
+                    cid, data.physical(), 0
+                );
                 let tail = queue.submit(entry);
                 self.submission_queue_tail(qid as u16, tail as u16);
             }
@@ -423,7 +430,9 @@ impl Nvme {
                 let qid = 0;
                 let queue = &mut self.submission_queues[qid];
                 let cid = queue.i as u16;
-                let entry = NvmeCmd::identify_namespace(cid, data.physical(), nsid);
+                let entry = NvmeCmd::identify_namespace(
+                    cid, data.physical(), nsid
+                );
                 let tail = queue.submit(entry);
                 self.submission_queue_tail(qid as u16, tail as u16);
             }
@@ -445,6 +454,61 @@ impl Nvme {
             println!("    - Capacity: {}", capacity);
 
             //TODO: Read block size
+        }
+
+        for io_qid in 1..self.completion_queues.len() {
+            let (ptr, len) = {
+                let queue = &self.completion_queues[io_qid];
+                (queue.data.physical(), queue.data.len())
+            };
+
+            println!("  - Attempting to create I/O completion queue {}", io_qid);
+            {
+                let qid = 0;
+                let queue = &mut self.submission_queues[qid];
+                let cid = queue.i as u16;
+                let entry = NvmeCmd::create_io_completion_queue(
+                    cid, io_qid as u16, ptr, len as u16
+                );
+                let tail = queue.submit(entry);
+                self.submission_queue_tail(qid as u16, tail as u16);
+            }
+
+            println!("  - Waiting to create I/O completion queue {}", io_qid);
+            {
+                let qid = 0;
+                let queue = &mut self.completion_queues[qid];
+                let (head, entry) = queue.complete_spin();
+                self.completion_queue_head(qid as u16, head as u16);
+            }
+        }
+
+        for io_qid in 1..self.submission_queues.len() {
+            let (ptr, len) = {
+                let queue = &self.submission_queues[io_qid];
+                (queue.data.physical(), queue.data.len())
+            };
+
+            println!("  - Attempting to create I/O submission queue {}", io_qid);
+            {
+                let qid = 0;
+                let queue = &mut self.submission_queues[qid];
+                let cid = queue.i as u16;
+                //TODO: Get completion queue ID through smarter mechanism
+                let entry = NvmeCmd::create_io_submission_queue(
+                    cid, io_qid as u16, ptr, len as u16, io_qid as u16
+                );
+                let tail = queue.submit(entry);
+                self.submission_queue_tail(qid as u16, tail as u16);
+            }
+
+            println!("  - Waiting to create I/O submission queue {}", io_qid);
+            {
+                let qid = 0;
+                let queue = &mut self.completion_queues[qid];
+                let (head, entry) = queue.complete_spin();
+                self.completion_queue_head(qid as u16, head as u16);
+            }
         }
     }
 }
