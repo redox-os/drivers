@@ -42,10 +42,11 @@ fn main() {
 
     // Daemonize
     if unsafe { syscall::clone(0).unwrap() } == 0 {
-        let address = unsafe { syscall::physmap(bar, 4096, PHYSMAP_WRITE | PHYSMAP_NO_CACHE).expect("nvmed: failed to map address") };
+        //TODO: Figure out correct size of mapping, not just 256 * 1024
+        let address = unsafe { syscall::physmap(bar, 256 * 1024, PHYSMAP_WRITE | PHYSMAP_NO_CACHE).expect("nvmed: failed to map address") };
         {
-            let mut nvme = Nvme::new(address);
-            nvme.init();
+            let mut nvme = Nvme::new(address).expect("nvmed: failed to allocate queues");
+            unsafe { nvme.init(); }
             /*
             let (_scheme_name, socket_fd) = create_scheme_fallback("disk", &name).expect("nvmed: failed to create disk scheme");
             let mut socket = unsafe { File::from_raw_fd(socket_fd) };
