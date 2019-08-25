@@ -1,6 +1,7 @@
-use std::{mem, thread};
+use std::thread;
+use std::collections::BTreeMap;
 use syscall::io::{Dma, Io, Mmio};
-use syscall::error::Result;
+use syscall::error::{Error, Result, EINVAL};
 
 #[derive(Clone, Copy)]
 #[repr(packed)]
@@ -124,7 +125,7 @@ impl NvmeCmd {
         }
     }
 
-    pub fn io_read(cid: u16, nsid: u32, lba: u64, count: u16, ptr: usize) -> Self {
+    pub fn io_read(cid: u16, nsid: u32, lba: u64, blocks_1: u16, ptr0: u64, ptr1: u64) -> Self {
         Self {
             opcode: 2,
             flags: 1 << 6,
@@ -132,17 +133,17 @@ impl NvmeCmd {
             nsid: nsid,
             _rsvd: 0,
             mptr: 0,
-            dptr: [ptr as u64, (count as u64) << 9],
+            dptr: [ptr0, ptr1],
             cdw10: lba as u32,
             cdw11: (lba >> 32) as u32,
-            cdw12: count.saturating_sub(1) as u32, //TODO: Prevent count of 0
+            cdw12: blocks_1 as u32,
             cdw13: 0,
             cdw14: 0,
             cdw15: 0,
         }
     }
 
-    pub fn io_write(cid: u16, nsid: u32, lba: u64, count: u16, ptr: usize) -> Self {
+    pub fn io_write(cid: u16, nsid: u32, lba: u64, blocks_1: u16, ptr0: u64, ptr1: u64) -> Self {
         Self {
             opcode: 1,
             flags: 1 << 6,
@@ -150,10 +151,10 @@ impl NvmeCmd {
             nsid: nsid,
             _rsvd: 0,
             mptr: 0,
-            dptr: [ptr as u64, (count as u64) << 9],
+            dptr: [ptr0, ptr1],
             cdw10: lba as u32,
             cdw11: (lba >> 32) as u32,
-            cdw12: count.saturating_sub(1) as u32, //TODO: Prevent count of 0
+            cdw12: blocks_1 as u32,
             cdw13: 0,
             cdw14: 0,
             cdw15: 0,
@@ -261,10 +262,18 @@ impl NvmeCompQueue {
     }
 }
 
+pub struct NvmeNamespace {
+    pub id: u32,
+    pub blocks: u64,
+    pub block_size: u64,
+}
+
 pub struct Nvme {
     regs: &'static mut NvmeRegs,
     submission_queues: [NvmeCmdQueue; 2],
     completion_queues: [NvmeCompQueue; 2],
+    buffer: Dma<[u8; 512 * 4096]>, // 2MB of buffer
+    buffer_prp: Dma<[u64; 512]>, // 4KB of PRP for the buffer
 }
 
 impl Nvme {
@@ -273,6 +282,8 @@ impl Nvme {
             regs: unsafe { &mut *(address as *mut NvmeRegs) },
             submission_queues: [NvmeCmdQueue::new()?, NvmeCmdQueue::new()?],
             completion_queues: [NvmeCompQueue::new()?, NvmeCompQueue::new()?],
+            buffer: Dma::zeroed()?,
+            buffer_prp: Dma::zeroed()?,
         })
     }
 
@@ -292,7 +303,11 @@ impl Nvme {
         self.doorbell(2 * (qid as usize) + 1).write(head as u32)
     }
 
-    pub unsafe fn init(&mut self) {
+    pub unsafe fn init(&mut self) -> BTreeMap<u32, NvmeNamespace> {
+        for i in 0..self.buffer_prp.len() {
+            self.buffer_prp[i] = (self.buffer.physical() + i * 4096) as u64;
+        }
+
         println!("  - CAPS: {:X}", self.regs.cap.read());
         println!("  - VS: {:X}", self.regs.vs.read());
         println!("  - CC: {:X}", self.regs.cc.read());
@@ -317,7 +332,7 @@ impl Nvme {
         {
             let asq = &self.submission_queues[0];
             let acq = &self.completion_queues[0];
-            self.regs.aqa.write(((acq.data.len() as u32) << 16) | (asq.data.len() as u32));
+            self.regs.aqa.write(((acq.data.len() as u32 - 1) << 16) | (asq.data.len() as u32 - 1));
             self.regs.asq.write(asq.data.physical() as u64);
             self.regs.acq.write(acq.data.physical() as u64);
 
@@ -337,6 +352,7 @@ impl Nvme {
         }
 
         {
+            //TODO: Use buffer
             let data: Dma<[u8; 4096]> = Dma::zeroed().unwrap();
 
             println!("  - Attempting to identify controller");
@@ -391,6 +407,7 @@ impl Nvme {
 
         let mut nsids = Vec::new();
         {
+            //TODO: Use buffer
             let data: Dma<[u32; 1024]> = Dma::zeroed().unwrap();
 
             println!("  - Attempting to retrieve namespace ID list");
@@ -422,7 +439,9 @@ impl Nvme {
             }
         }
 
+        let mut namespaces = BTreeMap::new();
         for &nsid in nsids.iter() {
+            //TODO: Use buffer
             let data: Dma<[u8; 4096]> = Dma::zeroed().unwrap();
 
             println!("  - Attempting to identify namespace {}", nsid);
@@ -454,6 +473,12 @@ impl Nvme {
             println!("    - Capacity: {}", capacity);
 
             //TODO: Read block size
+
+            namespaces.insert(nsid, NvmeNamespace {
+                id: nsid,
+                blocks: size,
+                block_size: 512, // TODO
+            });
         }
 
         for io_qid in 1..self.completion_queues.len() {
@@ -468,7 +493,7 @@ impl Nvme {
                 let queue = &mut self.submission_queues[qid];
                 let cid = queue.i as u16;
                 let entry = NvmeCmd::create_io_completion_queue(
-                    cid, io_qid as u16, ptr, len as u16
+                    cid, io_qid as u16, ptr, (len - 1) as u16
                 );
                 let tail = queue.submit(entry);
                 self.submission_queue_tail(qid as u16, tail as u16);
@@ -496,7 +521,7 @@ impl Nvme {
                 let cid = queue.i as u16;
                 //TODO: Get completion queue ID through smarter mechanism
                 let entry = NvmeCmd::create_io_submission_queue(
-                    cid, io_qid as u16, ptr, len as u16, io_qid as u16
+                    cid, io_qid as u16, ptr, (len - 1) as u16, io_qid as u16
                 );
                 let tail = queue.submit(entry);
                 self.submission_queue_tail(qid as u16, tail as u16);
@@ -510,5 +535,113 @@ impl Nvme {
                 self.completion_queue_head(qid as u16, head as u16);
             }
         }
+
+        namespaces
+    }
+
+    unsafe fn namespace_rw(&mut self, nsid: u32, lba: u64, blocks_1: u16, write: bool) -> Result<()> {
+        let (ptr0, ptr1) = if blocks_1 == 0 {
+            (self.buffer_prp[0], 0)
+        } else if blocks_1 == 1 {
+            (self.buffer_prp[0], self.buffer_prp[1])
+        } else {
+            (self.buffer_prp[0], (self.buffer_prp.physical() + 8) as u64)
+        };
+
+        {
+            let qid = 1;
+            let queue = &mut self.submission_queues[qid];
+            let cid = queue.i as u16;
+            //TODO: Get completion queue ID through smarter mechanism
+            let entry = if write {
+                NvmeCmd::io_write(
+                    cid, nsid, lba, blocks_1, ptr0, ptr1
+                )
+            } else {
+                NvmeCmd::io_read(
+                    cid, nsid, lba, blocks_1, ptr0, ptr1
+                )
+            };
+            let tail = queue.submit(entry);
+            self.submission_queue_tail(qid as u16, tail as u16);
+        }
+
+        {
+            let qid = 1;
+            let queue = &mut self.completion_queues[qid];
+            let (head, entry) = queue.complete_spin();
+            //TODO: Handle errors
+            self.completion_queue_head(qid as u16, head as u16);
+        }
+
+        Ok(())
+    }
+
+    pub unsafe fn namespace_read(&mut self, nsid: u32, lba: u64, buf: &mut [u8]) -> Result<Option<usize>> {
+        //TODO: Use interrupts
+
+        //TODO: Get real block size
+        let block_size = 512;
+
+        //TODO: Support this
+        if buf.len() % block_size != 0 {
+            return Err(Error::new(EINVAL));
+        }
+
+        //TODO: Support this
+        if buf.len() > self.buffer.len() {
+            return Err(Error::new(EINVAL));
+        }
+
+        let blocks = buf.len() / block_size;
+
+        if blocks == 0 {
+            return Ok(Some(0));
+        }
+
+        //TODO: Support this
+        if blocks > 0x1_0000 {
+            return Err(Error::new(EINVAL));
+        }
+
+        self.namespace_rw(nsid, lba, (blocks - 1) as u16, false)?;
+
+        buf.copy_from_slice(&self.buffer[..buf.len()]);
+
+        Ok(Some(buf.len()))
+    }
+
+    pub unsafe fn namespace_write(&mut self, nsid: u32, lba: u64, buf: &[u8]) -> Result<Option<usize>> {
+        //TODO: Use interrupts
+
+        //TODO: Get real block size
+        let block_size = 512;
+
+        //TODO: Support this
+        if buf.len() % block_size != 0 {
+            return Err(Error::new(EINVAL));
+        }
+
+        //TODO: Support this
+        if buf.len() > self.buffer.len() {
+            return Err(Error::new(EINVAL));
+        }
+
+        let blocks = buf.len() / block_size;
+
+        if blocks == 0 {
+            return Ok(Some(0));
+        }
+
+        //TODO: Support this
+        if blocks > 0x1_0000 {
+            return Err(Error::new(EINVAL));
+        }
+
+        self.buffer[..buf.len()].copy_from_slice(buf);
+
+        self.namespace_rw(nsid, lba, (blocks - 1) as u16, true)?;
+
+        Ok(Some(buf.len()))
     }
 }
