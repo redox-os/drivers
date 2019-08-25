@@ -540,9 +540,13 @@ impl Nvme {
     }
 
     unsafe fn namespace_rw(&mut self, nsid: u32, lba: u64, blocks_1: u16, write: bool) -> Result<()> {
-        let (ptr0, ptr1) = if blocks_1 == 0 {
+        //TODO: Get real block size
+        let block_size = 512;
+
+        let bytes = ((blocks_1 as u64) + 1) * block_size;
+        let (ptr0, ptr1) = if bytes <= 4096 {
             (self.buffer_prp[0], 0)
-        } else if blocks_1 == 1 {
+        } else if bytes <= 8192 {
             (self.buffer_prp[0], self.buffer_prp[1])
         } else {
             (self.buffer_prp[0], (self.buffer_prp.physical() + 8) as u64)
@@ -552,7 +556,6 @@ impl Nvme {
             let qid = 1;
             let queue = &mut self.submission_queues[qid];
             let cid = queue.i as u16;
-            //TODO: Get completion queue ID through smarter mechanism
             let entry = if write {
                 NvmeCmd::io_write(
                     cid, nsid, lba, blocks_1, ptr0, ptr1
@@ -577,70 +580,46 @@ impl Nvme {
         Ok(())
     }
 
-    pub unsafe fn namespace_read(&mut self, nsid: u32, lba: u64, buf: &mut [u8]) -> Result<Option<usize>> {
+    pub unsafe fn namespace_read(&mut self, nsid: u32, mut lba: u64, buf: &mut [u8]) -> Result<Option<usize>> {
         //TODO: Use interrupts
 
         //TODO: Get real block size
         let block_size = 512;
 
-        //TODO: Support this
-        if buf.len() % block_size != 0 {
-            return Err(Error::new(EINVAL));
+        for chunk in buf.chunks_mut(self.buffer.len()) {
+            let blocks = (chunk.len() + block_size - 1) / block_size;
+
+            assert!(blocks > 0);
+            assert!(blocks <= 0x1_0000);
+
+            self.namespace_rw(nsid, lba, (blocks - 1) as u16, false)?;
+
+            chunk.copy_from_slice(&self.buffer[..chunk.len()]);
+
+            lba += blocks as u64;
         }
-
-        //TODO: Support this
-        if buf.len() > self.buffer.len() {
-            return Err(Error::new(EINVAL));
-        }
-
-        let blocks = buf.len() / block_size;
-
-        if blocks == 0 {
-            return Ok(Some(0));
-        }
-
-        //TODO: Support this
-        if blocks > 0x1_0000 {
-            return Err(Error::new(EINVAL));
-        }
-
-        self.namespace_rw(nsid, lba, (blocks - 1) as u16, false)?;
-
-        buf.copy_from_slice(&self.buffer[..buf.len()]);
 
         Ok(Some(buf.len()))
     }
 
-    pub unsafe fn namespace_write(&mut self, nsid: u32, lba: u64, buf: &[u8]) -> Result<Option<usize>> {
+    pub unsafe fn namespace_write(&mut self, nsid: u32, mut lba: u64, buf: &[u8]) -> Result<Option<usize>> {
         //TODO: Use interrupts
 
         //TODO: Get real block size
         let block_size = 512;
 
-        //TODO: Support this
-        if buf.len() % block_size != 0 {
-            return Err(Error::new(EINVAL));
+        for chunk in buf.chunks(self.buffer.len()) {
+            let blocks = (chunk.len() + block_size - 1) / block_size;
+
+            assert!(blocks > 0);
+            assert!(blocks <= 0x1_0000);
+
+            self.buffer[..chunk.len()].copy_from_slice(chunk);
+
+            self.namespace_rw(nsid, lba, (blocks - 1) as u16, true)?;
+
+            lba += blocks as u64;
         }
-
-        //TODO: Support this
-        if buf.len() > self.buffer.len() {
-            return Err(Error::new(EINVAL));
-        }
-
-        let blocks = buf.len() / block_size;
-
-        if blocks == 0 {
-            return Ok(Some(0));
-        }
-
-        //TODO: Support this
-        if blocks > 0x1_0000 {
-            return Err(Error::new(EINVAL));
-        }
-
-        self.buffer[..buf.len()].copy_from_slice(buf);
-
-        self.namespace_rw(nsid, lba, (blocks - 1) as u16, true)?;
 
         Ok(Some(buf.len()))
     }

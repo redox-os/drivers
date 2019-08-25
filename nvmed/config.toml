@@ -1,5 +1,0 @@
-[[drivers]]
-name = "NVME storage"
-class = 1
-subclass = 8
-command = ["nvmed", "$NAME", "$BAR0", "$IRQ"]
