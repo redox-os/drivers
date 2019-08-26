@@ -575,7 +575,7 @@ dependencies = [
 name = "pcspkrd"
 version = "0.1.0"
 dependencies = [
- "redox_syscall 0.1.51 (registry+https://github.com/rust-lang/crates.io-index)",
+ "redox_syscall 0.1.56 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
