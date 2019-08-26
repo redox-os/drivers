@@ -295,7 +295,7 @@ impl StreamBuffer {
 			syscall::physalloc(block_length * block_count)
 		} {
 			Ok(phys) => phys,
-			Err(err) => {
+			Err(_err) => {
 				return Err("Could not allocate physical memory for buffer.");
 			}
 		};
@@ -304,7 +304,7 @@ impl StreamBuffer {
 			syscall::physmap(phys, block_length * block_count, PHYSMAP_WRITE | PHYSMAP_NO_CACHE)
 		} {
 			Ok(addr) => addr,
-			Err(err) => {
+			Err(_err) => {
 				unsafe {
 					syscall::physfree(phys, block_length * block_count);
 				}

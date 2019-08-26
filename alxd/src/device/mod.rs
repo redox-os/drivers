@@ -1721,7 +1721,7 @@ impl Alx {
     }
 
     unsafe fn open(&mut self) -> usize {
-        let mut err: usize = 0;
+        let _err: usize = 0;
 
         macro_rules! goto_out {
             () => {{
@@ -1805,7 +1805,7 @@ impl scheme::SchemeMut for Alx {
         Ok(id)
     }
 
-    fn read(&mut self, id: usize, buf: &mut [u8]) -> Result<usize> {
+    fn read(&mut self, id: usize, _buf: &mut [u8]) -> Result<usize> {
         /*
         let head = unsafe { self.read(RDH) };
         let mut tail = unsafe { self.read(RDT) };
@@ -1842,7 +1842,7 @@ impl scheme::SchemeMut for Alx {
         }
     }
 
-    fn write(&mut self, _id: usize, buf: &[u8]) -> Result<usize> {
+    fn write(&mut self, _id: usize, _buf: &[u8]) -> Result<usize> {
         /*
         loop {
             let head = unsafe { self.read(TDH) };

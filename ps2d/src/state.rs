@@ -1,12 +1,12 @@
-use orbclient::{KeyEvent, MouseEvent, ButtonEvent, ScrollEvent};
-use std::cmp;
+use orbclient::{KeyEvent, MouseEvent, MouseRelativeEvent, ButtonEvent, ScrollEvent};
 use std::fs::File;
 use std::io::Write;
 use std::os::unix::io::AsRawFd;
+use std::str;
 use syscall;
 
-use controller::Ps2;
-use vm;
+use crate::controller::Ps2;
+use crate::vm;
 
 bitflags! {
     flags MousePacketFlags: u8 {
@@ -46,7 +46,7 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
         let mut ps2 = Ps2::new();
         let extra_packet = ps2.init();
 
-        let vmmouse = vm::enable();
+        let vmmouse = false; //vm::enable();
 
         let mut ps2d = Ps2d {
             ps2: ps2,
@@ -75,7 +75,7 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
     pub fn resize(&mut self) {
         let mut buf: [u8; 4096] = [0; 4096];
         if let Ok(count) = syscall::fpath(self.input.as_raw_fd() as usize, &mut buf) {
-            let path = unsafe { String::from_utf8_unchecked(Vec::from(&buf[..count])) };
+            let path = unsafe { str::from_utf8_unchecked(&buf[..count]) };
             let res = path.split(":").nth(1).unwrap_or("");
             self.width = res.split("/").nth(1).unwrap_or("").parse::<u32>().unwrap_or(0);
             self.height = res.split("/").nth(2).unwrap_or("").parse::<u32>().unwrap_or(0);
@@ -89,9 +89,6 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
     }
 
     pub fn handle(&mut self, keyboard: bool, data: u8) {
-        // TODO: Improve efficiency
-        self.resize();
-
         if keyboard {
             let (scancode, pressed) = if data >= 0x80 {
                 (data - 0x80, false)
@@ -127,26 +124,28 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
 
         		let (status, dx, dy, dz, _, _) = unsafe { vm::cmd(vm::ABSPOINTER_DATA, 4) };
 
-                let (x, y) = if status & vm::RELATIVE_PACKET == vm::RELATIVE_PACKET {
-                    (
-                        cmp::max(0, cmp::min(self.width as i32, self.mouse_x + dx as i32)),
-                        cmp::max(0, cmp::min(self.height as i32, self.mouse_y - dy as i32))
-                    )
+                if status & vm::RELATIVE_PACKET == vm::RELATIVE_PACKET {
+                    if dx != 0 || dy != 0 {
+                        self.input.write(&MouseRelativeEvent {
+                            dx: dx as i32,
+                            dy: -(dy as i32),
+                        }.to_event()).expect("ps2d: failed to write mouse event");
+                    }
         		} else {
-                    (
-                        dx as i32 * self.width as i32 / 0xFFFF,
-                        dy as i32 * self.height as i32 / 0xFFFF
-                    )
-        		};
+                    // TODO: Improve efficiency
+                    self.resize();
 
-                if x != self.mouse_x || y != self.mouse_y {
-                    self.mouse_x = x;
-                    self.mouse_y = y;
-                    self.input.write(&MouseEvent {
-                        x: x,
-                        y: y,
-                    }.to_event()).expect("ps2d: failed to write mouse event");
-                }
+                    let x = dx as i32 * self.width as i32 / 0xFFFF;
+                    let y = dy as i32 * self.height as i32 / 0xFFFF;
+                    if x != self.mouse_x || y != self.mouse_y {
+                        self.mouse_x = x;
+                        self.mouse_y = y;
+                        self.input.write(&MouseEvent {
+                            x: x,
+                            y: y,
+                        }.to_event()).expect("ps2d: failed to write mouse event");
+                    }
+        		};
 
                 if dz != 0 {
                     self.input.write(&ScrollEvent {
@@ -200,14 +199,10 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
                         dz = -scroll as i32;
                     }
 
-                    let x = cmp::max(0, cmp::min(self.width as i32, self.mouse_x + dx));
-                    let y = cmp::max(0, cmp::min(self.height as i32, self.mouse_y + dy));
-                    if x != self.mouse_x || y != self.mouse_y {
-                        self.mouse_x = x;
-                        self.mouse_y = y;
-                        self.input.write(&MouseEvent {
-                            x: x,
-                            y: y,
+                    if dx != 0 || dy != 0 {
+                        self.input.write(&MouseRelativeEvent {
+                            dx: dx,
+                            dy: dy,
                         }.to_event()).expect("ps2d: failed to write mouse event");
                     }
 

@@ -1,7 +1,8 @@
 [package]
 name = "bgad"
 version = "0.1.0"
+edition = "2018"
 
 [dependencies]
-orbclient = "0.3"
+orbclient = "0.3.27"
 redox_syscall = "0.1"

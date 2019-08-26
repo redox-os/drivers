@@ -10,8 +10,8 @@ use syscall::iopl;
 use syscall::data::Packet;
 use syscall::scheme::SchemeMut;
 
-use bga::Bga;
-use scheme::BgaScheme;
+use crate::bga::Bga;
+use crate::scheme::BgaScheme;
 
 mod bga;
 mod scheme;
@@ -45,7 +45,9 @@ fn main() {
 
         loop {
             let mut packet = Packet::default();
-            socket.read(&mut packet).expect("bgad: failed to read events from bga scheme");
+            if socket.read(&mut packet).expect("bgad: failed to read events from bga scheme") == 0 {
+                break;
+            }
             scheme.handle(&mut packet);
             socket.write(&packet).expect("bgad: failed to write responses to bga scheme");
         }

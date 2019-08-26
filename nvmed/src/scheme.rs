@@ -7,29 +7,28 @@ use syscall::{
     Io, SchemeBlockMut, Stat, MODE_DIR, MODE_FILE, O_DIRECTORY,
     O_STAT, SEEK_CUR, SEEK_END, SEEK_SET};
 
-use crate::ahci::Disk;
-use crate::ahci::hba::HbaMem;
+use crate::nvme::{Nvme, NvmeNamespace};
 
 #[derive(Clone)]
 enum Handle {
     List(Vec<u8>, usize),
-    Disk(usize, usize)
+    Disk(u32, usize)
 }
 
 pub struct DiskScheme {
     scheme_name: String,
-    hba_mem: &'static mut HbaMem,
-    disks: Box<[Box<dyn Disk>]>,
+    nvme: Nvme,
+    disks: BTreeMap<u32, NvmeNamespace>,
     handles: BTreeMap<usize, Handle>,
     next_id: usize
 }
 
 impl DiskScheme {
-    pub fn new(scheme_name: String, hba_mem: &'static mut HbaMem, disks: Vec<Box<dyn Disk>>) -> DiskScheme {
+    pub fn new(scheme_name: String, nvme: Nvme, disks: BTreeMap<u32, NvmeNamespace>) -> DiskScheme {
         DiskScheme {
-            scheme_name: scheme_name,
-            hba_mem: hba_mem,
-            disks: disks.into_boxed_slice(),
+            scheme_name,
+            nvme,
+            disks,
             handles: BTreeMap::new(),
             next_id: 0
         }
@@ -38,22 +37,8 @@ impl DiskScheme {
 
 impl DiskScheme {
     pub fn irq(&mut self) -> bool {
-        let pi = self.hba_mem.pi.read();
-        let is = self.hba_mem.is.read();
-        let pi_is = pi & is;
-
-        for i in 0..self.hba_mem.ports.len() {
-            if pi_is & 1 << i > 0 {
-                let port = &mut self.hba_mem.ports[i];
-                let is = port.is.read();
-                //println!("IRQ Port {}: {:#>08x}", i, is);
-                //TODO: Handle requests for only this port here
-                port.is.write(is);
-            }
-        }
-
-        self.hba_mem.is.write(is);
-        is != 0
+        // TODO: implement
+        false
     }
 }
 
@@ -65,8 +50,8 @@ impl SchemeBlockMut for DiskScheme {
                 if flags & O_DIRECTORY == O_DIRECTORY || flags & O_STAT == O_STAT {
                     let mut list = String::new();
 
-                    for i in 0..self.disks.len() {
-                        write!(list, "{}\n", i).unwrap();
+                    for (nsid, _disk) in self.disks.iter() {
+                        write!(list, "{}\n", nsid).unwrap();
                     }
 
                     let id = self.next_id;
@@ -77,12 +62,12 @@ impl SchemeBlockMut for DiskScheme {
                     Err(Error::new(EISDIR))
                 }
             } else {
-                let i = path_str.parse::<usize>().or(Err(Error::new(ENOENT)))?;
+                let nsid = path_str.parse::<u32>().or(Err(Error::new(ENOENT)))?;
 
-                if self.disks.get(i).is_some() {
+                if self.disks.contains_key(&nsid) {
                     let id = self.next_id;
                     self.next_id += 1;
-                    self.handles.insert(id, Handle::Disk(i, 0));
+                    self.handles.insert(id, Handle::Disk(nsid, 0));
                     Ok(Some(id))
                 } else {
                     Err(Error::new(ENOENT))
@@ -117,9 +102,9 @@ impl SchemeBlockMut for DiskScheme {
                 Ok(Some(0))
             },
             Handle::Disk(number, _) => {
-                let disk = self.disks.get_mut(number).ok_or(Error::new(EBADF))?;
+                let disk = self.disks.get_mut(&number).ok_or(Error::new(EBADF))?;
                 stat.st_mode = MODE_FILE;
-                stat.st_size = disk.size();
+                stat.st_size = disk.blocks * disk.block_size;
                 Ok(Some(0))
             }
         }
@@ -168,9 +153,11 @@ impl SchemeBlockMut for DiskScheme {
                 Ok(Some(count))
             },
             Handle::Disk(number, ref mut size) => {
-                let disk = self.disks.get_mut(number).ok_or(Error::new(EBADF))?;
-                let blk_len = disk.block_length()?;
-                if let Some(count) = disk.read((*size as u64)/(blk_len as u64), buf)? {
+                let disk = self.disks.get_mut(&number).ok_or(Error::new(EBADF))?;
+                let block_size = disk.block_size;
+                if let Some(count) = unsafe {
+                    self.nvme.namespace_read(disk.id, (*size as u64)/block_size, buf)?
+                } {
                     *size += count;
                     Ok(Some(count))
                 } else {
@@ -186,9 +173,11 @@ impl SchemeBlockMut for DiskScheme {
                 Err(Error::new(EBADF))
             },
             Handle::Disk(number, ref mut size) => {
-                let disk = self.disks.get_mut(number).ok_or(Error::new(EBADF))?;
-                let blk_len = disk.block_length()?;
-                if let Some(count) = disk.write((*size as u64)/(blk_len as u64), buf)? {
+                let disk = self.disks.get_mut(&number).ok_or(Error::new(EBADF))?;
+                let block_size = disk.block_size;
+                if let Some(count) = unsafe {
+                    self.nvme.namespace_write(disk.id, (*size as u64)/block_size, buf)?
+                } {
                     *size += count;
                     Ok(Some(count))
                 } else {
@@ -212,8 +201,8 @@ impl SchemeBlockMut for DiskScheme {
                 Ok(Some(*size))
             },
             Handle::Disk(number, ref mut size) => {
-                let disk = self.disks.get_mut(number).ok_or(Error::new(EBADF))?;
-                let len = disk.size() as usize;
+                let disk = self.disks.get_mut(&number).ok_or(Error::new(EBADF))?;
+                let len = (disk.blocks * disk.block_size) as usize;
                 *size = match whence {
                     SEEK_SET => cmp::min(len, pos),
                     SEEK_CUR => cmp::max(0, cmp::min(len as isize, *size as isize + pos as isize)) as usize,

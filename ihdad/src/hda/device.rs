@@ -790,21 +790,21 @@ impl IntelHDA {
 
 		for i in 0..iss {
 			if ((sis >> i) & 1 ) == 1 {
-				let mut input = self.get_input_stream_descriptor(i).unwrap();
+				let input = self.get_input_stream_descriptor(i).unwrap();
 				input.clear_interrupts();
 			}
 		}
 
 		for i in 0..oss {
 			if ((sis >> (i + iss)) & 1 ) == 1 {
-				let mut output = self.get_output_stream_descriptor(i).unwrap();
+				let output = self.get_output_stream_descriptor(i).unwrap();
 				output.clear_interrupts();
 			}
 		}
 
 		for i in 0..bss {
 			if ((sis >> (i + iss + oss)) & 1 ) == 1 {
-				let mut bid = self.get_bidirectional_stream_descriptor(i).unwrap();
+				let bid = self.get_bidirectional_stream_descriptor(i).unwrap();
 				bid.clear_interrupts();
 			}
 		}
@@ -897,7 +897,7 @@ impl SchemeBlockMut for IntelHDA {
 	fn write(&mut self, id: usize, buf: &[u8]) -> Result<Option<usize>> {
 		let index = {
 	        let mut handles = self.handles.lock();
-	        let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+	        let _handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 			0
 		};
 
@@ -926,7 +926,7 @@ impl SchemeBlockMut for IntelHDA {
 
     fn fpath(&mut self, id: usize, buf: &mut [u8]) -> Result<Option<usize>> {
         let mut handles = self.handles.lock();
-        let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+        let _handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
         let mut i = 0;
         let scheme_path = b"hda:";

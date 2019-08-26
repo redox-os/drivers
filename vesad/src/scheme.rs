@@ -4,8 +4,8 @@ use std::{mem, slice, str};
 use orbclient::{Event, EventOption};
 use syscall::{Result, Error, EACCES, EBADF, EINVAL, ENOENT, O_NONBLOCK, Map, SchemeMut};
 
-use display::Display;
-use screen::{Screen, GraphicScreen, TextScreen};
+use crate::display::Display;
+use crate::screen::{Screen, GraphicScreen, TextScreen};
 
 #[derive(Clone)]
 pub enum HandleKind {
@@ -25,14 +25,14 @@ pub struct DisplayScheme {
     width: usize,
     height: usize,
     active: usize,
-    pub screens: BTreeMap<usize, Box<Screen>>,
+    pub screens: BTreeMap<usize, Box<dyn Screen>>,
     next_id: usize,
     pub handles: BTreeMap<usize, Handle>,
 }
 
 impl DisplayScheme {
     pub fn new(width: usize, height: usize, onscreen: usize, spec: &[bool]) -> DisplayScheme {
-        let mut screens: BTreeMap<usize, Box<Screen>> = BTreeMap::new();
+        let mut screens: BTreeMap<usize, Box<dyn Screen>> = BTreeMap::new();
 
         let mut screen_i = 1;
         for &screen_type in spec.iter() {
@@ -227,7 +227,7 @@ impl SchemeMut for DisplayScheme {
                     let mut new_active_opt = None;
                     match event.to_option() {
                         EventOption::Key(key_event) => match key_event.scancode {
-                            f @ 0x3B ... 0x44 => { // F1 through F10
+                            f @ 0x3B ..= 0x44 => { // F1 through F10
                                 new_active_opt = Some((f - 0x3A) as usize);
                             },
                             0x57 => { // F11

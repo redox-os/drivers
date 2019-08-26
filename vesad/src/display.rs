@@ -5,7 +5,7 @@ use std::alloc::{Alloc, Global, Layout};
 use std::{cmp, slice};
 use std::ptr::NonNull;
 
-use primitive::{fast_set32, fast_set64, fast_copy};
+use crate::primitive::{fast_set32, fast_set64, fast_copy};
 
 #[cfg(feature="rusttype")]
 use self::rusttype::{Font, FontCollection, Scale, point};

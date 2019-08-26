@@ -1,5 +1,4 @@
 #![feature(asm)]
-#![feature(iterator_step_by)]
 
 #[macro_use] extern crate bitflags;
 extern crate byteorder;
@@ -13,8 +12,8 @@ use std::io::Read;
 use std::process::Command;
 use syscall::iopl;
 
-use config::Config;
-use pci::{Pci, PciClass, PciHeader, PciHeaderError, PciHeaderType};
+use crate::config::Config;
+use crate::pci::{Pci, PciClass, PciHeader, PciHeaderError, PciHeaderType};
 
 mod config;
 mod pci;

@@ -10,9 +10,9 @@ use std::fs::File;
 use std::io::{Read, Write};
 use syscall::{physmap, physunmap, Packet, SchemeMut, EVENT_READ, PHYSMAP_WRITE, PHYSMAP_WRITE_COMBINE};
 
-use mode_info::VBEModeInfo;
-use primitive::fast_set64;
-use scheme::{DisplayScheme, HandleKind};
+use crate::mode_info::VBEModeInfo;
+use crate::primitive::fast_set64;
+use crate::scheme::{DisplayScheme, HandleKind};
 
 pub mod display;
 pub mod mode_info;
@@ -65,7 +65,10 @@ fn main() {
             let mut blocked = Vec::new();
             loop {
                 let mut packet = Packet::default();
-                socket.read(&mut packet).expect("vesad: failed to read display scheme");
+                if socket.read(&mut packet).expect("vesad: failed to read display scheme") == 0 {
+                    //TODO: Handle blocked
+                    break;
+                }
 
                 // If it is a read packet, and there is no data, block it. Otherwise, handle packet
                 if packet.a == syscall::number::SYS_READ && packet.d > 0 && scheme.can_read(packet.b).is_none() {
