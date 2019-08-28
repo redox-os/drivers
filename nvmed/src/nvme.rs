@@ -1,4 +1,4 @@
-use std::thread;
+use std::{ptr, thread};
 use std::collections::BTreeMap;
 use syscall::io::{Dma, Io, Mmio};
 use syscall::error::{Error, Result, EINVAL};
@@ -239,7 +239,9 @@ impl NvmeCompQueue {
     }
 
     fn complete(&mut self) -> Option<(usize, NvmeComp)> {
-        let entry = self.data[self.i];
+        let entry = unsafe {
+            ptr::read_volatile(self.data.as_ptr().add(self.i))
+        };
         if ((entry.status & 1) == 1) == self.phase {
             self.i = (self.i + 1) % self.data.len();
             if self.i == 0 {
