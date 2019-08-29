@@ -1,4 +1,4 @@
-use std::{mem, thread};
+use std::mem;
 use std::collections::BTreeMap;
 
 use netutils::setcfg;
@@ -162,7 +162,7 @@ impl SchemeMut for Rtl8168 {
                 self.regs.tppoll.writef(1 << 6, true); //Notify of normal priority packet
 
                 while self.regs.tppoll.readf(1 << 6) {
-                    thread::yield_now();
+                    unsafe { asm!("pause"); }
                 }
 
                 self.transmit_i += 1;
@@ -170,7 +170,7 @@ impl SchemeMut for Rtl8168 {
                 return Ok(i);
             }
 
-            thread::yield_now();
+            unsafe { asm!("pause"); }
         }
     }
 
@@ -286,7 +286,7 @@ impl Rtl8168 {
         // Reset - this will disable tx and rx, reinitialize FIFOs, and set the system buffer pointer to the initial value
         self.regs.cmd.writef(1 << 4, true);
         while self.regs.cmd.readf(1 << 4) {
-            thread::yield_now();
+            asm!("pause");
         }
 
         // Set up rx buffers
