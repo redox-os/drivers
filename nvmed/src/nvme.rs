@@ -242,6 +242,7 @@ impl NvmeCompQueue {
         let entry = unsafe {
             ptr::read_volatile(self.data.as_ptr().add(self.i))
         };
+        // println!("{:?}", entry);
         if ((entry.status & 1) == 1) == self.phase {
             self.i = (self.i + 1) % self.data.len();
             if self.i == 0 {
@@ -258,7 +259,7 @@ impl NvmeCompQueue {
             if let Some(some) = self.complete() {
                 return some;
             } else {
-                thread::yield_now();
+                unsafe { asm!("pause"); }
             }
         }
     }
@@ -318,6 +319,17 @@ impl Nvme {
         println!("  - Disable");
         self.regs.cc.writef(1, false);
 
+        println!("  - Waiting for not ready");
+        loop {
+            let csts = self.regs.csts.read();
+            // println!("CSTS: {:X}", csts);
+            if csts & 1 == 1 {
+                asm!("pause");
+            } else {
+                break;
+            }
+        }
+
         println!("  - Mask all interrupts");
         self.regs.intms.write(0xFFFFFFFF);
 
@@ -349,8 +361,14 @@ impl Nvme {
         self.regs.cc.writef(1, true);
 
         println!("  - Waiting for ready");
-        while ! self.regs.csts.readf(1) {
-            thread::yield_now();
+        loop {
+            let csts = self.regs.csts.read();
+            // println!("CSTS: {:X}", csts);
+            if csts & 1 == 0 {
+                asm!("pause");
+            } else {
+                break;
+            }
         }
 
         {
@@ -537,6 +555,8 @@ impl Nvme {
                 self.completion_queue_head(qid as u16, head as u16);
             }
         }
+
+        println!("  - Complete");
 
         namespaces
     }
