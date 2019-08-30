@@ -5,7 +5,7 @@ use netutils::setcfg;
 use syscall::error::{Error, EACCES, EBADF, EINVAL, EWOULDBLOCK, Result};
 use syscall::flag::O_NONBLOCK;
 use syscall::io::{Dma, Mmio, Io, ReadOnly};
-use syscall::scheme::SchemeMut;
+use syscall::scheme::SchemeBlockMut;
 
 #[repr(packed)]
 struct Regs {
@@ -79,18 +79,18 @@ pub struct Rtl8168 {
     pub handles: BTreeMap<usize, usize>
 }
 
-impl SchemeMut for Rtl8168 {
-    fn open(&mut self, _path: &[u8], flags: usize, uid: u32, _gid: u32) -> Result<usize> {
+impl SchemeBlockMut for Rtl8168 {
+    fn open(&mut self, _path: &[u8], flags: usize, uid: u32, _gid: u32) -> Result<Option<usize>> {
         if uid == 0 {
             self.next_id += 1;
             self.handles.insert(self.next_id, flags);
-            Ok(self.next_id)
+            Ok(Some(self.next_id))
         } else {
             Err(Error::new(EACCES))
         }
     }
 
-    fn dup(&mut self, id: usize, buf: &[u8]) -> Result<usize> {
+    fn dup(&mut self, id: usize, buf: &[u8]) -> Result<Option<usize>> {
         if ! buf.is_empty() {
             return Err(Error::new(EINVAL));
         }
@@ -101,85 +101,97 @@ impl SchemeMut for Rtl8168 {
         };
         self.next_id += 1;
         self.handles.insert(self.next_id, flags);
-        Ok(self.next_id)
+        Ok(Some(self.next_id))
     }
 
-    fn read(&mut self, id: usize, buf: &mut [u8]) -> Result<usize> {
-        let flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
+    fn read(&mut self, id: usize, buf: &mut [u8]) -> Result<Option<usize>> {
+        let mut inner = |buf: &mut [u8]| -> Result<Option<usize>> {
+            let flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
-        if self.receive_i >= self.receive_ring.len() {
-            self.receive_i = 0;
-        }
-
-        let rd = &mut self.receive_ring[self.receive_i];
-        if ! rd.ctrl.readf(OWN) {
-            let rd_len = rd.ctrl.read() & 0x3FFF;
-
-            let data = &self.receive_buffer[self.receive_i];
-
-            let mut i = 0;
-            while i < buf.len() && i < rd_len as usize {
-                buf[i] = data[i].read();
-                i += 1;
+            if self.receive_i >= self.receive_ring.len() {
+                self.receive_i = 0;
             }
 
-            let eor = rd.ctrl.read() & EOR;
-            rd.ctrl.write(OWN | eor | data.len() as u32);
+            let rd = &mut self.receive_ring[self.receive_i];
+            if ! rd.ctrl.readf(OWN) {
+                let rd_len = rd.ctrl.read() & 0x3FFF;
 
-            self.receive_i += 1;
-
-            return Ok(i);
-        }
-
-        if flags & O_NONBLOCK == O_NONBLOCK {
-            Ok(0)
-        } else {
-            Err(Error::new(EWOULDBLOCK))
-        }
-    }
-
-    fn write(&mut self, id: usize, buf: &[u8]) -> Result<usize> {
-        let _flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
-
-        loop {
-            if self.transmit_i >= self.transmit_ring.len() {
-                self.transmit_i = 0;
-            }
-
-            let td = &mut self.transmit_ring[self.transmit_i];
-            if ! td.ctrl.readf(OWN) {
-                let data = &mut self.transmit_buffer[self.transmit_i];
+                let data = &self.receive_buffer[self.receive_i];
 
                 let mut i = 0;
-                while i < buf.len() && i < data.len() {
-                    data[i].write(buf[i]);
+                while i < buf.len() && i < rd_len as usize {
+                    buf[i] = data[i].read();
                     i += 1;
                 }
 
-                let eor = td.ctrl.read() & EOR;
-                td.ctrl.write(OWN | eor | FS | LS | i as u32);
+                let eor = rd.ctrl.read() & EOR;
+                rd.ctrl.write(OWN | eor | data.len() as u32);
 
-                self.regs.tppoll.writef(1 << 6, true); //Notify of normal priority packet
+                self.receive_i += 1;
 
-                while self.regs.tppoll.readf(1 << 6) {
-                    unsafe { asm!("pause"); }
+                Ok(Some(i))
+            } else if flags & O_NONBLOCK == O_NONBLOCK {
+                Err(Error::new(EWOULDBLOCK))
+            } else {
+                Ok(None)
+            }
+        };
+
+        println!("rtl8168d read {}", buf.len());
+        let res = inner(buf);
+        println!("rtl8168d read {} = {:?}", buf.len(), res);
+        res
+    }
+
+    fn write(&mut self, id: usize, buf: &[u8]) -> Result<Option<usize>> {
+        let mut inner = |buf: &[u8]| -> Result<Option<usize>> {
+            let _flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
+
+            loop {
+                if self.transmit_i >= self.transmit_ring.len() {
+                    self.transmit_i = 0;
                 }
 
-                self.transmit_i += 1;
+                let td = &mut self.transmit_ring[self.transmit_i];
+                if ! td.ctrl.readf(OWN) {
+                    let data = &mut self.transmit_buffer[self.transmit_i];
 
-                return Ok(i);
+                    let mut i = 0;
+                    while i < buf.len() && i < data.len() {
+                        data[i].write(buf[i]);
+                        i += 1;
+                    }
+
+                    let eor = td.ctrl.read() & EOR;
+                    td.ctrl.write(OWN | eor | FS | LS | i as u32);
+
+                    self.regs.tppoll.writef(1 << 6, true); //Notify of normal priority packet
+
+                    while self.regs.tppoll.readf(1 << 6) {
+                        unsafe { asm!("pause"); }
+                    }
+
+                    self.transmit_i += 1;
+
+                    return Ok(Some(i));
+                }
+
+                unsafe { asm!("pause"); }
             }
+        };
 
-            unsafe { asm!("pause"); }
-        }
+        println!("rtl8168d write {}", buf.len());
+        let res = inner(buf);
+        println!("rtl8168d write {} = {:?}", buf.len(), res);
+        res
     }
 
-    fn fevent(&mut self, id: usize, _flags: usize) -> Result<usize> {
+    fn fevent(&mut self, id: usize, _flags: usize) -> Result<Option<usize>> {
         let _flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
-        Ok(0)
+        Ok(Some(0))
     }
 
-    fn fpath(&mut self, id: usize, buf: &mut [u8]) -> Result<usize> {
+    fn fpath(&mut self, id: usize, buf: &mut [u8]) -> Result<Option<usize>> {
         let _flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
         let mut i = 0;
@@ -188,17 +200,17 @@ impl SchemeMut for Rtl8168 {
             buf[i] = scheme_path[i];
             i += 1;
         }
-        Ok(i)
+        Ok(Some(i))
     }
 
-    fn fsync(&mut self, id: usize) -> Result<usize> {
+    fn fsync(&mut self, id: usize) -> Result<Option<usize>> {
         let _flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
-        Ok(0)
+        Ok(Some(0))
     }
 
-    fn close(&mut self, id: usize) -> Result<usize> {
+    fn close(&mut self, id: usize) -> Result<Option<usize>> {
         self.handles.remove(&id).ok_or(Error::new(EBADF))?;
-        Ok(0)
+        Ok(Some(0))
     }
 }
 
@@ -254,12 +266,12 @@ impl Rtl8168 {
         Ok(module)
     }
 
-    pub unsafe fn irq(&mut self) -> u16 {
+    pub unsafe fn irq(&mut self) -> bool {
         // Read and then clear the ISR
         let isr = self.regs.isr.read();
         self.regs.isr.write(isr);
         let imr = self.regs.imr.read();
-        isr & imr
+        (isr & imr) != 0
     }
 
     pub fn next_read(&self) -> usize {
@@ -280,16 +292,18 @@ impl Rtl8168 {
                     (mac_low >> 24) as u8,
                     mac_high as u8,
                     (mac_high >> 8) as u8];
-        print!("{}", format!("   - MAC: {:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}\n", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]));
+        println!("   - MAC: {:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
         let _ = setcfg("mac", &format!("{:>02X}-{:>02X}-{:>02X}-{:>02X}-{:>02X}-{:>02X}\n", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]));
 
         // Reset - this will disable tx and rx, reinitialize FIFOs, and set the system buffer pointer to the initial value
+        println!("  - Reset");
         self.regs.cmd.writef(1 << 4, true);
         while self.regs.cmd.readf(1 << 4) {
             asm!("pause");
         }
 
         // Set up rx buffers
+        println!("  - Receive buffers");
         for i in 0..self.receive_ring.len() {
             let rd = &mut self.receive_ring[i];
             let data = &mut self.receive_buffer[i];
@@ -301,6 +315,7 @@ impl Rtl8168 {
         }
 
         // Set up normal priority tx buffers
+        println!("  - Transmit buffers (normal priority)");
         for i in 0..self.transmit_ring.len() {
             self.transmit_ring[i].buffer.write(self.transmit_buffer[i].physical() as u64);
         }
@@ -309,6 +324,7 @@ impl Rtl8168 {
         }
 
         // Set up high priority tx buffers
+        println!("  - Transmit buffers (high priority)");
         for i in 0..self.transmit_ring_h.len() {
             self.transmit_ring_h[i].buffer.write(self.transmit_buffer_h[i].physical() as u64);
         }
@@ -316,6 +332,7 @@ impl Rtl8168 {
             td.ctrl.writef(EOR, true);
         }
 
+        println!("  - Set config");
         // Unlock config
         self.regs.cmd_9346.write(1 << 7 | 1 << 6);
 
@@ -358,5 +375,7 @@ impl Rtl8168 {
 
         // Lock config
         self.regs.cmd_9346.write(0);
+
+        println!("  - Complete!");
     }
 }

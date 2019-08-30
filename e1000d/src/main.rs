@@ -71,10 +71,7 @@ fn main() {
     let irq_str = args.next().expect("e1000d: no irq provided");
     let irq = irq_str.parse::<u8>().expect("e1000d: failed to parse irq");
 
-    print!(
-        "{}",
-        format!(" + E1000 {} on: {:X} IRQ: {}\n", name, bar, irq)
-    );
+    println!(" + E1000 {} on: {:X} IRQ: {}", name, bar, irq);
 
     // Daemonize
     if unsafe { syscall::clone(0).unwrap() } == 0 {
@@ -87,8 +84,11 @@ fn main() {
             File::from_raw_fd(socket_fd as RawFd)
         }));
 
-        let mut irq_file =
-            File::open(format!("irq:{}", irq)).expect("e1000d: failed to open IRQ file");
+        let irq_fd = syscall::open(
+            format!("irq:{}", irq),
+            syscall::O_RDWR | syscall::O_NONBLOCK
+        ).expect("e1000d: failed to open IRQ file");
+        let mut irq_file = unsafe { File::from_raw_fd(irq_fd as RawFd) };
 
         let address = unsafe {
             syscall::physmap(bar, 128 * 1024, PHYSMAP_WRITE | PHYSMAP_NO_CACHE)
