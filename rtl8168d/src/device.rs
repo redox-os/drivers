@@ -105,85 +105,71 @@ impl SchemeBlockMut for Rtl8168 {
     }
 
     fn read(&mut self, id: usize, buf: &mut [u8]) -> Result<Option<usize>> {
-        let mut inner = |buf: &mut [u8]| -> Result<Option<usize>> {
-            let flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
+        let flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
-            if self.receive_i >= self.receive_ring.len() {
-                self.receive_i = 0;
+        if self.receive_i >= self.receive_ring.len() {
+            self.receive_i = 0;
+        }
+
+        let rd = &mut self.receive_ring[self.receive_i];
+        if ! rd.ctrl.readf(OWN) {
+            let rd_len = rd.ctrl.read() & 0x3FFF;
+
+            let data = &self.receive_buffer[self.receive_i];
+
+            let mut i = 0;
+            while i < buf.len() && i < rd_len as usize {
+                buf[i] = data[i].read();
+                i += 1;
             }
 
-            let rd = &mut self.receive_ring[self.receive_i];
-            if ! rd.ctrl.readf(OWN) {
-                let rd_len = rd.ctrl.read() & 0x3FFF;
+            let eor = rd.ctrl.read() & EOR;
+            rd.ctrl.write(OWN | eor | data.len() as u32);
 
-                let data = &self.receive_buffer[self.receive_i];
+            self.receive_i += 1;
 
-                let mut i = 0;
-                while i < buf.len() && i < rd_len as usize {
-                    buf[i] = data[i].read();
-                    i += 1;
-                }
-
-                let eor = rd.ctrl.read() & EOR;
-                rd.ctrl.write(OWN | eor | data.len() as u32);
-
-                self.receive_i += 1;
-
-                Ok(Some(i))
-            } else if flags & O_NONBLOCK == O_NONBLOCK {
-                Err(Error::new(EWOULDBLOCK))
-            } else {
-                Ok(None)
-            }
-        };
-
-        println!("rtl8168d read {}", buf.len());
-        let res = inner(buf);
-        println!("rtl8168d read {} = {:?}", buf.len(), res);
-        res
+            Ok(Some(i))
+        } else if flags & O_NONBLOCK == O_NONBLOCK {
+            Err(Error::new(EWOULDBLOCK))
+        } else {
+            Ok(None)
+        }
     }
 
     fn write(&mut self, id: usize, buf: &[u8]) -> Result<Option<usize>> {
-        let mut inner = |buf: &[u8]| -> Result<Option<usize>> {
-            let _flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
+        let _flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
-            loop {
-                if self.transmit_i >= self.transmit_ring.len() {
-                    self.transmit_i = 0;
-                }
-
-                let td = &mut self.transmit_ring[self.transmit_i];
-                if ! td.ctrl.readf(OWN) {
-                    let data = &mut self.transmit_buffer[self.transmit_i];
-
-                    let mut i = 0;
-                    while i < buf.len() && i < data.len() {
-                        data[i].write(buf[i]);
-                        i += 1;
-                    }
-
-                    let eor = td.ctrl.read() & EOR;
-                    td.ctrl.write(OWN | eor | FS | LS | i as u32);
-
-                    self.regs.tppoll.writef(1 << 6, true); //Notify of normal priority packet
-
-                    while self.regs.tppoll.readf(1 << 6) {
-                        unsafe { asm!("pause"); }
-                    }
-
-                    self.transmit_i += 1;
-
-                    return Ok(Some(i));
-                }
-
-                unsafe { asm!("pause"); }
+        loop {
+            if self.transmit_i >= self.transmit_ring.len() {
+                self.transmit_i = 0;
             }
-        };
 
-        println!("rtl8168d write {}", buf.len());
-        let res = inner(buf);
-        println!("rtl8168d write {} = {:?}", buf.len(), res);
-        res
+            let td = &mut self.transmit_ring[self.transmit_i];
+            if ! td.ctrl.readf(OWN) {
+                let data = &mut self.transmit_buffer[self.transmit_i];
+
+                let mut i = 0;
+                while i < buf.len() && i < data.len() {
+                    data[i].write(buf[i]);
+                    i += 1;
+                }
+
+                let eor = td.ctrl.read() & EOR;
+                td.ctrl.write(OWN | eor | FS | LS | i as u32);
+
+                self.regs.tppoll.writef(1 << 6, true); //Notify of normal priority packet
+
+                while self.regs.tppoll.readf(1 << 6) {
+                    unsafe { asm!("pause"); }
+                }
+
+                self.transmit_i += 1;
+
+                return Ok(Some(i));
+            }
+
+            unsafe { asm!("pause"); }
+        }
     }
 
     fn fevent(&mut self, id: usize, _flags: usize) -> Result<Option<usize>> {
