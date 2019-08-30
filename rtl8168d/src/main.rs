@@ -33,10 +33,17 @@ fn main() {
 
     // Daemonize
     if unsafe { syscall::clone(0).unwrap() } == 0 {
-        let socket_fd = syscall::open(":network", syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK).expect("rtl8168d: failed to create network scheme");
+        let socket_fd = syscall::open(
+            ":network",
+            syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK
+        ).expect("rtl8168d: failed to create network scheme");
         let socket = Arc::new(RefCell::new(unsafe { File::from_raw_fd(socket_fd as RawFd) }));
 
-        let mut irq_file = File::open(format!("irq:{}", irq)).expect("rtl8168d: failed to open IRQ file");
+        let irq_fd = syscall::open(
+            format!("irq:{}", irq),
+            syscall::O_RDWR | syscall::O_NONBLOCK
+        ).expect("rtl8168d: failed to open IRQ file");
+        let mut irq_file = unsafe { File::from_raw_fd(irq_fd as RawFd) };
 
         let address = unsafe { syscall::physmap(bar, 256, PHYSMAP_WRITE | PHYSMAP_NO_CACHE).expect("rtl8168d: failed to map address") };
         {
