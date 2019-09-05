@@ -27,7 +27,7 @@ fn main() {
     let bar = usize::from_str_radix(&bar_str, 16).expect("nvmed: failed to parse address");
 
     let bar_size_str = args.next().expect("nvmed: no address size provided");
-    let bar_size = usize::from_str_radix(&bar_str, 16).expect("nvmed: failed to parse address size");
+    let bar_size = usize::from_str_radix(&bar_size_str, 16).expect("nvmed: failed to parse address size");
 
     let irq_str = args.next().expect("nvmed: no irq provided");
     let irq = irq_str.parse::<u8>().expect("nvmed: failed to parse irq");
