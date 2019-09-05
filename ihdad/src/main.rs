@@ -34,6 +34,9 @@ fn main() {
 	let bar_str = args.next().expect("ihda: no address provided");
 	let bar = usize::from_str_radix(&bar_str, 16).expect("ihda: failed to parse address");
 
+    let bar_size_str = args.next().expect("ihda: no address size provided");
+    let bar_size = usize::from_str_radix(&bar_size_str, 16).expect("ihda: failed to parse address size");
+
 	let irq_str = args.next().expect("ihda: no irq provided");
 	let irq = irq_str.parse::<u8>().expect("ihda: failed to parse irq");
 
@@ -43,11 +46,14 @@ fn main() {
 	let prod_str = args.next().expect("ihda: no product id provided");
 	let prod = usize::from_str_radix(&prod_str, 16).expect("ihda: failed to parse product id");
 
-	print!("{}", format!(" + ihda {} on: {:X} IRQ: {}\n", name, bar, irq));
+	print!("{}", format!(" + ihda {} on: {:X} size: {} IRQ: {}\n", name, bar, bar_size, irq));
 
 	// Daemonize
 	if unsafe { syscall::clone(0).unwrap() } == 0 {
-		let address = unsafe { syscall::physmap(bar, 0x4000, PHYSMAP_WRITE | PHYSMAP_NO_CACHE).expect("ihdad: failed to map address") };
+		let address = unsafe {
+			syscall::physmap(bar, bar_size, PHYSMAP_WRITE | PHYSMAP_NO_CACHE)
+				.expect("ihdad: failed to map address")
+		};
 		{
 			let mut irq_file = File::open(format!("irq:{}", irq)).expect("IHDA: failed to open IRQ file");
 
