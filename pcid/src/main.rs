@@ -13,7 +13,7 @@ use std::process::Command;
 use syscall::iopl;
 
 use crate::config::Config;
-use crate::pci::{Pci, PciClass, PciHeader, PciHeaderError, PciHeaderType};
+use crate::pci::{Pci, PciBar, PciClass, PciHeader, PciHeaderError, PciHeaderType};
 
 mod config;
 mod pci;
@@ -82,7 +82,7 @@ fn handle_parsed_header(config: &Config, pci: &Pci, bus_num: u8,
         if let Some(ref ids) = driver.ids {
             let mut device_found = false;
             for (vendor, devices) in ids {
-                let vendor_without_prefix = vendor.trim_left_matches("0x");
+                let vendor_without_prefix = vendor.trim_start_matches("0x");
                 let vendor = i64::from_str_radix(vendor_without_prefix, 16).unwrap() as u16;
 
                 if vendor != header.vendor_id() { continue; }
@@ -130,6 +130,42 @@ fn handle_parsed_header(config: &Config, pci: &Pci, bus_num: u8,
                 pci.write(bus_num, dev_num, func_num, 0x3C, data);
             }
 
+            // Find BAR sizes
+            let mut bars = [PciBar::None; 6];
+            let mut bar_sizes = [0; 6];
+            unsafe {
+                let count = match header.header_type() {
+                    PciHeaderType::GENERAL => 6,
+                    PciHeaderType::PCITOPCI => 2,
+                    _ => 0,
+                };
+
+                for i in 0..count {
+                    bars[i] = header.get_bar(i);
+
+                    let offset = 0x10 + (i as u8) * 4;
+
+                    let original = pci.read(bus_num, dev_num, func_num, offset);
+                    pci.write(bus_num, dev_num, func_num, offset, 0xFFFFFFFF);
+
+                    let new = pci.read(bus_num, dev_num, func_num, offset);
+                    pci.write(bus_num, dev_num, func_num, offset, original);
+
+                    let masked = if new & 1 == 1 {
+                        new & 0xFFFFFFFC
+                    } else {
+                        new & 0xFFFFFFF0
+                    };
+
+                    let size = !masked + 1;
+                    bar_sizes[i] = if size <= 1 {
+                        0
+                    } else {
+                        size
+                    };
+                }
+            }
+
             // TODO: find a better way to pass the header data down to the
             // device driver, making passing the capabilities list etc
             // posible.
@@ -142,16 +178,18 @@ fn handle_parsed_header(config: &Config, pci: &Pci, bus_num: u8,
                         "$DEV" => format!("{:>02X}", dev_num),
                         "$FUNC" => format!("{:>02X}", func_num),
                         "$NAME" => format!("pci-{:>02X}.{:>02X}.{:>02X}", bus_num, dev_num, func_num),
-                        "$BAR0" => format!("{}", header.get_bar(0)),
-                        "$BAR1" => format!("{}", header.get_bar(1)),
-                        "$BAR2" if header.header_type() == PciHeaderType::GENERAL =>
-                            format!("{}", header.get_bar(2)),
-                        "$BAR3" if header.header_type() == PciHeaderType::GENERAL =>
-                            format!("{}", header.get_bar(3)),
-                        "$BAR4" if header.header_type() == PciHeaderType::GENERAL =>
-                            format!("{}", header.get_bar(4)),
-                        "$BAR5" if header.header_type() == PciHeaderType::GENERAL =>
-                            format!("{}", header.get_bar(5)),
+                        "$BAR0" => format!("{}", bars[0]),
+                        "$BAR1" => format!("{}", bars[1]),
+                        "$BAR2" => format!("{}", bars[2]),
+                        "$BAR3" => format!("{}", bars[3]),
+                        "$BAR4" => format!("{}", bars[4]),
+                        "$BAR5" => format!("{}", bars[5]),
+                        "$BARSIZE0" => format!("{:>08X}", bar_sizes[0]),
+                        "$BARSIZE1" => format!("{:>08X}", bar_sizes[1]),
+                        "$BARSIZE2" => format!("{:>08X}", bar_sizes[2]),
+                        "$BARSIZE3" => format!("{:>08X}", bar_sizes[3]),
+                        "$BARSIZE4" => format!("{:>08X}", bar_sizes[4]),
+                        "$BARSIZE5" => format!("{:>08X}", bar_sizes[5]),
                         "$IRQ" => format!("{}", irq),
                         "$VENID" => format!("{:>04X}", header.vendor_id()),
                         "$DEVID" => format!("{:>04X}", header.device_id()),

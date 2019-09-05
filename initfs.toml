@@ -5,7 +5,7 @@
 name = "AHCI storage"
 class = 1
 subclass = 6
-command = ["ahcid", "$NAME", "$BAR5", "$IRQ"]
+command = ["ahcid", "$NAME", "$BAR5", "$BARSIZE5", "$IRQ"]
 
 # bgad
 [[drivers]]
@@ -27,7 +27,7 @@ command = ["bgad", "$NAME", "$BAR0"]
 name = "NVME storage"
 class = 1
 subclass = 8
-command = ["nvmed", "$NAME", "$BAR0", "$IRQ"]
+command = ["nvmed", "$NAME", "$BAR0", "$BARSIZE0", "$IRQ"]
 
 # vboxd
 [[drivers]]

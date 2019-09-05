@@ -68,10 +68,13 @@ fn main() {
     let bar_str = args.next().expect("e1000d: no address provided");
     let bar = usize::from_str_radix(&bar_str, 16).expect("e1000d: failed to parse address");
 
+    let bar_size_str = args.next().expect("e1000d: no address size provided");
+    let bar_size = usize::from_str_radix(&bar_str, 16).expect("e1000d: failed to parse address size");
+
     let irq_str = args.next().expect("e1000d: no irq provided");
     let irq = irq_str.parse::<u8>().expect("e1000d: failed to parse irq");
 
-    println!(" + E1000 {} on: {:X} IRQ: {}", name, bar, irq);
+    println!(" + E1000 {} on: {:X} size: {} IRQ: {}", name, bar, bar_size, irq);
 
     // Daemonize
     if unsafe { syscall::clone(0).unwrap() } == 0 {
@@ -91,7 +94,7 @@ fn main() {
         let mut irq_file = unsafe { File::from_raw_fd(irq_fd as RawFd) };
 
         let address = unsafe {
-            syscall::physmap(bar, 128 * 1024, PHYSMAP_WRITE | PHYSMAP_NO_CACHE)
+            syscall::physmap(bar, bar_size, PHYSMAP_WRITE | PHYSMAP_NO_CACHE)
                 .expect("e1000d: failed to map address")
         };
         {

@@ -26,15 +26,20 @@ fn main() {
     let bar_str = args.next().expect("nvmed: no address provided");
     let bar = usize::from_str_radix(&bar_str, 16).expect("nvmed: failed to parse address");
 
+    let bar_size_str = args.next().expect("nvmed: no address size provided");
+    let bar_size = usize::from_str_radix(&bar_str, 16).expect("nvmed: failed to parse address size");
+
     let irq_str = args.next().expect("nvmed: no irq provided");
     let irq = irq_str.parse::<u8>().expect("nvmed: failed to parse irq");
 
-    print!("{}", format!(" + NVME {} on: {:X} IRQ: {}\n", name, bar, irq));
+    print!("{}", format!(" + NVME {} on: {:X} size: {} IRQ: {}\n", name, bar, bar_size, irq));
 
     // Daemonize
     if unsafe { syscall::clone(0).unwrap() } == 0 {
-        //TODO: Figure out correct size of mapping, not just 256 * 1024
-        let address = unsafe { syscall::physmap(bar, 256 * 1024, PHYSMAP_WRITE | PHYSMAP_NO_CACHE).expect("nvmed: failed to map address") };
+        let address = unsafe {
+            syscall::physmap(bar, bar_size, PHYSMAP_WRITE | PHYSMAP_NO_CACHE)
+                .expect("nvmed: failed to map address")
+        };
         {
             let event_fd = syscall::open("event:", syscall::O_RDWR | syscall::O_CLOEXEC)
                 .expect("nvmed: failed to open event queue");
