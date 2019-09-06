@@ -37,8 +37,19 @@ impl DiskScheme {
 
 impl DiskScheme {
     pub fn irq(&mut self) -> bool {
-        // TODO: implement
-        false
+        let mut found_completion = false;
+
+        let nvme = &mut self.nvme;
+        for qid in 0..nvme.completion_queues.len() {
+            while let Some((head, entry)) = nvme.completion_queues[qid].complete() {
+                found_completion = true;
+                println!("nvmed: Unhandled completion {:?}", entry);
+                //TODO: Handle errors
+                unsafe { nvme.completion_queue_head(qid as u16, head as u16); }
+            }
+        }
+
+        found_completion
     }
 }
 

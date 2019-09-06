@@ -238,7 +238,7 @@ impl NvmeCompQueue {
         })
     }
 
-    fn complete(&mut self) -> Option<(usize, NvmeComp)> {
+    pub (crate) fn complete(&mut self) -> Option<(usize, NvmeComp)> {
         let entry = unsafe {
             ptr::read_volatile(self.data.as_ptr().add(self.i))
         };
@@ -274,7 +274,7 @@ pub struct NvmeNamespace {
 pub struct Nvme {
     regs: &'static mut NvmeRegs,
     submission_queues: [NvmeCmdQueue; 2],
-    completion_queues: [NvmeCompQueue; 2],
+    pub (crate) completion_queues: [NvmeCompQueue; 2],
     buffer: Dma<[u8; 512 * 4096]>, // 2MB of buffer
     buffer_prp: Dma<[u64; 512]>, // 4KB of PRP for the buffer
 }
