@@ -264,12 +264,17 @@ impl Rtl8168 {
     }
 
     pub fn next_read(&self) -> usize {
-        for rd in self.receive_ring.iter() {
-            if ! rd.ctrl.readf(OWN) {
-                return rd.ctrl.read() as usize & 0x3FFF;
-            }
+        let mut receive_i = self.receive_i;
+        if receive_i >= self.receive_ring.len() {
+            receive_i = 0;
         }
-        0
+
+        let rd = &self.receive_ring[receive_i];
+        if ! rd.ctrl.readf(OWN) {
+            (rd.ctrl.read() & 0x3FFF) as usize
+        } else {
+            0
+        }
     }
 
     pub unsafe fn init(&mut self) {
