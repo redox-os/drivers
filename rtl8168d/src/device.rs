@@ -1,3 +1,6 @@
+// Supports Realtek RTL8168, RTL8169, and other compatible devices
+// See https://people.freebsd.org/~wpaul/RealTek/rtl8169spec-121.pdf
+
 use std::mem;
 use std::collections::BTreeMap;
 
