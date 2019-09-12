@@ -1,6 +1,3 @@
-## Drivers for FS ##
-
-# xhcid
 # [[drivers]]
 # name = "XHCI"
 # class = 12
