@@ -118,6 +118,7 @@ fn main() {
                     move |_event| -> Result<Option<usize>> {
                         let mut irq = [0; 8];
                         irq_file.read(&mut irq)?;
+                        //TODO: This may be causing spurious interrupts
                         if unsafe { device_irq.borrow_mut().irq() } {
                             irq_file.write(&mut irq)?;
 
