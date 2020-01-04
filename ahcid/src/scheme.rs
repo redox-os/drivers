@@ -67,6 +67,8 @@ impl DiskWrapper {
                     }
                 }
 
+                let orig_buf_len = buf.len();
+
                 let blksize = self.disk.block_length().map_err(|err| io::Error::from_raw_os_error(err.errno))?;
 
                 let start_block = self.offset / u64::from(blksize);
@@ -88,6 +90,7 @@ impl DiskWrapper {
 
                         match self.disk.read(block, self.block_bytes) {
                             Ok(Some(bytes)) => {
+                                assert_eq!(bytes, self.block_bytes.len());
                                 assert_eq!(bytes, blksize as usize);
                                 break;
                             }
@@ -103,11 +106,12 @@ impl DiskWrapper {
                     } else {
                         (blksize.into(), &self.block_bytes[..])
                     };
-                    buf[..bytes_to_read as usize].copy_from_slice(src_buf);
-                    buf = &mut buf[..bytes_to_read as usize];
+                    let bytes_to_read = std::cmp::min(bytes_to_read as usize, buf.len());
+                    buf[..bytes_to_read].copy_from_slice(&src_buf[..bytes_to_read]);
+                    buf = &mut buf[..bytes_to_read];
                 }
 
-                let bytes_read = std::cmp::min(buf.len(), whole_blocks_to_read as usize * blksize as usize + offset_from_start_block as usize + offset_to_end_block as usize);
+                let bytes_read = std::cmp::min(orig_buf_len, whole_blocks_to_read as usize * blksize as usize + offset_from_start_block as usize + offset_to_end_block as usize);
                 self.offset += bytes_read as u64;
 
                 Ok(bytes_read)
