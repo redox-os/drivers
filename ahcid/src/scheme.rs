@@ -30,9 +30,9 @@ pub struct DiskWrapper {
 
 impl DiskWrapper {
     fn pt(disk: &mut dyn Disk) -> Option<PartitionTable> {
-        let bs = match disk.block_length().unwrap() {
-            512 => LogicalBlockSize::Lb512,
-            4096 => LogicalBlockSize::Lb4096,
+        let bs = match disk.block_length() {
+            Ok(512) => LogicalBlockSize::Lb512,
+            Ok(4096) => LogicalBlockSize::Lb4096,
             _ => return None,
         };
         struct Device<'a, 'b> { disk: &'a mut dyn Disk, offset: u64, block_bytes: &'b mut [u8] }
@@ -343,7 +343,7 @@ impl SchemeBlockMut for DiskScheme {
 
     fn read(&mut self, id: usize, buf: &mut [u8]) -> Result<Option<usize>> {
         match *self.handles.get_mut(&id).ok_or(Error::new(EBADF))? {
-            Handle::List(ref mut handle, ref mut size) => {
+            Handle::List(ref handle, ref mut size) => {
                 let count = (&handle[*size..]).read(buf).unwrap();
                 *size += count;
                 Ok(Some(count))
