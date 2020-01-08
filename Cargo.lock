@@ -524,6 +524,8 @@ name = "nvmed"
 version = "0.1.0"
 dependencies = [
  "bitflags 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "block-io-wrapper 0.1.0",
+ "partitionlib 0.1.0 (git+https://gitlab.redox-os.org/redox-os/partitionlib.git)",
  "redox_syscall 0.1.56 (registry+https://github.com/rust-lang/crates.io-index)",
  "spin 0.4.10 (registry+https://github.com/rust-lang/crates.io-index)",
 ]

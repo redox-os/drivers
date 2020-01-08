@@ -69,7 +69,7 @@ impl DiskWrapper {
                                  assert_eq!(bytes, blksize as usize);
                                  return Ok(());
                              }
-                             Ok(None) => continue,
+                             Ok(None) => { std::thread::yield_now(); continue }
                              Err(err) => return Err(io::Error::from_raw_os_error(err.errno)),
                          }
                      }
@@ -83,7 +83,7 @@ impl DiskWrapper {
 
         let mut block_bytes = [0u8; 4096];
 
-        partitionlib::get_partitions(&mut Device { disk, offset: 0, block_bytes: &mut block_bytes[..bs.into()] }, bs).map_err(|x| dbg!(x)).ok().flatten()
+        partitionlib::get_partitions(&mut Device { disk, offset: 0, block_bytes: &mut block_bytes[..bs.into()] }, bs).ok().flatten()
     }
     fn new(mut disk: Box<dyn Disk>) -> Self {
         Self {
