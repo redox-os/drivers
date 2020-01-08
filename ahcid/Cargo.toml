@@ -8,3 +8,4 @@ bitflags = "1.2"
 byteorder = "1.2"
 partitionlib = { git = "https://gitlab.redox-os.org/redox-os/partitionlib.git" }
 redox_syscall = "0.1"
+block-io-wrapper = { path = "../block-io-wrapper" }
