@@ -119,48 +119,58 @@ impl Xhci {
         );
 
         let config_descs = (0..raw_dd.configurations).map(|index| -> Result<_> {
+            // TODO: Actually, it seems like all descriptors contain a length field, and I
+            // encountered a SuperSpeed descriptor when endpoints were expected. The right way
+            // would probably be to have an enum of all possible descs, and sort them based on
+            // location, even though they might not necessarily be ordered trivially.
+
             let (desc, data) = dev.get_config(index)?;
 
-            let extra_length = desc.total_length as usize - mem::size_of::<usb::ConfigDescriptor>();
+            let extra_length = desc.total_length as usize - mem::size_of_val(&desc);
 
             let mut i = 0;
 
-            let interface_descs = (0..desc.interfaces).filter_map(|_| -> Option<Result<_>> {
+            let mut interface_descs = SmallVec::with_capacity(desc.interfaces as usize);
+
+            for _ in 0..desc.interfaces {
                 let mut idesc = usb::InterfaceDescriptor::default();
                 if i < extra_length && i < data.len() && idesc.copy_from_bytes(&data[i..extra_length]).is_ok() {
                     i += mem::size_of_val(&idesc);
 
-                    let endpoints = (0..idesc.endpoints).filter_map(|_| {
+                    let mut endpoints = SmallVec::with_capacity(idesc.endpoints as usize);
+
+                    while endpoints.len() < idesc.endpoints as usize {
                         let mut edesc = usb::EndpointDescriptor::default();
                         if i < extra_length && i < data.len() && edesc.copy_from_bytes(&data[i..extra_length]).is_ok() {
-                            Some(EndpDescJson {
+                            match edesc.kind {
+                                // TODO: Constants
+                                5 => i += mem::size_of_val(&edesc),
+                                48 => { i += 6; continue } // SuperSpeed Endpoint Companion Descriptor
+                                _ => unimplemented!(),
+                            }
+
+                            endpoints.push(EndpDescJson {
                                 address: edesc.address,
                                 attributes: edesc.attributes,
                                 interval: edesc.interval,
                                 kind: edesc.kind,
                                 max_packet_size: edesc.max_packet_size,
                             })
-                        } else { None }
-                    }).collect();
+                        } else { break }
+                    }
 
-                    Some(Ok(IfDescJson {
+                    interface_descs.push(IfDescJson {
                         kind: idesc.kind,
                         number: idesc.number,
                         alternate_setting: idesc.alternate_setting,
                         class: idesc.class,
                         sub_class: idesc.sub_class,
                         protocol: idesc.protocol,
-                        interface_str: match if idesc.interface_str > 0 { Some(dev.get_string(idesc.interface_str)) } else { None } {
-                            Some(Err(err)) => return Some(Err(err)),
-                            Some(Ok(ok)) => Some(ok),
-                            None => None,
-                        },
+                        interface_str: if idesc.interface_str > 0 { Some(dev.get_string(idesc.interface_str)?) } else { None },
                         endpoints,
-                    }))
-                } else {
-                    None
+                    });
                 }
-            }).collect::<Result<SmallVec<_>>>()?;
+            }
 
             Ok(ConfDescJson {
                 kind: desc.kind,
@@ -193,7 +203,7 @@ impl Xhci {
         };
 
         serde_json::to_writer_pretty(contents, &desc).unwrap();
-        
+
         Ok(())
     }
 }
@@ -226,7 +236,7 @@ impl SchemeMut for Xhci {
             let num_str = &path_str[4..slash_idx.unwrap_or(path_str.len())];
             let num = num_str.parse::<usize>().or(Err(Error::new(ENOENT)))?;
 
-            if slash_idx.is_some() && slash_idx.unwrap() + 1 < path_str.len() && path_str[slash_idx.unwrap() + 1..].starts_with("descriptor") {
+            if slash_idx.is_some() && slash_idx.unwrap() + 1 < path_str.len() && &path_str[slash_idx.unwrap() + 1..] == "descriptors" {
                 if flags & O_DIRECTORY != 0 {
                     return Err(Error::new(ENOTDIR));
                 }
@@ -243,7 +253,7 @@ impl SchemeMut for Xhci {
             if flags & O_DIRECTORY != 0 || flags & O_STAT != 0 {
                 let mut contents = Vec::new();
 
-                write!(contents, "descriptor\n").unwrap();
+                write!(contents, "descriptors\n").unwrap();
 
                 let fd = self.next_handle;
                 self.handles.insert(fd, Handle::Port(num, 0, contents));
