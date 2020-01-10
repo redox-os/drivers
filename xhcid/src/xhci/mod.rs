@@ -1,5 +1,6 @@
 use plain::Plain;
 use std::{mem, slice};
+use std::collections::BTreeMap;
 use syscall::error::Result;
 use syscall::io::{Dma, Io};
 use crate::usb;
@@ -112,6 +113,16 @@ pub struct Xhci {
     run: &'static mut RuntimeRegs,
     dev_ctx: DeviceContextList,
     cmd: CommandRing,
+
+    handles: BTreeMap<usize, scheme::Handle>,
+    next_handle: usize,
+    port_states: BTreeMap<usize, PortState>,
+}
+
+struct PortState {
+    slot: u8,
+    input_context: Dma<InputContext>,
+    ring: Ring,
 }
 
 impl Xhci {
@@ -178,6 +189,9 @@ impl Xhci {
             run: run,
             dev_ctx: DeviceContextList::new(max_slots)?,
             cmd: CommandRing::new()?,
+            handles: BTreeMap::new(),
+            next_handle: 0,
+            port_states: BTreeMap::new(),
         };
 
         xhci.init(max_slots);
@@ -237,6 +251,24 @@ impl Xhci {
         println!("  - XHCI initialized");
     }
 
+    pub fn enable_port_slot(cmd: &mut CommandRing, dbs: &mut [Doorbell]) -> u8 {
+        let (cmd, cycle, event) = cmd.next();
+
+        cmd.enable_slot(0, cycle);
+
+        dbs[0].write(0);
+
+        while event.data.read() == 0 {
+            println!("    - Waiting for event");
+        }
+        let slot = (event.control.read() >> 24) as u8;
+
+        cmd.reserved(false);
+        event.reserved(false);
+
+        slot
+    }
+
     pub fn probe(&mut self) -> Result<()> {
         for (i, port) in self.ports.iter().enumerate() {
             let data = port.read();
@@ -245,32 +277,18 @@ impl Xhci {
             let flags = port.flags();
             println!("   + XHCI Port {}: {:X}, State {}, Speed {}, Flags {:?}", i, data, state, speed, flags);
 
-            if flags.contains(port::PORT_CCS) {
+            if flags.contains(port::PortFlags::PORT_CCS) {
                 //TODO: Link TRB when running to the end of the ring buffer
 
                 println!("    - Enable slot");
 
-                let slot;
-                {
-                    let (cmd, cycle, event) = self.cmd.next();
+                self.run.ints[0].erdp.write(self.cmd.erdp()); // TODO: ?
 
-                    cmd.enable_slot(0, cycle);
-
-                    self.dbs[0].write(0);
-
-                    while event.data.read() == 0 {
-                        println!("    - Waiting for event");
-                    }
-                    slot = (event.control.read() >> 24) as u8;
-
-                    cmd.reserved(false);
-                    event.reserved(false);
-                }
-
-                self.run.ints[0].erdp.write(self.cmd.erdp());
+                let slot = Self::enable_port_slot(&mut self.cmd, &mut self.dbs);
 
                 println!("    - Slot {}", slot);
 
+                // transfer ring?
                 let mut ring = Ring::new(true)?;
 
                 let mut input = Dma::<InputContext>::zeroed()?;
@@ -360,6 +378,11 @@ impl Xhci {
                         }
                     }
                 }
+                self.port_states.insert(i, PortState {
+                    slot,
+                    input_context: input,
+                    ring,
+                });
             }
         }
 

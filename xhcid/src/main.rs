@@ -6,7 +6,7 @@ extern crate syscall;
 
 use event::{Event, EventQueue};
 use std::cell::RefCell;
-use std::env;
+use std::{io, env};
 use std::fs::File;
 use std::io::{Result, Read, Write};
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
@@ -37,7 +37,7 @@ fn main() {
 
     // Daemonize
     if unsafe { syscall::clone(0).unwrap() } == 0 {
-        let socket_fd = syscall::open(":usb", syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK).expect("xhcid: failed to create usb scheme");
+        let socket_fd = syscall::open(format!(":usb/{}-{}-{}", name, bar_str, irq_str), syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK).expect("xhcid: failed to create usb scheme");
         let socket = Arc::new(RefCell::new(unsafe { File::from_raw_fd(socket_fd as RawFd) }));
 
         let mut irq_file = File::open(format!("irq:{}", irq)).expect("xhcid: failed to open IRQ file");
@@ -87,8 +87,11 @@ fn main() {
             event_queue.add(socket_fd, move |_| -> Result<Option<()>> {
                 loop {
                     let mut packet = Packet::default();
-                    if socket_packet.borrow_mut().read(&mut packet)? == 0 {
-                        break;
+                    match socket_packet.borrow_mut().read(&mut packet)  {
+                        Ok(0) => break,
+                        Err(err) if err.kind() == io::ErrorKind::WouldBlock => break,
+                        Ok(_) => (),
+                        Err(err) => return Err(err),
                     }
 
                     let a = packet.a;
