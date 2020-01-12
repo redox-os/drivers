@@ -1,4 +1,5 @@
 use std::{cmp, mem, str};
+use std::convert::TryFrom;
 use std::io::prelude::*;
 
 use plain::Plain;
@@ -23,6 +24,8 @@ pub enum Handle {
     TopLevel(usize, Vec<u8>), // offset, contents (ports)
     Port(usize, usize, Vec<u8>), // port, offset, contents
     PortDesc(usize, usize, Vec<u8>), // port, offset, contents
+    Endpoints(usize, usize, Vec<u8>), // port, offset, contents
+    Endpoint(usize, usize, usize), // port, endpoint, offset
 }
 
 #[derive(Serialize)]
@@ -70,6 +73,17 @@ struct EndpDescJson {
     max_packet_size: u16,
     interval: u8,
 }
+impl From<usb::EndpointDescriptor> for EndpDescJson {
+    fn from(d: usb::EndpointDescriptor) -> Self {
+        Self {
+            kind: d.kind,
+            address: d.address,
+            attributes: d.attributes,
+            interval: d.interval,
+            max_packet_size: d.max_packet_size,
+        }
+    }
+}
 
 #[derive(Serialize)]
 struct IfDescJson {
@@ -81,7 +95,81 @@ struct IfDescJson {
     sub_class: u8,
     protocol: u8,
     interface_str: Option<String>,
-    endpoints: SmallVec<[EndpDescJson; 2]>,
+    endpoints: SmallVec<[AnyEndpDescJson; 4]>,
+}
+impl IfDescJson {
+    fn new(dev: &mut Device, desc: usb::InterfaceDescriptor, endps: impl IntoIterator<Item = AnyEndpDescJson>) -> Result<Self> {
+        Ok(Self {
+            alternate_setting: desc.alternate_setting,
+            class: desc.class,
+            interface_str: if desc.interface_str > 0 { Some(dev.get_string(desc.interface_str)?) } else { None },
+            kind: desc.kind,
+            number: desc.number,
+            protocol: desc.protocol,
+            sub_class: desc.sub_class,
+            endpoints: endps.into_iter().collect(),
+        })
+    }
+}
+
+#[derive(Serialize)]
+struct SuperSpeedCmpJson {
+    kind: u8,
+    max_burst: u8,
+    attributes: u8,
+    bytes_per_interval: u16,
+}
+
+impl From<usb::SuperSpeedCompanionDescriptor> for SuperSpeedCmpJson {
+    fn from(d: usb::SuperSpeedCompanionDescriptor) -> Self {
+        Self {
+            kind: d.kind,
+            attributes: d.attributes,
+            bytes_per_interval: d.bytes_per_interval,
+            max_burst: d.max_burst,
+        }
+    }
+}
+
+#[derive(Serialize)]
+enum AnyEndpDescJson {
+    Endp(EndpDescJson),
+    SuperSpeedCmp(SuperSpeedCmpJson),
+}
+
+/// Any descriptor that can be stored in the config desc "data" area.
+#[derive(Debug)]
+enum AnyDescriptor {
+    // These are the ones that I have found, but there are more.
+    Device(usb::DeviceDescriptor),
+    Config(usb::ConfigDescriptor),
+    Interface(usb::InterfaceDescriptor),
+    Endpoint(usb::EndpointDescriptor),
+    SuperSpeedCompanion(usb::SuperSpeedCompanionDescriptor),
+}
+
+impl AnyDescriptor {
+    fn parse(bytes: &[u8]) -> Option<(Self, usize)> {
+        // There has to be at least two bytes for the kind and length.
+        if bytes.len() < 2 { return None }
+
+        let len = bytes[0];
+        let kind = bytes[1];
+
+        if bytes.len() < len.into() { return None }
+
+        Some((match kind {
+            1 => Self::Device(*plain::from_bytes(bytes).ok()?),
+            2 => Self::Config(*plain::from_bytes(bytes).ok()?),
+            4 => Self::Interface(*plain::from_bytes(bytes).ok()?),
+            5 => Self::Endpoint(*plain::from_bytes(bytes).ok()?),
+            48 => Self::SuperSpeedCompanion(*plain::from_bytes(bytes).ok()?),
+            _ => {
+                //println!("Descriptor unknown {}: bytes {:#0x?}", kind, bytes);
+                return None;
+            }
+        }, len.into()))
+    }
 }
 
 impl Xhci {
@@ -118,6 +206,11 @@ impl Xhci {
             } else { None },
         );
 
+        let (bos_desc, bos_data) = dev.get_bos()?;
+        writeln!(contents, "BOS BASE {:?}", bos_desc).unwrap();
+
+        let has_superspeed = usb::bos_capability_descs(bos_desc, &bos_data).inspect(|item| println!("{:?}", item)).any(|desc| desc.is_superspeed());
+
         let config_descs = (0..raw_dd.configurations).map(|index| -> Result<_> {
             // TODO: Actually, it seems like all descriptors contain a length field, and I
             // encountered a SuperSpeed descriptor when endpoints were expected. The right way
@@ -127,48 +220,45 @@ impl Xhci {
             let (desc, data) = dev.get_config(index)?;
 
             let extra_length = desc.total_length as usize - mem::size_of_val(&desc);
+            let data = &data[..extra_length];
 
             let mut i = 0;
+            let mut descriptors = Vec::new();
 
-            let mut interface_descs = SmallVec::with_capacity(desc.interfaces as usize);
+            while let Some((descriptor, len)) = AnyDescriptor::parse(&data[i..]) {
+                descriptors.push(descriptor);
+                i += len;
+            }
 
-            for _ in 0..desc.interfaces {
-                let mut idesc = usb::InterfaceDescriptor::default();
-                if i < extra_length && i < data.len() && idesc.copy_from_bytes(&data[i..extra_length]).is_ok() {
-                    i += mem::size_of_val(&idesc);
+            let mut interface_descs = SmallVec::new();
+            let mut iter = descriptors.into_iter();
 
-                    let mut endpoints = SmallVec::with_capacity(idesc.endpoints as usize);
+            while let Some(item) = iter.next() {
+                if let AnyDescriptor::Interface(idesc) = item {
+                    let mut endpoints = SmallVec::<[AnyEndpDescJson; 4]>::new();
 
-                    while endpoints.len() < idesc.endpoints as usize {
-                        let mut edesc = usb::EndpointDescriptor::default();
-                        if i < extra_length && i < data.len() && edesc.copy_from_bytes(&data[i..extra_length]).is_ok() {
-                            match edesc.kind {
-                                // TODO: Constants
-                                5 => i += mem::size_of_val(&edesc),
-                                48 => { i += 6; continue } // SuperSpeed Endpoint Companion Descriptor
-                                _ => unimplemented!(),
-                            }
+                    for _ in 0..idesc.endpoints {
+                        let next = match iter.next() {
+                            Some(AnyDescriptor::Endpoint(n)) => n,
+                            _ => break,
+                        };
+                        endpoints.push(AnyEndpDescJson::Endp(EndpDescJson::from(next)));
 
-                            endpoints.push(EndpDescJson {
-                                address: edesc.address,
-                                attributes: edesc.attributes,
-                                interval: edesc.interval,
-                                kind: edesc.kind,
-                                max_packet_size: edesc.max_packet_size,
-                            })
-                        } else { break }
+                        if has_superspeed {
+                            dbg!();
+                            let next = match iter.next() {
+                                Some(AnyDescriptor::SuperSpeedCompanion(n)) => n,
+                                _ => break,
+                            };
+                            dbg!();
+                            endpoints.push(AnyEndpDescJson::SuperSpeedCmp(SuperSpeedCmpJson::from(next)));
+                        }
                     }
 
-                    interface_descs.push(IfDescJson {
-                        kind: idesc.kind,
-                        number: idesc.number,
-                        alternate_setting: idesc.alternate_setting,
-                        class: idesc.class,
-                        sub_class: idesc.sub_class,
-                        protocol: idesc.protocol,
-                        interface_str: if idesc.interface_str > 0 { Some(dev.get_string(idesc.interface_str)?) } else { None },
-                        endpoints,
-                    });
+                    interface_descs.push(IfDescJson::new(&mut dev, idesc, endpoints)?);
+                } else {
+                    // TODO
+                    break;
                 }
             }
 
@@ -236,32 +326,66 @@ impl SchemeMut for Xhci {
             let num_str = &path_str[4..slash_idx.unwrap_or(path_str.len())];
             let num = num_str.parse::<usize>().or(Err(Error::new(ENOENT)))?;
 
-            if slash_idx.is_some() && slash_idx.unwrap() + 1 < path_str.len() && &path_str[slash_idx.unwrap() + 1..] == "descriptors" {
-                if flags & O_DIRECTORY != 0 {
-                    return Err(Error::new(ENOTDIR));
-                }
-
-                let mut contents = Vec::new();
-                self.write_port_desc(num, &mut contents)?;
-
-                let fd = self.next_handle;
-                self.handles.insert(fd, Handle::PortDesc(num, 0, contents));
-                self.next_handle += 1;
-                return Ok(fd);
-            }
-
-            if flags & O_DIRECTORY != 0 || flags & O_STAT != 0 {
-                let mut contents = Vec::new();
-
-                write!(contents, "descriptors\n").unwrap();
-
-                let fd = self.next_handle;
-                self.handles.insert(fd, Handle::Port(num, 0, contents));
-                self.next_handle += 1;
-                Ok(fd)
+            let subdir_str = if slash_idx.is_some() && slash_idx.unwrap() + 1 < path_str.len() {
+                Some(&path_str[slash_idx.unwrap() + 1..])
             } else {
-                return Err(Error::new(EISDIR));
-            }
+                None
+            };
+
+            let handle = match subdir_str {
+                Some("descriptors") => {
+                    if flags & O_DIRECTORY != 0 {
+                        return Err(Error::new(ENOTDIR));
+                    }
+
+                    let mut contents = Vec::new();
+                    self.write_port_desc(num, &mut contents)?;
+
+                    Handle::PortDesc(num, 0, contents)
+                }
+                Some(other) if other.contains('/') => {
+                    let slash_idx = other.chars().position(|c| c == '/').ok_or(Error::new(ENOENT))?;
+                    if slash_idx + 2 >= other.len() {
+                        return Err(Error::new(ENOENT));
+                    }
+
+                    let slice = &other[slash_idx + 2..];
+                    let endpoint_num = slice.parse::<usize>().or(Err(Error::new(ENOENT)))?;
+                    Handle::Endpoint(num, endpoint_num, 0)
+                }
+                Some("endpoints") => {
+                    if flags & O_DIRECTORY == 0 && flags & O_STAT == 0 {
+                        return Err(Error::new(EISDIR));
+                    };
+                    let mut contents = Vec::new();
+                    let ps = &self.port_states[&num];
+
+                    for (ep_num, _) in ps.input_context.device.endpoints.iter().enumerate().filter(|(_, ep)| ep.a.read() & 0b111 == 1) {
+                        write!(contents, "i{}", ep_num).unwrap();
+                    }
+                    for (ep_num, _) in self.dev_ctx.contexts[ps.slot as usize].endpoints.iter().enumerate().filter(|(_, ep)| ep.a.read() & 0b111 == 1) {
+                        write!(contents, "o{}", ep_num).unwrap();
+                    }
+
+                    Handle::Endpoints(num, 0, contents)
+                }
+                Some(_) => return Err(Error::new(ENOENT)),
+                None => if flags & O_DIRECTORY != 0 || flags & O_STAT != 0 {
+                    let mut contents = Vec::new();
+
+                    write!(contents, "descriptors\n").unwrap();
+
+                    Handle::Port(num, 0, contents)
+                } else {
+                    return Err(Error::new(EISDIR));
+                }
+            };
+
+            let fd = self.next_handle;
+            self.next_handle += 1;
+            self.handles.insert(fd, handle);
+
+            Ok(fd)
         } else {
             return Err(Error::new(ENOSYS));
         }
@@ -269,7 +393,7 @@ impl SchemeMut for Xhci {
 
     fn fstat(&mut self, id: usize, stat: &mut Stat) -> Result<usize> {
         match self.handles.get(&id).ok_or(Error::new(EBADF))? {
-            Handle::TopLevel(_, ref buf) | Handle::Port(_, _, ref buf) => {
+            Handle::TopLevel(_, ref buf) | Handle::Port(_, _, ref buf) | Handle::Endpoints(_, _, ref buf) => {
                 // TODO: Known size perhaps?
                 stat.st_mode = MODE_DIR;
                 stat.st_size = buf.len() as u64;
@@ -280,12 +404,16 @@ impl SchemeMut for Xhci {
                 stat.st_size = buf.len() as u64;
                 Ok(0)
             }
+            Handle::Endpoint(_, _, _) => {
+                stat.st_mode = MODE_FILE;
+                Ok(0)
+            }
         }
     }
 
     fn seek(&mut self, fd: usize, pos: usize, whence: usize) -> Result<usize> {
         match self.handles.get_mut(&fd).ok_or(Error::new(EBADF))? {
-            Handle::TopLevel(ref mut offset, ref buf) | Handle::Port(_, ref mut offset, ref buf) | Handle::PortDesc(_, ref mut offset, ref buf) => {
+            Handle::TopLevel(ref mut offset, ref buf) | Handle::Port(_, ref mut offset, ref buf) | Handle::PortDesc(_, ref mut offset, ref buf) | Handle::Endpoints(_, ref mut offset, ref buf) => {
                 *offset = match whence {
                     SEEK_SET => cmp::max(0, cmp::min(pos, buf.len())),
                     SEEK_CUR => cmp::max(0, cmp::min(*offset + pos, buf.len())),
@@ -294,12 +422,13 @@ impl SchemeMut for Xhci {
                 };
                 Ok(*offset)
             }
+            Handle::Endpoint(_, _, _) => unimplemented!(),
         }
     }
 
     fn read(&mut self, fd: usize, buf: &mut [u8]) -> Result<usize> {
         match self.handles.get_mut(&fd).ok_or(Error::new(EBADF))? {
-            Handle::TopLevel(ref mut offset, ref src_buf) | Handle::Port(_, ref mut offset, ref src_buf) | Handle::PortDesc(_, ref mut offset, ref src_buf) => {
+            Handle::TopLevel(ref mut offset, ref src_buf) | Handle::Port(_, ref mut offset, ref src_buf) | Handle::PortDesc(_, ref mut offset, ref src_buf) | Handle::Endpoints(_, ref mut offset, ref src_buf) => {
                 let max_bytes_to_read = cmp::min(src_buf.len(), buf.len());
                 let bytes_to_read = cmp::max(max_bytes_to_read, *offset) - *offset;
 
@@ -308,6 +437,7 @@ impl SchemeMut for Xhci {
 
                 Ok(bytes_to_read)
             }
+            Handle::Endpoint(_, _, _) => unimplemented!(),
         }
     }
     fn close(&mut self, fd: usize) -> Result<usize> {

@@ -88,6 +88,16 @@ impl<'a> Device<'a> {
         Ok(*desc)
     }
 
+    fn get_bos(&mut self) -> Result<(usb::BosDescriptor, [u8; 4087])> {
+        let mut desc = Dma::<(usb::BosDescriptor, [u8; 4087])>::zeroed()?;
+        self.get_desc(
+            usb::DescriptorKind::BinaryObjectStorage,
+            0,
+            &mut desc,
+        );
+        Ok(*desc)
+    }
+
     fn get_string(&mut self, index: u8) -> Result<String> {
         let mut sdesc = Dma::<(u8, u8, [u16; 127])>::zeroed()?;
         self.get_desc(
@@ -295,13 +305,19 @@ impl Xhci {
                 {
                     input.add_context.write(1 << 1 | 1);
 
-                    input.device.slot.a.write((1 << 27) | (speed << 20));
+                    input.device.slot.a.write((1 << 27) | (speed << 20)); // FIXME: The speed field, bits 23:20, is deprecated.
                     input.device.slot.b.write(((i as u32 + 1) & 0xFF) << 16);
 
-                    input.device.endpoints[0].b.write(4096 << 16 | 4 << 3 | 3 << 1);
+                    // control endpoint?
+                    input.device.endpoints[0].b.write(4096 << 16 | 4 << 3 | 3 << 1); // packet size | control endpoint | allowed error count
                     let tr = ring.register();
                     input.device.endpoints[0].trh.write((tr >> 32) as u32);
                     input.device.endpoints[0].trl.write(tr as u32);
+
+                    // TODO: I presume that there should be additional endpoint contexts, for the
+                    // endpoints specified in the USB descriptors. Perhaps the specific USB drivers
+                    // (HID drivers, mass storage drivers, etc.) should enable these endpoints
+                    // themselves.
                 }
 
                 {

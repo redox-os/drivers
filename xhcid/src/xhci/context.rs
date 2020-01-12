@@ -23,7 +23,8 @@ pub struct EndpointContext {
 #[repr(packed)]
 pub struct DeviceContext {
     pub slot: SlotContext,
-    pub endpoints: [EndpointContext; 15]
+    pub endpoints: [EndpointContext; 15],
+    // Shouldn't this be 31 (both for in and out)?
 }
 
 #[repr(packed)]

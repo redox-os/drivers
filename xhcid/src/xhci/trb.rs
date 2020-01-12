@@ -164,6 +164,18 @@ impl Trb {
             (cycle as u32)
         );
     }
+    // Synchronizes the input context endpoints with the device context endpoints, it think.
+    pub fn configure_endpoint(&mut self, slot_id: u8, input_ctx_ptr: usize, cycle: bool) {
+        assert_eq!(input_ctx_ptr & 0xFFFF_FFFF_FFFF_FFF0, input_ctx_ptr);
+
+        self.set(
+            (input_ctx_ptr >> 4) as u64,
+            0,
+            (u32::from(slot_id) << 24) |
+            ((TrbType::ConfigureEndpoint as u32) << 10) |
+            (cycle as u32),
+        )
+    }
 
     pub fn setup(&mut self, setup: usb::Setup, transfer: TransferKind, cycle: bool) {
         self.set(

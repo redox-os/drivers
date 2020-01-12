@@ -37,7 +37,7 @@ fn main() {
 
     // Daemonize
     if unsafe { syscall::clone(0).unwrap() } == 0 {
-        let socket_fd = syscall::open(format!(":usb/{}-{}-{}", name, bar_str, irq_str), syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK).expect("xhcid: failed to create usb scheme");
+        let socket_fd = syscall::open(format!(":usb/{}", name), syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK).expect("xhcid: failed to create usb scheme");
         let socket = Arc::new(RefCell::new(unsafe { File::from_raw_fd(socket_fd as RawFd) }));
 
         let mut irq_file = File::open(format!("irq:{}", irq)).expect("xhcid: failed to open IRQ file");

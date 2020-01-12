@@ -10,3 +10,5 @@ pub struct ConfigDescriptor {
     pub attributes: u8,
     pub max_power: u8,
 }
+
+unsafe impl plain::Plain for ConfigDescriptor {}

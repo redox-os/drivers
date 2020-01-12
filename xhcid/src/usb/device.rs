@@ -16,3 +16,5 @@ pub struct DeviceDescriptor {
     pub serial_str: u8,
     pub configurations: u8,
 }
+
+unsafe impl plain::Plain for DeviceDescriptor {}
