@@ -20,11 +20,12 @@ pub struct EndpointContext {
     _rsvd: [Mmio<u32>; 3],
 }
 
+pub const ENDPOINT_CONTEXT_STATUS_MASK: u32 = 0x7;
+
 #[repr(packed)]
 pub struct DeviceContext {
     pub slot: SlotContext,
-    pub endpoints: [EndpointContext; 15],
-    // Shouldn't this be 31 (both for in and out)?
+    pub endpoints: [EndpointContext; 31],
 }
 
 #[repr(packed)]
