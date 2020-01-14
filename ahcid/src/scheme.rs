@@ -50,70 +50,33 @@ impl DiskWrapper {
                 Ok(self.offset)
             }
         }
-        // Perhaps this impl should be used in the rest of the scheme.
+        // TODO: Perhaps this impl should be used in the rest of the scheme.
         impl<'a, 'b> Read for Device<'a, 'b> {
-            fn read(&mut self, mut buf: &mut [u8]) -> io::Result<usize> {
-                // TODO: Yield sometimes, perhaps after a few blocks or something.
-                use std::ops::{Add, Div, Rem};
-
-                fn div_round_up<T>(a: T, b: T) -> T
-                where
-                    T: Add<Output = T> + Div<Output = T> + Rem<Output = T> + PartialEq + From<u8> + Copy
-                {
-                    if a % b != T::from(0u8) {
-                        a / b + T::from(1u8)
-                    } else {
-                        a / b
-                    }
-                }
-
-                let orig_buf_len = buf.len();
-
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
                 let blksize = self.disk.block_length().map_err(|err| io::Error::from_raw_os_error(err.errno))?;
+                let size_in_blocks = self.disk.size() / u64::from(blksize);
 
-                let start_block = self.offset / u64::from(blksize);
-                let end_block = div_round_up(self.offset + buf.len() as u64, u64::from(blksize)); // The first block not in the range
+                let disk = &mut self.disk;
 
-                let offset_from_start_block: u64 = self.offset % u64::from(blksize);
-                let offset_to_end_block: u64 = u64::from(blksize) - (self.offset + buf.len() as u64) % u64::from(blksize);
-
-                let first_whole_block = start_block + if offset_from_start_block > 0 { 1 } else { 0 };
-                let last_whole_block = end_block - if offset_to_end_block > 0 { 1 } else { 0 } - 1;
-
-                let whole_blocks_to_read = last_whole_block - first_whole_block + 1;
-
-                for block in start_block..end_block {
-                    // TODO: Async/await? I mean, shouldn't AHCI be async?
-
-                    loop {
-                        let block = self.offset / u64::from(blksize);
-
-                        match self.disk.read(block, self.block_bytes) {
-                            Ok(Some(bytes)) => {
-                                assert_eq!(bytes, self.block_bytes.len());
-                                assert_eq!(bytes, blksize as usize);
-                                break;
-                            }
-                            Ok(None) => continue,
-                            Err(err) => return Err(io::Error::from_raw_os_error(err.errno)),
-                        }
+                let read_block = |block: u64, block_bytes: &mut [u8]| {
+                    if block >= size_in_blocks {
+                        return Err(io::Error::from_raw_os_error(syscall::EOVERFLOW));
                     }
+                    loop {
+                         match disk.read(block, block_bytes) {
+                             Ok(Some(bytes)) => {
+                                 assert_eq!(bytes, block_bytes.len());
+                                 assert_eq!(bytes, blksize as usize);
+                                 return Ok(());
+                             }
+                             Ok(None) => { std::thread::yield_now(); continue }
+                             Err(err) => return Err(io::Error::from_raw_os_error(err.errno)),
+                         }
+                     }
+                };
+                let bytes_read = block_io_wrapper::read(self.offset, blksize, buf, self.block_bytes, read_block)?;
 
-                    let (bytes_to_read, src_buf): (u64, &[u8]) = if block == start_block {
-                        (u64::from(blksize) - offset_from_start_block, &self.block_bytes[offset_from_start_block as usize..])
-                    } else if block == end_block {
-                        (u64::from(blksize) - offset_to_end_block, &self.block_bytes[..offset_to_end_block as usize])
-                    } else {
-                        (blksize.into(), &self.block_bytes[..])
-                    };
-                    let bytes_to_read = std::cmp::min(bytes_to_read as usize, buf.len());
-                    buf[..bytes_to_read].copy_from_slice(&src_buf[..bytes_to_read]);
-                    buf = &mut buf[..bytes_to_read];
-                }
-
-                let bytes_read = std::cmp::min(orig_buf_len, whole_blocks_to_read as usize * blksize as usize + offset_from_start_block as usize + offset_to_end_block as usize);
                 self.offset += bytes_read as u64;
-
                 Ok(bytes_read)
             }
         }

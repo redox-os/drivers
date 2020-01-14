@@ -3,6 +3,7 @@ members = [
     "ahcid",
     "alxd",
     "bgad",
+    "block-io-wrapper",
     "e1000d",
     "ihdad",
     "ixgbed",
@@ -13,5 +14,5 @@ members = [
     "rtl8168d",
     "vboxd",
     "vesad",
-    "xhcid"
+    "xhcid",
 ]
