@@ -110,6 +110,15 @@ pub struct Trb {
     pub control: Mmio<u32>,
 }
 
+pub const TRB_STATUS_COMPLETION_CODE_SHIFT: u8 = 24;
+pub const TRB_STATUS_COMPLETION_CODE_MASK: u32 = 0xFF00_0000;
+
+pub const TRB_STATUS_COMPLETION_PARAM_SHIFT: u8 = 0;
+pub const TRB_STATUS_COMPLETION_PARAM_MASK: u32 = 0x00FF_FFFF;
+
+pub const TRB_CONTROL_TRB_TYPE_SHIFT: u8 = 10;
+pub const TRB_CONTROL_TRB_TYPE_MASK: u32 = 0x0000_FC00;
+
 impl Trb {
     pub fn set(&mut self, data: u64, status: u32, control: u32) {
         self.data.write(data);
@@ -124,6 +133,16 @@ impl Trb {
             ((TrbType::Reserved as u32) << 10) |
             (cycle as u32)
         );
+    }
+
+    pub fn completion_code(&self) -> u8 {
+        (self.status.read() >> TRB_STATUS_COMPLETION_CODE_SHIFT) as u8
+    }
+    pub fn completion_param(&self) -> u32 {
+        self.status.read() & TRB_STATUS_COMPLETION_PARAM_MASK
+    }
+    pub fn trb_type(&self) -> u8 {
+        ((self.control.read() & TRB_CONTROL_TRB_TYPE_MASK) >> TRB_CONTROL_TRB_TYPE_SHIFT) as u8
     }
 
     pub fn link(&mut self, address: usize, toggle: bool, cycle: bool) {
@@ -164,12 +183,12 @@ impl Trb {
             (cycle as u32)
         );
     }
-    // Synchronizes the input context endpoints with the device context endpoints, it think.
+    // Synchronizes the input context endpoints with the device context endpoints, I think.
     pub fn configure_endpoint(&mut self, slot_id: u8, input_ctx_ptr: usize, cycle: bool) {
-        assert_eq!(input_ctx_ptr & 0xFFFF_FFFF_FFFF_FFF0, input_ctx_ptr);
+        assert_eq!(input_ctx_ptr & 0xFFFF_FFFF_FFFF_FF80, input_ctx_ptr, "unaligned input context ptr");
 
         self.set(
-            (input_ctx_ptr >> 4) as u64,
+            input_ctx_ptr as u64,
             0,
             (u32::from(slot_id) << 24) |
             ((TrbType::ConfigureEndpoint as u32) << 10) |

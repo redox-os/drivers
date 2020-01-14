@@ -12,7 +12,7 @@ use std::io::{Result, Read, Write};
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::sync::Arc;
 use syscall::data::Packet;
-use syscall::flag::{PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
+use syscall::flag::{CloneFlags, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
 use syscall::error::EWOULDBLOCK;
 use syscall::scheme::SchemeMut;
 
@@ -36,7 +36,7 @@ fn main() {
     print!("{}", format!(" + XHCI {} on: {:X} IRQ: {}\n", name, bar, irq));
 
     // Daemonize
-    if unsafe { syscall::clone(0).unwrap() } == 0 {
+    if unsafe { syscall::clone(CloneFlags::empty()).unwrap() } == 0 {
         let socket_fd = syscall::open(format!(":usb/{}", name), syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK).expect("xhcid: failed to create usb scheme");
         let socket = Arc::new(RefCell::new(unsafe { File::from_raw_fd(socket_fd as RawFd) }));
 
@@ -61,7 +61,7 @@ fn main() {
                 let mut irq = [0; 8];
                 irq_file.read(&mut irq)?;
 
-                if hci_irq.borrow_mut().irq() {
+                if hci_irq.borrow_mut().trigger_irq() {
                     irq_file.write(&mut irq)?;
 
                     let mut todo = todo_irq.borrow_mut();

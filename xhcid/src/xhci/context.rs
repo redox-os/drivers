@@ -1,5 +1,5 @@
 use syscall::error::Result;
-use syscall::io::{Dma, Mmio};
+use syscall::io::{Dma, Mmio, Io};
 
 #[repr(packed)]
 pub struct SlotContext {
@@ -8,6 +8,23 @@ pub struct SlotContext {
     pub c: Mmio<u32>,
     pub d: Mmio<u32>,
     _rsvd: [Mmio<u32>; 4],
+}
+
+pub const SLOT_CONTEXT_STATE_MASK: u32 = 0xF800_0000;
+pub const SLOT_CONTEXT_STATE_SHIFT: u8 = 27;
+
+impl SlotContext {
+    pub fn state(&self) -> u8 {
+        ((self.d.read() & SLOT_CONTEXT_STATE_MASK) >> SLOT_CONTEXT_STATE_SHIFT) as u8
+    }
+}
+
+#[repr(u8)]
+pub enum SlotState {
+    EnabledOrDisabled = 0,
+    Default = 1,
+    Addressed = 2,
+    Configured = 3,
 }
 
 #[repr(packed)]
@@ -36,6 +53,11 @@ pub struct InputContext {
     pub control: Mmio<u32>,
     pub device: DeviceContext,
 }
+impl InputContext {
+    pub fn dump_control(&self) {
+        println!("INPUT CONTEXT: {} {} [{} {} {} {} {}] {}", self.drop_context.read(), self.add_context.read(), self._rsvd[0].read(), self._rsvd[1].read(), self._rsvd[2].read(), self._rsvd[3].read(), self._rsvd[4].read(), self.control.read());
+    }
+}
 
 pub struct DeviceContextList {
     pub dcbaa: Dma<[u64; 256]>,
@@ -62,5 +84,30 @@ impl DeviceContextList {
 
     pub fn dcbaap(&self) -> u64 {
         self.dcbaa.physical() as u64
+    }
+}
+
+#[repr(packed)]
+pub struct StreamContext {
+    trl: Mmio<u32>,
+    trh: Mmio<u32>,
+    edtla: Mmio<u32>,
+    rsvd: Mmio<u32>,
+}
+
+pub struct StreamContextArray {
+    pub contexts: Dma<[StreamContext]>,
+}
+
+impl StreamContextArray {
+    pub fn new(count: usize) -> Result<Self> {
+        unsafe {
+            Ok(Self {
+                contexts: Dma::zeroed_unsized(count)?,
+            })
+        }
+    }
+    pub fn register(&self) -> u64 {
+        self.contexts.physical() as u64
     }
 }

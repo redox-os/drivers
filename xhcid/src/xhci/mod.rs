@@ -1,6 +1,8 @@
 use plain::Plain;
-use std::{mem, slice};
+use std::{mem, slice, sync::atomic, task};
 use std::collections::BTreeMap;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex, Weak, atomic::AtomicBool};
 use syscall::error::Result;
 use syscall::io::{Dma, Io};
 use crate::usb;
@@ -19,13 +21,13 @@ mod trb;
 
 use self::capability::CapabilityRegs;
 use self::command::CommandRing;
-use self::context::{DeviceContextList, InputContext};
+use self::context::{DeviceContextList, InputContext, StreamContextArray};
 use self::doorbell::Doorbell;
 use self::operational::OperationalRegs;
 use self::port::Port;
 use self::ring::Ring;
 use self::runtime::{RuntimeRegs, Interrupter};
-use self::trb::TransferKind;
+use self::trb::{TransferKind, TrbCompletionCode, TrbType};
 
 struct Device<'a> {
     ring: &'a mut Ring,
@@ -127,12 +129,41 @@ pub struct Xhci {
     handles: BTreeMap<usize, scheme::Handle>,
     next_handle: usize,
     port_states: BTreeMap<usize, PortState>,
+
+    // TODO: Is this the correct implementation? I mean, there will be a really limited number of
+    // IRQs, if not just one, and since we probably wont use a thread pool scheduler like those of
+    // async-std or tokio, one could possibly assume that the futures themselves won't have to push
+    // all the wakers.
+    // TODO: This should probably be a BTreeMap (or just a VecMap) of states for each IRQ number,
+    // if more than one are used. I'm not sure if the XHCI interrupters actually use different
+    // IRQs, but it would make sense in case the hub has both isochronous (which trigger interrupts
+    // reapeatedly with some time in between), bulk, control, etc. I might be wrong though...
+    irq_state: Arc<IrqState>,
 }
 
 struct PortState {
     slot: u8,
     input_context: Dma<InputContext>,
-    ring: Ring,
+    dev_desc: scheme::DevDesc,
+    endpoint_states: BTreeMap<u8, EndpointState>,
+}
+
+pub(crate) enum RingOrStreams {
+    Ring(Ring),
+    Streams(StreamContextArray),
+}
+
+pub(crate) enum EndpointState {
+    Ready(RingOrStreams),
+    Init,
+}
+impl EndpointState {
+    fn ring(&mut self) -> Option<&mut Ring> {
+        match self {
+            Self::Ready(RingOrStreams::Ring(ring)) => Some(ring),
+            _ => None,
+        }
+    }
 }
 
 impl Xhci {
@@ -202,6 +233,11 @@ impl Xhci {
             handles: BTreeMap::new(),
             next_handle: 0,
             port_states: BTreeMap::new(),
+
+            irq_state: Arc::new(IrqState {
+                triggered: AtomicBool::new(false),
+                wakers: Mutex::new(Vec::new()),
+            }),
         };
 
         xhci.init(max_slots);
@@ -246,7 +282,7 @@ impl Xhci {
 
         // Set run/stop to 1
         println!("  - Start");
-        self.op.usb_cmd.writef(1, true);
+        self.op.usb_cmd.writef(1 | 1 << 2, true);
 
         // Wait until controller is running
         println!("  - Wait for running");
@@ -279,12 +315,21 @@ impl Xhci {
         slot
     }
 
+    pub fn slot_state(&self, slot: usize) -> u8 {
+        self.dev_ctx.contexts[slot].slot.state()
+    }
+
     pub fn probe(&mut self) -> Result<()> {
-        for (i, port) in self.ports.iter().enumerate() {
-            let data = port.read();
-            let state = port.state();
-            let speed = port.speed();
-            let flags = port.flags();
+        for i in 0..self.ports.len() {
+            let (data, state, speed, flags) = {
+                let port = &self.ports[i];
+                (
+                    port.read(),
+                    port.state(),
+                    port.speed(),
+                    port.flags(),
+                )
+            };
             println!("   + XHCI Port {}: {:X}, State {}, Speed {}, Flags {:?}", i, data, state, speed, flags);
 
             if flags.contains(port::PortFlags::PORT_CCS) {
@@ -303,7 +348,7 @@ impl Xhci {
 
                 let mut input = Dma::<InputContext>::zeroed()?;
                 {
-                    input.add_context.write(1 << 1 | 1);
+                    input.add_context.write(1 << 1 | 1); // Enable the slot (zeroth bit) and the control endpoint (first bit).
 
                     input.device.slot.a.write((1 << 27) | (speed << 20)); // FIXME: The speed field, bits 23:20, is deprecated.
                     input.device.slot.b.write(((i as u32 + 1) & 0xFF) << 16);
@@ -313,11 +358,6 @@ impl Xhci {
                     let tr = ring.register();
                     input.device.endpoints[0].trh.write((tr >> 32) as u32);
                     input.device.endpoints[0].trl.write(tr as u32);
-
-                    // TODO: I presume that there should be additional endpoint contexts, for the
-                    // endpoints specified in the USB descriptors. Perhaps the specific USB drivers
-                    // (HID drivers, mass storage drivers, etc.) should enable these endpoints
-                    // themselves.
                 }
 
                 {
@@ -331,73 +371,23 @@ impl Xhci {
                         println!("    - Waiting for event");
                     }
 
+                    if event.completion_code() != TrbCompletionCode::Success as u8 || event.trb_type() != TrbType::CommandCompletion as u8 {
+                        panic!("ADDRESS DEVICE FAILED");
+                    }
+
                     cmd.reserved(false);
                     event.reserved(false);
                 }
 
-                self.run.ints[0].erdp.write(self.cmd.erdp());
+                let dev_desc = Self::get_dev_desc_raw(&mut self.ports, &mut self.run, &mut self.cmd, &mut self.dbs, i, slot, &mut ring)?;
 
-                let mut dev = Device {
-                    ring: &mut ring,
-                    cmd: &mut self.cmd,
-                    db: &mut self.dbs[slot as usize],
-                    int: &mut self.run.ints[0],
-                };
-
-                println!("    - Get descriptor");
-
-                let ddesc = dev.get_device()?;
-                println!("      {:?}", ddesc);
-
-                if ddesc.manufacturer_str > 0 {
-                    println!("        Manufacturer: {}", dev.get_string(ddesc.manufacturer_str)?);
-                }
-
-                if ddesc.product_str > 0 {
-                    println!("        Product: {}", dev.get_string(ddesc.product_str)?);
-                }
-
-                if ddesc.serial_str > 0 {
-                    println!("        Serial: {}", dev.get_string(ddesc.serial_str)?);
-                }
-
-                for config in 0..ddesc.configurations {
-                    let (cdesc, data) = dev.get_config(config)?;
-                    println!("        {}: {:?}", config, cdesc);
-
-                    if cdesc.configuration_str > 0 {
-                        println!("          Name: {}", dev.get_string(cdesc.configuration_str)?);
-                    }
-
-                    if cdesc.total_length as usize > mem::size_of::<usb::ConfigDescriptor>() {
-                        let len = cdesc.total_length as usize - mem::size_of::<usb::ConfigDescriptor>();
-
-                        let mut i = 0;
-                        for interface in 0..cdesc.interfaces {
-                            let mut idesc = usb::InterfaceDescriptor::default();
-                            if i < len && i < data.len() && idesc.copy_from_bytes(&data[i..len]).is_ok() {
-                                i += mem::size_of_val(&idesc);
-                                println!("          {}: {:?}", interface, idesc);
-
-                                if idesc.interface_str > 0 {
-                                    println!("            Name: {}", dev.get_string(idesc.interface_str)?);
-                                }
-
-                                for endpoint in 0..idesc.endpoints {
-                                    let mut edesc = usb::EndpointDescriptor::default();
-                                    if i < len && i < data.len() && edesc.copy_from_bytes(&data[i..len]).is_ok() {
-                                        i += mem::size_of_val(&edesc);
-                                        println!("            {}: {:?}", endpoint, edesc);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
                 self.port_states.insert(i, PortState {
                     slot,
                     input_context: input,
-                    ring,
+                    dev_desc,
+                    endpoint_states: std::iter::once((0, EndpointState::Ready(
+                        RingOrStreams::Ring(ring),
+                    ))).collect::<BTreeMap<_, _>>(),
                 });
             }
         }
@@ -405,13 +395,66 @@ impl Xhci {
         Ok(())
     }
 
-    pub fn irq(&mut self) -> bool {
+    pub fn trigger_irq(&mut self) -> bool {
+        // Read the Interrupter Pending bit.
+        println!("preinterrupt");
         if self.run.ints[0].iman.readf(1) {
             println!("XHCI Interrupt");
+
+            // If set, set it back to zero, so that new interrupts can be triggered.
+            // FIXME: MSI and MSI-X systems
             self.run.ints[0].iman.writef(1, true);
+
+            // Wake all futures that await the IRQ.
+            for waker in self.irq_state.wakers.lock().unwrap().drain(..) {
+                waker.wake();
+            }
+
             true
         } else {
             false
+        }
+    }
+    pub(crate) fn irq(&self) -> IrqFuture {
+        IrqFuture {
+            state: IrqFutureState::Pending(Arc::downgrade(&self.irq_state))
+        }
+    }
+}
+
+pub(crate) struct IrqFuture { state: IrqFutureState }
+
+struct IrqState {
+    triggered: AtomicBool,
+    // TODO: Perhaps a channel?
+    wakers: Mutex<Vec<task::Waker>>,
+}
+
+enum IrqFutureState {
+    Pending(Weak<IrqState>),
+    Finished,
+}
+
+impl std::future::Future for IrqFuture {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, context: &mut task::Context) -> task::Poll<Self::Output> {
+        let this = self.get_mut();
+
+        match &mut this.state {
+            // TODO: Ordering?
+            IrqFutureState::Pending(state_weak) => {
+                let state = state_weak.upgrade().expect("IRQ futures keep getting polled even after the driver has been deinitialized");
+
+                if state.triggered.load(atomic::Ordering::SeqCst) {
+                    this.state = IrqFutureState::Finished;
+                    task::Poll::Ready(())
+                } else {
+                    state.wakers.lock().unwrap().push(context.waker().clone());
+                    task::Poll::Pending
+                }
+            }
+            IrqFutureState::Finished => panic!("polling finished future"),
         }
     }
 }

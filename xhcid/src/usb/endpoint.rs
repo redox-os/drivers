@@ -11,6 +11,29 @@ pub struct EndpointDescriptor {
     pub interval: u8,
 }
 
+pub const ENDP_ATTR_TY_MASK: u8 = 0x3;
+
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum EndpointTy {
+    Ctrl = 0,
+    Interrupt = 1,
+    Bulk = 2,
+    Isoch = 3,
+}
+
+impl EndpointDescriptor {
+    fn ty(self) -> EndpointTy {
+        match self.attributes & ENDP_ATTR_TY_MASK {
+            0 => EndpointTy::Ctrl,
+            1 => EndpointTy::Interrupt,
+            2 => EndpointTy::Bulk,
+            3 => EndpointTy::Isoch,
+            _ => unreachable!(),
+        }
+    }
+}
+
 unsafe impl Plain for EndpointDescriptor {}
 
 #[repr(packed)]

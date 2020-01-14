@@ -82,7 +82,7 @@ impl<'a> Iterator for BosDevDescIter<'a> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum BosAnyDevDesc {
     SuperSpeed(BosSuperSpeedDesc),
     Usb2Ext(BosUsb2ExtDesc),

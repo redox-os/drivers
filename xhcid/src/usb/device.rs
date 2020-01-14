@@ -18,3 +18,12 @@ pub struct DeviceDescriptor {
 }
 
 unsafe impl plain::Plain for DeviceDescriptor {}
+
+impl DeviceDescriptor {
+    fn minor_usb_vers(&self) -> u8 {
+        (self.usb & 0xFF) as u8
+    }
+    fn major_usb_vers(&self) -> u8 {
+        ((self.usb >> 8) & 0xFF) as u8
+    }
+}
