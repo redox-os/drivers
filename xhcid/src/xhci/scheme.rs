@@ -45,6 +45,7 @@ pub enum Handle {
     TopLevel(usize, Vec<u8>), // offset, contents (ports)
     Port(usize, usize, Vec<u8>), // port, offset, contents
     PortDesc(usize, usize, Vec<u8>), // port, offset, contents
+    PortState(usize, usize), // port, offset
     Endpoints(usize, usize, Vec<u8>), // port, offset, contents
     Endpoint(usize, u8, EndpointHandleTy), // port, endpoint, offset, state
     ConfigureEndpoints(usize), // port
@@ -422,6 +423,12 @@ impl Xhci {
 
         Ok(())
     }
+    fn transfer_read(&mut self, port_num: usize, endp_num: u8, buf: &mut [u8]) -> Result<()> {
+        Err(Error::new(ENOSYS))
+    }
+    fn transfer_write(&mut self, port_num: usize, endp_num: u8, buf: &[u8]) -> Result<()> {
+        Err(Error::new(ENOSYS))
+    }
     pub(crate) fn get_dev_desc(&mut self, port_id: usize) -> Result<DevDesc> {
         let st = self.port_states.get_mut(&port_id).ok_or(Error::new(ENOENT))?;
         Self::get_dev_desc_raw(&mut self.ports, &mut self.run, &mut self.cmd, &mut self.dbs, port_id, st.slot, st.endpoint_states.get_mut(&0).ok_or(Error::new(EIO))?.ring().ok_or(Error::new(EIO))?)
@@ -536,6 +543,15 @@ impl Xhci {
         serde_json::to_writer_pretty(contents, dev_desc).unwrap();
         Ok(())
     }
+    fn write_dyn_string(string: &[u8], buf: &mut [u8], offset: &mut usize) -> usize {
+        let max_bytes_to_read = cmp::min(string.len(), buf.len());
+        let bytes_to_read = cmp::max(*offset, max_bytes_to_read) - *offset;
+        buf[..bytes_to_read].copy_from_slice(&string[..bytes_to_read]);
+
+        *offset += bytes_to_read;
+
+        bytes_to_read
+    }
 }
 
 impl SchemeMut for Xhci {
@@ -563,48 +579,60 @@ impl SchemeMut for Xhci {
             } else {
                 return Err(Error::new(EISDIR));
             }
-            &[port, "configure"] if port.starts_with("port") => {
+            &[port, port_tl] if port.starts_with("port") => {
                 let port_num = port[4..].parse::<usize>().or(Err(Error::new(ENOENT)))?;
-
-                if flags & O_DIRECTORY != 0 && flags & O_STAT == 0 {
-                    return Err(Error::new(ENOTDIR));
-                }
-                if flags & O_RDWR != O_WRONLY && flags & O_STAT == 0 {
-                    return Err(Error::new(EACCES));
+                if !self.port_states.contains_key(&port_num) {
+                    return Err(Error::new(ENOENT));
                 }
 
-                Handle::ConfigureEndpoints(port_num)
-            }
-            &[port, "descriptors"] if port.starts_with("port") => {
-                let port_num = port[4..].parse::<usize>().or(Err(Error::new(ENOENT)))?;
+                match port_tl {
+                    "descriptors" => {
+                        if flags & O_DIRECTORY != 0 && flags & O_STAT == 0 {
+                            return Err(Error::new(ENOTDIR));
+                        }
 
-                if flags & O_DIRECTORY != 0 {
-                    return Err(Error::new(ENOTDIR));
+                        let mut contents = Vec::new();
+                        self.write_port_desc(port_num, &mut contents)?;
+
+                        Handle::PortDesc(port_num, 0, contents)
+                    }
+                    "configure" => {
+                        if flags & O_DIRECTORY != 0 && flags & O_STAT == 0 {
+                            return Err(Error::new(ENOTDIR));
+                        }
+                        if flags & O_RDWR != O_WRONLY && flags & O_STAT == 0 {
+                            return Err(Error::new(EACCES));
+                        }
+
+                        Handle::ConfigureEndpoints(port_num)
+                    }
+                    "state" => {
+                        if flags & O_DIRECTORY != 0 && flags & O_STAT == 0 {
+                            return Err(Error::new(ENOTDIR));
+                        }
+
+                        Handle::PortState(port_num, 0)
+                    }
+                    "endpoints" => {
+                        if flags & O_DIRECTORY == 0 && flags & O_STAT == 0 {
+                            return Err(Error::new(EISDIR));
+                        };
+                        let mut contents = Vec::new();
+                        let ps = self.port_states.get(&port_num).ok_or(Error::new(ENOENT))?;
+
+                        /*for (ep_num, _) in self.dev_ctx.contexts[ps.slot as usize].endpoints.iter().enumerate().filter(|(_, ep)| ep.a.read() & 0b111 == 1) {
+                            write!(contents, "{}\n", ep_num).unwrap();
+                        }*/
+
+                        for ep_num in ps.endpoint_states.keys() {
+                            write!(contents, "{}\n", ep_num).unwrap();
+                        }
+
+                        Handle::Endpoints(port_num, 0, contents)
+                    }
+                    _ => return Err(Error::new(ENOENT)),
                 }
 
-                let mut contents = Vec::new();
-                self.write_port_desc(port_num, &mut contents)?;
-
-                Handle::PortDesc(port_num, 0, contents)
-            }
-            &[port, "endpoints"] if port.starts_with("port") => {
-                let port_num = port[4..].parse::<usize>().or(Err(Error::new(ENOENT)))?;
-
-                if flags & O_DIRECTORY == 0 && flags & O_STAT == 0 {
-                    return Err(Error::new(EISDIR));
-                };
-                let mut contents = Vec::new();
-                let ps = self.port_states.get(&port_num).ok_or(Error::new(ENOENT))?;
-
-                /*for (ep_num, _) in self.dev_ctx.contexts[ps.slot as usize].endpoints.iter().enumerate().filter(|(_, ep)| ep.a.read() & 0b111 == 1) {
-                    write!(contents, "{}\n", ep_num).unwrap();
-                }*/
-
-                for ep_num in ps.endpoint_states.keys() {
-                    write!(contents, "{}\n", ep_num).unwrap();
-                }
-
-                Handle::Endpoints(port_num, 0, contents)
             }
             &[port, "endpoints", endpoint_num_str] if port.starts_with("port") => {
                 let port_num = port[4..].parse::<usize>().or(Err(Error::new(ENOENT)))?;
@@ -683,6 +711,7 @@ impl SchemeMut for Xhci {
                 stat.st_mode = MODE_FILE;
                 stat.st_size = buf.len() as u64;
             }
+            Handle::PortState(_, _) => stat.st_mode = MODE_CHR,
             Handle::Endpoint(_, _, st) => match st {
                 EndpointHandleTy::Status(_) | EndpointHandleTy::Transfer => stat.st_mode = MODE_CHR,
                 EndpointHandleTy::Root(_, ref buf) => {
@@ -702,6 +731,7 @@ impl SchemeMut for Xhci {
             Handle::TopLevel(_, _) => write!(src, "/").unwrap(),
             Handle::Port(port_num, _, _) => write!(src, "/port{}/", port_num).unwrap(),
             Handle::PortDesc(port_num, _, _) => write!(src, "/port{}/descriptors", port_num).unwrap(),
+            Handle::PortState(port_num, _) => write!(src, "/port{}/state", port_num).unwrap(),
             Handle::Endpoints(port_num, _, _) => write!(src, "/port{}/endpoints/", port_num).unwrap(),
             Handle::Endpoint(port_num, endp_num, st) => write!(src, "/port{}/endpoints/{}/{}", port_num, endp_num, match st {
                 EndpointHandleTy::Root(_, _) => "",
@@ -717,6 +747,7 @@ impl SchemeMut for Xhci {
 
     fn seek(&mut self, fd: usize, pos: usize, whence: usize) -> Result<usize> {
         match self.handles.get_mut(&fd).ok_or(Error::new(EBADF))? {
+            // Directories, or fixed files
             Handle::TopLevel(ref mut offset, ref buf) | Handle::Port(_, ref mut offset, ref buf) | Handle::PortDesc(_, ref mut offset, ref buf) | Handle::Endpoints(_, ref mut offset, ref buf) | Handle::Endpoint(_, _, EndpointHandleTy::Root(ref mut offset, ref buf)) => {
                 *offset = match whence {
                     SEEK_SET => cmp::max(0, cmp::min(pos, buf.len())),
@@ -726,7 +757,8 @@ impl SchemeMut for Xhci {
                 };
                 Ok(*offset)
             }
-            Handle::Endpoint(_, _, EndpointHandleTy::Status(ref mut offset)) => {
+            // Read-only unknown-length status strings
+            Handle::Endpoint(_, _, EndpointHandleTy::Status(ref mut offset)) | Handle::PortState(_, ref mut offset) => {
                 *offset = match whence {
                     SEEK_SET => cmp::max(0, pos),
                     SEEK_CUR => cmp::max(0, *offset + pos),
@@ -735,6 +767,7 @@ impl SchemeMut for Xhci {
                 };
                 Ok(*offset)
             }
+            // Write-once configure or transfer
             Handle::Endpoint(_, _, _) | Handle::ConfigureEndpoints(_) => return Err(Error::new(ESPIPE)),
         }
     }
@@ -752,7 +785,12 @@ impl SchemeMut for Xhci {
             }
             Handle::ConfigureEndpoints(_) => return Err(Error::new(EBADF)),
             &mut Handle::Endpoint(port_num, endp_num, ref mut st) => match st {
-                EndpointHandleTy::Transfer => return Err(Error::new(ENOSYS)),
+                EndpointHandleTy::Transfer => {
+                    self.transfer_read(port_num, endp_num, buf)?;
+                    // TODO: Perhaps transfers with large buffers could be broken up a to smaller
+                    // transfers.
+                    Ok(buf.len())
+                }
                 EndpointHandleTy::Status(ref mut offset) => {
                     let status = self.dev_ctx.contexts.get(port_num).ok_or(Error::new(EBADF))?.endpoints.get(endp_num as usize).ok_or(Error::new(EBADF))?.a.read() & ENDPOINT_CONTEXT_STATUS_MASK;
 
@@ -766,16 +804,24 @@ impl SchemeMut for Xhci {
                         _ => "unknown",
                     }.as_bytes();
 
-                    let max_bytes_to_read = cmp::min(string.len(), buf.len());
-                    let bytes_to_read = cmp::max(*offset, max_bytes_to_read) - *offset;
-                    buf[..bytes_to_read].copy_from_slice(&string[..bytes_to_read]);
-
-                    *offset += bytes_to_read;
-
-                    Ok(bytes_to_read)
+                    Ok(Self::write_dyn_string(string, buf, offset))
                 }
                 EndpointHandleTy::Root(_, _) => unreachable!(),
             },
+            &mut Handle::PortState(port_num, ref mut offset) => {
+                let state = self.dev_ctx.contexts.get(port_num).ok_or(Error::new(EBADF))?.slot.state();
+
+                let string = match state {
+                    // TODO: Give this its own enum.
+                    0 => "enabled_or_disabled", // Maybe "enabled/disabled"?
+                    1 => "default",
+                    2 => "addressed",
+                    3 => "configured",
+                    _ => "unknown",
+                }.as_bytes();
+
+                Ok(Self::write_dyn_string(string, buf, offset))
+            }
         }
     }
     fn write(&mut self, fd: usize, buf: &[u8]) -> Result<usize> {
@@ -784,7 +830,11 @@ impl SchemeMut for Xhci {
                 self.configure_endpoints(port_num, buf)?;
                 Ok(buf.len())
             }
-            Handle::Endpoint(_, _, EndpointHandleTy::Transfer) => return Err(Error::new(ENOSYS)),
+            &Handle::Endpoint(port_num, endp_num, EndpointHandleTy::Transfer) => {
+                self.transfer_write(port_num, endp_num, buf)?;
+                // TODO
+                Ok(buf.len())
+            }
             _ => return Err(Error::new(EBADF)),
         }
     }
