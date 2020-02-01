@@ -810,7 +810,8 @@ impl SchemeMut for Xhci {
                 EndpointHandleTy::Root(_, _) => unreachable!(),
             },
             &mut Handle::PortState(port_num, ref mut offset) => {
-                let state = self.dev_ctx.contexts.get(port_num).ok_or(Error::new(EBADF))?.slot.state();
+                let ps = self.port_states.get(&port_num).ok_or(Error::new(EBADF))?;
+                let state = self.dev_ctx.contexts.get(ps.slot as usize).ok_or(Error::new(EBADF))?.slot.state();
 
                 let string = match state {
                     // TODO: Give this its own enum.
