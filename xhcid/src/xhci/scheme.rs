@@ -792,7 +792,8 @@ impl SchemeMut for Xhci {
                     Ok(buf.len())
                 }
                 EndpointHandleTy::Status(ref mut offset) => {
-                    let status = self.dev_ctx.contexts.get(port_num).ok_or(Error::new(EBADF))?.endpoints.get(endp_num as usize).ok_or(Error::new(EBADF))?.a.read() & ENDPOINT_CONTEXT_STATUS_MASK;
+                    let ps = self.port_states.get(&port_num).ok_or(Error::new(EBADF))?;
+                    let status = self.dev_ctx.contexts.get(ps.slot as usize).ok_or(Error::new(EBADF))?.endpoints.get(endp_num as usize).ok_or(Error::new(EBADF))?.a.read() & ENDPOINT_CONTEXT_STATUS_MASK;
 
                     let string = match status {
                         // TODO: Give this its own enum.

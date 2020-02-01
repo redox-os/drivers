@@ -337,7 +337,7 @@ impl Xhci {
 
                 println!("    - Enable slot");
 
-                self.run.ints[0].erdp.write(self.cmd.erdp()); // TODO: ?
+                self.run.ints[0].erdp.write(self.cmd.erdp());
 
                 let slot = Self::enable_port_slot(&mut self.cmd, &mut self.dbs);
 
