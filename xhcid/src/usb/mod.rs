@@ -18,6 +18,7 @@ pub enum DescriptorKind {
     InterfacePower,
     OnTheGo,
     BinaryObjectStorage = 15,
+    Hid = 33,
     SuperSpeedCompanion = 48,
 }
 
