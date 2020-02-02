@@ -47,3 +47,19 @@ pub struct SuperSpeedCompanionDescriptor {
 }
 
 unsafe impl Plain for SuperSpeedCompanionDescriptor {}
+
+#[repr(packed)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct HidDescriptor {
+    pub length: u8,
+    pub kind: u8,
+    pub hid_spec_release: u16,
+    pub country_code: u8,
+    pub num_descriptors: u8,
+    pub report_desc_ty: u8,
+    pub report_desc_len: u16,
+    pub optional_desc_ty: u8,
+    pub optional_desc_len: u16,
+}
+
+unsafe impl Plain for HidDescriptor {}

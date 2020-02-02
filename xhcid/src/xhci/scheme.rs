@@ -160,9 +160,10 @@ pub(crate) struct IfDesc {
     pub(crate) protocol: u8,
     pub(crate) interface_str: Option<String>,
     pub(crate) endpoints: SmallVec<[EndpDesc; 4]>,
+    pub(crate) hid_descs: SmallVec<[HidDesc; 1]>,
 }
 impl IfDesc {
-    fn new(dev: &mut Device, desc: usb::InterfaceDescriptor, endps: impl IntoIterator<Item = EndpDesc>) -> Result<Self> {
+    fn new(dev: &mut Device, desc: usb::InterfaceDescriptor, endps: impl IntoIterator<Item = EndpDesc>, hid_descs: impl IntoIterator<Item = HidDesc>) -> Result<Self> {
         Ok(Self {
             alternate_setting: desc.alternate_setting,
             class: desc.class,
@@ -172,6 +173,7 @@ impl IfDesc {
             protocol: desc.protocol,
             sub_class: desc.sub_class,
             endpoints: endps.into_iter().collect(),
+            hid_descs: hid_descs.into_iter().collect(),
         })
     }
 }
@@ -182,6 +184,33 @@ pub(crate) struct SuperSpeedCmp {
     pub(crate) max_burst: u8,
     pub(crate) attributes: u8,
     pub(crate) bytes_per_interval: u16,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+pub(crate) struct HidDesc {
+    pub(crate) kind: u8,
+    pub(crate) hid_spec_release: u16,
+    pub(crate) country: u8,
+    pub(crate) desc_count: u8,
+    pub(crate) desc_ty: u8,
+    pub(crate) desc_len: u16,
+    pub(crate) optional_desc_ty: u8,
+    pub(crate) optional_desc_len: u16,
+}
+
+impl From<usb::HidDescriptor> for HidDesc {
+    fn from(d: usb::HidDescriptor) -> Self {
+        Self {
+            kind: d.kind,
+            hid_spec_release: d.hid_spec_release,
+            country: d.country_code,
+            desc_count: d.num_descriptors,
+            desc_ty: d.report_desc_ty,
+            desc_len: d.report_desc_len,
+            optional_desc_ty: d.optional_desc_ty,
+            optional_desc_len: d.optional_desc_len,
+        }
+    }
 }
 
 impl From<usb::SuperSpeedCompanionDescriptor> for SuperSpeedCmp {
@@ -203,6 +232,7 @@ enum AnyDescriptor {
     Config(usb::ConfigDescriptor),
     Interface(usb::InterfaceDescriptor),
     Endpoint(usb::EndpointDescriptor),
+    Hid(usb::HidDescriptor),
     SuperSpeedCompanion(usb::SuperSpeedCompanionDescriptor),
 }
 
@@ -220,9 +250,10 @@ impl AnyDescriptor {
             2 => Self::Config(*plain::from_bytes(bytes).ok()?),
             4 => Self::Interface(*plain::from_bytes(bytes).ok()?),
             5 => Self::Endpoint(*plain::from_bytes(bytes).ok()?),
+            33 => Self::Hid(*plain::from_bytes(bytes).ok()?),
             48 => Self::SuperSpeedCompanion(*plain::from_bytes(bytes).ok()?),
             _ => {
-                //println!("Descriptor unknown {}: bytes {:#0x?}", kind, bytes);
+                //panic!("Descriptor unknown {}: bytes {:#0x?}", kind, bytes);
                 return None;
             }
         }, len.into()))
@@ -487,10 +518,15 @@ impl Xhci {
             while let Some(item) = iter.next() {
                 if let AnyDescriptor::Interface(idesc) = item {
                     let mut endpoints = SmallVec::<[EndpDesc; 4]>::new();
+                    let mut hid_descs = SmallVec::<[HidDesc; 1]>::new();
 
                     for _ in 0..idesc.endpoints {
                         let next = match iter.next() {
                             Some(AnyDescriptor::Endpoint(n)) => n,
+                            Some(AnyDescriptor::Hid(h)) if idesc.class == 3 => {
+                                hid_descs.push(h.into());
+                                break;
+                            }
                             _ => break,
                         };
                         let mut endp = EndpDesc::from(next);
@@ -505,7 +541,7 @@ impl Xhci {
                         endpoints.push(endp);
                     }
 
-                    interface_descs.push(IfDesc::new(&mut dev, idesc, endpoints)?);
+                    interface_descs.push(IfDesc::new(&mut dev, idesc, endpoints, hid_descs)?);
                 } else {
                     // TODO
                     break;

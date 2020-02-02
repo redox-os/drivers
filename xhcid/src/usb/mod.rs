@@ -1,7 +1,7 @@
 pub use self::bos::{BosDescriptor, BosAnyDevDesc, BosSuperSpeedDesc, bos_capability_descs};
 pub use self::config::ConfigDescriptor;
 pub use self::device::DeviceDescriptor;
-pub use self::endpoint::{EndpointDescriptor, SuperSpeedCompanionDescriptor, EndpointTy, ENDP_ATTR_TY_MASK};
+pub use self::endpoint::{EndpointDescriptor, HidDescriptor, SuperSpeedCompanionDescriptor, EndpointTy, ENDP_ATTR_TY_MASK};
 pub use self::interface::InterfaceDescriptor;
 pub use self::setup::Setup;
 
