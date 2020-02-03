@@ -15,4 +15,5 @@ members = [
     "vboxd",
     "vesad",
     "xhcid",
+    "usbscsid",
 ]

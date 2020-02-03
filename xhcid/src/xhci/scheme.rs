@@ -46,7 +46,7 @@ pub enum Handle {
     Port(usize, usize, Vec<u8>), // port, offset, contents
     PortDesc(usize, usize, Vec<u8>), // port, offset, contents
     PortState(usize, usize), // port, offset
-    PortReq(usize),
+    PortReq(usize), // port
     Endpoints(usize, usize, Vec<u8>), // port, offset, contents
     Endpoint(usize, u8, EndpointHandleTy), // port, endpoint, offset, state
     ConfigureEndpoints(usize), // port
@@ -55,7 +55,8 @@ pub enum Handle {
 #[derive(Serialize)]
 struct PortDesc(DevDesc);
 
-// Even though these descriptors are originally intended for JSON, they should suffice..
+// TODO: Even though these descriptors are originally intended for JSON, they should suffice... for
+// now.
 
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct DevDesc {

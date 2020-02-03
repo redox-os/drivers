@@ -44,7 +44,7 @@ fn main() {
 
         let address = unsafe { syscall::physmap(bar, 65536, PHYSMAP_WRITE | PHYSMAP_NO_CACHE).expect("xhcid: failed to map address") };
         {
-            let hci = Arc::new(RefCell::new(Xhci::new(address).expect("xhcid: failed to allocate device")));
+            let hci = Arc::new(RefCell::new(Xhci::new(name, address).expect("xhcid: failed to allocate device")));
 
             hci.borrow_mut().probe().expect("xhcid: failed to probe");
 

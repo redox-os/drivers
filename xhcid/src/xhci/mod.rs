@@ -1,10 +1,13 @@
-use plain::Plain;
-use std::{mem, slice, sync::atomic, task};
+use std::{mem, slice, process, sync::atomic, task};
 use std::collections::BTreeMap;
+use std::ffi::OsStr;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, Weak, atomic::AtomicBool};
-use syscall::error::Result;
+
+use serde::Deserialize;
+use syscall::error::{EBADF, EBADMSG, ENOENT, Error, Result};
 use syscall::io::{Dma, Io};
+
 use crate::usb;
 
 mod capability;
@@ -139,6 +142,9 @@ pub struct Xhci {
     // IRQs, but it would make sense in case the hub has both isochronous (which trigger interrupts
     // reapeatedly with some time in between), bulk, control, etc. I might be wrong though...
     irq_state: Arc<IrqState>,
+
+    drivers: BTreeMap<usize, process::Child>,
+    scheme_name: String,
 }
 
 struct PortState {
@@ -167,7 +173,7 @@ impl EndpointState {
 }
 
 impl Xhci {
-    pub fn new(address: usize) -> Result<Xhci> {
+    pub fn new(scheme_name: String, address: usize) -> Result<Xhci> {
         let cap = unsafe { &mut *(address as *mut CapabilityRegs) };
         println!("  - CAP {:X}", address);
 
@@ -238,6 +244,8 @@ impl Xhci {
                 triggered: AtomicBool::new(false),
                 wakers: Mutex::new(Vec::new()),
             }),
+            drivers: BTreeMap::new(),
+            scheme_name,
         };
 
         xhci.init(max_slots);
@@ -380,15 +388,21 @@ impl Xhci {
                 }
 
                 let dev_desc = Self::get_dev_desc_raw(&mut self.ports, &mut self.run, &mut self.cmd, &mut self.dbs, i, slot, &mut ring)?;
-
-                self.port_states.insert(i, PortState {
+                let mut port_state = PortState {
                     slot,
                     input_context: input,
                     dev_desc,
                     endpoint_states: std::iter::once((0, EndpointState::Ready(
                         RingOrStreams::Ring(ring),
                     ))).collect::<BTreeMap<_, _>>(),
-                });
+                };
+
+                match self.spawn_drivers(i, &mut port_state) {
+                    Ok(()) => (),
+                    Err(err) => println!("Failed to spawn driver for port {}: `{}`", i, err),
+                }
+
+                self.port_states.insert(i, port_state);
             }
         }
 
@@ -405,7 +419,7 @@ impl Xhci {
             // FIXME: MSI and MSI-X systems
             self.run.ints[0].iman.writef(1, true);
 
-            // Wake all futures that await the IRQ.
+            // Wake all futures awaiting the IRQ.
             for waker in self.irq_state.wakers.lock().unwrap().drain(..) {
                 waker.wake();
             }
@@ -420,6 +434,51 @@ impl Xhci {
             state: IrqFutureState::Pending(Arc::downgrade(&self.irq_state))
         }
     }
+    fn spawn_drivers(&mut self, port: usize, ps: &mut PortState) -> Result<()> {
+        // TODO: There should probably be a way to select alternate interfaces, and not just the
+        // first one.
+        // TODO: Now that there are some good error crates, I don't think errno.h error codes are
+        // suitable here.
+
+        let ifdesc = &ps.dev_desc.config_descs.first().ok_or(Error::new(EBADF))?.interface_descs.first().ok_or(Error::new(EBADF))?;
+        let drivers_usercfg: &DriversConfig = &DRIVERS_CONFIG;
+
+        if let Some(driver) = drivers_usercfg.drivers.iter().find(|driver| driver.class == ifdesc.class && driver.subclass == ifdesc.sub_class) {
+            println!("Loading driver \"{}\"", driver.name);
+            let (command, args) = driver.command.split_first().ok_or(Error::new(EBADMSG))?;
+
+            let if_proto = ifdesc.protocol;
+
+            let process = process::Command::new(command).args(args.into_iter().map(|arg| arg.replace("$SCHEME", &self.scheme_name).replace("$PORT", &format!("{}", port)).replace("$IF_PROTO", &format!("{}", if_proto))).collect::<Vec<_>>()).stdin(process::Stdio::null()).spawn().or(Err(Error::new(ENOENT)))?;
+            self.drivers.insert(port, process);
+        } else {
+            return Err(Error::new(ENOENT));
+        }
+
+        Ok(())
+    }
+}
+#[derive(Deserialize)]
+struct DriverConfig {
+    name: String,
+    class: u8,
+    subclass: u8,
+    command: Vec<String>,
+}
+#[derive(Deserialize)]
+struct DriversConfig {
+    drivers: Vec<DriverConfig>,
+}
+
+use lazy_static::lazy_static;
+
+lazy_static! {
+    static ref DRIVERS_CONFIG: DriversConfig = {
+        // TODO: Load this at runtime.
+        const TOML: &'static [u8] = include_bytes!("../../drivers.toml");
+
+        toml::from_slice::<DriversConfig>(TOML).expect("Failed to parse internally embedded config file")
+    };
 }
 
 pub(crate) struct IrqFuture { state: IrqFutureState }
