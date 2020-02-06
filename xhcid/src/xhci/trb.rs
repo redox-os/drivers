@@ -1,6 +1,6 @@
+use crate::usb;
 use std::{fmt, mem};
 use syscall::io::{Io, Mmio};
-use crate::usb;
 
 #[repr(u8)]
 pub enum TrbType {
@@ -127,12 +127,7 @@ impl Trb {
     }
 
     pub fn reserved(&mut self, cycle: bool) {
-        self.set(
-            0,
-            0,
-            ((TrbType::Reserved as u32) << 10) |
-            (cycle as u32)
-        );
+        self.set(0, 0, ((TrbType::Reserved as u32) << 10) | (cycle as u32));
     }
 
     pub fn completion_code(&self) -> u8 {
@@ -149,28 +144,21 @@ impl Trb {
         self.set(
             address as u64,
             0,
-            ((TrbType::Link as u32) << 10) |
-            ((toggle as u32) << 1) |
-            (cycle as u32)
+            ((TrbType::Link as u32) << 10) | ((toggle as u32) << 1) | (cycle as u32),
         );
     }
 
     pub fn no_op_cmd(&mut self, cycle: bool) {
-        self.set(
-            0,
-            0,
-            ((TrbType::NoOpCmd as u32) << 10) |
-            (cycle as u32)
-        );
+        self.set(0, 0, ((TrbType::NoOpCmd as u32) << 10) | (cycle as u32));
     }
 
     pub fn enable_slot(&mut self, slot_type: u8, cycle: bool) {
         self.set(
             0,
             0,
-            (((slot_type as u32) & 0x1F) << 16) |
-            ((TrbType::EnableSlot as u32) << 10) |
-            (cycle as u32)
+            (((slot_type as u32) & 0x1F) << 16)
+                | ((TrbType::EnableSlot as u32) << 10)
+                | (cycle as u32),
         );
     }
 
@@ -178,21 +166,23 @@ impl Trb {
         self.set(
             input as u64,
             0,
-            ((slot_id as u32) << 24) |
-            ((TrbType::AddressDevice as u32) << 10) |
-            (cycle as u32)
+            ((slot_id as u32) << 24) | ((TrbType::AddressDevice as u32) << 10) | (cycle as u32),
         );
     }
     // Synchronizes the input context endpoints with the device context endpoints, I think.
     pub fn configure_endpoint(&mut self, slot_id: u8, input_ctx_ptr: usize, cycle: bool) {
-        assert_eq!(input_ctx_ptr & 0xFFFF_FFFF_FFFF_FF80, input_ctx_ptr, "unaligned input context ptr");
+        assert_eq!(
+            input_ctx_ptr & 0xFFFF_FFFF_FFFF_FF80,
+            input_ctx_ptr,
+            "unaligned input context ptr"
+        );
 
         self.set(
             input_ctx_ptr as u64,
             0,
-            (u32::from(slot_id) << 24) |
-            ((TrbType::ConfigureEndpoint as u32) << 10) |
-            (cycle as u32),
+            (u32::from(slot_id) << 24)
+                | ((TrbType::ConfigureEndpoint as u32) << 10)
+                | (cycle as u32),
         )
     }
 
@@ -200,10 +190,10 @@ impl Trb {
         self.set(
             unsafe { mem::transmute(setup) },
             8,
-            ((transfer as u32) << 16) |
-            ((TrbType::SetupStage as u32) << 10) |
-            (1 << 6) |
-            (cycle as u32)
+            ((transfer as u32) << 16)
+                | ((TrbType::SetupStage as u32) << 10)
+                | (1 << 6)
+                | (cycle as u32),
         );
     }
 
@@ -211,9 +201,7 @@ impl Trb {
         self.set(
             buffer as u64,
             length as u32,
-            ((input as u32) << 16) |
-            ((TrbType::DataStage as u32) << 10) |
-            (cycle as u32)
+            ((input as u32) << 16) | ((TrbType::DataStage as u32) << 10) | (cycle as u32),
         );
     }
 
@@ -221,24 +209,34 @@ impl Trb {
         self.set(
             0,
             0,
-            ((input as u32) << 16) |
-            ((TrbType::StatusStage as u32) << 10) |
-            (1 << 5) |
-            (cycle as u32)
+            ((input as u32) << 16)
+                | ((TrbType::StatusStage as u32) << 10)
+                | (1 << 5)
+                | (cycle as u32),
         );
     }
 }
 
 impl fmt::Debug for Trb {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Trb {{ data: {:>016X}, status: {:>08X}, control: {:>08X} }}",
-                  self.data.read(), self.status.read(), self.control.read())
+        write!(
+            f,
+            "Trb {{ data: {:>016X}, status: {:>08X}, control: {:>08X} }}",
+            self.data.read(),
+            self.status.read(),
+            self.control.read()
+        )
     }
 }
 
 impl fmt::Display for Trb {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "({:>016X}, {:>08X}, {:>08X})",
-                  self.data.read(), self.status.read(), self.control.read())
+        write!(
+            f,
+            "({:>016X}, {:>08X}, {:>08X})",
+            self.data.read(),
+            self.status.read(),
+            self.control.read()
+        )
     }
 }

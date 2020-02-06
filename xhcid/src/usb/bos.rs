@@ -57,9 +57,7 @@ pub struct BosDevDescIter<'a> {
 }
 impl<'a> BosDevDescIter<'a> {
     pub fn new(bytes: &'a [u8]) -> Self {
-        Self {
-            bytes,
-        }
+        Self { bytes }
     }
 }
 impl<'a> From<&'a [u8]> for BosDevDescIter<'a> {
@@ -72,7 +70,9 @@ impl<'a> Iterator for BosDevDescIter<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(desc) = plain::from_bytes::<BosDevDescriptorBase>(self.bytes).ok() {
-            if desc.len as usize > self.bytes.len() { return None };
+            if desc.len as usize > self.bytes.len() {
+                return None;
+            };
             let bytes_ret = &self.bytes[..desc.len as usize];
             self.bytes = &self.bytes[desc.len as usize..];
             Some((*desc, bytes_ret))
@@ -129,6 +129,10 @@ impl<'a> Iterator for BosAnyDevDescIter<'a> {
     }
 }
 
-pub fn bos_capability_descs<'a>(desc: BosDescriptor, data: &'a [u8]) -> impl Iterator<Item = BosAnyDevDesc> + 'a {
-    BosAnyDevDescIter::from(&data[..desc.total_len as usize - std::mem::size_of_val(&desc)]).take(desc.cap_count as usize)
+pub fn bos_capability_descs<'a>(
+    desc: BosDescriptor,
+    data: &'a [u8],
+) -> impl Iterator<Item = BosAnyDevDesc> + 'a {
+    BosAnyDevDescIter::from(&data[..desc.total_len as usize - std::mem::size_of_val(&desc)])
+        .take(desc.cap_count as usize)
 }

@@ -1,6 +1,5 @@
 use syscall::error::Result;
 
-
 use super::event::EventRing;
 use super::ring::Ring;
 use super::trb::Trb;

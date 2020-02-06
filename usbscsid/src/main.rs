@@ -1,5 +1,7 @@
 use std::env;
 
+pub mod protocol;
+
 fn main() {
     let mut args = env::args().skip(1);
 

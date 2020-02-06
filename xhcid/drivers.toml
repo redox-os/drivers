@@ -2,4 +2,4 @@
 name = "SCSI over USB"
 class = 8 # Mass Storage class
 subclass = 6 # SCSI transparent command set
-command = ["usbscsid", "$SCHEME", "$PORT", "$IF_PROTO"]
+command = ["/bin/usbscsid", "$SCHEME", "$PORT", "$IF_PROTO"]

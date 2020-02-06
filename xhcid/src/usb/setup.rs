@@ -108,7 +108,12 @@ impl Setup {
         }
     }
 
-    pub const fn get_descriptor(kind: DescriptorKind, index: u8, language: u16, length: u16) -> Self {
+    pub const fn get_descriptor(
+        kind: DescriptorKind,
+        index: u8,
+        language: u16,
+        length: u16,
+    ) -> Self {
         Self {
             kind: 0b1000_0000,
             request: 0x06,

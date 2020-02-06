@@ -28,10 +28,10 @@ bitflags! {
 
 #[repr(packed)]
 pub struct Port {
-    pub portsc : Mmio<u32>,
-    pub portpmsc : Mmio<u32>,
-    pub portli : Mmio<u32>,
-    pub porthlpmc : Mmio<u32>,
+    pub portsc: Mmio<u32>,
+    pub portpmsc: Mmio<u32>,
+    pub portli: Mmio<u32>,
+    pub porthlpmc: Mmio<u32>,
 }
 
 impl Port {

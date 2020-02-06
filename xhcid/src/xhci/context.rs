@@ -1,5 +1,5 @@
 use syscall::error::Result;
-use syscall::io::{Dma, Mmio, Io};
+use syscall::io::{Dma, Io, Mmio};
 
 #[repr(packed)]
 pub struct SlotContext {
@@ -55,7 +55,17 @@ pub struct InputContext {
 }
 impl InputContext {
     pub fn dump_control(&self) {
-        println!("INPUT CONTEXT: {} {} [{} {} {} {} {}] {}", self.drop_context.read(), self.add_context.read(), self._rsvd[0].read(), self._rsvd[1].read(), self._rsvd[2].read(), self._rsvd[3].read(), self._rsvd[4].read(), self.control.read());
+        println!(
+            "INPUT CONTEXT: {} {} [{} {} {} {} {}] {}",
+            self.drop_context.read(),
+            self.add_context.read(),
+            self._rsvd[0].read(),
+            self._rsvd[1].read(),
+            self._rsvd[2].read(),
+            self._rsvd[3].read(),
+            self._rsvd[4].read(),
+            self.control.read()
+        );
     }
 }
 
@@ -78,7 +88,7 @@ impl DeviceContextList {
 
         Ok(DeviceContextList {
             dcbaa: dcbaa,
-            contexts: contexts
+            contexts: contexts,
         })
     }
 

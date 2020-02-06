@@ -1,11 +1,11 @@
-use std::{mem, slice, process, sync::atomic, task};
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex, Weak, atomic::AtomicBool};
+use std::sync::{atomic::AtomicBool, Arc, Mutex, Weak};
+use std::{mem, process, slice, sync::atomic, task};
 
 use serde::Deserialize;
-use syscall::error::{EBADF, EBADMSG, ENOENT, Error, Result};
+use syscall::error::{Error, Result, EBADF, EBADMSG, ENOENT};
 use syscall::io::{Dma, Io};
 
 use crate::usb;
@@ -17,8 +17,8 @@ mod doorbell;
 mod event;
 mod operational;
 mod port;
-mod runtime;
 mod ring;
+mod runtime;
 mod scheme;
 mod trb;
 
@@ -29,8 +29,10 @@ use self::doorbell::Doorbell;
 use self::operational::OperationalRegs;
 use self::port::Port;
 use self::ring::Ring;
-use self::runtime::{RuntimeRegs, Interrupter};
+use self::runtime::{Interrupter, RuntimeRegs};
 use self::trb::{TransferKind, TrbCompletionCode, TrbType};
+
+use crate::driver_interface::*;
 
 struct Device<'a> {
     ring: &'a mut Ring,
@@ -47,7 +49,8 @@ impl<'a> Device<'a> {
             let (cmd, cycle) = self.ring.next();
             cmd.setup(
                 usb::Setup::get_descriptor(kind, index, 0, len as u16),
-                TransferKind::In, cycle
+                TransferKind::In,
+                cycle,
             );
         }
 
@@ -75,45 +78,29 @@ impl<'a> Device<'a> {
 
     fn get_device(&mut self) -> Result<usb::DeviceDescriptor> {
         let mut desc = Dma::<usb::DeviceDescriptor>::zeroed()?;
-        self.get_desc(
-            usb::DescriptorKind::Device,
-            0,
-            &mut desc
-        );
+        self.get_desc(usb::DescriptorKind::Device, 0, &mut desc);
         Ok(*desc)
     }
 
     fn get_config(&mut self, config: u8) -> Result<(usb::ConfigDescriptor, [u8; 4087])> {
         let mut desc = Dma::<(usb::ConfigDescriptor, [u8; 4087])>::zeroed()?;
-        self.get_desc(
-            usb::DescriptorKind::Configuration,
-            config,
-            &mut desc
-        );
+        self.get_desc(usb::DescriptorKind::Configuration, config, &mut desc);
         Ok(*desc)
     }
 
     fn get_bos(&mut self) -> Result<(usb::BosDescriptor, [u8; 4087])> {
         let mut desc = Dma::<(usb::BosDescriptor, [u8; 4087])>::zeroed()?;
-        self.get_desc(
-            usb::DescriptorKind::BinaryObjectStorage,
-            0,
-            &mut desc,
-        );
+        self.get_desc(usb::DescriptorKind::BinaryObjectStorage, 0, &mut desc);
         Ok(*desc)
     }
 
     fn get_string(&mut self, index: u8) -> Result<String> {
         let mut sdesc = Dma::<(u8, u8, [u16; 127])>::zeroed()?;
-        self.get_desc(
-            usb::DescriptorKind::String,
-            index,
-            &mut sdesc
-        );
+        self.get_desc(usb::DescriptorKind::String, index, &mut sdesc);
 
         let len = sdesc.0 as usize;
         if len > 2 {
-            Ok(String::from_utf16(&sdesc.2[.. (len - 2)/2]).unwrap_or(String::new()))
+            Ok(String::from_utf16(&sdesc.2[..(len - 2) / 2]).unwrap_or(String::new()))
         } else {
             Ok(String::new())
         }
@@ -150,7 +137,7 @@ pub struct Xhci {
 struct PortState {
     slot: u8,
     input_context: Dma<InputContext>,
-    dev_desc: scheme::DevDesc,
+    dev_desc: DevDesc,
     endpoint_states: BTreeMap<u8, EndpointState>,
 }
 
@@ -197,7 +184,7 @@ impl Xhci {
 
             println!("  - Wait for not running");
             // Wait until controller not running
-            while ! op.usb_sts.readf(1) {
+            while !op.usb_sts.readf(1) {
                 println!("  - Waiting for XHCI stopped");
             }
 
@@ -217,7 +204,8 @@ impl Xhci {
         }
 
         let port_base = op_base + 0x400;
-        let ports = unsafe { slice::from_raw_parts_mut(port_base as *mut Port, max_ports as usize) };
+        let ports =
+            unsafe { slice::from_raw_parts_mut(port_base as *mut Port, max_ports as usize) };
         println!("  - PORT {:X}", port_base);
 
         let db_base = address + cap.db_offset.read() as usize;
@@ -331,14 +319,12 @@ impl Xhci {
         for i in 0..self.ports.len() {
             let (data, state, speed, flags) = {
                 let port = &self.ports[i];
-                (
-                    port.read(),
-                    port.state(),
-                    port.speed(),
-                    port.flags(),
-                )
+                (port.read(), port.state(), port.speed(), port.flags())
             };
-            println!("   + XHCI Port {}: {:X}, State {}, Speed {}, Flags {:?}", i, data, state, speed, flags);
+            println!(
+                "   + XHCI Port {}: {:X}, State {}, Speed {}, Flags {:?}",
+                i, data, state, speed, flags
+            );
 
             if flags.contains(port::PortFlags::PORT_CCS) {
                 //TODO: Link TRB when running to the end of the ring buffer
@@ -362,7 +348,9 @@ impl Xhci {
                     input.device.slot.b.write(((i as u32 + 1) & 0xFF) << 16);
 
                     // control endpoint?
-                    input.device.endpoints[0].b.write(4096 << 16 | 4 << 3 | 3 << 1); // packet size | control endpoint | allowed error count
+                    input.device.endpoints[0]
+                        .b
+                        .write(4096 << 16 | 4 << 3 | 3 << 1); // packet size | control endpoint | allowed error count
                     let tr = ring.register();
                     input.device.endpoints[0].trh.write((tr >> 32) as u32);
                     input.device.endpoints[0].trl.write(tr as u32);
@@ -379,7 +367,9 @@ impl Xhci {
                         println!("    - Waiting for event");
                     }
 
-                    if event.completion_code() != TrbCompletionCode::Success as u8 || event.trb_type() != TrbType::CommandCompletion as u8 {
+                    if event.completion_code() != TrbCompletionCode::Success as u8
+                        || event.trb_type() != TrbType::CommandCompletion as u8
+                    {
                         panic!("ADDRESS DEVICE FAILED");
                     }
 
@@ -387,14 +377,24 @@ impl Xhci {
                     event.reserved(false);
                 }
 
-                let dev_desc = Self::get_dev_desc_raw(&mut self.ports, &mut self.run, &mut self.cmd, &mut self.dbs, i, slot, &mut ring)?;
+                let dev_desc = Self::get_dev_desc_raw(
+                    &mut self.ports,
+                    &mut self.run,
+                    &mut self.cmd,
+                    &mut self.dbs,
+                    i,
+                    slot,
+                    &mut ring,
+                )?;
                 let mut port_state = PortState {
                     slot,
                     input_context: input,
                     dev_desc,
-                    endpoint_states: std::iter::once((0, EndpointState::Ready(
-                        RingOrStreams::Ring(ring),
-                    ))).collect::<BTreeMap<_, _>>(),
+                    endpoint_states: std::iter::once((
+                        0,
+                        EndpointState::Ready(RingOrStreams::Ring(ring)),
+                    ))
+                    .collect::<BTreeMap<_, _>>(),
                 };
 
                 match self.spawn_drivers(i, &mut port_state) {
@@ -431,7 +431,7 @@ impl Xhci {
     }
     pub(crate) fn irq(&self) -> IrqFuture {
         IrqFuture {
-            state: IrqFutureState::Pending(Arc::downgrade(&self.irq_state))
+            state: IrqFutureState::Pending(Arc::downgrade(&self.irq_state)),
         }
     }
     fn spawn_drivers(&mut self, port: usize, ps: &mut PortState) -> Result<()> {
@@ -440,16 +440,39 @@ impl Xhci {
         // TODO: Now that there are some good error crates, I don't think errno.h error codes are
         // suitable here.
 
-        let ifdesc = &ps.dev_desc.config_descs.first().ok_or(Error::new(EBADF))?.interface_descs.first().ok_or(Error::new(EBADF))?;
+        let ifdesc = &ps
+            .dev_desc
+            .config_descs
+            .first()
+            .ok_or(Error::new(EBADF))?
+            .interface_descs
+            .first()
+            .ok_or(Error::new(EBADF))?;
         let drivers_usercfg: &DriversConfig = &DRIVERS_CONFIG;
 
-        if let Some(driver) = drivers_usercfg.drivers.iter().find(|driver| driver.class == ifdesc.class && driver.subclass == ifdesc.sub_class) {
+        if let Some(driver) = drivers_usercfg
+            .drivers
+            .iter()
+            .find(|driver| driver.class == ifdesc.class && driver.subclass == ifdesc.sub_class)
+        {
             println!("Loading driver \"{}\"", driver.name);
             let (command, args) = driver.command.split_first().ok_or(Error::new(EBADMSG))?;
 
             let if_proto = ifdesc.protocol;
 
-            let process = process::Command::new(command).args(args.into_iter().map(|arg| arg.replace("$SCHEME", &self.scheme_name).replace("$PORT", &format!("{}", port)).replace("$IF_PROTO", &format!("{}", if_proto))).collect::<Vec<_>>()).stdin(process::Stdio::null()).spawn().or(Err(Error::new(ENOENT)))?;
+            let process = process::Command::new(command)
+                .args(
+                    args.into_iter()
+                        .map(|arg| {
+                            arg.replace("$SCHEME", &self.scheme_name)
+                                .replace("$PORT", &format!("{}", port))
+                                .replace("$IF_PROTO", &format!("{}", if_proto))
+                        })
+                        .collect::<Vec<_>>(),
+                )
+                .stdin(process::Stdio::null())
+                .spawn()
+                .or(Err(Error::new(ENOENT)))?;
             self.drivers.insert(port, process);
         } else {
             return Err(Error::new(ENOENT));
@@ -481,7 +504,9 @@ lazy_static! {
     };
 }
 
-pub(crate) struct IrqFuture { state: IrqFutureState }
+pub(crate) struct IrqFuture {
+    state: IrqFutureState,
+}
 
 struct IrqState {
     triggered: AtomicBool,
@@ -503,7 +528,9 @@ impl std::future::Future for IrqFuture {
         match &mut this.state {
             // TODO: Ordering?
             IrqFutureState::Pending(state_weak) => {
-                let state = state_weak.upgrade().expect("IRQ futures keep getting polled even after the driver has been deinitialized");
+                let state = state_weak.upgrade().expect(
+                    "IRQ futures keep getting polled even after the driver has been deinitialized",
+                );
 
                 if state.triggered.load(atomic::Ordering::SeqCst) {
                     this.state = IrqFutureState::Finished;

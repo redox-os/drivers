@@ -3,6 +3,14 @@ name = "xhcid"
 version = "0.1.0"
 edition = "2018"
 
+[[bin]]
+name = "xhcid"
+path = "src/main.rs"
+
+[lib]
+name = "xhcid_interface"
+path = "src/lib.rs"
+
 [dependencies]
 bitflags = "1"
 plain = "0.2"

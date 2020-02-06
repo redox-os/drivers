@@ -1,4 +1,4 @@
-use syscall::io::{Mmio, Io};
+use syscall::io::{Io, Mmio};
 
 #[repr(packed)]
 pub struct OperationalRegs {
