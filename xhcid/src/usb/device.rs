@@ -27,3 +27,18 @@ impl DeviceDescriptor {
         ((self.usb >> 8) & 0xFF) as u8
     }
 }
+
+#[repr(packed)]
+pub struct DeviceQualifier {
+    pub length: u8,
+    pub kind: u8,
+    pub usb: u16,
+    pub class: u8,
+    pub sub_class: u8,
+    pub protocol: u8,
+    pub pkgsz_other_speed: u8,
+    pub num_other_speed_cfgs: u8,
+    pub _rsvd: u8,
+}
+
+unsafe impl plain::Plain for DeviceQualifier {}

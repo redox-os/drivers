@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::ffi::OsStr;
+use std::convert::TryFrom;
 use std::pin::Pin;
 use std::sync::{atomic::AtomicBool, Arc, Mutex, Weak};
 use std::{mem, process, slice, sync::atomic, task};
@@ -15,6 +15,7 @@ mod command;
 mod context;
 mod doorbell;
 mod event;
+mod extended;
 mod operational;
 mod port;
 mod ring;
@@ -450,11 +451,13 @@ impl Xhci {
             .ok_or(Error::new(EBADF))?;
         let drivers_usercfg: &DriversConfig = &DRIVERS_CONFIG;
 
-        if let Some(driver) = drivers_usercfg
-            .drivers
-            .iter()
-            .find(|driver| driver.class == ifdesc.class && driver.subclass == ifdesc.sub_class)
-        {
+        if let Some(driver) = drivers_usercfg.drivers.iter().find(|driver| {
+            driver.class == ifdesc.class
+                && driver
+                    .subclass()
+                    .map(|subclass| subclass == ifdesc.sub_class)
+                    .unwrap_or(true)
+        }) {
             println!("Loading driver \"{}\"", driver.name);
             let (command, args) = driver.command.split_first().ok_or(Error::new(EBADMSG))?;
 
@@ -485,8 +488,13 @@ impl Xhci {
 struct DriverConfig {
     name: String,
     class: u8,
-    subclass: u8,
+    subclass: i16, // The subclass may be meaningless for some drivers, hence negative values (and values above 255) mean "undefined".
     command: Vec<String>,
+}
+impl DriverConfig {
+    fn subclass(&self) -> Option<u8> {
+        u8::try_from(self.subclass).ok()
+    }
 }
 #[derive(Deserialize)]
 struct DriversConfig {

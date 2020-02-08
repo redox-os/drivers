@@ -96,6 +96,7 @@ pub enum TrbCompletionCode {
 }
 
 #[repr(u8)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TransferKind {
     NoData,
     Reserved,

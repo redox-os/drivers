@@ -3,14 +3,14 @@ use std::io::prelude::*;
 use std::{cmp, mem, path, str};
 
 use serde::{Deserialize, Serialize};
-use smallvec::SmallVec;
+use smallvec::{smallvec, SmallVec};
 
 use syscall::io::{Dma, Io};
 use syscall::scheme::SchemeMut;
 use syscall::{
     Error, Result, Stat, EACCES, EBADF, EBADMSG, EEXIST, EINVAL, EIO, EISDIR, ENOENT, ENOSYS,
-    ENOTDIR, ENXIO, ESPIPE, MODE_CHR, MODE_DIR, MODE_FILE, O_CREAT, O_DIRECTORY, O_RDONLY, O_RDWR,
-    O_STAT, O_WRONLY, SEEK_CUR, SEEK_END, SEEK_SET,
+    ENOTDIR, ENXIO, EOVERFLOW, ESPIPE, MODE_CHR, MODE_DIR, MODE_FILE, O_CREAT, O_DIRECTORY,
+    O_RDONLY, O_RDWR, O_STAT, O_WRONLY, SEEK_CUR, SEEK_END, SEEK_SET,
 };
 
 use super::{port, usb};
@@ -42,12 +42,17 @@ pub enum EndpointHandleTy {
     Root(usize, Vec<u8>), // offset, content
 }
 
+pub enum PortReqState {
+    Init,
+    Ready(TransferKind, Dma<[u8]>), // direction, buffers
+}
+
 pub enum Handle {
     TopLevel(usize, Vec<u8>),              // offset, contents (ports)
     Port(usize, usize, Vec<u8>),           // port, offset, contents
     PortDesc(usize, usize, Vec<u8>),       // port, offset, contents
     PortState(usize, usize),               // port, offset
-    PortReq(usize),                        // port
+    PortReq(usize, PortReqState),          // port, state
     Endpoints(usize, usize, Vec<u8>),      // port, offset, contents
     Endpoint(usize, u8, EndpointHandleTy), // port, endpoint, offset, state
     ConfigureEndpoints(usize),             // port
@@ -229,8 +234,6 @@ impl Xhci {
         const CONTEXT_ENTRIES_SHIFT: u8 = 27;
 
         let current_slot_a = input_context.device.slot.a.read();
-        let current_context_entries =
-            ((current_slot_a & CONTEXT_ENTRIES_MASK) >> CONTEXT_ENTRIES_SHIFT) as u8;
 
         let endpoints =
             &port_state.dev_desc.config_descs[req.config_desc].interface_descs[0].endpoints;
@@ -261,18 +264,8 @@ impl Xhci {
                 .ok_or(Error::new(EIO))?;
             let endp_desc = endpoints.get(index as usize).ok_or(Error::new(EIO))?;
 
-            let superspeed_companion = endp_desc.ssc;
-
             // TODO: Check if streams are actually supported.
-            let max_streams = superspeed_companion
-                .map(|ssc| {
-                    if endp_desc.is_bulk() {
-                        1 << (ssc.attributes & 0x1F)
-                    } else {
-                        0
-                    }
-                })
-                .unwrap_or(0);
+            let max_streams = endp_desc.max_streams();
             let max_psa_size = self.cap.max_psa_size();
 
             // TODO: Secondary streams.
@@ -291,18 +284,10 @@ impl Xhci {
             //     I presume that USB 3 devices can never be in low/full/high-speed mode, but
             //     always SuperSpeed (gen 1 and 2 etc.).
 
-            let max_burst_size = superspeed_companion.map(|ssc| ssc.max_burst).unwrap_or(0);
+            let max_burst_size = endp_desc.max_burst();
             let max_packet_size = endp_desc.max_packet_size;
 
-            let mult = if !lec && endp_desc.is_isoch() {
-                if let Some(ssc) = superspeed_companion {
-                    ssc.attributes & 0x3
-                } else {
-                    0
-                }
-            } else {
-                0
-            };
+            let mult = endp_desc.isoch_mult(lec);
 
             let interval = endp_desc.interval;
             let max_error_count = 3;
@@ -377,8 +362,6 @@ impl Xhci {
             endp_ctx.trh.write((ring_ptr >> 32) as u32);
             endp_ctx.c.write(u32::from(avg_trb_len));
         }
-
-        input_context.dump_control();
 
         self.run.ints[0].erdp.write(self.cmd.erdp());
 
@@ -571,14 +554,13 @@ impl Xhci {
             config_descs,
         })
     }
-    fn write_port_desc(&mut self, port_id: usize, contents: &mut Vec<u8>) -> Result<()> {
+    fn port_desc_json(&mut self, port_id: usize) -> Result<Vec<u8>> {
         let dev_desc = &self
             .port_states
             .get(&port_id)
             .ok_or(Error::new(ENOENT))?
             .dev_desc;
-        serde_json::to_writer_pretty(contents, dev_desc).unwrap();
-        Ok(())
+        serde_json::to_vec(dev_desc).or(Err(Error::new(EIO)))
     }
     fn write_dyn_string(string: &[u8], buf: &mut [u8], offset: &mut usize) -> usize {
         let max_bytes_to_read = cmp::min(string.len(), buf.len());
@@ -589,22 +571,15 @@ impl Xhci {
 
         bytes_to_read
     }
-    fn port_req(&mut self, port_num: usize, buf: &[u8]) -> Result<()> {
+    fn port_req(&mut self, fd: usize, port_num: usize, buf: &[u8]) -> Result<()> {
         use usb::setup::*;
 
-        #[derive(Deserialize)]
-        struct PortReq<'a> {
-            direction: &'a str,
-            req_type: &'a str,
-            req_recipient: &'a str,
-            request: u8,
-            value: u16,
-            index: u16,
-            length: u16,
-        }
         // TODO: This json format might be too high level, but is useful for debugging,
         // but when actual device-specific drivers are written, a binary format would
         // be better.
+
+        // FIXME: Make sure there aren't any other PortReq handles, perhaps by storing the state in
+        // PortState?
 
         let req = serde_json::from_slice::<PortReq<'_>>(buf).or(Err(Error::new(EBADMSG)))?;
 
@@ -612,12 +587,13 @@ impl Xhci {
             "host_to_device" => ReqDirection::HostToDevice,
             "device_to_host" => ReqDirection::DeviceToHost,
             _ => return Err(Error::new(EBADMSG)),
-        } as u8;
+        };
 
         let ty = match req.req_type {
             "class" => ReqType::Class,
             "vendor" => ReqType::Vendor,
-            "standard" | _ => return Err(Error::new(EBADMSG)),
+            "standard" => ReqType::Standard,
+            _ => return Err(Error::new(EBADMSG)),
         } as u8;
 
         let recipient = match req.req_recipient {
@@ -629,8 +605,14 @@ impl Xhci {
             _ => return Err(Error::new(EBADMSG)),
         } as u8;
 
+        let transfer_kind = match direction {
+            _ if !req.transfers_data => TransferKind::NoData,
+            ReqDirection::DeviceToHost => TransferKind::In,
+            ReqDirection::HostToDevice => TransferKind::Out,
+        };
+
         let setup = Setup {
-            kind: (direction << USB_SETUP_DIR_SHIFT)
+            kind: ((direction as u8) << USB_SETUP_DIR_SHIFT)
                 | (ty << USB_SETUP_REQ_TY_SHIFT)
                 | (recipient << USB_SETUP_RECIPIENT_SHIFT),
             request: req.request,
@@ -643,6 +625,7 @@ impl Xhci {
             .port_states
             .get_mut(&port_num)
             .ok_or(Error::new(EBADF))?;
+
         let ring = match port_state
             .endpoint_states
             .get_mut(&0)
@@ -654,17 +637,32 @@ impl Xhci {
             _ => return Err(Error::new(EIO)),
         };
 
+        let mut buffer = None;
+
         {
             let (cmd, cycle) = ring.next();
-            cmd.setup(
-                setup,
-                TransferKind::NoData, // FIXME
+            cmd.setup(setup, transfer_kind, cycle);
+        }
+        if transfer_kind != TransferKind::NoData {
+            let (cmd, cycle) = ring.next();
+
+            // TODO: Reuse buffers, or something.
+            // TODO: Validate the size.
+            // TODO: Sizes above 65536, *perhaps*.
+            let data_buffer = unsafe { Dma::<[u8]>::zeroed_unsized(req.length as usize)? };
+            assert_eq!(data_buffer.len(), req.length as usize);
+
+            cmd.data(
+                data_buffer.physical(),
+                req.length,
+                transfer_kind == TransferKind::In,
                 cycle,
             );
+            buffer = Some(data_buffer);
         }
         {
             let (cmd, cycle) = ring.next();
-            cmd.status(false, cycle);
+            cmd.status(transfer_kind == TransferKind::In, cycle);
         }
         self.dbs[port_state.slot as usize].write(1);
 
@@ -673,9 +671,26 @@ impl Xhci {
             while event.data.read() == 0 {
                 println!("  - Waiting for event");
             }
+            if event.completion_code() != TrbCompletionCode::Success as u8
+                || event.trb_type() != TrbType::Transfer as u8
+            {
+                println!(
+                    "Custom device request failed with EVENT {:#0x} {:#0x} {:#0x}",
+                    event.data.read(),
+                    event.status.read(),
+                    event.control.read()
+                );
+            }
         }
 
         self.run.ints[0].erdp.write(self.cmd.erdp());
+
+        match self.handles.get_mut(&fd).ok_or(Error::new(EBADF))? {
+            Handle::PortReq(_, ref mut st) if buffer.is_some() => {
+                *st = PortReqState::Ready(transfer_kind, buffer.unwrap())
+            }
+            _ => return Err(Error::new(EBADF)),
+        }
 
         Ok(())
     }
@@ -733,9 +748,7 @@ impl SchemeMut for Xhci {
                             return Err(Error::new(ENOTDIR));
                         }
 
-                        let mut contents = Vec::new();
-                        self.write_port_desc(port_num, &mut contents)?;
-
+                        let contents = self.port_desc_json(port_num)?;
                         Handle::PortDesc(port_num, 0, contents)
                     }
                     "configure" => {
@@ -759,10 +772,7 @@ impl SchemeMut for Xhci {
                         if flags & O_DIRECTORY != 0 && flags & O_STAT == 0 {
                             return Err(Error::new(ENOTDIR));
                         }
-                        if flags & O_RDWR != O_WRONLY && flags & O_STAT == 0 {
-                            return Err(Error::new(EACCES));
-                        }
-                        Handle::PortReq(port_num)
+                        Handle::PortReq(port_num, PortReqState::Init)
                     }
                     "endpoints" => {
                         if flags & O_DIRECTORY == 0 && flags & O_STAT == 0 {
@@ -852,12 +862,12 @@ impl SchemeMut for Xhci {
 
                     write!(contents, "descriptors\nendpoints\n").unwrap();
 
-                    if dbg!(self.slot_state(
+                    if self.slot_state(
                         self.port_states
                             .get(&port_num)
                             .ok_or(Error::new(ENOENT))?
-                            .slot as usize
-                    )) != SlotState::Configured as u8
+                            .slot as usize,
+                    ) != SlotState::Configured as u8
                     {
                         write!(contents, "configure\n").unwrap();
                     }
@@ -889,7 +899,12 @@ impl SchemeMut for Xhci {
                 stat.st_mode = MODE_FILE;
                 stat.st_size = buf.len() as u64;
             }
-            Handle::PortState(_, _) => stat.st_mode = MODE_CHR,
+            Handle::PortReq(_, PortReqState::Ready(TransferKind::In, ref buf)) => {
+                stat.st_mode = MODE_CHR;
+                stat.st_size = buf.len() as u64;
+            }
+
+            Handle::PortState(_, _) | Handle::PortReq(_, _) => stat.st_mode = MODE_CHR,
             Handle::Endpoint(_, _, st) => match st {
                 EndpointHandleTy::Status(_) | EndpointHandleTy::Transfer => stat.st_mode = MODE_CHR,
                 EndpointHandleTy::Root(_, ref buf) => {
@@ -897,7 +912,7 @@ impl SchemeMut for Xhci {
                     stat.st_size = buf.len() as u64;
                 }
             },
-            Handle::ConfigureEndpoints(_) | Handle::PortReq(_) => {
+            Handle::ConfigureEndpoints(_) => {
                 stat.st_mode = MODE_CHR | 0o200; // write only
             }
         }
@@ -914,7 +929,7 @@ impl SchemeMut for Xhci {
                 write!(src, "/port{}/descriptors", port_num).unwrap()
             }
             Handle::PortState(port_num, _) => write!(src, "/port{}/state", port_num).unwrap(),
-            Handle::PortReq(port_num) => write!(src, "/port{}/request", port_num).unwrap(),
+            Handle::PortReq(port_num, _) => write!(src, "/port{}/request", port_num).unwrap(),
             Handle::Endpoints(port_num, _, _) => {
                 write!(src, "/port{}/endpoints/", port_num).unwrap()
             }
@@ -967,7 +982,7 @@ impl SchemeMut for Xhci {
                 Ok(*offset)
             }
             // Write-once configure or transfer
-            Handle::Endpoint(_, _, _) | Handle::ConfigureEndpoints(_) | Handle::PortReq(_) => {
+            Handle::Endpoint(_, _, _) | Handle::ConfigureEndpoints(_) | Handle::PortReq(_, _) => {
                 return Err(Error::new(ESPIPE))
             }
         }
@@ -988,7 +1003,7 @@ impl SchemeMut for Xhci {
 
                 Ok(bytes_to_read)
             }
-            Handle::ConfigureEndpoints(_) | Handle::PortReq(_) => return Err(Error::new(EBADF)),
+            Handle::ConfigureEndpoints(_) => return Err(Error::new(EBADF)),
 
             &mut Handle::Endpoint(port_num, endp_num, ref mut st) => match st {
                 EndpointHandleTy::Transfer => {
@@ -1012,14 +1027,16 @@ impl SchemeMut for Xhci {
                         & ENDPOINT_CONTEXT_STATUS_MASK;
 
                     let string = match status {
-                        // TODO: Give this its own enum.
-                        0 => "disabled",
-                        1 => "enabled",
-                        2 => "halted",
-                        3 => "stopped",
-                        4 => "error",
-                        _ => "unknown",
+                        0 => Some(EndpointStatus::Disabled),
+                        1 => Some(EndpointStatus::Enabled),
+                        2 => Some(EndpointStatus::Halted),
+                        3 => Some(EndpointStatus::Stopped),
+                        4 => Some(EndpointStatus::Error),
+                        _ => None,
                     }
+                    .as_ref()
+                    .map(EndpointStatus::as_str)
+                    .unwrap_or("unknown")
                     .as_bytes();
 
                     Ok(Self::write_dyn_string(string, buf, offset))
@@ -1037,34 +1054,53 @@ impl SchemeMut for Xhci {
                     .state();
 
                 let string = match state {
-                    // TODO: Give this its own enum.
-                    0 => "enabled_or_disabled", // Maybe "enabled/disabled"?
-                    1 => "default",
-                    2 => "addressed",
-                    3 => "configured",
-                    _ => "unknown",
+                    0 => Some(PortState::EnabledOrDisabled),
+                    1 => Some(PortState::Default),
+                    2 => Some(PortState::Addressed),
+                    3 => Some(PortState::Configured),
+                    _ => None,
                 }
+                .as_ref()
+                .map(PortState::as_str)
+                .unwrap_or("unknown")
                 .as_bytes();
 
                 Ok(Self::write_dyn_string(string, buf, offset))
             }
+            Handle::PortReq(_, st) => {
+                if let PortReqState::Ready(TransferKind::In, ref src_buf) = st {
+                    if buf.len() != src_buf.len() {
+                        return Err(Error::new(EINVAL));
+                    }
+                    buf.copy_from_slice(src_buf);
+                    Ok(buf.len())
+                } else {
+                    Err(Error::new(EBADF))
+                }
+            }
         }
     }
     fn write(&mut self, fd: usize, buf: &[u8]) -> Result<usize> {
-        match self.handles.get(&fd).ok_or(Error::new(EBADF))? {
-            &Handle::ConfigureEndpoints(port_num) => {
+        match self.handles.get_mut(&fd).ok_or(Error::new(EBADF))? {
+            &mut Handle::ConfigureEndpoints(port_num) => {
                 self.configure_endpoints(port_num, buf)?;
                 Ok(buf.len())
             }
-            &Handle::Endpoint(port_num, endp_num, EndpointHandleTy::Transfer) => {
+            &mut Handle::Endpoint(port_num, endp_num, EndpointHandleTy::Transfer) => {
                 self.transfer_write(port_num, endp_num, buf)?;
                 // TODO
                 Ok(buf.len())
             }
-            &Handle::PortReq(port_num) => {
-                self.port_req(port_num, buf)?;
+            &mut Handle::PortReq(port_num, PortReqState::Init) => {
+                self.port_req(fd, port_num, buf)?;
                 Ok(buf.len())
             }
+            // TODO: Introduce PortReqState::Waiting, which this write call changes to
+            // PortReqState::ReadyToWrite when all bytes are written.
+            &mut Handle::PortReq(
+                port_num,
+                PortReqState::Ready(TransferKind::Out, ref mut src_buf),
+            ) => return Err(Error::new(ENOSYS)),
             _ => return Err(Error::new(EBADF)),
         }
     }
