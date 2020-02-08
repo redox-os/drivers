@@ -261,7 +261,6 @@ impl XhciClientHandle {
     pub fn get_standard_descs(&self) -> result::Result<DevDesc, XhciClientHandleError> {
         let path = format!("{}:port{}/descriptors", self.scheme, self.port);
         let json = std::fs::read(path)?;
-        std::io::stdout().lock().write_all(&json)?;
         Ok(serde_json::from_slice(&json)?)
     }
     pub fn configure_endpoints(
