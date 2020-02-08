@@ -185,7 +185,9 @@ impl<'a> Iterator for ReportFlatIter<'a> {
     type Item = ReportItem;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.offset >= self.desc.len() { return None }
+        if self.offset >= self.desc.len() {
+            return None;
+        }
 
         let first = self.desc[self.offset];
         let size = first & 0b11;
@@ -219,6 +221,9 @@ pub struct ReportIter<'a> {
     flat: ReportFlatIter<'a>,
     error: bool,
     // this is just for reusing the vec
+    // TODO: When GATs are available, this could be done simply using iterators. Every collection
+    // yields a child iterator, which returns the mutable reference to the flat iter to its parent
+    // when dropped.
     open_collections: Vec<(u8, Vec<ReportIterItem>)>,
 }
 #[derive(Debug)]
@@ -240,7 +245,9 @@ impl<'a> Iterator for ReportIter<'a> {
     type Item = ReportIterItem;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.error { return None }
+        if self.error {
+            return None;
+        }
 
         self.open_collections.clear();
 
@@ -265,10 +272,15 @@ impl<'a> Iterator for ReportIter<'a> {
                         return Some(ReportIterItem::Collection(value, finished_collection));
                     }
                 }
-                other if self.open_collections.is_empty() => return Some(ReportIterItem::Item(other)),
-                other => {
-                    self.open_collections.last_mut().unwrap().1.push(ReportIterItem::Item(other))
+                other if self.open_collections.is_empty() => {
+                    return Some(ReportIterItem::Item(other))
                 }
+                other => self
+                    .open_collections
+                    .last_mut()
+                    .unwrap()
+                    .1
+                    .push(ReportIterItem::Item(other)),
             }
         }
     }

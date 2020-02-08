@@ -1,6 +1,7 @@
 pub extern crate serde;
 pub extern crate smallvec;
 
+use std::convert::TryFrom;
 use std::fs::File;
 use std::io::prelude::*;
 use std::{io, result, str};
@@ -164,15 +165,34 @@ pub struct HidDesc {
     pub optional_desc_len: u16,
 }
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub struct PortReq<'a> {
-    pub direction: &'a str,
-    pub req_type: &'a str,
-    pub req_recipient: &'a str,
+pub struct PortReq {
+    pub direction: PortReqDirection,
+    pub req_type: PortReqTy,
+    pub req_recipient: PortReqRecipient,
     pub request: u8,
     pub value: u16,
     pub index: u16,
     pub length: u16,
     pub transfers_data: bool,
+}
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum PortReqDirection {
+    HostToDevice,
+    DeviceToHost,
+}
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum PortReqTy {
+    Class,
+    Vendor,
+    Standard,
+}
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum PortReqRecipient {
+    Device,
+    Interface,
+    Endpoint,
+    Other,
+    VendorSpecific,
 }
 
 #[derive(Debug)]
@@ -253,6 +273,34 @@ impl str::FromStr for EndpointStatus {
     }
 }
 
+pub enum DeviceReqData<'a> {
+    In(&'a mut [u8]),
+    Out(&'a [u8]),
+    NoData,
+}
+impl DeviceReqData<'_> {
+    fn len(&self) -> usize {
+        match self {
+            Self::In(buf) => buf.len(),
+            Self::Out(buf) => buf.len(),
+            Self::NoData => 0,
+        }
+    }
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+impl<'a> DeviceReqData<'a> {
+    fn direction(&self) -> PortReqDirection {
+        match self {
+            DeviceReqData::Out(_) => PortReqDirection::HostToDevice,
+            DeviceReqData::NoData => PortReqDirection::HostToDevice,
+            DeviceReqData::In(_) => PortReqDirection::DeviceToHost,
+        }
+    }
+}
+
 impl XhciClientHandle {
     pub fn new(scheme: String, port: usize) -> Self {
         Self { scheme, port }
@@ -284,19 +332,22 @@ impl XhciClientHandle {
         let string = std::fs::read_to_string(path)?;
         Ok(string.parse()?)
     }
-    // TODO: Device-specific request, with data
-    pub fn get_class_descriptor(
+    pub fn device_request<'a>(
         &self,
+        req_type: PortReqTy,
+        req_recipient: PortReqRecipient,
+        request: u8,
         value: u16,
         index: u16,
-        length: u16,
-    ) -> result::Result<Vec<u8>, XhciClientHandleError> {
-        // TODO: Base this on the to-be-written generic device request function.
+        data: DeviceReqData<'a>,
+    ) -> result::Result<(), XhciClientHandleError> {
+        let length = u16::try_from(data.len()).or(Err(XhciClientHandleError::TransferBufTooLarge(data.len())))?;
+
         let req = PortReq {
-            direction: "device_to_host",
-            req_type: "standard", // TODO: Add as a parameter, with its own enum.
-            req_recipient: "interface",
-            request: 0x06,
+            direction: data.direction(),
+            req_type,
+            req_recipient,
+            request,
             value,
             index,
             length,
@@ -307,19 +358,32 @@ impl XhciClientHandle {
         let path = format!("{}:port{}/request", self.scheme, self.port);
         let mut file = File::open(path)?;
 
-        let bytes_written = file.write(&json)?;
-        if bytes_written != json.len() {
+        let json_bytes_written = file.write(&json)?;
+        if json_bytes_written != json.len() {
             return Err(XhciClientHandleError::InvalidResponse(Invalid));
         }
 
-        let mut buf = vec![0u8; length as usize];
-        let bytes_read = file.read(&mut buf)?;
-        if bytes_read != buf.len() {
-            println!("HIDd B");
-            return Err(XhciClientHandleError::InvalidResponse(Invalid));
-        }
+        match data {
+            DeviceReqData::In(buf) => {
+                let bytes_read = file.read(buf)?;
 
-        Ok(buf)
+                if bytes_read != buf.len() {
+                    return Err(XhciClientHandleError::InvalidResponse(Invalid));
+                }
+            }
+            DeviceReqData::Out(buf) => {
+                let bytes_read = file.write(&buf)?;
+
+                if bytes_read != buf.len() {
+                    return Err(XhciClientHandleError::InvalidResponse(Invalid));
+                }
+            }
+            DeviceReqData::NoData => (),
+        }
+        Ok(())
+    }
+    pub fn get_descriptor(&self, recipient: PortReqRecipient, ty: u8, idx: u8, windex: u16, buffer: &mut [u8]) -> result::Result<(), XhciClientHandleError> {
+        self.device_request(PortReqTy::Standard, recipient, 0x06, (u16::from(ty) << 8) | u16::from(idx), windex, DeviceReqData::In(buffer))
     }
 }
 
@@ -333,4 +397,7 @@ pub enum XhciClientHandleError {
 
     #[error("invalid response")]
     InvalidResponse(#[from] Invalid),
+
+    #[error("transfer buffer too large ({0} > 65536)")]
+    TransferBufTooLarge(usize),
 }

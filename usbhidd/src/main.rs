@@ -1,11 +1,11 @@
-use std::convert::TryInto;
 use std::env;
 
-use xhcid_interface::{DevDesc, XhciClientHandle};
+use xhcid_interface::{DevDesc, PortReqRecipient, XhciClientHandle};
 
 mod report_desc;
+mod reqs;
 
-use report_desc::{ReportIter, ReportFlatIter, REPORT_DESC_TY};
+use report_desc::{ReportFlatIter, ReportIter, REPORT_DESC_TY};
 
 fn main() {
     let mut args = env::args().skip(1);
@@ -37,11 +37,14 @@ fn main() {
     let report_desc_len = hid_desc.desc_len;
     assert_eq!(hid_desc.desc_ty, REPORT_DESC_TY);
 
-    let report_desc_bytes: Vec<u8> = handle
-        .get_class_descriptor(
-            u16::from(REPORT_DESC_TY) << 8,
+    let mut report_desc_bytes = vec![0u8; report_desc_len as usize];
+    handle
+        .get_descriptor(
+            PortReqRecipient::Interface,
+            REPORT_DESC_TY,
+            0,
             interface_num,
-            report_desc_len,
+            &mut report_desc_bytes,
         )
         .expect("Failed to retrieve report descriptor");
 

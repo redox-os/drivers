@@ -1,4 +1,5 @@
 use super::DescriptorKind;
+use crate::driver_interface::*;
 
 #[repr(packed)]
 #[derive(Clone, Copy, Debug, Default)]
@@ -14,6 +15,14 @@ pub struct Setup {
 pub enum ReqDirection {
     HostToDevice = 0,
     DeviceToHost = 1,
+}
+impl From<PortReqDirection> for ReqDirection {
+    fn from(d: PortReqDirection) -> Self {
+        match d {
+            PortReqDirection::DeviceToHost => Self::DeviceToHost,
+            PortReqDirection::HostToDevice => Self::HostToDevice,
+        }
+    }
 }
 
 #[repr(u8)]
@@ -31,6 +40,15 @@ pub enum ReqType {
     /// Reserved
     Reserved = 3,
 }
+impl From<PortReqTy> for ReqType {
+    fn from(d: PortReqTy) -> Self {
+        match d {
+            PortReqTy::Standard => Self::Standard,
+            PortReqTy::Class => Self::Class,
+            PortReqTy::Vendor => Self::Vendor,
+        }
+    }
+}
 
 #[repr(u8)]
 pub enum ReqRecipient {
@@ -40,6 +58,17 @@ pub enum ReqRecipient {
     Other = 3,
     // 4..=30 are reserved
     VendorSpecific = 31,
+}
+impl From<PortReqRecipient> for ReqRecipient {
+    fn from(d: PortReqRecipient) -> Self {
+        match d {
+            PortReqRecipient::Device => Self::Device,
+            PortReqRecipient::Interface => Self::Interface,
+            PortReqRecipient::Endpoint => Self::Endpoint,
+            PortReqRecipient::Other => Self::Other,
+            PortReqRecipient::VendorSpecific => Self::VendorSpecific,
+        }
+    }
 }
 
 pub const USB_SETUP_DIR_BIT: u8 = 1 << 7;

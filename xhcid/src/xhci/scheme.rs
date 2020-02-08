@@ -576,34 +576,17 @@ impl Xhci {
 
         // TODO: This json format might be too high level, but is useful for debugging,
         // but when actual device-specific drivers are written, a binary format would
-        // be better.
+        // be better. Maybe something simple like bincode could be used, if a custom binary struct
+        // is too much overkill.
 
         // FIXME: Make sure there aren't any other PortReq handles, perhaps by storing the state in
         // PortState?
 
-        let req = serde_json::from_slice::<PortReq<'_>>(buf).or(Err(Error::new(EBADMSG)))?;
+        let req = serde_json::from_slice::<PortReq>(buf).or(Err(Error::new(EBADMSG)))?;
 
-        let direction = match req.direction {
-            "host_to_device" => ReqDirection::HostToDevice,
-            "device_to_host" => ReqDirection::DeviceToHost,
-            _ => return Err(Error::new(EBADMSG)),
-        };
-
-        let ty = match req.req_type {
-            "class" => ReqType::Class,
-            "vendor" => ReqType::Vendor,
-            "standard" => ReqType::Standard,
-            _ => return Err(Error::new(EBADMSG)),
-        } as u8;
-
-        let recipient = match req.req_recipient {
-            "device" => ReqRecipient::Device,
-            "interface" => ReqRecipient::Interface,
-            "endpoint" => ReqRecipient::Endpoint,
-            "other" => ReqRecipient::Other,
-            "vendor_specific" => ReqRecipient::VendorSpecific,
-            _ => return Err(Error::new(EBADMSG)),
-        } as u8;
+        let direction = ReqDirection::from(req.direction);
+        let ty = ReqType::from(req.req_type) as u8;
+        let recipient = ReqRecipient::from(req.req_recipient) as u8;
 
         let transfer_kind = match direction {
             _ if !req.transfers_data => TransferKind::NoData,
