@@ -2,7 +2,7 @@ pub extern crate serde;
 pub extern crate smallvec;
 
 use std::convert::TryFrom;
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::prelude::*;
 use std::{io, result, str};
 
@@ -315,8 +315,13 @@ impl XhciClientHandle {
         &self,
         req: &ConfigureEndpointsReq,
     ) -> result::Result<(), XhciClientHandleError> {
-        let path = format!("{}:port{}/configure_endpoints", self.scheme, self.port);
-        serde_json::to_writer(File::open(path)?, req)?;
+        let path = format!("{}:port{}/configure", self.scheme, self.port);
+        let json = serde_json::to_vec(req)?;
+        let mut file = OpenOptions::new().read(false).write(true).open(path)?;
+        let json_bytes_written = file.write(&json)?;
+        if json_bytes_written != json.len() {
+            return Err(XhciClientHandleError::InvalidResponse(Invalid));
+        }
         Ok(())
     }
     pub fn port_state(&self) -> result::Result<PortState, XhciClientHandleError> {

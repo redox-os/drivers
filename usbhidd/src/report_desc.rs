@@ -1,6 +1,8 @@
 use bitflags::bitflags;
 use ux::{u2, u4};
 
+use crate::reqs::ReportTy;
+
 /*#[repr(u8)]
 enum Protocol {
 
@@ -40,6 +42,16 @@ pub enum MainItem {
     Collection(u8),
     EndOfCollection,
 }
+impl MainItem {
+    pub fn report_ty(&self) -> Option<ReportTy> {
+        match self {
+            Self::Input(_) => Some(ReportTy::Input),
+            Self::Output(_) => Some(ReportTy::Output),
+            Self::Feature(_) => Some(ReportTy::Feature),
+            _ => None,
+        }
+    }
+}
 #[derive(Debug)]
 pub enum GlobalItem {
     UsagePage(u32),
@@ -50,11 +62,51 @@ pub enum GlobalItem {
     UnitExponent(u32),
     Unit(u32),
     ReportSize(u32),
-    RepordId(u32),
+    ReportId(u32),
     ReportCount(u32),
-    Push(u32),
-    Pop(u32),
+    Push,
+    Pop,
 }
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct GlobalItemsState {
+    pub usage_page: Option<u32>,
+    pub logical_min: Option<u32>,
+    pub logical_max: Option<u32>,
+    pub physical_min: Option<u32>,
+    pub physical_max: Option<u32>,
+    pub unit_exponent: Option<u32>,
+    pub unit: Option<u32>,
+    pub report_size: Option<u32>,
+    pub report_id: Option<u32>,
+    pub report_count: Option<u32>,
+}
+
+#[derive(Debug)]
+pub struct Invalid;
+
+pub fn update_state(current_state: &mut GlobalItemsState, stack: &mut Vec<GlobalItemsState>, report_item: &ReportItem) -> Result<(), Invalid> {
+    match report_item {
+        ReportItem::Global(global) => match global {
+            &GlobalItem::UsagePage(u) => current_state.usage_page = Some(u),
+            &GlobalItem::LogicalMinimum(m) => current_state.logical_min = Some(m),
+            &GlobalItem::LogicalMaximum(m) => current_state.logical_max = Some(m),
+            &GlobalItem::PhysicalMinimum(m) => current_state.physical_min = Some(m),
+            &GlobalItem::PhysicalMaximum(m) => current_state.physical_max = Some(m),
+            &GlobalItem::UnitExponent(e) => current_state.unit_exponent = Some(e),
+            &GlobalItem::Unit(u) => current_state.unit = Some(u),
+            &GlobalItem::ReportSize(s) => current_state.report_size = Some(s),
+            &GlobalItem::ReportId(i) => current_state.report_id = Some(i),
+            &GlobalItem::ReportCount(c) => current_state.report_count = Some(c),
+            &GlobalItem::Push => stack.push(*current_state),
+            &GlobalItem::Pop => *current_state = stack.pop().ok_or(Invalid)?,
+        }
+        ReportItem::Local(local) => (), // TODO
+        ReportItem::Main(_) => (),
+    }
+    Ok(())
+}
+
 #[derive(Debug)]
 pub enum LocalItem {
     Usage(u32),
@@ -73,6 +125,14 @@ pub enum ReportItem {
     Main(MainItem),
     Global(GlobalItem),
     Local(LocalItem),
+}
+impl ReportItem {
+    pub fn as_main_item(&self) -> Option<&MainItem> {
+        match self {
+            Self::Main(m) => Some(m),
+            _ => None,
+        }
+    }
 }
 impl From<MainItem> for ReportItem {
     fn from(main: MainItem) -> Self {
@@ -135,10 +195,10 @@ impl ReportItem {
                     0b0101 => (GlobalItem::UnitExponent(value).into(), 1 + real_size),
                     0b0110 => (GlobalItem::Unit(value).into(), 1 + real_size),
                     0b0111 => (GlobalItem::ReportSize(value).into(), 1 + real_size),
-                    0b1000 => (GlobalItem::RepordId(value).into(), 1 + real_size),
+                    0b1000 => (GlobalItem::ReportId(value).into(), 1 + real_size),
                     0b1001 => (GlobalItem::ReportCount(value).into(), 1 + real_size),
-                    0b1010 => (GlobalItem::Push(value).into(), 1 + real_size),
-                    0b1011 => (GlobalItem::Pop(value).into(), 1 + real_size),
+                    0b1010 => (GlobalItem::Push.into(), 1),
+                    0b1011 => (GlobalItem::Pop.into(), 1),
                     _ => return None,
                 }
             }
@@ -231,6 +291,20 @@ pub enum ReportIterItem {
     // collection and end of collection tags will never be found here
     Item(ReportItem),
     Collection(u8, Vec<ReportIterItem>),
+}
+impl ReportIterItem {
+    pub fn as_item(&self) -> Option<&ReportItem> {
+        match self {
+            Self::Item(i) => Some(i),
+            _ => None,
+        }
+    }
+    pub fn as_collection(&self) -> Option<(u8, &[ReportIterItem])> {
+        match self {
+            &Self::Collection(n, ref c) => Some((n, c)),
+            _ => None,
+        }
+    }
 }
 impl<'a> ReportIter<'a> {
     pub fn new(flat: ReportFlatIter<'a>) -> Self {

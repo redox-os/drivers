@@ -11,13 +11,21 @@ const SET_IDLE_REQ: u8 = 0xA;
 const GET_PROTOCOL_REQ: u8 = 0x3;
 const SET_PROTOCOL_REQ: u8 = 0xB;
 
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum ReportTy {
+    Input = 1,
+    Output,
+    Feature,
+}
+
 fn concat(hi: u8, lo: u8) -> u16 {
     (u16::from(hi) << 8) | u16::from(lo)
 }
 
 pub fn get_report(
-    handle: &mut XhciClientHandle,
-    report_ty: u8,
+    handle: &XhciClientHandle,
+    report_ty: ReportTy,
     report_id: u8,
     if_num: u16,
     buffer: &mut [u8],
@@ -26,14 +34,14 @@ pub fn get_report(
         PortReqTy::Class,
         PortReqRecipient::Interface,
         GET_REPORT_REQ,
-        concat(report_ty, report_id),
+        concat(report_ty as u8, report_id),
         if_num,
         DeviceReqData::In(buffer),
     )
 }
 pub fn set_report(
-    handle: &mut XhciClientHandle,
-    report_ty: u8,
+    handle: &XhciClientHandle,
+    report_ty: ReportTy,
     report_id: u8,
     if_num: u16,
     buffer: &[u8],
@@ -42,13 +50,13 @@ pub fn set_report(
         PortReqTy::Class,
         PortReqRecipient::Interface,
         SET_REPORT_REQ,
-        concat(report_id, report_ty),
+        concat(report_id, report_ty as u8),
         if_num,
         DeviceReqData::Out(buffer),
     )
 }
 pub fn get_idle(
-    handle: &mut XhciClientHandle,
+    handle: &XhciClientHandle,
     report_id: u8,
     if_num: u16,
 ) -> Result<u8, XhciClientHandleError> {
@@ -65,7 +73,7 @@ pub fn get_idle(
     Ok(idle_rate)
 }
 pub fn set_idle(
-    handle: &mut XhciClientHandle,
+    handle: &XhciClientHandle,
     duration: u8,
     report_id: u8,
     if_num: u16,
@@ -80,7 +88,7 @@ pub fn set_idle(
     )
 }
 pub fn get_protocol(
-    handle: &mut XhciClientHandle,
+    handle: &XhciClientHandle,
     if_num: u16,
 ) -> Result<u8, XhciClientHandleError> {
     let mut protocol = 0;
@@ -96,7 +104,7 @@ pub fn get_protocol(
     Ok(protocol)
 }
 pub fn set_protocol(
-    handle: &mut XhciClientHandle,
+    handle: &XhciClientHandle,
     protocol: u8,
     if_num: u16,
 ) -> Result<(), XhciClientHandleError> {

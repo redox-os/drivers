@@ -1336,6 +1336,7 @@ dependencies = [
 name = "usbscsid"
 version = "0.1.0"
 dependencies = [
+ "thiserror 1.0.10 (registry+https://github.com/rust-lang/crates.io-index)",
  "xhcid 0.1.0",
 ]
 

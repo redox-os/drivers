@@ -1,4 +1,9 @@
-use super::Protocol;
+use std::slice;
+
+use thiserror::Error;
+use xhcid_interface::{DeviceReqData, PortReqTy, PortReqRecipient, XhciClientHandle, XhciClientHandleError};
+
+use super::{Protocol, ProtocolError};
 
 pub const CBW_SIGNATURE: u32 = 0x43425355;
 
@@ -35,13 +40,33 @@ pub struct CommandStatusWrapper {
     pub status: u8,
 }
 
-pub struct BulkOnlyTransport;
+pub struct BulkOnlyTransport<'a> {
+    handle: &'a XhciClientHandle,
+}
 
-impl Protocol for BulkOnlyTransport {
-    fn send_command_block(&mut self, cb: &[u8]) {
+impl<'a> BulkOnlyTransport<'a> {
+    pub fn init(handle: &'a XhciClientHandle) -> Result<Self, ProtocolError> {
+        Ok(Self {
+            handle,
+        })
+    }
+}
+
+impl<'a> Protocol for BulkOnlyTransport<'a> {
+    fn send_command_block(&mut self, cb: &[u8]) -> Result<(), ProtocolError> {
         todo!()
     }
-    fn recv_command_block(&mut self, cb: &mut [u8]) {
+    fn recv_command_block(&mut self, cb: &mut [u8]) -> Result<(), ProtocolError> {
         todo!()
     }
+}
+
+pub fn bulk_only_mass_storage_reset(handle: &XhciClientHandle, if_num: u16) -> Result<(), XhciClientHandleError> {
+    handle.device_request(PortReqTy::Class, PortReqRecipient::Interface, 0xFF, 0, if_num, DeviceReqData::NoData)
+}
+pub fn get_max_lun(handle: &XhciClientHandle, if_num: u16) -> Result<u8, XhciClientHandleError> {
+    let mut lun = 0;
+    let buffer = slice::from_mut(&mut lun);
+    handle.device_request(PortReqTy::Class, PortReqRecipient::Interface, 0xFE, 0, if_num, DeviceReqData::In(buffer))?;
+    Ok(lun)
 }
