@@ -9,7 +9,7 @@ use syscall::io::{Dma, Io};
 use syscall::scheme::SchemeMut;
 use syscall::{
     Error, Result, Stat, EACCES, EBADF, EBADMSG, EEXIST, EINVAL, EIO, EISDIR, ENOENT, ENOSYS,
-    ENOTDIR, ENXIO, EOVERFLOW, ESPIPE, MODE_CHR, MODE_DIR, MODE_FILE, O_CREAT, O_DIRECTORY,
+    ENOTDIR, ENXIO, EOVERFLOW, EPERM, ESPIPE, MODE_CHR, MODE_DIR, MODE_FILE, O_CREAT, O_DIRECTORY,
     O_RDONLY, O_RDWR, O_STAT, O_WRONLY, SEEK_CUR, SEEK_END, SEEK_SET,
 };
 
@@ -310,7 +310,10 @@ impl Xhci {
             assert_ne!(ep_ty, 0); // 0 means invalid.
 
             let ring_ptr = if max_streams != 0 {
-                let array = StreamContextArray::new(1 << (max_streams + 1))?;
+                let mut array = StreamContextArray::new(1 << (max_streams + 1))?;
+
+                // TODO: Use as many stream rings as needed.
+                array.add_ring(1, true)?;
                 let array_ptr = array.register();
 
                 assert_eq!(
@@ -398,11 +401,86 @@ impl Xhci {
 
         Ok(())
     }
-    fn transfer_read(&mut self, port_num: usize, endp_num: u8, buf: &mut [u8]) -> Result<()> {
-        Err(Error::new(ENOSYS))
+    fn transfer_read(&mut self, port_num: usize, endp_idx: u8, buf: &mut [u8]) -> Result<u32> {
+        self.transfer(port_num, endp_idx, if !buf.is_empty() { DeviceReqData::In(buf) } else { DeviceReqData::NoData })
     }
-    fn transfer_write(&mut self, port_num: usize, endp_num: u8, buf: &[u8]) -> Result<()> {
-        Err(Error::new(ENOSYS))
+    fn transfer_write(&mut self, port_num: usize, endp_idx: u8, buf: &[u8]) -> Result<u32> {
+        self.transfer(port_num, endp_idx, if !buf.is_empty() { DeviceReqData::Out(buf) } else { DeviceReqData::NoData })
+    }
+    // TODO: Rename DeviceReqData to something more general.
+    fn transfer(&mut self, port_num: usize, endp_idx: u8, buf: DeviceReqData) -> Result<u32> {
+        let endp_num = endp_idx + 1;
+        // TODO: Check that buf has a nonzero size, otherwise (at least for Rust's GlobalAlloc),
+        // UB.
+        let mut dma_buffer = match buf {
+            DeviceReqData::Out(sbuf) => {
+                let dma_buffer = unsafe { Dma::<[u8]>::zeroed_unsized(sbuf.len()) }?;
+                dma_buffer.copy_from_slice(sbuf);
+                Some(dma_buffer)
+            }
+            DeviceReqData::In(dbuf) => {
+                Some(unsafe { Dma::<[u8]>::zeroed_unsized(dbuf.len()) }?)
+            }
+            DeviceReqData::NoData => None,
+        };
+
+        let port_state = self.port_states.get_mut(&port_num).ok_or(Error::new(EBADF))?;
+        let endp_desc: &EndpDesc = port_state.dev_desc.config_descs.get(0).ok_or(Error::new(EIO))?.interface_descs.get(0).ok_or(Error::new(EIO))?.endpoints.get(endp_idx as usize).ok_or(Error::new(EBADF))?;
+        let endp_state = port_state.endpoint_states.get_mut(&endp_idx).ok_or(Error::new(EBADF))?;
+
+        let ring: &mut Ring = match endp_state {
+            EndpointState::Ready(super::RingOrStreams::Ring(ref mut ring)) => ring,
+            EndpointState::Ready(super::RingOrStreams::Streams(stream_ctx_array)) => stream_ctx_array.rings.get_mut(1).ok_or(Error::new(EBADF))?,
+            EndpointState::Init => return Err(Error::new(EIO)),
+        };
+        // TODO: Scatter-gather transfers, possibly allowing >64KiB sizes.
+        let len = u16::try_from(buf.len()).or(Err(Error::new(ENOSYS)))?;
+        let max_packet_size = endp_desc.max_packet_size;
+        {
+            let (trb, cycle) = ring.next();
+            let (buffer, idt) = if len <= 8 && max_packet_size >= 8 {
+                buf.map_buf(|buf| {
+                    let bytes = match <[u8; 8]>::try_from(buf) {
+                        Ok(b) => b,
+                        Err(_) => unreachable!(),
+                    };
+                    // FIXME: little endian, right?
+                    (u64::from_le_bytes(bytes), true)
+                }).unwrap_or((0, false))
+            } else {
+                (dma_buffer.map(|dma| dma.physical()).unwrap_or(0) as u64, false)
+            };
+            let estimated_td_size = mem::size_of_val(&trb) as u8; // one trb per td
+            trb.normal(buffer, len, cycle, estimated_td_size, false, true, false, true, idt, false);
+        }
+
+        self.dbs[port_state.slot as usize].write(endp_num.into());
+
+        let bytes_transferred = {
+            let event = self.cmd.next_event();
+            while event.data.read() == 0 {
+                println!("  - Waiting for event");
+            }
+
+            // FIXME: EDTLA if event data was set
+            if event.completion_code() != TrbCompletionCode::ShortPacket as u8 && event.transfer_length() != 0 {
+                println!("Event trb yielded a short packet, but all bytes were still transferred");
+            }
+
+            if event.completion_code() != TrbCompletionCode::Success as u8 || event.trb_type() != TrbType::Transfer as u8 {
+                println!("Custom transfer event failed with {:#0x} {:#0x} {:#0x}", event.data.read(), event.status.read(), event.control.read());
+            }
+            // TODO: Handle event data
+            println!("EVENT DATA: {:?}", event.event_data());
+
+            u32::from(len) - event.transfer_length()
+        };
+
+        if let DeviceReqData::In(ref mut dbuf) = buf {
+            dbuf.copy_from_slice(dma_buffer.unwrap());
+        }
+
+        Ok(bytes_transferred)
     }
     pub(crate) fn get_dev_desc(&mut self, port_id: usize) -> Result<DevDesc> {
         let st = self
@@ -814,10 +892,9 @@ impl SchemeMut for Xhci {
                     return Err(Error::new(EISDIR));
                 }
 
-                if self
-                    .port_states
-                    .get(&port_num)
-                    .ok_or(Error::new(ENOENT))?
+                let port_state = self.port_states.get(&port_num).ok_or(Error::new(ENOENT))?;
+
+                if port_state
                     .endpoint_states
                     .get(&endpoint_num)
                     .is_none()
@@ -833,7 +910,24 @@ impl SchemeMut for Xhci {
                         }
                         EndpointHandleTy::Status(0)
                     }
-                    "transfer" => EndpointHandleTy::Transfer,
+                    "transfer" => {
+                        if endpoint_num == 0 {
+                            // Don't allow user programs to interface directly with the control
+                            // endpoint.
+                            return Err(Error::new(EPERM));
+                        }
+                        let endp_desc = &port_state.dev_desc.config_descs.get(0).ok_or(Error::new(EIO))?.interface_descs.get(0).ok_or(Error::new(EIO))?.endpoints.get(endpoint_num as usize).ok_or(Error::new(ENOENT))?;
+                        match endp_desc.direction() {
+                            EndpDirection::Out => if flags & O_RDWR != O_WRONLY && flags & O_STAT != 0 {
+                                return Err(Error::new(EACCES));
+                            }
+                            EndpDirection::In => if flags & O_RDWR != O_RDONLY && flags & O_STAT != 0 {
+                                return Err(Error::new(EACCES));
+                            }
+                            _ => (),
+                        }
+                        EndpointHandleTy::Transfer
+                    }
                     _ => return Err(Error::new(ENOENT)),
                 };
                 Handle::Endpoint(port_num, endpoint_num, st)

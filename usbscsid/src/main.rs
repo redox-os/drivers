@@ -3,6 +3,7 @@ use std::env;
 use xhcid_interface::XhciClientHandle;
 
 pub mod protocol;
+pub mod scsi;
 
 fn main() {
     let mut args = env::args().skip(1);
@@ -17,4 +18,5 @@ fn main() {
 
     let handle = XhciClientHandle::new(scheme, port);
     let protocol = protocol::setup(&handle, protocol);
+    
 }

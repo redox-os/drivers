@@ -46,6 +46,8 @@ pub struct BulkOnlyTransport<'a> {
 
 impl<'a> BulkOnlyTransport<'a> {
     pub fn init(handle: &'a XhciClientHandle) -> Result<Self, ProtocolError> {
+        let lun = get_max_lun(handle, 0)?;
+        println!("BOT_MAX_LUN {}", lun);
         Ok(Self {
             handle,
         })

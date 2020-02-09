@@ -117,8 +117,17 @@ pub const TRB_STATUS_COMPLETION_CODE_MASK: u32 = 0xFF00_0000;
 pub const TRB_STATUS_COMPLETION_PARAM_SHIFT: u8 = 0;
 pub const TRB_STATUS_COMPLETION_PARAM_MASK: u32 = 0x00FF_FFFF;
 
+pub const TRB_STATUS_TRANSFER_LENGTH_SHIFT: u8 = 0;
+pub const TRB_STATUS_TRANSFER_LENGTH_MASK: u32 = 0x00FF_FFFF;
+
 pub const TRB_CONTROL_TRB_TYPE_SHIFT: u8 = 10;
 pub const TRB_CONTROL_TRB_TYPE_MASK: u32 = 0x0000_FC00;
+
+pub const TRB_CONTROL_EVENT_DATA_SHIFT: u8 = 2;
+pub const TRB_CONTROL_EVENT_DATA_BIT: u32 = 1 << TRB_CONTROL_EVENT_DATA_SHIFT;
+
+pub const TRB_CONTROL_ENDPOINT_ID_MASK: u32 = 0x001F_0000;
+pub const TRB_CONTROL_ENDPOINT_ID_SHIFT: u8 = 16;
 
 impl Trb {
     pub fn set(&mut self, data: u64, status: u32, control: u32) {
@@ -136,6 +145,19 @@ impl Trb {
     }
     pub fn completion_param(&self) -> u32 {
         self.status.read() & TRB_STATUS_COMPLETION_PARAM_MASK
+    }
+    /// Returns the number of bytes that should have been transmitten, but weren't.
+    pub fn transfer_length(&self) -> u32 {
+        self.status.read() & TRB_STATUS_TRANSFER_LENGTH_MASK
+    }
+    pub fn event_data_bit(&self) -> bool {
+        self.control.readf(TRB_CONTROL_EVENT_DATA_BIT)
+    }
+    pub fn event_data(&self) -> Option<u64> {
+        if self.event_data_bit() { Some(self.data.read()) } else { None }
+    }
+    pub fn endpoint_id(&self) -> u8 {
+        ((self.control.read() & TRB_CONTROL_ENDPOINT_ID_MASK) >> TRB_CONTROL_ENDPOINT_ID_SHIFT) as u8
     }
     pub fn trb_type(&self) -> u8 {
         ((self.control.read() & TRB_CONTROL_TRB_TYPE_MASK) >> TRB_CONTROL_TRB_TYPE_SHIFT) as u8
@@ -215,6 +237,23 @@ impl Trb {
                 | (1 << 5)
                 | (cycle as u32),
         );
+    }
+    pub fn normal(&mut self, buffer: u64, len: u16, cycle: bool, estimated_td_size: u8, ent: bool, isp: bool, chain: bool, ioc: bool, idt: bool, bei: bool) {
+        assert_eq!(estimated_td_size & 0x1F, estimated_td_size);
+        // NOTE: The interrupter target and no snoop flags have been omitted.
+        self.set(
+            buffer,
+            u32::from(len)
+                | (u32::from(estimated_td_size) << 17),
+            u32::from(cycle)
+                | (u32::from(ent) << 1)
+                | (u32::from(isp) << 2)
+                | (u32::from(ent) << 4)
+                | (u32::from(ioc) << 5)
+                | (u32::from(idt) << 6)
+                | (u32::from(bei) << 9)
+                | ((TrbType::Normal as u32) << 10)
+        )
     }
 }
 

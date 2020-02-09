@@ -279,20 +279,27 @@ pub enum DeviceReqData<'a> {
     NoData,
 }
 impl DeviceReqData<'_> {
-    fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         match self {
             Self::In(buf) => buf.len(),
             Self::Out(buf) => buf.len(),
             Self::NoData => 0,
         }
     }
-    fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+    pub fn map_buf<T, F: Fn(&[u8]) -> T>(&self, f: F) -> Option<T> {
+        match self {
+            Self::In(sbuf) => Some(f(sbuf)),
+            Self::Out(dbuf) => Some(f(dbuf)),
+            _ => None,
+        }
     }
 }
 
 impl<'a> DeviceReqData<'a> {
-    fn direction(&self) -> PortReqDirection {
+    pub fn direction(&self) -> PortReqDirection {
         match self {
             DeviceReqData::Out(_) => PortReqDirection::HostToDevice,
             DeviceReqData::NoData => PortReqDirection::HostToDevice,

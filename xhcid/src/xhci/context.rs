@@ -1,6 +1,8 @@
 use syscall::error::Result;
 use syscall::io::{Dma, Io, Mmio};
 
+use super::ring::Ring;
+
 #[repr(packed)]
 pub struct SlotContext {
     pub a: Mmio<u32>,
@@ -105,8 +107,23 @@ pub struct StreamContext {
     rsvd: Mmio<u32>,
 }
 
+unsafe impl plain::Plain for StreamContext {}
+
+#[repr(u8)]
+pub enum StreamContextType {
+    SecondaryRing,
+    PrimaryRing,
+    PrimarySsa8,
+    PrimarySsa16,
+    PrimarySsa32,
+    PrimarySsa64,
+    PrimarySsa128,
+    PrimarySsa256,
+}
+
 pub struct StreamContextArray {
     pub contexts: Dma<[StreamContext]>,
+    pub rings: Vec<Ring>,
 }
 
 impl StreamContextArray {
@@ -114,8 +131,14 @@ impl StreamContextArray {
         unsafe {
             Ok(Self {
                 contexts: Dma::zeroed_unsized(count)?,
+                rings: Vec::new(),
             })
         }
+    }
+    pub fn add_ring(&mut self, stream_id: u16, link: bool) -> Result<()> {
+        // NOTE: stream_id is reserved
+        self.rings.insert(stream_id as usize, Ring::new(link)?);
+        Ok(())
     }
     pub fn register(&self) -> u64 {
         self.contexts.physical() as u64
