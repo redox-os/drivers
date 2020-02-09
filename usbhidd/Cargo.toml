@@ -9,5 +9,6 @@ license = "MIT"
 
 [dependencies]
 bitflags = "1.2"
+orbclient = "0.3.27"
 ux = "0.1"
 xhcid = { path = "../xhcid" }

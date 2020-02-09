@@ -85,7 +85,7 @@ pub struct GlobalItemsState {
 #[derive(Debug)]
 pub struct Invalid;
 
-pub fn update_state(current_state: &mut GlobalItemsState, stack: &mut Vec<GlobalItemsState>, report_item: &ReportItem) -> Result<(), Invalid> {
+pub fn update_global_state(current_state: &mut GlobalItemsState, stack: &mut Vec<GlobalItemsState>, report_item: &ReportItem) -> Result<(), Invalid> {
     match report_item {
         ReportItem::Global(global) => match global {
             &GlobalItem::UsagePage(u) => current_state.usage_page = Some(u),
@@ -120,6 +120,37 @@ pub enum LocalItem {
     StringMaximum(u32),
     Delimeter(u32),
 }
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct LocalItemsState {
+    pub usage: Option<u32>,
+    pub usage_min: Option<u32>,
+    pub usage_max: Option<u32>,
+    pub desig_idx: Option<u32>,
+    pub desig_min: Option<u32>,
+    pub desig_max: Option<u32>,
+    pub str_idx: Option<u32>,
+    pub str_min: Option<u32>,
+    pub str_max: Option<u32>,
+}
+pub fn update_local_state(current_state: &mut LocalItemsState, report_item: &ReportItem) {
+    match report_item {
+        ReportItem::Local(local) => match local {
+            &LocalItem::Usage(u) => current_state.usage = Some(u),
+            &LocalItem::UsageMinimum(m) => current_state.usage_min = Some(m),
+            &LocalItem::UsageMaximum(m) => current_state.usage_max = Some(m),
+            &LocalItem::DesignatorIndex(i) => current_state.desig_idx = Some(i),
+            &LocalItem::DesignatorMinimum(m) => current_state.desig_min = Some(m),
+            &LocalItem::DesignatorMaximum(m) => current_state.desig_max = Some(m),
+            &LocalItem::StringIndex(i) => current_state.str_idx = Some(i),
+            &LocalItem::StringMinimum(m) => current_state.str_min = Some(m),
+            &LocalItem::StringMaximum(m) => current_state.str_max = Some(m),
+            &LocalItem::Delimeter(_) => todo!(),
+        },
+        _ => todo!(),
+    }
+}
+
 #[derive(Debug)]
 pub enum ReportItem {
     Main(MainItem),

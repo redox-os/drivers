@@ -1328,6 +1328,7 @@ name = "usbhidd"
 version = "0.1.0"
 dependencies = [
  "bitflags 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "orbclient 0.3.27 (registry+https://github.com/rust-lang/crates.io-index)",
  "ux 0.1.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "xhcid 0.1.0",
 ]
