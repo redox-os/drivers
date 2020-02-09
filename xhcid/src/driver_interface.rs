@@ -56,10 +56,19 @@ pub struct EndpDesc {
     pub interval: u8,
     pub ssc: Option<SuperSpeedCmp>,
 }
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum EndpDirection {
     Out,
     In,
     Bidirectional,
+}
+impl From<PortReqDirection> for EndpDirection {
+    fn from(d: PortReqDirection) -> Self {
+        match d {
+            PortReqDirection::DeviceToHost => Self::In,
+            PortReqDirection::HostToDevice => Self::Out,
+        }
+    }
 }
 
 impl EndpDesc {
@@ -343,6 +352,13 @@ impl XhciClientHandle {
         let path = format!("{}:port{}/endpoints/{}/status", self.scheme, self.port, num);
         let string = std::fs::read_to_string(path)?;
         Ok(string.parse()?)
+    }
+    pub fn open_endpoint(&self, num: u8, direction: PortReqDirection) -> result::Result<File, XhciClientHandleError> {
+        let path = format!("{}:port{}/endpoints/{}/transfer", self.scheme, self.port, num);
+        Ok(match direction {
+            PortReqDirection::HostToDevice => OpenOptions::new().read(false).write(true).create(false).open(path)?,
+            PortReqDirection::DeviceToHost => OpenOptions::new().read(true).write(false).create(false).open(path)?,
+        })
     }
     pub fn device_request<'a>(
         &self,

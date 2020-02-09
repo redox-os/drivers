@@ -16,19 +16,6 @@ fn div_round_up(num: u32, denom: u32) -> u32 {
     if num % denom == 0 { num / denom } else { num / denom + 1 }
 }
 
-bitflags! {
-    pub struct ModifierKeys: u8 {
-        const LEFT_CTRL = 1 << 0;
-        const LEFT_SHIFT = 1 << 1;
-        const LEFT_ALT = 1 << 2;
-        const LEFT_META = 1 << 3;
-        const RIGHT_CTRL = 1 << 4;
-        const RIGHT_SHIFT = 1 << 5;
-        const RIGHT_ALT = 1 << 6;
-        const RIGHT_META = 1 << 7;
-    }
-}
-
 struct BinaryView<'a> {
     data: &'a [u8],
     offset: usize,
@@ -189,11 +176,8 @@ fn main() {
 
         let orbital_socket = File::open("display:input").expect("Failed to open orbital input socket");
 
-        let mut pressed_keys = vec! [];
+        let mut pressed_keys = Vec::<u8>::new();
         let mut last_pressed_keys = pressed_keys.clone();
-
-        let mut modifier_keys = ModifierKeys::empty();
-        let mut last_modifier_keys = modifier_keys;
 
         loop {
             std::thread::sleep(std::time::Duration::from_millis(10));
@@ -209,27 +193,35 @@ fn main() {
                 let report_size = global_state.report_size.unwrap();
                 let report_count = global_state.report_count.unwrap();
 
-                if input.contains(MainItemFlags::VARIABLE) {
-                    // variable
-                    //assert_eq!(state.logical_max.unwrap() - state.logical_min.unwrap(), report_count, "modifiers don't map");
+                // TODO: For now, the dynamic value usages cannot overlap with selector usages...
+                // for now.
+
+                if local_state.usage_min == Some(224) && local_state.usage_max == Some(231) {
+                    // The usages that this descriptor references are all dynamic values.
+                } else {
+                    // The usages are selectors.
+                }
+
+                for report_index in 0..report_count {
+                }
+
+                /*if input.contains(MainItemFlags::VARIABLE) {
+                    // The item is a variable.
+
                     let binary_view = BinaryView::new(&report_buffer, bit_offset as usize, bit_length as usize);
-                    // PRETTYFYME
+
                     if report_count == 8 && report_size == 1 && local_state.usage_min == Some(224) && local_state.usage_max == Some(231) && global_state.logical_min == Some(0)  && global_state.logical_max == Some(1) {
-                        std::mem::swap(&mut modifier_keys, &mut last_modifier_keys);
-                        modifier_keys = match ModifierKeys::from_bits(binary_view.read_u8(0).unwrap()) {
-                            Some(f) => f,
-                            None => unreachable!(),
-                        };
                     } else {
                         println!("unknown report variable item");
                     }
                 } else {
+                    // The item is an array.
+
                     std::mem::swap(&mut pressed_keys, &mut last_pressed_keys);
                     pressed_keys.clear();
 
                     println!("INPUT FLAGS: {:?}", input);
                     assert_eq!(report_size, 8);
-                    // array
                     for report_index in 0..report_count as usize {
                         let binary_view = BinaryView::new(&report_buffer, bit_offset as usize + report_index * report_size as usize, report_size as usize);
                         let usage = binary_view.read_u8(0).expect("Failed to read array item");
@@ -238,10 +230,8 @@ fn main() {
                         }
                         println!("Report index array {}: {}", report_index, usage);
                     }
-
-                }
+                }*/
             }
-            let changed_modifier_keys = modifier_keys ^ last_modifier_keys;
             for (current, last) in pressed_keys.iter().copied().zip(last_pressed_keys.iter().copied()) {
                 if current == last { continue }
                 if current != 0 {

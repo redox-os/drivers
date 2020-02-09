@@ -147,7 +147,7 @@ pub fn update_local_state(current_state: &mut LocalItemsState, report_item: &Rep
             &LocalItem::StringMaximum(m) => current_state.str_max = Some(m),
             &LocalItem::Delimeter(_) => todo!(),
         },
-        _ => todo!(),
+        _ => (),
     }
 }
 

@@ -1,6 +1,6 @@
 use std::env;
 
-use xhcid_interface::XhciClientHandle;
+use xhcid_interface::{ConfigureEndpointsReq, XhciClientHandle};
 
 pub mod protocol;
 pub mod scsi;
@@ -17,6 +17,10 @@ fn main() {
     println!("USB SCSI driver spawned with scheme `{}`, port {}, protocol {}", scheme, port, protocol);
 
     let handle = XhciClientHandle::new(scheme, port);
+
+    handle.configure_endpoints(&ConfigureEndpointsReq {
+        config_desc: 0,
+    }).expect("Failed to configure endpoints");
+
     let protocol = protocol::setup(&handle, protocol);
-    
 }

@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use syscall::error::Result;
 use syscall::io::{Dma, Io, Mmio};
 
@@ -123,7 +125,7 @@ pub enum StreamContextType {
 
 pub struct StreamContextArray {
     pub contexts: Dma<[StreamContext]>,
-    pub rings: Vec<Ring>,
+    pub rings: BTreeMap<u16, Ring>,
 }
 
 impl StreamContextArray {
@@ -131,13 +133,26 @@ impl StreamContextArray {
         unsafe {
             Ok(Self {
                 contexts: Dma::zeroed_unsized(count)?,
-                rings: Vec::new(),
+                rings: BTreeMap::new(),
             })
         }
     }
     pub fn add_ring(&mut self, stream_id: u16, link: bool) -> Result<()> {
-        // NOTE: stream_id is reserved
-        self.rings.insert(stream_id as usize, Ring::new(link)?);
+        // NOTE: stream_id 0 is reserved
+        assert_ne!(stream_id, 0);
+
+        let ring = Ring::new(link)?;
+        let pointer = ring.register();
+        let sct = StreamContextType::PrimaryRing;
+
+        assert_eq!(pointer & (!0xE), pointer);
+        {
+            let context = &mut self.contexts[stream_id as usize];
+            context.trl.write((pointer as u32) | ((sct as u32) << 1));
+            context.trh.write((pointer >> 32) as u32);
+            // TODO: stopped edtla
+        }
+        self.rings.insert(stream_id, ring);
         Ok(())
     }
     pub fn register(&self) -> u64 {
