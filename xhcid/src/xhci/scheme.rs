@@ -8,8 +8,8 @@ use smallvec::{smallvec, SmallVec};
 use syscall::io::{Dma, Io};
 use syscall::scheme::SchemeMut;
 use syscall::{
-    Error, Result, Stat, EACCES, EBADF, EBADMSG, EEXIST, EINVAL, EIO, EISDIR, ENOENT, ENOSYS,
-    ENOTDIR, ENXIO, EOVERFLOW, EPERM, ESPIPE, MODE_CHR, MODE_DIR, MODE_FILE, O_CREAT, O_DIRECTORY,
+    Error, Result, Stat, EACCES, EBADF, EBADFD, EBADMSG, EEXIST, EINVAL, EIO, EISDIR, ENOENT, ENOSYS,
+    ENOTDIR, ENXIO, EOPNOTSUPP, EOVERFLOW, EPERM, ESPIPE, MODE_CHR, MODE_DIR, MODE_FILE, O_CREAT, O_DIRECTORY,
     O_RDONLY, O_RDWR, O_STAT, O_WRONLY, SEEK_CUR, SEEK_END, SEEK_SET,
 };
 
@@ -168,7 +168,7 @@ impl AnyDescriptor {
 }
 
 impl Xhci {
-    fn set_configuration(&mut self, port: usize, config: u16) -> Result<()> {
+    fn device_req_no_data(&mut self, port: usize, req: usb::Setup) -> Result<()> {
         let ps = self.port_states.get_mut(&port).ok_or(Error::new(EIO))?;
         let ring = ps
             .endpoint_states
@@ -180,7 +180,7 @@ impl Xhci {
         {
             let (cmd, cycle) = ring.next();
             cmd.setup(
-                usb::Setup::set_configuration(config),
+                req,
                 TransferKind::NoData,
                 cycle,
             );
@@ -201,13 +201,13 @@ impl Xhci {
 
             if (status >> 24) != TrbCompletionCode::Success as u32 {
                 println!(
-                    "SET_CONFIGURATION ERROR, COMPLETION CODE {:#0x}",
+                    "DEVICE_REQ ERROR, COMPLETION CODE {:#0x}",
                     (status >> 24)
                 );
             }
 
             println!(
-                "SET_CONFIGURATION EVENT {:#0x} {:#0x} {:#0x}",
+                "DEVICE_REQ EVENT {:#0x} {:#0x} {:#0x}",
                 event.data.read(),
                 status,
                 control
@@ -218,10 +218,26 @@ impl Xhci {
 
         Ok(())
     }
+    fn set_configuration(&mut self, port: usize, config: u8) -> Result<()> {
+        self.device_req_no_data(port, usb::Setup::set_configuration(config))
+    }
+    fn set_interface(&mut self, port: usize, interface_num: u8, alternate_setting: u8) -> Result<()> {
+        self.device_req_no_data(port, usb::Setup::set_interface(interface_num, alternate_setting))
+    }
 
     fn configure_endpoints(&mut self, port: usize, json_buf: &[u8]) -> Result<()> {
-        let req: ConfigureEndpointsReq =
+        let mut req: ConfigureEndpointsReq =
             serde_json::from_slice(json_buf).or(Err(Error::new(EBADMSG)))?;
+
+        if (!self.cap.cic() || !self.op.cie()) && (req.config_desc != 0 || req.interface_desc != None || req.alternate_setting != None) {
+            //return Err(Error::new(EOPNOTSUPP));
+            req.config_desc = 0;
+            req.alternate_setting = None;
+            req.interface_desc = None;
+        }
+        if req.interface_desc.is_some() != req.alternate_setting.is_some() {
+            return Err(Error::new(EBADMSG));
+        }
 
         let port_state = self.port_states.get_mut(&port).ok_or(Error::new(ENOENT))?;
         let input_context: &mut Dma<InputContext> = &mut port_state.input_context;
@@ -236,7 +252,7 @@ impl Xhci {
         let current_slot_a = input_context.device.slot.a.read();
 
         let endpoints =
-            &port_state.dev_desc.config_descs[req.config_desc].interface_descs[0].endpoints;
+            &port_state.dev_desc.config_descs.get(req.config_desc as usize).ok_or(Error::new(EBADMSG))?.interface_descs[0].endpoints;
 
         if endpoints.len() >= 31 {
             return Err(Error::new(EIO));
@@ -249,13 +265,15 @@ impl Xhci {
                 | ((u32::from(new_context_entries) << CONTEXT_ENTRIES_SHIFT)
                     & CONTEXT_ENTRIES_MASK),
         );
+        input_context.control.write((u32::from(req.alternate_setting.unwrap_or(0)) << 16) | (u32::from(req.interface_desc.unwrap_or(0)) << 8) | u32::from(req.config_desc));
 
         let lec = self.cap.lec();
 
         for index in 0..endpoints.len() as u8 {
             let endp_num = index + 1;
+            let xhc_endp_num = endp_num + 1;
 
-            input_context.add_context.writef(1 << (endp_num + 1), true);
+            input_context.add_context.writef(1 << xhc_endp_num, true);
 
             let endp_ctx = input_context
                 .device
@@ -394,10 +412,14 @@ impl Xhci {
         let configuration_value = port_state
             .dev_desc
             .config_descs
-            .get(req.config_desc)
+            .get(req.config_desc as usize)
             .ok_or(Error::new(EIO))?
             .configuration_value;
-        self.set_configuration(port, configuration_value.into())?;
+        self.set_configuration(port, configuration_value)?;
+
+        if let (Some(interface_num), Some(alternate_setting)) = (req.interface_desc, req.alternate_setting) {
+            self.set_interface(port, interface_num, alternate_setting)?;
+        }
 
         Ok(())
     }
@@ -410,6 +432,7 @@ impl Xhci {
     // TODO: Rename DeviceReqData to something more general.
     fn transfer(&mut self, port_num: usize, endp_idx: u8, mut buf: DeviceReqData) -> Result<u32> {
         let endp_num = endp_idx + 1;
+        let xhc_endp_num = endp_num + 1;
         // TODO: Check that buf has a nonzero size, otherwise (at least for Rust's GlobalAlloc),
         // UB.
         let dma_buffer = match buf {
@@ -424,18 +447,19 @@ impl Xhci {
             DeviceReqData::NoData => None,
         };
 
-        let port_state = self.port_states.get_mut(&port_num).ok_or(Error::new(EBADF))?;
-        let endp_desc: &EndpDesc = port_state.dev_desc.config_descs.get(0).ok_or(Error::new(EIO))?.interface_descs.get(0).ok_or(Error::new(EIO))?.endpoints.get(endp_idx as usize).ok_or(Error::new(EBADF))?;
+        let port_state = self.port_states.get_mut(&port_num).ok_or(Error::new(EBADFD))?;
+        let endp_desc: &EndpDesc = port_state.dev_desc.config_descs.get(0).ok_or(Error::new(EIO))?.interface_descs.get(0).ok_or(Error::new(EIO))?.endpoints.get(endp_idx as usize).ok_or(Error::new(EBADFD))?;
 
         if endp_desc.is_isoch() {
             return Err(Error::new(ENOSYS));
         }
 
         if EndpDirection::from(buf.direction()) != endp_desc.direction() {
+            dbg!(buf.direction(), endp_desc, endp_idx, endp_num);
             return Err(Error::new(EBADF));
         }
 
-        let endp_state = port_state.endpoint_states.get_mut(&endp_idx).ok_or(Error::new(EBADF))?;
+        let endp_state = port_state.endpoint_states.get_mut(&endp_num).ok_or(Error::new(EBADF))?;
 
         let ring: &mut Ring = match endp_state {
             EndpointState::Ready(super::RingOrStreams::Ring(ref mut ring)) => ring,
@@ -462,7 +486,7 @@ impl Xhci {
         }
 
         let stream_id = 1u16;
-        self.dbs[port_state.slot as usize].write(u32::from(endp_num) | (u32::from(stream_id) << 16));
+        self.dbs[port_state.slot as usize].write(u32::from(xhc_endp_num) | (u32::from(stream_id) << 16));
 
         let bytes_transferred = {
             let event = self.cmd.next_event();
@@ -924,7 +948,7 @@ impl SchemeMut for Xhci {
                             // endpoint.
                             return Err(Error::new(ENOENT));
                         }
-                        let endp_desc = &port_state.dev_desc.config_descs.get(0).ok_or(Error::new(EIO))?.interface_descs.get(0).ok_or(Error::new(EIO))?.endpoints.get(endpoint_num as usize).ok_or(Error::new(ENOENT))?;
+                        let endp_desc = &port_state.dev_desc.config_descs.get(0).ok_or(Error::new(EIO))?.interface_descs.get(0).ok_or(Error::new(EIO))?.endpoints.get(endpoint_num as usize - 1).ok_or(Error::new(ENOENT))?;
                         match endp_desc.direction() {
                             EndpDirection::Out => if flags & O_RDWR != O_WRONLY && flags & O_STAT != 0 {
                                 return Err(Error::new(EACCES));
@@ -1092,7 +1116,7 @@ impl SchemeMut for Xhci {
 
             &mut Handle::Endpoint(port_num, endp_num, ref mut st) => match st {
                 EndpointHandleTy::Transfer => {
-                    self.transfer_read(port_num, endp_num, buf)?;
+                    self.transfer_read(port_num, endp_num - 1, buf)?;
                     // TODO: Perhaps transfers with large buffers could be broken up a to smaller
                     // transfers.
                     Ok(buf.len())
@@ -1172,7 +1196,7 @@ impl SchemeMut for Xhci {
                 Ok(buf.len())
             }
             &mut Handle::Endpoint(port_num, endp_num, EndpointHandleTy::Transfer) => {
-                self.transfer_write(port_num, endp_num, buf)?;
+                self.transfer_write(port_num, endp_num - 1, buf)?;
                 // TODO
                 Ok(buf.len())
             }

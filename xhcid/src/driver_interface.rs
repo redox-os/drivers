@@ -16,8 +16,9 @@ pub use crate::usb::{EndpointTy, ENDP_ATTR_TY_MASK};
 #[derive(Serialize, Deserialize)]
 pub struct ConfigureEndpointsReq {
     /// Index into the configuration descriptors of the device descriptor.
-    pub config_desc: usize,
-    // TODO: Support multiple alternate interfaces as well.
+    pub config_desc: u8,
+    pub interface_desc: Option<u8>,
+    pub alternate_setting: Option<u8>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -65,8 +66,8 @@ pub enum EndpDirection {
 impl From<PortReqDirection> for EndpDirection {
     fn from(d: PortReqDirection) -> Self {
         match d {
-            PortReqDirection::DeviceToHost => Self::In,
             PortReqDirection::HostToDevice => Self::Out,
+            PortReqDirection::DeviceToHost => Self::In,
         }
     }
 }
@@ -305,9 +306,6 @@ impl DeviceReqData<'_> {
             _ => None,
         }
     }
-}
-
-impl<'a> DeviceReqData<'a> {
     pub fn direction(&self) -> PortReqDirection {
         match self {
             DeviceReqData::Out(_) => PortReqDirection::HostToDevice,
@@ -345,13 +343,20 @@ impl XhciClientHandle {
         let string = std::fs::read_to_string(path)?;
         Ok(string.parse()?)
     }
-    pub fn endpoint_status(
+    pub fn endpoint_onetime_status(
         &self,
         num: u8,
     ) -> result::Result<EndpointStatus, XhciClientHandleError> {
         let path = format!("{}:port{}/endpoints/{}/status", self.scheme, self.port, num);
         let string = std::fs::read_to_string(path)?;
         Ok(string.parse()?)
+    }
+    pub fn open_endpoint_status(
+        &self,
+        num: u8,
+    ) -> result::Result<XhciEndpStatusHandle, XhciClientHandleError> {
+        let path = format!("{}:port{}/endpoints/{}/status", self.scheme, self.port, num);
+        Ok(XhciEndpStatusHandle(OpenOptions::new().read(true).write(false).create(false).open(path)?))
     }
     pub fn open_endpoint(&self, num: u8, direction: PortReqDirection) -> result::Result<File, XhciClientHandleError> {
         let path = format!("{}:port{}/endpoints/{}/transfer", self.scheme, self.port, num);
@@ -412,6 +417,22 @@ impl XhciClientHandle {
     }
     pub fn get_descriptor(&self, recipient: PortReqRecipient, ty: u8, idx: u8, windex: u16, buffer: &mut [u8]) -> result::Result<(), XhciClientHandleError> {
         self.device_request(PortReqTy::Standard, recipient, 0x06, (u16::from(ty) << 8) | u16::from(idx), windex, DeviceReqData::In(buffer))
+    }
+    pub fn clear_feature(&self, recipient: PortReqRecipient, index: u16, feature_sel: u16) -> result::Result<(), XhciClientHandleError> {
+        self.device_request(PortReqTy::Standard, recipient, 0x01, feature_sel, index, DeviceReqData::NoData)
+    }
+}
+
+#[derive(Debug)]
+pub struct XhciEndpStatusHandle(File);
+
+impl XhciEndpStatusHandle {
+    pub fn current_status(&mut self) -> result::Result<EndpointStatus, XhciClientHandleError> {
+        self.0.seek(io::SeekFrom::Start(0))?;
+        let mut status_buf = [0u8; 16];
+        let len = self.0.read(&mut status_buf)?;
+        let status = std::str::from_utf8(&status_buf[..len]).or(Err(XhciClientHandleError::InvalidResponse(Invalid)))?;
+        Ok(status.parse::<EndpointStatus>().or(Err(XhciClientHandleError::InvalidResponse(Invalid)))?)
     }
 }
 

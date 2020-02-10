@@ -1,5 +1,7 @@
+use std::io;
+
 use thiserror::Error;
-use xhcid_interface::{XhciClientHandle, XhciClientHandleError};
+use xhcid_interface::{DevDesc, ConfDesc, IfDesc, XhciClientHandle, XhciClientHandleError};
 
 #[derive(Debug, Error)]
 pub enum ProtocolError {
@@ -8,11 +10,16 @@ pub enum ProtocolError {
 
     #[error("xhcid connection error: {0}")]
     XhciError(#[from] XhciClientHandleError),
+
+    #[error("i/o error")]
+    IoError(#[from] io::Error),
+
+    #[error("attempted recovery failed")]
+    RecoveryFailed,
 }
 
 pub trait Protocol {
-    fn send_command_block(&mut self, cb: &[u8]) -> Result<(), ProtocolError>;
-    fn recv_command_block(&mut self, cb: &mut [u8]) -> Result<(), ProtocolError>;
+    fn send_command(&mut self, command: &[u8]) -> Result<(), ProtocolError>;
 }
 
 /// Bulk-only transport
@@ -24,9 +31,9 @@ mod uas {
 
 use bot::BulkOnlyTransport;
 
-pub fn setup<'a>(handle: &'a XhciClientHandle, protocol: u8) -> Option<Box<dyn Protocol + 'a>> {
+pub fn setup<'a>(handle: &'a XhciClientHandle, protocol: u8, dev_desc: &DevDesc, conf_desc: &ConfDesc, if_desc: &IfDesc) -> Option<Box<dyn Protocol + 'a>> {
     match protocol {
-        0x50 => Some(Box::new(BulkOnlyTransport::init(handle).unwrap())),
+        0x50 => Some(Box::new(BulkOnlyTransport::init(handle, conf_desc, if_desc).unwrap())),
         _ => None,
     }
 }

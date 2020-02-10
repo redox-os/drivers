@@ -18,9 +18,35 @@ fn main() {
 
     let handle = XhciClientHandle::new(scheme, port);
 
+    let desc = handle.get_standard_descs().expect("Failed to get standard descriptors");
+
+    // TODO: Perhaps the drivers should just be given the config, interface, and alternate setting
+    // from xhcid.
+    let (conf_desc, configuration_value, (if_desc, interface_num, alternate_setting)) = desc.config_descs.iter().find_map(|config_desc| {
+        let interface_desc = config_desc.interface_descs.iter().find_map(|if_desc| if if_desc.class == 8 && if_desc.sub_class == 6 && if_desc.protocol == 0x50 {
+            Some((if_desc.clone(), if_desc.number, if_desc.alternate_setting))
+        } else {
+            None
+        })?;
+        Some((config_desc.clone(), config_desc.configuration_value, interface_desc))
+    }).expect("Failed to find suitable configuration");
+
     handle.configure_endpoints(&ConfigureEndpointsReq {
-        config_desc: 0,
+        config_desc: configuration_value,
+        interface_desc: Some(interface_num),
+        alternate_setting: Some(alternate_setting),
     }).expect("Failed to configure endpoints");
 
-    let protocol = protocol::setup(&handle, protocol);
+    let mut protocol = protocol::setup(&handle, protocol, &desc, &conf_desc, &if_desc).expect("Failed to setup protocol");
+
+    let get_info = {
+        // Max number of bytes that can be recieved from a "REPORT IDENTIFYING INFORMATION"
+        // command.
+        let alloc_len = 256; 
+        let info_ty = scsi::cmds::ReportIdInfoInfoTy::IdentInfoSupp;
+        let control = 0; // TODO: NACA?
+        scsi::cmds::ReportIdentInfo::new(alloc_len, info_ty, control)
+    };
+    use protocol::Protocol;
+    protocol.send_command(unsafe { plain::as_bytes(&get_info) }).expect("Failed to send command");
 }

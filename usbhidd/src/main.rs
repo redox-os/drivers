@@ -107,7 +107,7 @@ fn main() {
         println!("{:?}", item);
     }
 
-    handle.configure_endpoints(&ConfigureEndpointsReq { config_desc: 0 }).expect("Failed to configure endpoints");
+    handle.configure_endpoints(&ConfigureEndpointsReq { config_desc: 0, interface_desc: None, alternate_setting: None }).expect("Failed to configure endpoints");
 
     let (mut global_state, mut local_state, mut stack) = (GlobalItemsState::default(), LocalItemsState::default(), Vec::new());
 

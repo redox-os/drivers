@@ -13,6 +13,26 @@ pub struct ReportIdentInfo {
     pub info_ty: u8,
     pub control: u8,
 }
+impl ReportIdentInfo {
+    pub fn new(alloc_len: u32, info_ty: ReportIdInfoInfoTy, control: u8) -> Self {
+        Self {
+            opcode: Opcode::ServiceActionA3 as u8,
+            serviceaction: ServiceActionA3::ReportIdentInfo as u8,
+            _rsvd: 0,
+            restricted: 0,
+            alloc_len: u32::to_le(alloc_len),
+            info_ty: (info_ty as u8) << REP_ID_INFO_INFO_TY_SHIFT,
+            control,
+        }
+    }
+}
+#[repr(u8)]
+pub enum ReportIdInfoInfoTy {
+    PeripheralDevIdInfo = 0b000_0000,
+    PeripheralDevTextIdInfo = 0b000_0010,
+    IdentInfoSupp = 0b111_1111,
+    // every other number ending with a 1 is restricted
+}
 
 pub const REP_ID_INFO_INFO_TY_MASK: u8 = 0xFE;
 pub const REP_ID_INFO_INFO_TY_SHIFT: u8 = 1;

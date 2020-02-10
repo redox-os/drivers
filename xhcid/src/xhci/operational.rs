@@ -16,10 +16,10 @@ pub struct OperationalRegs {
 pub const OP_CONFIG_CIE_BIT: u32 = 1 << 9;
 
 impl OperationalRegs {
-    fn cie(&self) -> bool {
+    pub fn cie(&self) -> bool {
         self.config.readf(OP_CONFIG_CIE_BIT)
     }
-    fn set_cie(&mut self, value: bool) {
+    pub fn set_cie(&mut self, value: bool) {
         self.config.writef(OP_CONFIG_CIE_BIT, value)
     }
 }

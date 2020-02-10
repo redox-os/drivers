@@ -398,6 +398,10 @@ impl Xhci {
                     .collect::<BTreeMap<_, _>>(),
                 };
 
+                if self.cap.cic() {
+                    self.op.set_cie(true);
+                }
+
                 /*match self.spawn_drivers(i, &mut port_state) {
                     Ok(()) => (),
                     Err(err) => println!("Failed to spawn driver for port {}: `{}`", i, err),
