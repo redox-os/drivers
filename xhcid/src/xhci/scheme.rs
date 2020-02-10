@@ -44,7 +44,10 @@ pub enum EndpointHandleTy {
 
 pub enum PortReqState {
     Init,
-    Ready(TransferKind, Dma<[u8]>), // direction, buffers
+    WaitingForDeviceBytes(Dma<[u8]>, usb::Setup), // buffer, setup params
+    WaitingForHostBytes(Dma<[u8]>, usb::Setup), // buffer, setup params
+    TmpSetup(usb::Setup),
+    Tmp,
 }
 
 pub enum Handle {
@@ -686,38 +689,11 @@ impl Xhci {
 
         bytes_to_read
     }
-    fn port_req(&mut self, fd: usize, port_num: usize, buf: &[u8]) -> Result<()> {
-        use usb::setup::*;
-
+    fn port_req_transfer(&mut self, port_num: usize, data_buffer: Option<&mut Dma<[u8]>>, setup: usb::Setup, transfer_kind: TransferKind) -> Result<()> {
         // TODO: This json format might be too high level, but is useful for debugging,
         // but when actual device-specific drivers are written, a binary format would
         // be better. Maybe something simple like bincode could be used, if a custom binary struct
         // is too much overkill.
-
-        // FIXME: Make sure there aren't any other PortReq handles, perhaps by storing the state in
-        // PortState?
-
-        let req = serde_json::from_slice::<PortReq>(buf).or(Err(Error::new(EBADMSG)))?;
-
-        let direction = ReqDirection::from(req.direction);
-        let ty = ReqType::from(req.req_type) as u8;
-        let recipient = ReqRecipient::from(req.req_recipient) as u8;
-
-        let transfer_kind = match direction {
-            _ if !req.transfers_data => TransferKind::NoData,
-            ReqDirection::DeviceToHost => TransferKind::In,
-            ReqDirection::HostToDevice => TransferKind::Out,
-        };
-
-        let setup = Setup {
-            kind: ((direction as u8) << USB_SETUP_DIR_SHIFT)
-                | (ty << USB_SETUP_REQ_TY_SHIFT)
-                | (recipient << USB_SETUP_RECIPIENT_SHIFT),
-            request: req.request,
-            value: req.value,
-            index: req.index,
-            length: req.length,
-        };
 
         let port_state = self
             .port_states
@@ -735,28 +711,19 @@ impl Xhci {
             _ => return Err(Error::new(EIO)),
         };
 
-        let mut buffer = None;
-
         {
             let (cmd, cycle) = ring.next();
-            cmd.setup(setup, transfer_kind, cycle);
+            cmd.setup(setup, TransferKind::In, cycle);
         }
         if transfer_kind != TransferKind::NoData {
             let (cmd, cycle) = ring.next();
 
-            // TODO: Reuse buffers, or something.
-            // TODO: Validate the size.
-            // TODO: Sizes above 65536, *perhaps*.
-            let data_buffer = unsafe { Dma::<[u8]>::zeroed_unsized(req.length as usize)? };
-            assert_eq!(data_buffer.len(), req.length as usize);
-
             cmd.data(
-                data_buffer.physical(),
-                req.length,
+                data_buffer.as_ref().map(|dma| dma.physical()).unwrap_or(0),
+                setup.length,
                 transfer_kind == TransferKind::In,
                 cycle,
             );
-            buffer = Some(data_buffer);
         }
         {
             let (cmd, cycle) = ring.next();
@@ -780,17 +747,101 @@ impl Xhci {
                 );
             }
         }
-
-        self.run.ints[0].erdp.write(self.cmd.erdp());
-
-        match self.handles.get_mut(&fd).ok_or(Error::new(EBADF))? {
-            Handle::PortReq(_, ref mut st) if buffer.is_some() => {
-                *st = PortReqState::Ready(transfer_kind, buffer.unwrap())
-            }
-            _ => return Err(Error::new(EBADF)),
-        }
-
         Ok(())
+    }
+    fn port_req_init_st(&mut self, port_num: usize, req: &PortReq) -> Result<PortReqState> {
+        use usb::setup::*;
+
+        let direction = ReqDirection::from(req.direction);
+        let ty = ReqType::from(req.req_type) as u8;
+        let recipient = ReqRecipient::from(req.req_recipient) as u8;
+
+        let transfer_kind = match direction {
+            _ if !req.transfers_data => TransferKind::NoData,
+            ReqDirection::DeviceToHost => TransferKind::In,
+            ReqDirection::HostToDevice => TransferKind::Out,
+        };
+
+        let setup = Setup {
+            kind: ((direction as u8) << USB_SETUP_DIR_SHIFT)
+                | (ty << USB_SETUP_REQ_TY_SHIFT)
+                | (recipient << USB_SETUP_RECIPIENT_SHIFT),
+            request: req.request,
+            value: req.value,
+            index: req.index,
+            length: req.length,
+        };
+        // TODO: Reuse buffers, or something.
+        // TODO: Validate the size.
+        // TODO: Sizes above 65536, *perhaps*.
+        let data_buffer = unsafe { Dma::<[u8]>::zeroed_unsized(req.length as usize)? };
+        assert_eq!(data_buffer.len(), req.length as usize);
+
+        Ok(match transfer_kind {
+            TransferKind::In => PortReqState::WaitingForDeviceBytes(data_buffer, setup),
+            TransferKind::Out => PortReqState::WaitingForHostBytes(data_buffer, setup),
+            TransferKind::NoData => PortReqState::TmpSetup(setup),
+            _ => unreachable!(),
+        })
+        // FIXME: Make sure there aren't any other PortReq handles, perhaps by storing the state in
+        // PortState?
+    }
+    fn handle_port_req_write(&mut self, fd: usize, port_num: usize, mut st: PortReqState, buf: &[u8]) -> Result<usize> {
+        let bytes_written = match st {
+            PortReqState::Init => {
+                let req = serde_json::from_slice::<PortReq>(buf).or(Err(Error::new(EBADMSG)))?;
+
+                st = self.port_req_init_st(port_num, &req)?;
+
+                if let PortReqState::TmpSetup(setup) = st {
+                    // No need for any additional reads or writes, before completing.
+                    self.port_req_transfer(port_num, None, setup, TransferKind::NoData)?;
+                    st = PortReqState::Init;
+                }
+
+                buf.len()
+            }
+            PortReqState::WaitingForHostBytes(mut dma_buffer, setup) => {
+                if buf.len() != dma_buffer.len() {
+                    return Err(Error::new(EINVAL));
+                }
+                dma_buffer.copy_from_slice(buf);
+
+                self.port_req_transfer(port_num, Some(&mut dma_buffer), setup, TransferKind::Out)?;
+                st = PortReqState::Init;
+
+                buf.len()
+            }
+            PortReqState::WaitingForDeviceBytes(_, _) => return Err(Error::new(EBADF)),
+            PortReqState::Tmp | PortReqState::TmpSetup(_) => unreachable!(),
+        };
+        match self.handles.get_mut(&fd).ok_or(Error::new(EBADF))? {
+            Handle::PortReq(_, ref mut state) => *state = st,
+            _ => unreachable!(),
+        }
+        Ok(bytes_written)
+    }
+    fn handle_port_req_read(&mut self, fd: usize, port_num: usize, mut st: PortReqState, buf: &mut [u8]) -> Result<usize> {
+        let bytes_read = match st {
+            PortReqState::WaitingForDeviceBytes(mut dma_buffer, setup) => {
+                if buf.len() != dma_buffer.len() {
+                    return Err(Error::new(EINVAL));
+                }
+                self.port_req_transfer(port_num, Some(&mut dma_buffer), setup, TransferKind::In)?;
+                buf.copy_from_slice(&dma_buffer);
+
+                st = PortReqState::Init;
+
+                buf.len()
+            }
+            PortReqState::Init | PortReqState::WaitingForHostBytes(_, _) => return Err(Error::new(EBADF)),
+            PortReqState::Tmp | PortReqState::TmpSetup(_) => unreachable!(),
+        };
+        match self.handles.get_mut(&fd).ok_or(Error::new(EBADF))? {
+            Handle::PortReq(_, ref mut state) => *state = st,
+            _ => unreachable!(),
+        }
+        Ok(bytes_read)
     }
 }
 
@@ -1013,10 +1064,11 @@ impl SchemeMut for Xhci {
                 stat.st_mode = MODE_FILE;
                 stat.st_size = buf.len() as u64;
             }
-            Handle::PortReq(_, PortReqState::Ready(TransferKind::In, ref buf)) => {
+            Handle::PortReq(_, PortReqState::WaitingForDeviceBytes(ref buf, _)) | Handle::PortReq(_, PortReqState::WaitingForHostBytes(ref buf, _)) => {
                 stat.st_mode = MODE_CHR;
                 stat.st_size = buf.len() as u64;
             }
+            Handle::PortReq(_, PortReqState::Tmp) | Handle::PortReq(_, PortReqState::TmpSetup(_)) => unreachable!(),
 
             Handle::PortState(_, _) | Handle::PortReq(_, _) => stat.st_mode = MODE_CHR,
             Handle::Endpoint(_, _, st) => match st {
@@ -1181,16 +1233,9 @@ impl SchemeMut for Xhci {
 
                 Ok(Self::write_dyn_string(string, buf, offset))
             }
-            Handle::PortReq(_, st) => {
-                if let PortReqState::Ready(TransferKind::In, ref src_buf) = st {
-                    if buf.len() != src_buf.len() {
-                        return Err(Error::new(EINVAL));
-                    }
-                    buf.copy_from_slice(src_buf);
-                    Ok(buf.len())
-                } else {
-                    Err(Error::new(EBADF))
-                }
+            &mut Handle::PortReq(port_num, ref mut st) => {
+                let state = std::mem::replace(st, PortReqState::Tmp);
+                self.handle_port_req_read(fd, port_num, state, buf)
             }
         }
     }
@@ -1205,16 +1250,12 @@ impl SchemeMut for Xhci {
                 // TODO
                 Ok(buf.len())
             }
-            &mut Handle::PortReq(port_num, PortReqState::Init) => {
-                self.port_req(fd, port_num, buf)?;
-                Ok(buf.len())
+            &mut Handle::PortReq(port_num, ref mut st) => {
+                let state = std::mem::replace(st, PortReqState::Tmp);
+                self.handle_port_req_write(fd, port_num, state, buf)
             }
             // TODO: Introduce PortReqState::Waiting, which this write call changes to
             // PortReqState::ReadyToWrite when all bytes are written.
-            &mut Handle::PortReq(
-                port_num,
-                PortReqState::Ready(TransferKind::Out, ref mut src_buf),
-            ) => return Err(Error::new(ENOSYS)),
             _ => return Err(Error::new(EBADF)),
         }
     }
