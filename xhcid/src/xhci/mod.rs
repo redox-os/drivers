@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::convert::TryFrom;
 use std::pin::Pin;
+use std::ptr::NonNull;
 use std::sync::{atomic::AtomicBool, Arc, Mutex, Weak};
 use std::{mem, process, slice, sync::atomic, task};
 
@@ -27,6 +28,7 @@ use self::capability::CapabilityRegs;
 use self::command::CommandRing;
 use self::context::{DeviceContextList, InputContext, StreamContextArray};
 use self::doorbell::Doorbell;
+use self::extended::{CapabilityId, ExtendedCapabilitiesIter, ProtocolSpeed, SupportedProtoCap};
 use self::operational::OperationalRegs;
 use self::port::Port;
 use self::ring::Ring;
@@ -117,6 +119,8 @@ pub struct Xhci {
     dev_ctx: DeviceContextList,
     cmd: CommandRing,
 
+    base: *const u8,
+
     handles: BTreeMap<usize, scheme::Handle>,
     next_handle: usize,
     port_states: BTreeMap<usize, PortState>,
@@ -169,10 +173,7 @@ impl Xhci {
         let op = unsafe { &mut *(op_base as *mut OperationalRegs) };
         println!("  - OP {:X}", op_base);
 
-        let max_slots;
-        let max_ports;
-
-        {
+        let (max_slots, max_ports) = {
             println!("  - Wait for ready");
             // Wait until controller is ready
             while op.usb_sts.readf(1 << 11) {
@@ -196,13 +197,13 @@ impl Xhci {
             }
 
             println!("  - Read max slots");
-            // Read maximum slots and ports
-            let hcs_params1 = cap.hcs_params1.read();
-            max_slots = (hcs_params1 & 0xFF) as u8;
-            max_ports = ((hcs_params1 & 0xFF000000) >> 24) as u8;
+
+            let max_slots = cap.max_slots();
+            let max_ports = cap.max_ports();
 
             println!("  - Max Slots: {}, Max Ports {}", max_slots, max_ports);
-        }
+            (max_slots, max_ports)
+        };
 
         let port_base = op_base + 0x400;
         let ports =
@@ -218,11 +219,12 @@ impl Xhci {
         println!("  - RUNTIME {:X}", run_base);
 
         let mut xhci = Xhci {
-            cap: cap,
-            op: op,
-            ports: ports,
-            dbs: dbs,
-            run: run,
+            base: address as *const u8,
+            cap,
+            op,
+            ports,
+            dbs,
+            run,
             dev_ctx: DeviceContextList::new(max_slots)?,
             cmd: CommandRing::new()?,
             handles: BTreeMap::new(),
@@ -292,6 +294,10 @@ impl Xhci {
         self.dbs[0].write(0);
 
         println!("  - XHCI initialized");
+
+        for (pointer, capability) in self.capabilities_iter() {
+            dbg!(pointer, capability);
+        }
     }
 
     pub fn enable_port_slot(cmd: &mut CommandRing, dbs: &mut [Doorbell]) -> u8 {
@@ -345,7 +351,7 @@ impl Xhci {
                 {
                     input.add_context.write(1 << 1 | 1); // Enable the slot (zeroth bit) and the control endpoint (first bit).
 
-                    input.device.slot.a.write((1 << 27) | (speed << 20)); // FIXME: The speed field, bits 23:20, is deprecated.
+                    input.device.slot.a.write((1 << 27) | (u32::from(speed) << 20)); // FIXME: The speed field, bits 23:20, is deprecated.
                     input.device.slot.b.write(((i as u32 + 1) & 0xFF) << 16);
 
                     // control endpoint?
@@ -493,6 +499,93 @@ impl Xhci {
         }
 
         Ok(())
+    }
+    pub fn capabilities_iter(&self) -> ExtendedCapabilitiesIter {
+        unsafe { ExtendedCapabilitiesIter::new((self.base as *mut u8).offset((self.cap.ext_caps_ptr_in_dwords() << 2) as isize)) }
+    }
+    pub fn supported_protocols_iter(&self) -> impl Iterator<Item = &'static SupportedProtoCap> {
+        self.capabilities_iter().filter_map(|(pointer, cap_num)| unsafe {
+            if cap_num == CapabilityId::SupportedProtocol as u8 {
+                Some(&*pointer.cast::<SupportedProtoCap>().as_ptr())
+            } else {
+                None
+            }
+        })
+    }
+    pub fn supported_protocol_speeds(&self, port: u8) -> Option<impl Iterator<Item = &'static ProtocolSpeed>> {
+        use extended::*;
+        const DEFAULT_SUPP_PROTO_SPEEDS: [ProtocolSpeed; 7] = [
+            // Full-speed
+            ProtocolSpeed::from_raw(
+                (Plt::Symmetric as u32) << PROTO_SPEED_PLT_SHIFT
+                    | (false as u32) << PROTO_SPEED_PFD_SHIFT
+                    | (Psie::Mbps as u32) << PROTO_SPEED_PSIE_SHIFT
+                    | 12 << PROTO_SPEED_PSIM_SHIFT
+                    | 1 << PROTO_SPEED_PSIV_SHIFT
+            ),
+            // Low-speed
+            ProtocolSpeed::from_raw(
+                (Plt::Symmetric as u32) << PROTO_SPEED_PLT_SHIFT
+                    | (false as u32) << PROTO_SPEED_PFD_SHIFT
+                    | (Psie::Kbps as u32) << PROTO_SPEED_PSIE_SHIFT
+                    | 1500 << PROTO_SPEED_PSIM_SHIFT
+                    | 2 << PROTO_SPEED_PSIV_SHIFT
+            ),
+            // High-speed
+            ProtocolSpeed::from_raw(
+                (Plt::Symmetric as u32) << PROTO_SPEED_PLT_SHIFT
+                    | (false as u32) << PROTO_SPEED_PFD_SHIFT
+                    | (Psie::Mbps as u32) << PROTO_SPEED_PSIE_SHIFT
+                    | 480 << PROTO_SPEED_PSIM_SHIFT
+                    | 3 << PROTO_SPEED_PSIV_SHIFT
+            ),
+            // SuperSpeed Gen1 x1
+            ProtocolSpeed::from_raw(
+                (Plt::Symmetric as u32) << PROTO_SPEED_PLT_SHIFT
+                    | (true as u32) << PROTO_SPEED_PFD_SHIFT
+                    | (Psie::Gbps as u32) << PROTO_SPEED_PSIE_SHIFT
+                    | 5 << PROTO_SPEED_PSIM_SHIFT
+                    | (Lp::SuperSpeed as u32) << PROTO_SPEED_LP_SHIFT
+                    | 4 << PROTO_SPEED_PSIV_SHIFT
+            ),
+            // SuperSpeedPlus Gen2 x1
+            ProtocolSpeed::from_raw(
+                (Plt::Symmetric as u32) << PROTO_SPEED_PLT_SHIFT
+                    | (true as u32) << PROTO_SPEED_PFD_SHIFT
+                    | (Psie::Gbps as u32) << PROTO_SPEED_PSIE_SHIFT
+                    | 10 << PROTO_SPEED_PSIM_SHIFT
+                    | (Lp::SuperSpeedPlus as u32) << PROTO_SPEED_LP_SHIFT
+                    | 5 << PROTO_SPEED_PSIV_SHIFT
+            ),
+            // SuperSpeedPlus Gen1 x2
+            ProtocolSpeed::from_raw(
+                (Plt::Symmetric as u32) << PROTO_SPEED_PLT_SHIFT
+                    | (true as u32) << PROTO_SPEED_PFD_SHIFT
+                    | (Psie::Gbps as u32) << PROTO_SPEED_PSIE_SHIFT
+                    | 10 << PROTO_SPEED_PSIM_SHIFT
+                    | (Lp::SuperSpeedPlus as u32) << PROTO_SPEED_LP_SHIFT
+                    | 6 << PROTO_SPEED_PSIV_SHIFT
+            ),
+            // SuperSpeedPlus Gen2 x2
+            ProtocolSpeed::from_raw(
+                (Plt::Symmetric as u32) << PROTO_SPEED_PLT_SHIFT
+                    | (true as u32) << PROTO_SPEED_PFD_SHIFT
+                    | (Psie::Gbps as u32) << PROTO_SPEED_PSIE_SHIFT
+                    | 20 << PROTO_SPEED_PSIM_SHIFT
+                    | (Lp::SuperSpeedPlus as u32) << PROTO_SPEED_LP_SHIFT
+                    | 7 << PROTO_SPEED_PSIV_SHIFT
+            ),
+        ];
+        let supp_proto = self.supported_protocols_iter().find(|supp_proto| supp_proto.compat_port_range().contains(&port))?;
+
+        Some(if supp_proto.psic() != 0 {
+            unsafe { supp_proto.protocol_speeds().iter() }
+        } else {
+            DEFAULT_SUPP_PROTO_SPEEDS.iter()
+        })
+    }
+    pub fn lookup_psiv(&self, port: u8, psiv: u8) -> Option<&'static ProtocolSpeed> {
+        self.supported_protocol_speeds(port)?.find(|speed| speed.psiv() == psiv)
     }
 }
 #[derive(Deserialize)]

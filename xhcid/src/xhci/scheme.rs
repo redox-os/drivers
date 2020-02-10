@@ -239,6 +239,11 @@ impl Xhci {
             return Err(Error::new(EBADMSG));
         }
 
+        let port_speed_id = self.ports[port].speed();
+        // FIXME
+        let speed_id = self.lookup_psiv(port as u8, port_speed_id);
+        dbg!(speed_id);
+
         let port_state = self.port_states.get_mut(&port).ok_or(Error::new(ENOENT))?;
         let input_context: &mut Dma<InputContext> = &mut port_state.input_context;
 

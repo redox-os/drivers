@@ -39,12 +39,12 @@ impl Port {
         self.portsc.read()
     }
 
-    pub fn state(&self) -> u32 {
-        (self.read() & (0b1111 << 5)) >> 5
+    pub fn state(&self) -> u8 {
+        ((self.read() & (0b1111 << 5)) >> 5) as u8
     }
 
-    pub fn speed(&self) -> u32 {
-        (self.read() & (0b1111 << 10)) >> 10
+    pub fn speed(&self) -> u8 {
+        ((self.read() & (0b1111 << 10)) >> 10) as u8
     }
 
     pub fn flags(&self) -> PortFlags {

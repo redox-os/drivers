@@ -16,9 +16,16 @@ pub struct CapabilityRegs {
 
 pub const HCC_PARAMS1_MAXPSASIZE_MASK: u32 = 0xF000; // 15:12
 pub const HCC_PARAMS1_MAXPSASIZE_SHIFT: u8 = 12;
+pub const HCC_PARAMS1_XECP_MASK: u32 = 0xFFFF_0000;
+pub const HCC_PARAMS1_XECP_SHIFT: u8 = 16;
 
 pub const HCC_PARAMS2_LEC_BIT: u32 = 1 << 4;
 pub const HCC_PARAMS2_CIC_BIT: u32 = 1 << 5;
+
+pub const HCS_PARAMS1_MAX_PORTS_MASK: u32 = 0xFF00_0000;
+pub const HCS_PARAMS1_MAX_PORTS_SHIFT: u8 = 24;
+pub const HCS_PARAMS1_MAX_SLOTS_MASK: u32 = 0x0000_00FF;
+pub const HCS_PARAMS1_MAX_SLOTS_SHIFT: u8 = 0;
 
 impl CapabilityRegs {
     pub fn lec(&self) -> bool {
@@ -30,5 +37,14 @@ impl CapabilityRegs {
     pub fn max_psa_size(&self) -> u8 {
         ((self.hcc_params1.read() & HCC_PARAMS1_MAXPSASIZE_MASK) >> HCC_PARAMS1_MAXPSASIZE_SHIFT)
             as u8
+    }
+    pub fn max_ports(&self) -> u8 {
+        ((self.hcs_params1.read() & HCS_PARAMS1_MAX_PORTS_MASK) >> HCS_PARAMS1_MAX_PORTS_SHIFT) as u8
+    }
+    pub fn max_slots(&self) -> u8 {
+        (self.hcs_params1.read() & HCS_PARAMS1_MAX_SLOTS_MASK) as u8
+    }
+    pub fn ext_caps_ptr_in_dwords(&self) -> u16 {
+        ((self.hcc_params1.read() & HCC_PARAMS1_XECP_MASK) >> HCC_PARAMS1_XECP_SHIFT) as u16
     }
 }

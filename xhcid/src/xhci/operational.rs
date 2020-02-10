@@ -1,4 +1,8 @@
+use std::slice;
+use std::num::NonZeroU8;
 use syscall::io::{Io, Mmio};
+
+use super::CapabilityRegs;
 
 #[repr(packed)]
 pub struct OperationalRegs {
