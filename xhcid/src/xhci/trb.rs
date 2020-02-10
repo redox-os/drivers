@@ -154,10 +154,15 @@ impl Trb {
         self.control.readf(TRB_CONTROL_EVENT_DATA_BIT)
     }
     pub fn event_data(&self) -> Option<u64> {
-        if self.event_data_bit() { Some(self.data.read()) } else { None }
+        if self.event_data_bit() {
+            Some(self.data.read())
+        } else {
+            None
+        }
     }
     pub fn endpoint_id(&self) -> u8 {
-        ((self.control.read() & TRB_CONTROL_ENDPOINT_ID_MASK) >> TRB_CONTROL_ENDPOINT_ID_SHIFT) as u8
+        ((self.control.read() & TRB_CONTROL_ENDPOINT_ID_MASK) >> TRB_CONTROL_ENDPOINT_ID_SHIFT)
+            as u8
     }
     pub fn trb_type(&self) -> u8 {
         ((self.control.read() & TRB_CONTROL_TRB_TYPE_MASK) >> TRB_CONTROL_TRB_TYPE_SHIFT) as u8
@@ -205,8 +210,39 @@ impl Trb {
             0,
             (u32::from(slot_id) << 24)
                 | ((TrbType::ConfigureEndpoint as u32) << 10)
-                | (cycle as u32),
-        )
+                | u32::from(cycle),
+        );
+    }
+    pub fn reset_endpoint(&mut self, slot_id: u8, endp_num_xhc: u8, tsp: bool, cycle: bool) {
+        assert_eq!(endp_num_xhc & 0x1F, endp_num_xhc);
+        self.set(
+            0,
+            0,
+            (u32::from(slot_id) << 24)
+                | (u32::from(endp_num_xhc) << 16)
+                | ((TrbType::ResetEndpoint as u32) << 10)
+                | (u32::from(tsp) << 9)
+                | u32::from(cycle),
+        );
+    }
+    pub fn stop_endpoint(&mut self, slot_id: u8, endp_num_xhc: u8, suspend: bool, cycle: bool) {
+        assert_eq!(endp_num_xhc & 0x1F, endp_num_xhc);
+        self.set(
+            0,
+            0,
+            (u32::from(slot_id) << 24)
+                | (u32::from(suspend) << 23)
+                | (u32::from(endp_num_xhc) << 16)
+                | ((TrbType::StopEndpoint as u32) << 10)
+                | u32::from(cycle),
+        );
+    }
+    pub fn reset_device(&mut self, slot_id: u8, cycle: bool) {
+        self.set(
+            0,
+            0,
+            (u32::from(slot_id) << 24) | ((TrbType::ResetDevice as u32) << 10) | u32::from(cycle),
+        );
     }
 
     pub fn setup(&mut self, setup: usb::Setup, transfer: TransferKind, cycle: bool) {
@@ -238,13 +274,24 @@ impl Trb {
                 | (cycle as u32),
         );
     }
-    pub fn normal(&mut self, buffer: u64, len: u16, cycle: bool, estimated_td_size: u8, ent: bool, isp: bool, chain: bool, ioc: bool, idt: bool, bei: bool) {
+    pub fn normal(
+        &mut self,
+        buffer: u64,
+        len: u16,
+        cycle: bool,
+        estimated_td_size: u8,
+        ent: bool,
+        isp: bool,
+        chain: bool,
+        ioc: bool,
+        idt: bool,
+        bei: bool,
+    ) {
         assert_eq!(estimated_td_size & 0x1F, estimated_td_size);
         // NOTE: The interrupter target and no snoop flags have been omitted.
         self.set(
             buffer,
-            u32::from(len)
-                | (u32::from(estimated_td_size) << 17),
+            u32::from(len) | (u32::from(estimated_td_size) << 17),
             u32::from(cycle)
                 | (u32::from(ent) << 1)
                 | (u32::from(isp) << 2)
@@ -252,7 +299,7 @@ impl Trb {
                 | (u32::from(ioc) << 5)
                 | (u32::from(idt) << 6)
                 | (u32::from(bei) << 9)
-                | ((TrbType::Normal as u32) << 10)
+                | ((TrbType::Normal as u32) << 10),
         )
     }
 }

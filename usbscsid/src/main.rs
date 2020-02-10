@@ -1,6 +1,6 @@
 use std::env;
 
-use xhcid_interface::{ConfigureEndpointsReq, XhciClientHandle};
+use xhcid_interface::{ConfigureEndpointsReq, DeviceReqData, XhciClientHandle};
 
 pub mod protocol;
 pub mod scsi;
@@ -39,14 +39,16 @@ fn main() {
 
     let mut protocol = protocol::setup(&handle, protocol, &desc, &conf_desc, &if_desc).expect("Failed to setup protocol");
 
-    let get_info = {
+    /*let get_info = {
         // Max number of bytes that can be recieved from a "REPORT IDENTIFYING INFORMATION"
         // command.
         let alloc_len = 256; 
         let info_ty = scsi::cmds::ReportIdInfoInfoTy::IdentInfoSupp;
         let control = 0; // TODO: NACA?
         scsi::cmds::ReportIdentInfo::new(alloc_len, info_ty, control)
-    };
+    };*/
+    let inquiry = scsi::cmds::Inquiry::new(false, 0, 36, 0);
+    let mut buffer = [0u8; 36];
     use protocol::Protocol;
-    protocol.send_command(unsafe { plain::as_bytes(&get_info) }).expect("Failed to send command");
+    protocol.send_command(unsafe { plain::as_bytes(&inquiry) }, DeviceReqData::In(&mut buffer)).expect("Failed to send command");
 }

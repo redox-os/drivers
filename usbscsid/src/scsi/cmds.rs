@@ -122,3 +122,26 @@ pub struct OneCommandParam {
     pub a: u8,
     // TODO
 }
+
+#[repr(packed)]
+pub struct Inquiry {
+    pub opcode: u8,
+    /// bits 7:2 are reserved, bit 1 (CMDDT) is obsolete, bit 0 is EVPD
+    pub evpd: u8,
+    pub page_code: u8,
+    /// little endian
+    pub alloc_len: u16,
+    pub control: u8,
+}
+
+impl Inquiry {
+    pub fn new(evpd: bool, page_code: u8, alloc_len: u16, control: u8) -> Self {
+        Self {
+            opcode: Opcode::Inquiry as u8,
+            evpd: evpd as u8,
+            page_code,
+            alloc_len: u16::to_le(alloc_len),
+            control,
+        }
+    }
+}

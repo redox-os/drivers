@@ -8,9 +8,7 @@ pub struct ExtendedCapabilitiesIter {
 }
 impl ExtendedCapabilitiesIter {
     pub unsafe fn new(base: *const u8) -> Self {
-        Self {
-            base,
-        }
+        Self { base }
     }
 }
 impl Iterator for ExtendedCapabilitiesIter {
@@ -26,7 +24,11 @@ impl Iterator for ExtendedCapabilitiesIter {
 
             let next_rel = u16::from(next_rel_in_dwords) << 2;
 
-            self.base = if next_rel != 0 { self.base.offset(next_rel as isize) } else { ptr::null() };
+            self.base = if next_rel != 0 {
+                self.base.offset(next_rel as isize)
+            } else {
+                ptr::null()
+            };
 
             Some((current, capability_id))
         }
@@ -109,9 +111,7 @@ pub enum Lp {
 
 impl ProtocolSpeed {
     pub const fn from_raw(raw: u32) -> Self {
-        Self {
-            a: Mmio::from(raw),
-        }
+        Self { a: Mmio::from(raw) }
     }
     pub fn is_lowspeed(&self) -> bool {
         self.psim() == 1500 && self.psie() == Psie::Kbps
@@ -196,11 +196,17 @@ pub const SUPP_PROTO_CAP_PORT_SLOT_TYPE_SHIFT: u8 = 0;
 
 impl SupportedProtoCap {
     pub unsafe fn protocol_speeds(&self) -> &[ProtocolSpeed] {
-        slice::from_raw_parts(&self.protocol_speeds as *const u8 as *const _, self.psic() as usize)
+        slice::from_raw_parts(
+            &self.protocol_speeds as *const u8 as *const _,
+            self.psic() as usize,
+        )
     }
     pub unsafe fn protocol_speeds_mut(&mut self) -> &mut [ProtocolSpeed] {
         // XXX: Variance really is annoying sometimes.
-        slice::from_raw_parts_mut(&self.protocol_speeds as *const u8 as *mut u8 as *mut _, self.psic() as usize)
+        slice::from_raw_parts_mut(
+            &self.protocol_speeds as *const u8 as *mut u8 as *mut _,
+            self.psic() as usize,
+        )
     }
     pub fn rev_minor(&self) -> u8 {
         ((self.a.read() & SUPP_PROTO_CAP_REV_MIN_MASK) >> SUPP_PROTO_CAP_REV_MIN_SHIFT) as u8
@@ -213,10 +219,12 @@ impl SupportedProtoCap {
         u32::to_le_bytes(self.b.read())
     }
     pub fn compat_port_offset(&self) -> u8 {
-        ((self.c.read() & SUPP_PROTO_CAP_COMPAT_PORT_OFF_MASK) >> SUPP_PROTO_CAP_COMPAT_PORT_OFF_SHIFT) as u8
+        ((self.c.read() & SUPP_PROTO_CAP_COMPAT_PORT_OFF_MASK)
+            >> SUPP_PROTO_CAP_COMPAT_PORT_OFF_SHIFT) as u8
     }
     pub fn compat_port_count(&self) -> u8 {
-        ((self.c.read() & SUPP_PROTO_CAP_COMPAT_PORT_CNT_MASK) >> SUPP_PROTO_CAP_COMPAT_PORT_CNT_SHIFT) as u8
+        ((self.c.read() & SUPP_PROTO_CAP_COMPAT_PORT_CNT_MASK)
+            >> SUPP_PROTO_CAP_COMPAT_PORT_CNT_SHIFT) as u8
     }
     pub fn compat_port_range(&self) -> Range<u8> {
         self.compat_port_offset()..self.compat_port_offset() + self.compat_port_count()
@@ -229,12 +237,12 @@ impl SupportedProtoCap {
         ((self.c.read() & SUPP_PROTO_CAP_PSIC_MASK) >> SUPP_PROTO_CAP_PSIC_SHIFT) as u8
     }
     pub fn proto_slot_ty(&self) -> u8 {
-        ((self.d.read() & SUPP_PROTO_CAP_PORT_SLOT_TYPE_MASK) >> SUPP_PROTO_CAP_PORT_SLOT_TYPE_SHIFT) as u8
+        ((self.d.read() & SUPP_PROTO_CAP_PORT_SLOT_TYPE_MASK)
+            >> SUPP_PROTO_CAP_PORT_SLOT_TYPE_SHIFT) as u8
     }
 }
 impl fmt::Debug for SupportedProtoCap {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-
         f.debug_struct("SupportedProtoCap")
             .field("rev_minor", &self.rev_minor())
             .field("rev_major", &self.rev_major())
@@ -244,7 +252,9 @@ impl fmt::Debug for SupportedProtoCap {
             .field("proto_defined", &self.proto_defined())
             .field("psic", &self.psic())
             .field("proto_slot_ty", &self.proto_slot_ty())
-            .field("proto_speeds", unsafe { &self.protocol_speeds().to_owned() })
+            .field("proto_speeds", unsafe {
+                &self.protocol_speeds().to_owned()
+            })
             .finish()
     }
 }

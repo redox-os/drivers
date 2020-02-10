@@ -351,7 +351,11 @@ impl Xhci {
                 {
                     input.add_context.write(1 << 1 | 1); // Enable the slot (zeroth bit) and the control endpoint (first bit).
 
-                    input.device.slot.a.write((1 << 27) | (u32::from(speed) << 20)); // FIXME: The speed field, bits 23:20, is deprecated.
+                    input
+                        .device
+                        .slot
+                        .a
+                        .write((1 << 27) | (u32::from(speed) << 20)); // FIXME: The speed field, bits 23:20, is deprecated.
                     input.device.slot.b.write(((i as u32 + 1) & 0xFF) << 16);
 
                     // control endpoint?
@@ -501,18 +505,26 @@ impl Xhci {
         Ok(())
     }
     pub fn capabilities_iter(&self) -> ExtendedCapabilitiesIter {
-        unsafe { ExtendedCapabilitiesIter::new((self.base as *mut u8).offset((self.cap.ext_caps_ptr_in_dwords() << 2) as isize)) }
+        unsafe {
+            ExtendedCapabilitiesIter::new(
+                (self.base as *mut u8).offset((self.cap.ext_caps_ptr_in_dwords() << 2) as isize),
+            )
+        }
     }
     pub fn supported_protocols_iter(&self) -> impl Iterator<Item = &'static SupportedProtoCap> {
-        self.capabilities_iter().filter_map(|(pointer, cap_num)| unsafe {
-            if cap_num == CapabilityId::SupportedProtocol as u8 {
-                Some(&*pointer.cast::<SupportedProtoCap>().as_ptr())
-            } else {
-                None
-            }
-        })
+        self.capabilities_iter()
+            .filter_map(|(pointer, cap_num)| unsafe {
+                if cap_num == CapabilityId::SupportedProtocol as u8 {
+                    Some(&*pointer.cast::<SupportedProtoCap>().as_ptr())
+                } else {
+                    None
+                }
+            })
     }
-    pub fn supported_protocol_speeds(&self, port: u8) -> Option<impl Iterator<Item = &'static ProtocolSpeed>> {
+    pub fn supported_protocol_speeds(
+        &self,
+        port: u8,
+    ) -> Option<impl Iterator<Item = &'static ProtocolSpeed>> {
         use extended::*;
         const DEFAULT_SUPP_PROTO_SPEEDS: [ProtocolSpeed; 7] = [
             // Full-speed
@@ -521,7 +533,7 @@ impl Xhci {
                     | (false as u32) << PROTO_SPEED_PFD_SHIFT
                     | (Psie::Mbps as u32) << PROTO_SPEED_PSIE_SHIFT
                     | 12 << PROTO_SPEED_PSIM_SHIFT
-                    | 1 << PROTO_SPEED_PSIV_SHIFT
+                    | 1 << PROTO_SPEED_PSIV_SHIFT,
             ),
             // Low-speed
             ProtocolSpeed::from_raw(
@@ -529,7 +541,7 @@ impl Xhci {
                     | (false as u32) << PROTO_SPEED_PFD_SHIFT
                     | (Psie::Kbps as u32) << PROTO_SPEED_PSIE_SHIFT
                     | 1500 << PROTO_SPEED_PSIM_SHIFT
-                    | 2 << PROTO_SPEED_PSIV_SHIFT
+                    | 2 << PROTO_SPEED_PSIV_SHIFT,
             ),
             // High-speed
             ProtocolSpeed::from_raw(
@@ -537,7 +549,7 @@ impl Xhci {
                     | (false as u32) << PROTO_SPEED_PFD_SHIFT
                     | (Psie::Mbps as u32) << PROTO_SPEED_PSIE_SHIFT
                     | 480 << PROTO_SPEED_PSIM_SHIFT
-                    | 3 << PROTO_SPEED_PSIV_SHIFT
+                    | 3 << PROTO_SPEED_PSIV_SHIFT,
             ),
             // SuperSpeed Gen1 x1
             ProtocolSpeed::from_raw(
@@ -546,7 +558,7 @@ impl Xhci {
                     | (Psie::Gbps as u32) << PROTO_SPEED_PSIE_SHIFT
                     | 5 << PROTO_SPEED_PSIM_SHIFT
                     | (Lp::SuperSpeed as u32) << PROTO_SPEED_LP_SHIFT
-                    | 4 << PROTO_SPEED_PSIV_SHIFT
+                    | 4 << PROTO_SPEED_PSIV_SHIFT,
             ),
             // SuperSpeedPlus Gen2 x1
             ProtocolSpeed::from_raw(
@@ -555,7 +567,7 @@ impl Xhci {
                     | (Psie::Gbps as u32) << PROTO_SPEED_PSIE_SHIFT
                     | 10 << PROTO_SPEED_PSIM_SHIFT
                     | (Lp::SuperSpeedPlus as u32) << PROTO_SPEED_LP_SHIFT
-                    | 5 << PROTO_SPEED_PSIV_SHIFT
+                    | 5 << PROTO_SPEED_PSIV_SHIFT,
             ),
             // SuperSpeedPlus Gen1 x2
             ProtocolSpeed::from_raw(
@@ -564,7 +576,7 @@ impl Xhci {
                     | (Psie::Gbps as u32) << PROTO_SPEED_PSIE_SHIFT
                     | 10 << PROTO_SPEED_PSIM_SHIFT
                     | (Lp::SuperSpeedPlus as u32) << PROTO_SPEED_LP_SHIFT
-                    | 6 << PROTO_SPEED_PSIV_SHIFT
+                    | 6 << PROTO_SPEED_PSIV_SHIFT,
             ),
             // SuperSpeedPlus Gen2 x2
             ProtocolSpeed::from_raw(
@@ -573,10 +585,12 @@ impl Xhci {
                     | (Psie::Gbps as u32) << PROTO_SPEED_PSIE_SHIFT
                     | 20 << PROTO_SPEED_PSIM_SHIFT
                     | (Lp::SuperSpeedPlus as u32) << PROTO_SPEED_LP_SHIFT
-                    | 7 << PROTO_SPEED_PSIV_SHIFT
+                    | 7 << PROTO_SPEED_PSIV_SHIFT,
             ),
         ];
-        let supp_proto = self.supported_protocols_iter().find(|supp_proto| supp_proto.compat_port_range().contains(&port))?;
+        let supp_proto = self
+            .supported_protocols_iter()
+            .find(|supp_proto| supp_proto.compat_port_range().contains(&port))?;
 
         Some(if supp_proto.psic() != 0 {
             unsafe { supp_proto.protocol_speeds().iter() }
@@ -585,7 +599,8 @@ impl Xhci {
         })
     }
     pub fn lookup_psiv(&self, port: u8, psiv: u8) -> Option<&'static ProtocolSpeed> {
-        self.supported_protocol_speeds(port)?.find(|speed| speed.psiv() == psiv)
+        self.supported_protocol_speeds(port)?
+            .find(|speed| speed.psiv() == psiv)
     }
 }
 #[derive(Deserialize)]

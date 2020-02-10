@@ -39,7 +39,8 @@ impl CapabilityRegs {
             as u8
     }
     pub fn max_ports(&self) -> u8 {
-        ((self.hcs_params1.read() & HCS_PARAMS1_MAX_PORTS_MASK) >> HCS_PARAMS1_MAX_PORTS_SHIFT) as u8
+        ((self.hcs_params1.read() & HCS_PARAMS1_MAX_PORTS_MASK) >> HCS_PARAMS1_MAX_PORTS_SHIFT)
+            as u8
     }
     pub fn max_slots(&self) -> u8 {
         (self.hcs_params1.read() & HCS_PARAMS1_MAX_SLOTS_MASK) as u8

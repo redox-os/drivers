@@ -1,7 +1,7 @@
 use std::io;
 
 use thiserror::Error;
-use xhcid_interface::{DevDesc, ConfDesc, IfDesc, XhciClientHandle, XhciClientHandleError};
+use xhcid_interface::{DeviceReqData, DevDesc, ConfDesc, IfDesc, XhciClientHandle, XhciClientHandleError};
 
 #[derive(Debug, Error)]
 pub enum ProtocolError {
@@ -19,7 +19,7 @@ pub enum ProtocolError {
 }
 
 pub trait Protocol {
-    fn send_command(&mut self, command: &[u8]) -> Result<(), ProtocolError>;
+    fn send_command(&mut self, command: &[u8], data: DeviceReqData) -> Result<(), ProtocolError>;
 }
 
 /// Bulk-only transport

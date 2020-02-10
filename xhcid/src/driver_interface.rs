@@ -63,6 +63,21 @@ pub enum EndpDirection {
     In,
     Bidirectional,
 }
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum EndpBinaryDirection {
+    Out,
+    In,
+}
+impl From<EndpBinaryDirection> for EndpDirection {
+    fn from(b: EndpBinaryDirection) -> Self {
+        match b {
+            EndpBinaryDirection::In => Self::In,
+            EndpBinaryDirection::Out => Self::Out,
+        }
+    }
+}
+
 impl From<PortReqDirection> for EndpDirection {
     fn from(d: PortReqDirection) -> Self {
         match d {
@@ -185,7 +200,7 @@ pub struct PortReq {
     pub length: u16,
     pub transfers_data: bool,
 }
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub enum PortReqDirection {
     HostToDevice,
     DeviceToHost,
@@ -230,7 +245,7 @@ impl PortState {
 }
 #[derive(Debug, Error)]
 #[error("invalid input")]
-pub struct Invalid;
+pub struct Invalid(pub &'static str);
 
 impl str::FromStr for PortState {
     type Err = Invalid;
@@ -241,7 +256,7 @@ impl str::FromStr for PortState {
             "default" => Self::Default,
             "addressed" => Self::Addressed,
             "configured" => Self::Configured,
-            _ => return Err(Invalid),
+            _ => return Err(Invalid("read reserved port state")),
         })
     }
 }
@@ -254,6 +269,14 @@ pub enum EndpointStatus {
     Halted,
     Stopped,
     Error,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+pub enum PortTransferStatus {
+    Success,
+    ShortPacket(u16),
+    Stalled,
+    Unknown,
 }
 
 impl EndpointStatus {
@@ -278,7 +301,7 @@ impl str::FromStr for EndpointStatus {
             "halted" => Self::Halted,
             "stopped" => Self::Stopped,
             "error" => Self::Error,
-            _ => return Err(Invalid),
+            _ => return Err(Invalid("read reserved endpoint state")),
         })
     }
 }
@@ -334,7 +357,9 @@ impl XhciClientHandle {
         let mut file = OpenOptions::new().read(false).write(true).open(path)?;
         let json_bytes_written = file.write(&json)?;
         if json_bytes_written != json.len() {
-            return Err(XhciClientHandleError::InvalidResponse(Invalid));
+            return Err(XhciClientHandleError::InvalidResponse(Invalid(
+                "configure_endpoints didn't read as many bytes as were requested",
+            )));
         }
         Ok(())
     }
@@ -356,14 +381,35 @@ impl XhciClientHandle {
         num: u8,
     ) -> result::Result<XhciEndpStatusHandle, XhciClientHandleError> {
         let path = format!("{}:port{}/endpoints/{}/status", self.scheme, self.port, num);
-        Ok(XhciEndpStatusHandle(OpenOptions::new().read(true).write(false).create(false).open(path)?))
+        Ok(XhciEndpStatusHandle(
+            OpenOptions::new()
+                .read(true)
+                .write(false)
+                .create(false)
+                .open(path)?,
+        ))
     }
-    pub fn open_endpoint(&self, num: u8, direction: PortReqDirection) -> result::Result<File, XhciClientHandleError> {
-        let path = format!("{}:port{}/endpoints/{}/transfer", self.scheme, self.port, num);
-        Ok(match direction {
-            PortReqDirection::HostToDevice => OpenOptions::new().read(false).write(true).create(false).open(path)?,
-            PortReqDirection::DeviceToHost => OpenOptions::new().read(true).write(false).create(false).open(path)?,
-        })
+    pub fn open_endpoint(
+        &self,
+        num: u8,
+        direction: PortReqDirection,
+    ) -> result::Result<XhciEndpTransferHandle, XhciClientHandleError> {
+        let path = format!(
+            "{}:port{}/endpoints/{}/transfer",
+            self.scheme, self.port, num
+        );
+        Ok(XhciEndpTransferHandle(match direction {
+            PortReqDirection::HostToDevice => OpenOptions::new()
+                .read(false)
+                .write(true)
+                .create(false)
+                .open(path)?,
+            PortReqDirection::DeviceToHost => OpenOptions::new()
+                .read(true)
+                .write(false)
+                .create(false)
+                .open(path)?,
+        }))
     }
     pub fn device_request<'a>(
         &self,
@@ -374,7 +420,8 @@ impl XhciClientHandle {
         index: u16,
         data: DeviceReqData<'a>,
     ) -> result::Result<(), XhciClientHandleError> {
-        let length = u16::try_from(data.len()).or(Err(XhciClientHandleError::TransferBufTooLarge(data.len())))?;
+        let length = u16::try_from(data.len())
+            .or(Err(XhciClientHandleError::TransferBufTooLarge(data.len())))?;
 
         let req = PortReq {
             direction: data.direction(),
@@ -393,7 +440,9 @@ impl XhciClientHandle {
 
         let json_bytes_written = file.write(&json)?;
         if json_bytes_written != json.len() {
-            return Err(XhciClientHandleError::InvalidResponse(Invalid));
+            return Err(XhciClientHandleError::InvalidResponse(Invalid(
+                "device_request didn't return the same number of bytes as were written",
+            )));
         }
 
         match data {
@@ -401,25 +450,55 @@ impl XhciClientHandle {
                 let bytes_read = file.read(buf)?;
 
                 if bytes_read != buf.len() {
-                    return Err(XhciClientHandleError::InvalidResponse(Invalid));
+                    return Err(XhciClientHandleError::InvalidResponse(Invalid(
+                        "device_request didn't transfer (host2dev) all bytes",
+                    )));
                 }
             }
             DeviceReqData::Out(buf) => {
                 let bytes_read = file.write(&buf)?;
 
                 if bytes_read != buf.len() {
-                    return Err(XhciClientHandleError::InvalidResponse(Invalid));
+                    return Err(XhciClientHandleError::InvalidResponse(Invalid(
+                        "device_request didn't transfer (dev2host) all bytes",
+                    )));
                 }
             }
             DeviceReqData::NoData => (),
         }
         Ok(())
     }
-    pub fn get_descriptor(&self, recipient: PortReqRecipient, ty: u8, idx: u8, windex: u16, buffer: &mut [u8]) -> result::Result<(), XhciClientHandleError> {
-        self.device_request(PortReqTy::Standard, recipient, 0x06, (u16::from(ty) << 8) | u16::from(idx), windex, DeviceReqData::In(buffer))
+    pub fn get_descriptor(
+        &self,
+        recipient: PortReqRecipient,
+        ty: u8,
+        idx: u8,
+        windex: u16,
+        buffer: &mut [u8],
+    ) -> result::Result<(), XhciClientHandleError> {
+        self.device_request(
+            PortReqTy::Standard,
+            recipient,
+            0x06,
+            (u16::from(ty) << 8) | u16::from(idx),
+            windex,
+            DeviceReqData::In(buffer),
+        )
     }
-    pub fn clear_feature(&self, recipient: PortReqRecipient, index: u16, feature_sel: u16) -> result::Result<(), XhciClientHandleError> {
-        self.device_request(PortReqTy::Standard, recipient, 0x01, feature_sel, index, DeviceReqData::NoData)
+    pub fn clear_feature(
+        &self,
+        recipient: PortReqRecipient,
+        index: u16,
+        feature_sel: u16,
+    ) -> result::Result<(), XhciClientHandleError> {
+        self.device_request(
+            PortReqTy::Standard,
+            recipient,
+            0x01,
+            feature_sel,
+            index,
+            DeviceReqData::NoData,
+        )
     }
 }
 
@@ -431,8 +510,61 @@ impl XhciEndpStatusHandle {
         self.0.seek(io::SeekFrom::Start(0))?;
         let mut status_buf = [0u8; 16];
         let len = self.0.read(&mut status_buf)?;
-        let status = std::str::from_utf8(&status_buf[..len]).or(Err(XhciClientHandleError::InvalidResponse(Invalid)))?;
-        Ok(status.parse::<EndpointStatus>().or(Err(XhciClientHandleError::InvalidResponse(Invalid)))?)
+        let status = std::str::from_utf8(&status_buf[..len]).or(Err(
+            XhciClientHandleError::InvalidResponse(Invalid("non-utf8 endpoint state")),
+        ))?;
+        Ok(status
+            .parse::<EndpointStatus>()
+            .or(Err(XhciClientHandleError::InvalidResponse(Invalid(
+                "malformed endpoint state",
+            ))))?)
+    }
+    pub fn into_inner(self) -> File {
+        self.0
+    }
+}
+
+#[derive(Debug)]
+pub struct XhciEndpTransferHandle(File);
+
+impl XhciEndpTransferHandle {
+    fn get_status(
+        &mut self,
+        requested_len: usize,
+        bytes_transferred: usize,
+    ) -> result::Result<PortTransferStatus, XhciClientHandleError> {
+        let mut status_buf = [0u8; 32];
+        let status_bytes_read = self.0.read(&mut status_buf)?;
+
+        let status = serde_json::from_slice(dbg!(&status_buf[..status_bytes_read]))?;
+
+        if let PortTransferStatus::ShortPacket(len) = status {
+            if len as usize != bytes_transferred {
+                return Err(XhciClientHandleError::InvalidResponse(Invalid("xhcid gave a short packet with a different length than the bytes transferred (which should have been the same)")));
+            }
+        } else if let PortTransferStatus::Success = status {
+            if requested_len != bytes_transferred {
+                return Err(XhciClientHandleError::InvalidResponse(Invalid("xhcid transferred fewer or more bytes than requested, but didn't return a short packed")));
+            }
+        }
+        Ok(status)
+    }
+    pub fn transfer_write(
+        &mut self,
+        buffer: &[u8],
+    ) -> result::Result<PortTransferStatus, XhciClientHandleError> {
+        let bytes_transferred = self.0.write(buffer)?;
+        self.get_status(buffer.len(), bytes_transferred)
+    }
+    pub fn transfer_read(
+        &mut self,
+        buffer: &mut [u8],
+    ) -> result::Result<PortTransferStatus, XhciClientHandleError> {
+        let bytes_transferred = self.0.read(buffer)?;
+        self.get_status(buffer.len(), bytes_transferred)
+    }
+    pub fn into_inner(self) -> File {
+        self.0
     }
 }
 
