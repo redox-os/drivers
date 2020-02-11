@@ -38,6 +38,15 @@ pub struct DevDesc {
     pub config_descs: SmallVec<[ConfDesc; 1]>,
 }
 
+impl DevDesc {
+    pub fn major_version(&self) -> u8 {
+        ((self.usb & 0xFF00) >> 8) as u8
+    }
+    pub fn minor_version(&self) -> u8 {
+        self.usb as u8
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConfDesc {
     pub kind: u8,
@@ -56,6 +65,7 @@ pub struct EndpDesc {
     pub max_packet_size: u16,
     pub interval: u8,
     pub ssc: Option<SuperSpeedCmp>,
+    pub sspc: Option<SuperSpeedPlusIsochCmp>,
 }
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum EndpDirection {
@@ -131,6 +141,31 @@ impl EndpDesc {
             _ => return Err(Error::new(EINVAL)),
         })
     }
+    pub fn is_superspeed(&self) -> bool {
+        self.ssc.is_some()
+    }
+    pub fn is_superspeedplus(&self) -> bool {
+        todo!()
+    }
+    fn interrupt_usage_bits(&self) -> u8 {
+        assert!(self.is_interrupt());
+        (self.attributes & 0x20) >> 4
+    }
+    pub fn is_periodic(&self) -> bool {
+        #[repr(u8)]
+        enum InterruptUsageBits {
+            Periodic,
+            Notification,
+            Rsvd2,
+            Rsvd3,
+        }
+
+        if self.is_interrupt() {
+            self.interrupt_usage_bits() == InterruptUsageBits::Periodic as u8
+        } else {
+            self.is_isoch()
+        }
+    }
     pub fn max_streams(&self) -> u8 {
         self.ssc
             .as_ref()
@@ -156,6 +191,9 @@ impl EndpDesc {
     pub fn max_burst(&self) -> u8 {
         self.ssc.map(|ssc| ssc.max_burst).unwrap_or(0)
     }
+    pub fn has_ssp_companion(&self) -> bool {
+        self.ssc.map(|ssc| ssc.attributes & (1 << 7) != 0).unwrap_or(false)
+    }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct IfDesc {
@@ -177,7 +215,11 @@ pub struct SuperSpeedCmp {
     pub attributes: u8,
     pub bytes_per_interval: u16,
 }
-
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct SuperSpeedPlusIsochCmp {
+    pub kind: u8,
+    pub bytes_per_interval: u32,
+}
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct HidDesc {
     pub kind: u8,
@@ -536,7 +578,7 @@ impl XhciEndpTransferHandle {
         let mut status_buf = [0u8; 32];
         let status_bytes_read = self.0.read(&mut status_buf)?;
 
-        let status = serde_json::from_slice(dbg!(&status_buf[..status_bytes_read]))?;
+        let status = serde_json::from_slice(&status_buf[..status_bytes_read])?;
 
         if let PortTransferStatus::ShortPacket(len) = status {
             if len as usize != bytes_transferred {

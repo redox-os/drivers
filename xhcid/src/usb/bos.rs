@@ -1,3 +1,5 @@
+use std::slice;
+
 #[repr(packed)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct BosDescriptor {
@@ -34,6 +36,21 @@ pub struct BosSuperSpeedDesc {
 }
 #[repr(packed)]
 #[derive(Clone, Copy, Debug, Default)]
+pub struct BosSuperSpeedPlusDesc {
+    pub len: u8,
+    pub kind: u8,
+    pub cap_ty: u8,
+    pub _rsvd0: u8,
+    pub attrs: u32,
+    pub func_supp: u32,
+    pub _rsvd1: u16,
+    sublink_speed_attr: [u32; 0],
+}
+
+unsafe impl plain::Plain for BosSuperSpeedPlusDesc {}
+
+#[repr(packed)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct BosUsb2ExtDesc {
     pub len: u8,
     pub kind: u8,
@@ -46,11 +63,21 @@ unsafe impl plain::Plain for BosUsb2ExtDesc {}
 
 #[repr(u8)]
 pub enum DeviceCapability {
-    Usb2Ext = 2,
-    SuperSpeed = 3,
+    Usb2Ext = 0x02,
+    SuperSpeed,
+    SuperSpeedPlus = 0x0A,
 }
 
 unsafe impl plain::Plain for BosSuperSpeedDesc {}
+
+impl BosSuperSpeedPlusDesc {
+    pub fn ssac(&self) -> u8 {
+        (self.attrs & 0x0000_000F) as u8
+    }
+    pub fn sublink_speed_attr(&self) -> &[u32] {
+        unsafe { slice::from_raw_parts(&self.sublink_speed_attr as *const u32, self.ssac() as usize + 1) }
+    }
+}
 
 pub struct BosDevDescIter<'a> {
     bytes: &'a [u8],
@@ -84,14 +111,21 @@ impl<'a> Iterator for BosDevDescIter<'a> {
 
 #[derive(Clone, Copy, Debug)]
 pub enum BosAnyDevDesc {
-    SuperSpeed(BosSuperSpeedDesc),
     Usb2Ext(BosUsb2ExtDesc),
+    SuperSpeed(BosSuperSpeedDesc),
+    SuperSpeedPlus(BosSuperSpeedPlusDesc),
 }
 
 impl BosAnyDevDesc {
     pub fn is_superspeed(&self) -> bool {
         match self {
             Self::SuperSpeed(_) => true,
+            _ => false,
+        }
+    }
+    pub fn is_superspeedplus(&self) -> bool {
+        match self {
+            Self::SuperSpeedPlus(_) => true,
             _ => false,
         }
     }
@@ -120,6 +154,8 @@ impl<'a> Iterator for BosAnyDevDescIter<'a> {
             Some(BosAnyDevDesc::Usb2Ext(*plain::from_bytes(slice).ok()?))
         } else if base.cap_ty == DeviceCapability::SuperSpeed as u8 {
             Some(BosAnyDevDesc::SuperSpeed(*plain::from_bytes(slice).ok()?))
+        } else if base.cap_ty == DeviceCapability::SuperSpeedPlus as u8 {
+            Some(BosAnyDevDesc::SuperSpeedPlus(*plain::from_bytes(slice).ok()?))
         } else if base.cap_ty == 0 {
             // TODO
             return None;

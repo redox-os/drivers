@@ -45,8 +45,17 @@ pub struct SuperSpeedCompanionDescriptor {
     pub attributes: u8,
     pub bytes_per_interval: u16,
 }
-
 unsafe impl Plain for SuperSpeedCompanionDescriptor {}
+
+#[repr(packed)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SuperSpeedPlusIsochCmpDescriptor {
+    pub length: u8,
+    pub kind: u8,
+    pub reserved: u16,
+    pub bytes_per_interval: u32,
+}
+unsafe impl Plain for SuperSpeedPlusIsochCmpDescriptor {}
 
 #[repr(packed)]
 #[derive(Clone, Copy, Debug, Default)]

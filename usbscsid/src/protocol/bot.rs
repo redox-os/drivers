@@ -85,6 +85,7 @@ pub struct BulkOnlyTransport<'a> {
     bulk_out_num: u8,
     max_lun: u8,
     current_tag: u32,
+    interface_num: u8,
 }
 
 pub const FEATURE_ENDPOINT_HALT: u16 = 0;
@@ -95,6 +96,8 @@ impl<'a> BulkOnlyTransport<'a> {
 
         let bulk_in_num = (endpoints.iter().position(|endpoint| endpoint.direction() == EndpDirection::In).unwrap() + 1) as u8;
         let bulk_out_num = (endpoints.iter().position(|endpoint| endpoint.direction() == EndpDirection::Out).unwrap() + 1) as u8;
+
+        bulk_only_mass_storage_reset(handle, if_desc.number.into())?;
 
         let max_lun = get_max_lun(handle, 0)?;
         println!("BOT_MAX_LUN {}", max_lun);
@@ -109,13 +112,14 @@ impl<'a> BulkOnlyTransport<'a> {
             handle,
             max_lun,
             current_tag: 0,
+            interface_num: if_desc.number,
         })
     }
     fn clear_stall(&mut self, endp_num: u8) -> Result<(), XhciClientHandleError> {
         self.handle.clear_feature(PortReqRecipient::Endpoint, u16::from(endp_num), FEATURE_ENDPOINT_HALT)
     }
     fn reset_recovery(&mut self) -> Result<(), ProtocolError> {
-        bulk_only_mass_storage_reset(self.handle, 0)?;
+        bulk_only_mass_storage_reset(self.handle, self.interface_num.into())?;
         self.clear_stall(self.bulk_in_num.into())?;
         self.clear_stall(self.bulk_out_num.into())?;
 
@@ -128,8 +132,6 @@ impl<'a> BulkOnlyTransport<'a> {
 
 impl<'a> Protocol for BulkOnlyTransport<'a> {
     fn send_command(&mut self, cb: &[u8], data: DeviceReqData) -> Result<(), ProtocolError> {
-        dbg!(self.bulk_in_status.current_status()?);
-        dbg!(self.bulk_out_status.current_status()?);
         self.current_tag += 1;
         let tag = self.current_tag;
 

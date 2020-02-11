@@ -21,6 +21,7 @@ use super::context::{
     InputContext, SlotState, StreamContext, StreamContextArray, ENDPOINT_CONTEXT_STATUS_MASK,
 };
 use super::doorbell::Doorbell;
+use super::extended::ProtocolSpeed;
 use super::operational::OperationalRegs;
 use super::ring::Ring;
 use super::runtime::RuntimeRegs;
@@ -82,6 +83,7 @@ impl From<usb::EndpointDescriptor> for EndpDesc {
             interval: d.interval,
             max_packet_size: d.max_packet_size,
             ssc: None,
+            sspc: None,
         }
     }
 }
@@ -111,6 +113,15 @@ impl From<usb::SuperSpeedCompanionDescriptor> for SuperSpeedCmp {
         }
     }
 }
+impl From<usb::SuperSpeedPlusIsochCmpDescriptor> for SuperSpeedPlusIsochCmp {
+    fn from(r: usb::SuperSpeedPlusIsochCmpDescriptor) -> Self {
+        Self {
+            kind: r.kind,
+            bytes_per_interval: r.bytes_per_interval,
+        }
+    }
+}
+
 impl IfDesc {
     fn new(
         dev: &mut Device,
@@ -146,6 +157,7 @@ pub enum AnyDescriptor {
     Endpoint(usb::EndpointDescriptor),
     Hid(usb::HidDescriptor),
     SuperSpeedCompanion(usb::SuperSpeedCompanionDescriptor),
+    SuperSpeedPlusCompanion(usb::SuperSpeedPlusIsochCmpDescriptor),
 }
 
 impl AnyDescriptor {
@@ -169,6 +181,7 @@ impl AnyDescriptor {
                 5 => Self::Endpoint(*plain::from_bytes(bytes).ok()?),
                 33 => Self::Hid(*plain::from_bytes(bytes).ok()?),
                 48 => Self::SuperSpeedCompanion(*plain::from_bytes(bytes).ok()?),
+                49 => Self::SuperSpeedPlusCompanion(*plain::from_bytes(bytes).ok()?),
                 _ => {
                     //panic!("Descriptor unknown {}: bytes {:#0x?}", kind, bytes);
                     return None;
@@ -269,6 +282,65 @@ impl Xhci {
         Ok(())
     }
 
+    fn endp_ctx_interval(speed_id: &ProtocolSpeed, endp_desc: &EndpDesc) -> u8 {
+        /// Logarithmic (base 2) 125 µs periods per millisecond.
+        const MILLISEC_PERIODS: u8 = 3;
+
+        // TODO: Also check the Speed ID for superspeed(plus).
+        if (speed_id.is_lowspeed() || speed_id.is_fullspeed()) && endp_desc.is_interrupt() {
+            // The interval field has values 1-255, ranging from 1 ms to 255 ms.
+            // TODO: This is correct, right?
+            let last_power_of_two = 8 - endp_desc.interval.leading_zeros() as u8;
+            last_power_of_two - 1 + MILLISEC_PERIODS
+        } else if speed_id.is_fullspeed() && endp_desc.is_isoch() {
+            // bInterval has values 1-16, ranging from 1 ms to 32,768 ms.
+            endp_desc.interval - 1 + MILLISEC_PERIODS
+        } else if (speed_id.is_fullspeed() || endp_desc.is_superspeed() || endp_desc.is_superspeedplus()) && (endp_desc.is_interrupt() || endp_desc.is_isoch()) {
+            // bInterval has values 1-16, but ranging from 125 µs to 4096 ms.
+            endp_desc.interval - 1
+        } else {
+            // This includes superspeed(plus) control and bulk endpoints in particular.
+            0
+        }
+    }
+    fn endp_ctx_max_burst(speed_id: &ProtocolSpeed, dev_desc: &DevDesc, endp_desc: &EndpDesc) -> u8 {
+        if speed_id.is_highspeed() && (endp_desc.is_interrupt() || endp_desc.is_isoch()) {
+            assert_eq!(dev_desc.major_version(), 2);
+            ((endp_desc.max_packet_size & 0x0C00) >> 11) as u8
+        } else if endp_desc.is_superspeed() {
+            endp_desc.max_burst()
+        } else {
+            0
+        }
+
+    }
+    fn endp_ctx_max_packet_size(endp_desc: &EndpDesc) -> u16 {
+        // TODO: Control endpoint? Encoding?
+        endp_desc.max_packet_size & 0x03FF
+    }
+    fn endp_ctx_max_esit_payload(speed_id: &ProtocolSpeed, dev_desc: &DevDesc, endp_desc: &EndpDesc, max_packet_size: u16, max_burst_size: u8) -> u32 {
+        const KIB: u32 = 1024;
+
+        if dev_desc.major_version() == 2 && endp_desc.is_periodic() {
+            u32::from(max_packet_size) * (u32::from(max_burst_size) + 1)
+        } else if !endp_desc.has_ssp_companion() {
+            u32::from(endp_desc.ssc.as_ref().unwrap().bytes_per_interval)
+        } else if endp_desc.has_ssp_companion() {
+            endp_desc.sspc.as_ref().unwrap().bytes_per_interval
+        } else if speed_id.is_fullspeed() && endp_desc.is_interrupt() {
+            64
+        } else if speed_id.is_fullspeed() && endp_desc.is_isoch() {
+            1 * KIB
+        } else if (speed_id.is_highspeed() && (endp_desc.is_interrupt() || endp_desc.is_isoch())) || endp_desc.is_superspeed() && endp_desc.is_interrupt() {
+            3 * KIB
+        } else if endp_desc.is_superspeed() && endp_desc.is_isoch() {
+            48 * KIB
+        } else {
+            // TODO: Is "maximum allowed" ESIT payload, the same as "maximum" ESIT payload.
+            0
+        }
+    }
+
     fn configure_endpoints(&mut self, port: usize, json_buf: &[u8]) -> Result<()> {
         let mut req: ConfigureEndpointsReq =
             serde_json::from_slice(json_buf).or(Err(Error::new(EBADMSG)))?;
@@ -286,9 +358,7 @@ impl Xhci {
         }
 
         let port_speed_id = self.ports[port].speed();
-        // FIXME
-        let speed_id = self.lookup_psiv(port as u8, port_speed_id);
-        dbg!(speed_id);
+        let speed_id: &ProtocolSpeed = self.lookup_psiv(port as u8, port_speed_id).ok_or(Error::new(EIO))?;
 
         let port_state = self.port_states.get_mut(&port).ok_or(Error::new(ENOENT))?;
         let input_context: &mut Dma<InputContext> = &mut port_state.input_context;
@@ -302,12 +372,12 @@ impl Xhci {
 
         let current_slot_a = input_context.device.slot.a.read();
 
-        let endpoints = &port_state
-            .dev_desc
+        let dev_desc = &port_state.dev_desc;
+        let endpoints = &dev_desc
             .config_descs
             .get(req.config_desc as usize)
             .ok_or(Error::new(EBADMSG))?
-            .interface_descs[0]
+            .interface_descs.get(req.interface_desc.unwrap_or(0) as usize).ok_or(Error::new(EBADMSG))?
             .endpoints;
 
         if endpoints.len() >= 31 {
@@ -342,7 +412,6 @@ impl Xhci {
                 .ok_or(Error::new(EIO))?;
             let endp_desc = endpoints.get(index as usize).ok_or(Error::new(EIO))?;
 
-            // TODO: Check if streams are actually supported.
             let max_streams = endp_desc.max_streams();
             let max_psa_size = self.cap.max_psa_size();
 
@@ -357,17 +426,17 @@ impl Xhci {
             // TODO: Interval related fields
             // TODO: Max ESIT payload size.
 
-            // TODO: The max burst size is non-zero for high-speed isoch endpoints. How are the USB2
-            // speeds detected?
-            //     I presume that USB 3 devices can never be in low/full/high-speed mode, but
-            //     always SuperSpeed (gen 1 and 2 etc.).
-
-            let max_burst_size = endp_desc.max_burst();
-            let max_packet_size = endp_desc.max_packet_size;
-
             let mult = endp_desc.isoch_mult(lec);
 
-            let interval = endp_desc.interval;
+            let max_packet_size = Self::endp_ctx_max_packet_size(endp_desc);
+            let max_burst_size = Self::endp_ctx_max_burst(speed_id, dev_desc, endp_desc);
+
+            let max_esit_payload = Self::endp_ctx_max_esit_payload(speed_id, dev_desc, endp_desc, max_packet_size, max_burst_size);
+            let max_esit_payload_lo = max_esit_payload as u16;
+            let max_esit_payload_hi = ((max_esit_payload & 0x00FF_0000) >> 16) as u8;
+
+            let interval = Self::endp_ctx_interval(speed_id, endp_desc);
+
             let max_error_count = 3;
             let ep_ty = endp_desc.xhci_ep_type()?;
             let host_initiate_disable = false;
@@ -384,7 +453,6 @@ impl Xhci {
             assert_eq!(ep_ty & 0x7, ep_ty);
             assert_eq!(mult & 0x3, mult);
             assert_eq!(max_error_count & 0x3, max_error_count);
-
             assert_ne!(ep_ty, 0); // 0 means invalid.
 
             let ring_ptr = if max_streams != 0 {
@@ -399,7 +467,6 @@ impl Xhci {
                     array_ptr,
                     "stream ctx ptr not aligned to 16 bytes"
                 );
-
                 port_state.endpoint_states.insert(
                     endp_num,
                     EndpointState::Ready(super::RingOrStreams::Streams(array)),
@@ -415,22 +482,20 @@ impl Xhci {
                     ring_ptr,
                     "ring pointer not aligned to 16 bytes"
                 );
-
                 port_state.endpoint_states.insert(
                     endp_num,
                     EndpointState::Ready(super::RingOrStreams::Ring(ring)),
                 );
-
                 ring_ptr
             };
-
             assert_eq!(primary_streams & 0x1F, primary_streams);
 
             endp_ctx.a.write(
                 u32::from(mult) << 8
-                    | u32::from(interval) << 16
                     | u32::from(primary_streams) << 10
-                    | u32::from(linear_stream_array) << 15,
+                    | u32::from(linear_stream_array) << 15
+                    | u32::from(interval) << 16
+                    | u32::from(max_esit_payload_hi) << 24
             );
             endp_ctx.b.write(
                 max_error_count << 1
@@ -439,9 +504,14 @@ impl Xhci {
                     | u32::from(max_burst_size) << 8
                     | u32::from(max_packet_size) << 16,
             );
+
             endp_ctx.trl.write(ring_ptr as u32);
             endp_ctx.trh.write((ring_ptr >> 32) as u32);
-            endp_ctx.c.write(u32::from(avg_trb_len));
+
+            endp_ctx.c.write(
+                u32::from(avg_trb_len)
+                    | (u32::from(max_esit_payload_lo) << 16)
+            );
         }
 
         self.run.ints[0].erdp.write(self.cmd.erdp());
@@ -719,8 +789,9 @@ impl Xhci {
         );
 
         let (bos_desc, bos_data) = dev.get_bos()?;
-        let has_superspeed =
+        let supports_superspeed =
             usb::bos_capability_descs(bos_desc, &bos_data).any(|desc| desc.is_superspeed());
+        let supports_superspeedplus = usb::bos_capability_descs(bos_desc, &bos_data).any(|desc| desc.is_superspeedplus());
 
         let config_descs = (0..raw_dd.configurations)
             .map(|index| -> Result<_> {
@@ -756,12 +827,20 @@ impl Xhci {
                             };
                             let mut endp = EndpDesc::from(next);
 
-                            if has_superspeed {
+                            if supports_superspeed {
                                 let next = match iter.next() {
                                     Some(AnyDescriptor::SuperSpeedCompanion(n)) => n,
                                     _ => break,
                                 };
                                 endp.ssc = Some(SuperSpeedCmp::from(next));
+
+                                if endp.has_ssp_companion() && supports_superspeedplus {
+                                    let next = match iter.next() {
+                                        Some(AnyDescriptor::SuperSpeedPlusCompanion(n)) => n,
+                                        _ => break,
+                                    };
+                                    endp.sspc = Some(SuperSpeedPlusIsochCmp::from(next));
+                                }
                             }
                             endpoints.push(endp);
                         }
