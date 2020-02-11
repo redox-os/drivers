@@ -114,13 +114,28 @@ impl ProtocolSpeed {
         Self { a: Mmio::from(raw) }
     }
     pub fn is_lowspeed(&self) -> bool {
-        self.psim() == 1500 && self.psie() == Psie::Kbps
+        self.psim() == 1500 && self.psie() == Psie::Kbps && !self.pfd()
     }
     pub fn is_fullspeed(&self) -> bool {
-        self.psim() == 12 && self.psie() == Psie::Mbps
+        self.psim() == 12 && self.psie() == Psie::Mbps && !self.pfd()
     }
     pub fn is_highspeed(&self) -> bool {
-        self.psim() == 480 && self.psie() == Psie::Mbps
+        self.psim() == 480 && self.psie() == Psie::Mbps && !self.pfd()
+    }
+    pub fn is_superspeed_gen1x1(&self) -> bool {
+        self.psim() == 5 && self.psie() == Psie::Gbps && self.pfd() && self.lp() == Lp::SuperSpeed
+    }
+    pub fn is_superspeedplus_gen2x1(&self) -> bool {
+        self.psim() == 10 && self.psie() == Psie::Gbps && self.pfd() && self.lp() == Lp::SuperSpeedPlus
+    }
+    pub fn is_superspeedplus_gen1x2(&self) -> bool {
+        self.psim() == 10 && self.psie() == Psie::Gbps && self.pfd() && self.lp() == Lp::SuperSpeedPlus
+    }
+    pub fn is_superspeedplus_gen2x2(&self) -> bool {
+        self.psim() == 20 && self.psie() == Psie::Gbps && self.pfd() && self.lp() == Lp::SuperSpeedPlus
+    }
+    pub fn is_superspeed_gen_x(&self) -> bool {
+        self.is_superspeed_gen1x1() || self.is_superspeedplus_gen2x1() || self.is_superspeedplus_gen1x2() || self.is_superspeedplus_gen2x2()
     }
     /// Protocol speed ID value
     pub fn psiv(&self) -> u8 {

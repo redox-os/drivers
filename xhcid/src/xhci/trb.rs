@@ -190,17 +190,22 @@ impl Trb {
         );
     }
 
-    pub fn address_device(&mut self, slot_id: u8, input: usize, cycle: bool) {
+    pub fn address_device(&mut self, slot_id: u8, input_ctx_ptr: usize, bsr: bool, cycle: bool) {
+        assert_eq!(
+            input_ctx_ptr & 0xFFFF_FFFF_FFFF_FFF0,
+            input_ctx_ptr,
+            "unaligned input context ptr"
+        );
         self.set(
-            input as u64,
+            input_ctx_ptr as u64,
             0,
-            ((slot_id as u32) << 24) | ((TrbType::AddressDevice as u32) << 10) | (cycle as u32),
+            (u32::from(slot_id) << 24) | ((TrbType::AddressDevice as u32) << 10) | (u32::from(bsr) << 9) | u32::from(cycle),
         );
     }
     // Synchronizes the input context endpoints with the device context endpoints, I think.
     pub fn configure_endpoint(&mut self, slot_id: u8, input_ctx_ptr: usize, cycle: bool) {
         assert_eq!(
-            input_ctx_ptr & 0xFFFF_FFFF_FFFF_FF80,
+            input_ctx_ptr & 0xFFFF_FFFF_FFFF_FFF0,
             input_ctx_ptr,
             "unaligned input context ptr"
         );
@@ -211,6 +216,18 @@ impl Trb {
             (u32::from(slot_id) << 24)
                 | ((TrbType::ConfigureEndpoint as u32) << 10)
                 | u32::from(cycle),
+        );
+    }
+    pub fn evaluate_context(&mut self, slot_id: u8, input_ctx_ptr: usize, bsr: bool, cycle: bool) {
+        assert_eq!(
+            input_ctx_ptr & 0xFFFF_FFFF_FFFF_FFF0,
+            input_ctx_ptr,
+            "unaligned input context ptr"
+        );
+        self.set(
+            input_ctx_ptr as u64,
+            0,
+            (u32::from(slot_id) << 24) | ((TrbType::EvaluateContext as u32) << 10) | (u32::from(bsr) << 9) | u32::from(cycle),
         );
     }
     pub fn reset_endpoint(&mut self, slot_id: u8, endp_num_xhc: u8, tsp: bool, cycle: bool) {

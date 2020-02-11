@@ -180,6 +180,7 @@ impl EndpDesc {
     }
     pub fn isoch_mult(&self, lec: bool) -> u8 {
         if !lec && self.is_isoch() {
+            if self.is_superspeedplus() { return 0 }
             self.ssc
                 .as_ref()
                 .map(|ssc| ssc.attributes & 0x3)

@@ -316,7 +316,7 @@ impl Xhci {
     }
     fn endp_ctx_max_packet_size(endp_desc: &EndpDesc) -> u16 {
         // TODO: Control endpoint? Encoding?
-        endp_desc.max_packet_size & 0x03FF
+        endp_desc.max_packet_size & 0x07FF
     }
     fn endp_ctx_max_esit_payload(speed_id: &ProtocolSpeed, dev_desc: &DevDesc, endp_desc: &EndpDesc, max_packet_size: u16, max_burst_size: u8) -> u32 {
         const KIB: u32 = 1024;

@@ -344,49 +344,8 @@ impl Xhci {
 
                 println!("    - Slot {}", slot);
 
-                // transfer ring?
-                let mut ring = Ring::new(true)?;
-
                 let mut input = Dma::<InputContext>::zeroed()?;
-                {
-                    input.add_context.write(1 << 1 | 1); // Enable the slot (zeroth bit) and the control endpoint (first bit).
-
-                    input
-                        .device
-                        .slot
-                        .a
-                        .write((1 << 27) | (u32::from(speed) << 20)); // FIXME: The speed field, bits 23:20, is deprecated.
-                    input.device.slot.b.write(((i as u32 + 1) & 0xFF) << 16);
-
-                    // control endpoint?
-                    input.device.endpoints[0]
-                        .b
-                        .write(4096 << 16 | 4 << 3 | 3 << 1); // packet size | control endpoint | allowed error count
-                    let tr = ring.register();
-                    input.device.endpoints[0].trh.write((tr >> 32) as u32);
-                    input.device.endpoints[0].trl.write(tr as u32);
-                }
-
-                {
-                    let (cmd, cycle, event) = self.cmd.next();
-
-                    cmd.address_device(slot, input.physical(), cycle);
-
-                    self.dbs[0].write(0);
-
-                    while event.data.read() == 0 {
-                        println!("    - Waiting for event");
-                    }
-
-                    if event.completion_code() != TrbCompletionCode::Success as u8
-                        || event.trb_type() != TrbType::CommandCompletion as u8
-                    {
-                        panic!("ADDRESS DEVICE FAILED");
-                    }
-
-                    cmd.reserved(false);
-                    event.reserved(false);
-                }
+                let mut ring = self.address_device(&mut input, i, slot, speed)?;
 
                 let dev_desc = Self::get_dev_desc_raw(
                     &mut self.ports,
@@ -397,6 +356,9 @@ impl Xhci {
                     slot,
                     &mut ring,
                 )?;
+
+                self.update_default_control_pipe(&mut input, slot, &dev_desc)?;
+
                 let mut port_state = PortState {
                     slot,
                     input_context: input,
@@ -422,6 +384,142 @@ impl Xhci {
         }
 
         Ok(())
+    }
+
+    pub fn update_default_control_pipe(&mut self, input_context: &mut Dma<InputContext>, slot_id: u8, dev_desc: &DevDesc) -> Result<()> {
+        let new_max_packet_size = if dev_desc.major_version() == 2 {
+            u32::from(dev_desc.packet_size)
+        } else {
+            1u32 << dev_desc.packet_size
+        };
+        let endp_ctx = &mut input_context.device.endpoints[0];
+        let mut b = endp_ctx.b.read();
+        b &= 0x0000_FFFF;
+        b |= (new_max_packet_size) << 16;
+        endp_ctx.b.write(b);
+
+        {
+            let (cmd, cycle, event) = self.cmd.next();
+
+            cmd.evaluate_context(slot_id, input_context.physical(), false, cycle);
+
+            self.dbs[0].write(0);
+
+            while event.data.read() == 0 {
+                println!("    - Waiting for event");
+            }
+
+            if event.completion_code() != TrbCompletionCode::Success as u8
+                || event.trb_type() != TrbType::CommandCompletion as u8
+            {
+                panic!("EVALUATE_CONTEXT failed with {:#0x} {:#0x} {:#0x}", event.data.read(), event.status.read(), event.control.read());
+            }
+
+            cmd.reserved(false);
+            event.reserved(false);
+        }
+        Ok(())
+    }
+
+    pub fn address_device(&mut self, input_context: &mut Dma<InputContext>, i: usize, slot: u8, speed: u8) -> Result<Ring> {
+        let mut ring = Ring::new(true)?;
+
+        {
+            input_context.add_context.write(1 << 1 | 1); // Enable the slot (zeroth bit) and the control endpoint (first bit).
+
+            let slot_ctx = &mut input_context.device.slot;
+
+            let route_string = 0u32; // TODO
+            let context_entries = 1u8;
+            let mtt = false;
+            let hub = false;
+
+            assert_eq!(route_string & 0x000F_FFFF, route_string);
+            slot_ctx.a.write(
+                route_string
+                    | (u32::from(mtt) << 25)
+                    | (u32::from(hub) << 26)
+                    | (u32::from(context_entries) << 27)
+            );
+
+            let max_exit_latency = 0u16;
+            let root_hub_port_num = (i + 1) as u8;
+            let number_of_ports = 0u8;
+            slot_ctx.b.write(
+                u32::from(max_exit_latency)
+                    | (u32::from(root_hub_port_num) << 16)
+                    | (u32::from(number_of_ports) << 24)
+            );
+
+            // TODO
+            let parent_hud_slot_id = 0u8;
+            let parent_port_num = 0u8;
+            let ttt = 0u8;
+            let interrupter = 0u8;
+
+            assert_eq!(ttt & 0b11, ttt);
+            slot_ctx.c.write(
+                u32::from(parent_hud_slot_id)
+                    | (u32::from(parent_port_num) << 8)
+                    | (u32::from(ttt) << 16)
+                    | (u32::from(interrupter) << 22)
+            );
+
+            let endp_ctx = &mut input_context.device.endpoints[0];
+
+            let speed_id = self.lookup_psiv(root_hub_port_num, speed).expect("Failed to retrieve speed ID");
+
+            let max_error_count = 3u8; // recommended value according to the XHCI spec
+            let ep_ty = 4u8; // control endpoint, bidirectional
+            let max_packet_size: u32 = if speed_id.is_lowspeed() {
+                8 // only valid value
+            } else if speed_id.is_fullspeed() {
+                64 // valid values are 8, 16, 32, 64
+            } else if speed_id.is_highspeed() {
+                64 // only valid value
+            } else if speed_id.is_superspeed_gen_x() {
+                512 // only valid value
+            } else {
+                unreachable!()
+            };
+            let host_initiate_disable = false; // only applies to streams
+            let max_burst_size = 0u8; // TODO
+
+            assert_eq!(max_error_count & 0b11, max_error_count);
+            endp_ctx.b.write(
+                (u32::from(max_error_count) << 1)
+                    | (u32::from(ep_ty) << 3)
+                    | (u32::from(host_initiate_disable) << 7)
+                    | (u32::from(max_burst_size) << 8)
+                    | (u32::from(max_packet_size) << 16)
+            );
+
+            let tr = ring.register();
+            endp_ctx.trh.write((tr >> 32) as u32);
+            endp_ctx.trl.write(tr as u32);
+        }
+
+        {
+            let (cmd, cycle, event) = self.cmd.next();
+
+            cmd.address_device(slot, input_context.physical(), false, cycle);
+
+            self.dbs[0].write(0);
+
+            while event.data.read() == 0 {
+                println!("    - Waiting for event");
+            }
+
+            if event.completion_code() != TrbCompletionCode::Success as u8
+                || event.trb_type() != TrbType::CommandCompletion as u8
+            {
+                panic!("ADDRESS DEVICE FAILED");
+            }
+
+            cmd.reserved(false);
+            event.reserved(false);
+        }
+        Ok(ring)
     }
 
     pub fn ring_command_doorbell(&mut self) {
