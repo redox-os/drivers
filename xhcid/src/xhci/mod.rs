@@ -35,6 +35,8 @@ use self::ring::Ring;
 use self::runtime::{Interrupter, RuntimeRegs};
 use self::trb::{TransferKind, TrbCompletionCode, TrbType};
 
+use self::scheme::EndpIfState;
+
 use crate::driver_interface::*;
 
 struct Device<'a> {
@@ -151,14 +153,14 @@ pub(crate) enum RingOrStreams {
     Streams(StreamContextArray),
 }
 
-pub(crate) enum EndpointState {
-    Ready(RingOrStreams),
-    Init,
+pub(crate) struct EndpointState {
+    pub transfer: RingOrStreams,
+    pub driver_if_state: EndpIfState,
 }
 impl EndpointState {
     fn ring(&mut self) -> Option<&mut Ring> {
-        match self {
-            Self::Ready(RingOrStreams::Ring(ring)) => Some(ring),
+        match self.transfer {
+            RingOrStreams::Ring(ref mut ring) => Some(ring),
             _ => None,
         }
     }
@@ -294,10 +296,6 @@ impl Xhci {
         self.dbs[0].write(0);
 
         println!("  - XHCI initialized");
-
-        for (pointer, capability) in self.capabilities_iter() {
-            dbg!(pointer, capability);
-        }
     }
 
     pub fn enable_port_slot(cmd: &mut CommandRing, dbs: &mut [Doorbell]) -> u8 {
@@ -365,7 +363,10 @@ impl Xhci {
                     dev_desc,
                     endpoint_states: std::iter::once((
                         0,
-                        EndpointState::Ready(RingOrStreams::Ring(ring)),
+                        EndpointState {
+                            transfer: RingOrStreams::Ring(ring),
+                            driver_if_state: EndpIfState::Init,
+                        }
                     ))
                     .collect::<BTreeMap<_, _>>(),
                 };

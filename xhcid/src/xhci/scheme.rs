@@ -30,14 +30,21 @@ use super::usb::endpoint::{EndpointTy, ENDP_ATTR_TY_MASK};
 
 use crate::driver_interface::*;
 
+#[derive(Clone, Copy, Debug)]
+pub enum EndpIfState {
+    Init,
+    WaitingForDataPipe(XhciEndpCtlDirection),
+    WaitingForStatus,
+    WaitingForTransferResult(PortTransferStatus),
+}
+
 /// Subdirs of an endpoint
 pub enum EndpointHandleTy {
-    /// portX/endpoints/Y/transfer. Write calls transfer data to the device, and read calls
-    /// transfer data from the device.
-    Transfer(PortTransferState),
+    /// portX/endpoints/Y/data. Allows clients to read and write data associated with ctl requests.
+    Data,
 
     /// portX/endpoints/Y/status
-    Status(usize), // offset
+    Ctl,
 
     /// portX/endpoints/Y/
     Root(usize, Vec<u8>), // offset, content
@@ -469,7 +476,7 @@ impl Xhci {
                 );
                 port_state.endpoint_states.insert(
                     endp_num,
-                    EndpointState::Ready(super::RingOrStreams::Streams(array)),
+                    EndpointState { transfer: super::RingOrStreams::Streams(array), driver_if_state: EndpIfState::Init },
                 );
 
                 array_ptr
@@ -484,7 +491,7 @@ impl Xhci {
                 );
                 port_state.endpoint_states.insert(
                     endp_num,
-                    EndpointState::Ready(super::RingOrStreams::Ring(ring)),
+                    EndpointState { transfer: super::RingOrStreams::Ring(ring), driver_if_state: EndpIfState::Init },
                 );
                 ring_ptr
             };
@@ -627,7 +634,6 @@ impl Xhci {
         }
 
         if EndpDirection::from(buf.direction()) != endp_desc.direction() {
-            dbg!(buf.direction(), endp_desc, endp_idx, endp_num);
             return Err(Error::new(EBADF));
         }
 
@@ -637,14 +643,13 @@ impl Xhci {
             .ok_or(Error::new(EBADF))?;
 
         let ring: &mut Ring = match endp_state {
-            EndpointState::Ready(super::RingOrStreams::Ring(ref mut ring)) => ring,
-            EndpointState::Ready(super::RingOrStreams::Streams(stream_ctx_array)) => {
+            EndpointState { transfer: super::RingOrStreams::Ring(ref mut ring), .. } => ring,
+            EndpointState { transfer: super::RingOrStreams::Streams(stream_ctx_array), .. } => {
                 stream_ctx_array
                     .rings
                     .get_mut(&1)
                     .ok_or(Error::new(EBADF))?
             }
-            EndpointState::Init => return Err(Error::new(EIO)),
         };
         // TODO: Scatter-gather transfers, possibly allowing >64KiB sizes.
         let len = u16::try_from(buf.len()).or(Err(Error::new(ENOSYS)))?;
@@ -671,6 +676,7 @@ impl Xhci {
                 len,
                 cycle,
                 estimated_td_size,
+                0,
                 false,
                 true,
                 false,
@@ -922,7 +928,7 @@ impl Xhci {
             .get_mut(&0)
             .ok_or(Error::new(EIO))?
         {
-            EndpointState::Ready(super::RingOrStreams::Ring(ref mut ring)) => ring,
+            EndpointState { transfer: super::RingOrStreams::Ring(ref mut ring), .. } => ring,
 
             // Control endpoints never use streams
             _ => return Err(Error::new(EIO)),
@@ -1074,84 +1080,6 @@ impl Xhci {
         }
         Ok(bytes_read)
     }
-    fn completion_code_to_status(
-        completion_code: u8,
-        bytes_transferred: u16,
-    ) -> PortTransferStatus {
-        if completion_code == TrbCompletionCode::Success as u8 {
-            PortTransferStatus::Success
-        } else if completion_code == TrbCompletionCode::ShortPacket as u8 {
-            PortTransferStatus::ShortPacket(bytes_transferred as u16)
-        } else if completion_code == TrbCompletionCode::Stall as u8 {
-            PortTransferStatus::Stalled
-        } else {
-            PortTransferStatus::Unknown
-        }
-    }
-
-    fn handle_transfer_write(
-        &mut self,
-        fd: usize,
-        port_num: usize,
-        endp_num: u8,
-        mut st: PortTransferState,
-        buf: &[u8],
-    ) -> Result<usize> {
-        let bytes_written = match st {
-            PortTransferState::Ready => {
-                let (completion_code, bytes_written) =
-                    self.transfer_write(port_num, endp_num - 1, buf)?;
-                st = PortTransferState::WaitingForStatusReq(Self::completion_code_to_status(
-                    completion_code,
-                    bytes_written as u16,
-                ));
-                bytes_written
-            }
-            PortTransferState::WaitingForStatusReq(_) => return Err(Error::new(EBADF)),
-        };
-        match self.handles.get_mut(&fd).ok_or(Error::new(EBADF))? {
-            Handle::Endpoint(_, _, EndpointHandleTy::Transfer(ref mut state)) => *state = st,
-            _ => unreachable!(),
-        }
-        Ok(bytes_written as usize)
-    }
-    fn handle_transfer_read(
-        &mut self,
-        fd: usize,
-        port_num: usize,
-        endp_num: u8,
-        mut st: PortTransferState,
-        mut buf: &mut [u8],
-    ) -> Result<usize> {
-        let bytes_read = match st {
-            PortTransferState::Ready => {
-                let (completion_code, bytes_transferred) =
-                    self.transfer_read(port_num, endp_num - 1, buf)?;
-                // TODO: Perhaps transfers with large buffers could be broken up to smaller
-                // transfers.
-                st = PortTransferState::WaitingForStatusReq(Self::completion_code_to_status(
-                    completion_code,
-                    bytes_transferred as u16,
-                ));
-                bytes_transferred as usize
-            }
-            PortTransferState::WaitingForStatusReq(status) => {
-                // Use a cursor to count the number of bytes written
-                let mut cursor = io::Cursor::new(buf);
-                serde_json::to_writer(&mut cursor, &status).or(Err(Error::new(EIO)))?;
-                st = PortTransferState::Ready;
-
-                cursor
-                    .seek(io::SeekFrom::Current(0))
-                    .or(Err(Error::new(EIO)))? as usize
-            }
-        };
-        match self.handles.get_mut(&fd).ok_or(Error::new(EBADF))? {
-            Handle::Endpoint(_, _, EndpointHandleTy::Transfer(ref mut state)) => *state = st,
-            _ => unreachable!(),
-        }
-        Ok(bytes_read)
-    }
 }
 
 impl SchemeMut for Xhci {
@@ -1268,16 +1196,10 @@ impl SchemeMut for Xhci {
                 /*if self.dev_ctx.contexts[port_state.slot as usize].endpoints.get(endpoint_num as usize).ok_or(Error::new(ENOENT))?.a.read() & 0b111 != 1 {
                     return Err(Error::new(ENXIO)); // TODO: Find a proper error code for "endpoint not initialized".
                 }*/
-                let contents = match port_state
-                    .endpoint_states
-                    .get(&endpoint_num)
-                    .ok_or(Error::new(ENOENT))?
-                {
-                    EndpointState::Ready { .. } if endpoint_num != 0 => "transfer\nstatus\n",
-                    EndpointState::Init | EndpointState::Ready { .. } => "status\n",
+                if !port_state.endpoint_states.contains_key(&endpoint_num) {
+                    return Err(Error::new(ENOENT));
                 }
-                .as_bytes()
-                .to_owned();
+                let contents = "ctl\ndata\n".as_bytes().to_owned();
 
                 Handle::Endpoint(port_num, endpoint_num, EndpointHandleTy::Root(0, contents))
             }
@@ -1296,37 +1218,8 @@ impl SchemeMut for Xhci {
                 }
 
                 let st = match sub {
-                    "status" => {
-                        // status is read-only
-                        if flags & O_RDWR != O_RDONLY && flags & O_STAT == 0 {
-                            return Err(Error::new(EACCES));
-                        }
-                        EndpointHandleTy::Status(0)
-                    }
-                    "transfer" => {
-                        if endpoint_num == 0 {
-                            // Don't allow user programs to interface directly with the control
-                            // endpoint.
-                            return Err(Error::new(ENOENT));
-                        }
-                        let endp_desc = &port_state
-                            .dev_desc
-                            .config_descs
-                            .get(0)
-                            .ok_or(Error::new(EIO))?
-                            .interface_descs
-                            .get(0)
-                            .ok_or(Error::new(EIO))?
-                            .endpoints
-                            .get(endpoint_num as usize - 1)
-                            .ok_or(Error::new(ENOENT))?;
-                        if let EndpDirection::In = endp_desc.direction() {
-                            if flags & O_RDWR != O_RDONLY && flags & O_STAT != 0 {
-                                return Err(Error::new(EACCES));
-                            }
-                        }
-                        EndpointHandleTy::Transfer(PortTransferState::Ready)
-                    }
+                    "ctl" => EndpointHandleTy::Ctl,
+                    "data" => EndpointHandleTy::Data,
                     _ => return Err(Error::new(ENOENT)),
                 };
                 Handle::Endpoint(port_num, endpoint_num, st)
@@ -1385,9 +1278,7 @@ impl SchemeMut for Xhci {
 
             Handle::PortState(_, _) | Handle::PortReq(_, _) => stat.st_mode = MODE_CHR,
             Handle::Endpoint(_, _, st) => match st {
-                EndpointHandleTy::Status(_) | EndpointHandleTy::Transfer(_) => {
-                    stat.st_mode = MODE_CHR
-                }
+                EndpointHandleTy::Ctl | EndpointHandleTy::Data => stat.st_mode = MODE_CHR,
                 EndpointHandleTy::Root(_, ref buf) => {
                     stat.st_mode = MODE_DIR;
                     stat.st_size = buf.len() as u64;
@@ -1421,8 +1312,8 @@ impl SchemeMut for Xhci {
                 endp_num,
                 match st {
                     EndpointHandleTy::Root(_, _) => "",
-                    EndpointHandleTy::Status(_) => "status",
-                    EndpointHandleTy::Transfer(_) => "transfer",
+                    EndpointHandleTy::Ctl => "ctl",
+                    EndpointHandleTy::Data => "data",
                 }
             )
             .unwrap(),
@@ -1451,13 +1342,11 @@ impl SchemeMut for Xhci {
                 };
                 Ok(*offset)
             }
-            // Read-only unknown-length status strings
-            Handle::Endpoint(_, _, EndpointHandleTy::Status(ref mut offset))
-            | Handle::PortState(_, ref mut offset) => {
-                *offset = match whence {
-                    SEEK_SET => cmp::max(0, pos),
-                    SEEK_CUR => cmp::max(0, *offset + pos),
-                    SEEK_END => return Err(Error::new(ESPIPE)),
+            Handle::PortState(_, ref mut offset) => {
+                match whence {
+                    SEEK_SET => *offset = pos,
+                    SEEK_CUR => *offset = pos,
+                    SEEK_END => *offset = pos,
                     _ => return Err(Error::new(EINVAL)),
                 };
                 Ok(*offset)
@@ -1487,39 +1376,9 @@ impl SchemeMut for Xhci {
             Handle::ConfigureEndpoints(_) => return Err(Error::new(EBADF)),
 
             &mut Handle::Endpoint(port_num, endp_num, ref mut st) => match st {
-                &mut EndpointHandleTy::Transfer(state) => {
-                    self.handle_transfer_read(fd, port_num, endp_num, state, buf)
-                }
-                EndpointHandleTy::Status(ref mut offset) => {
-                    let ps = self.port_states.get(&port_num).ok_or(Error::new(EBADF))?;
-                    let status = self
-                        .dev_ctx
-                        .contexts
-                        .get(ps.slot as usize)
-                        .ok_or(Error::new(EBADF))?
-                        .endpoints
-                        .get(endp_num as usize)
-                        .ok_or(Error::new(EBADF))?
-                        .a
-                        .read()
-                        & ENDPOINT_CONTEXT_STATUS_MASK;
-
-                    let string = match status {
-                        0 => Some(EndpointStatus::Disabled),
-                        1 => Some(EndpointStatus::Enabled),
-                        2 => Some(EndpointStatus::Halted),
-                        3 => Some(EndpointStatus::Stopped),
-                        4 => Some(EndpointStatus::Error),
-                        _ => None,
-                    }
-                    .as_ref()
-                    .map(EndpointStatus::as_str)
-                    .unwrap_or("unknown")
-                    .as_bytes();
-
-                    Ok(Self::write_dyn_string(string, buf, offset))
-                }
-                EndpointHandleTy::Root(_, _) => unreachable!(),
+                EndpointHandleTy::Ctl => self.on_read_endp_ctl(port_num, endp_num, buf),
+                EndpointHandleTy::Data => self.on_read_endp_data(port_num, endp_num, buf),
+                EndpointHandleTy::Root(_, _) => return Err(Error::new(EBADF)),
             },
             &mut Handle::PortState(port_num, ref mut offset) => {
                 let ps = self.port_states.get(&port_num).ok_or(Error::new(EBADF))?;
@@ -1557,8 +1416,10 @@ impl SchemeMut for Xhci {
                 self.configure_endpoints(port_num, buf)?;
                 Ok(buf.len())
             }
-            &mut Handle::Endpoint(port_num, endp_num, EndpointHandleTy::Transfer(state)) => {
-                self.handle_transfer_write(fd, port_num, endp_num, state, buf)
+            &mut Handle::Endpoint(port_num, endp_num, ref ep_file_ty) => match ep_file_ty {
+                EndpointHandleTy::Ctl => self.on_write_endp_ctl(port_num, endp_num, buf),
+                EndpointHandleTy::Data => self.on_write_endp_data(port_num, endp_num, buf),
+                _ => return Err(Error::new(EBADF)),
             }
             &mut Handle::PortReq(port_num, ref mut st) => {
                 let state = std::mem::replace(st, PortReqState::Tmp);
@@ -1574,5 +1435,118 @@ impl SchemeMut for Xhci {
             return Err(Error::new(EBADF));
         }
         Ok(0)
+    }
+}
+impl Xhci {
+    pub fn get_endp_status(&mut self, port_num: usize, endp_num: u8) -> Result<EndpointStatus> {
+        let slot = self.port_states.get(&port_num).ok_or(Error::new(EBADFD))?.slot;
+        let raw = self.dev_ctx.contexts.get(slot as usize).ok_or(Error::new(EBADFD))?.endpoints.get(endp_num as usize).ok_or(Error::new(EBADFD))?.a.read() & super::context::ENDPOINT_CONTEXT_STATUS_MASK;
+        Ok(match raw {
+            0 => EndpointStatus::Disabled,
+            1 => EndpointStatus::Enabled,
+            2 => EndpointStatus::Halted,
+            3 => EndpointStatus::Stopped,
+            4 => EndpointStatus::Error,
+            _ => return Err(Error::new(EIO)),
+        })
+    }
+    pub fn on_req_reset_device(&mut self, port_num: usize, endp_num: u8, no_clear_feature: bool) {
+    }
+    pub fn on_write_endp_ctl(&mut self, port_num: usize, endp_num: u8, buf: &[u8]) -> Result<usize> {
+        let ep_if_state = &mut self.port_states.get_mut(&port_num).ok_or(Error::new(EBADF))?.endpoint_states.get_mut(&endp_num).ok_or(Error::new(EBADF))?.driver_if_state;
+        let req = serde_json::from_slice::<XhciEndpCtlReq>(buf).or(Err(Error::new(EBADMSG)))?;
+        match req {
+            XhciEndpCtlReq::Status => match ep_if_state {
+                state @ EndpIfState::Init => *state = EndpIfState::WaitingForStatus,
+                _ => return Err(Error::new(EBADF)),
+            }
+            XhciEndpCtlReq::Reset { no_clear_feature } => match ep_if_state {
+                EndpIfState::Init => self.on_req_reset_device(port_num, endp_num, no_clear_feature),
+                _ => return Err(Error::new(EBADF)),
+            }
+            XhciEndpCtlReq::Transfer(direction) => match ep_if_state {
+                state @ EndpIfState::Init => if direction == XhciEndpCtlDirection::NoData {
+                    // Yield the result directly because no bytes have to be sent or received
+                    // beforehand.
+                    let (completion_code, bytes_transferred) = self.transfer(port_num, endp_num - 1, DeviceReqData::NoData)?;
+                    if bytes_transferred > 0 { return Err(Error::new(EIO)) }
+                    let result = Self::transfer_result(completion_code, 0);
+
+                    let new_state = &mut self.port_states.get_mut(&port_num).ok_or(Error::new(EBADF))?.endpoint_states.get_mut(&endp_num).ok_or(Error::new(EBADF))?.driver_if_state;
+                    *new_state = EndpIfState::WaitingForTransferResult(result)
+                } else {
+                    *state = EndpIfState::WaitingForDataPipe(direction)
+                }
+                _ => return Err(Error::new(EBADF)),
+            }
+            _ => return Err(Error::new(ENOSYS)),
+        }
+        Ok(buf.len())
+    }
+    fn transfer_result(completion_code: u8, bytes_transferred: u32) -> PortTransferStatus {
+        if completion_code == TrbCompletionCode::Success as u8 {
+            PortTransferStatus::Success
+        } else if completion_code == TrbCompletionCode::ShortPacket as u8 {
+            PortTransferStatus::ShortPacket(bytes_transferred as u16)
+        } else if completion_code == TrbCompletionCode::Stall as u8 {
+            PortTransferStatus::Stalled
+        } else {
+            PortTransferStatus::Unknown
+        }
+    }
+    pub fn on_write_endp_data(&mut self, port_num: usize, endp_num: u8, buf: &[u8]) -> Result<usize> {
+        {
+            let ep_if_state = &mut self.port_states.get_mut(&port_num).ok_or(Error::new(EBADF))?.endpoint_states.get_mut(&endp_num).ok_or(Error::new(EBADF))?.driver_if_state;
+            match ep_if_state {
+                state @ EndpIfState::WaitingForDataPipe(XhciEndpCtlDirection::Out) => (),
+                _ => return Err(Error::new(EBADF)),
+            }
+        }
+        {
+            let (completion_code, bytes_transferred) = self.transfer_write(port_num, endp_num - 1, buf)?;
+            let result = Self::transfer_result(completion_code, bytes_transferred);
+
+            let ep_if_state = &mut self.port_states.get_mut(&port_num).ok_or(Error::new(EBADF))?.endpoint_states.get_mut(&endp_num).ok_or(Error::new(EBADF))?.driver_if_state;
+            *ep_if_state = EndpIfState::WaitingForTransferResult(result);
+            Ok(bytes_transferred as usize)
+        }
+    }
+    pub fn on_read_endp_ctl(&mut self, port_num: usize, endp_num: u8, buf: &mut [u8]) -> Result<usize> {
+        let ep_if_state = &mut self.port_states.get_mut(&port_num).ok_or(Error::new(EBADF))?.endpoint_states.get_mut(&endp_num).ok_or(Error::new(EBADF))?.driver_if_state;
+
+        let res: XhciEndpCtlRes = match ep_if_state {
+            &mut EndpIfState::Init => XhciEndpCtlRes::Idle,
+
+            state @ &mut EndpIfState::WaitingForStatus => {
+                *state = EndpIfState::Init;
+                XhciEndpCtlRes::Status(self.get_endp_status(port_num, endp_num)?)
+            }
+            &mut EndpIfState::WaitingForDataPipe(_) => XhciEndpCtlRes::Pending,
+            &mut EndpIfState::WaitingForTransferResult(status) => {
+                *ep_if_state = EndpIfState::Init;
+                XhciEndpCtlRes::TransferResult(status)
+            }
+        };
+
+        let mut cursor = io::Cursor::new(buf);
+        serde_json::to_writer(&mut cursor, &res).or(Err(Error::new(EIO)))?;
+        Ok(cursor.seek(io::SeekFrom::Current(0)).unwrap() as usize)
+    }
+    pub fn on_read_endp_data(&mut self, port_num: usize, endp_num: u8, buf: &mut [u8]) -> Result<usize> {
+        {
+            let ep_if_state = &mut self.port_states.get_mut(&port_num).ok_or(Error::new(EBADF))?.endpoint_states.get_mut(&endp_num).ok_or(Error::new(EBADF))?.driver_if_state;
+            match ep_if_state {
+                EndpIfState::WaitingForDataPipe(XhciEndpCtlDirection::In) => (),
+                _ => return Err(Error::new(EBADF)),
+            }
+        }
+        {
+            let (completion_code, bytes_transferred) = self.transfer_read(port_num, endp_num, buf)?;
+            let result = Self::transfer_result(completion_code, bytes_transferred);
+
+            let ep_if_state = &mut self.port_states.get_mut(&port_num).ok_or(Error::new(EBADF))?.endpoint_states.get_mut(&endp_num).ok_or(Error::new(EBADF))?.driver_if_state;
+            *ep_if_state = EndpIfState::WaitingForTransferResult(result);
+            Ok(bytes_transferred as usize)
+        }
     }
 }

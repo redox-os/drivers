@@ -13,6 +13,8 @@ pub struct ReportIdentInfo {
     pub info_ty: u8,
     pub control: u8,
 }
+unsafe impl plain::Plain for ReportIdentInfo {}
+
 impl ReportIdentInfo {
     pub fn new(alloc_len: u32, info_ty: ReportIdInfoInfoTy, control: u8) -> Self {
         Self {
@@ -52,6 +54,8 @@ pub struct ReportSuppOpcodes {
     pub _rsvd: u8,
     pub control: u8,
 }
+unsafe impl plain::Plain for ReportSuppOpcodes {}
+
 impl ReportSuppOpcodes {
     pub const fn new(rep_opts: ReportSuppOpcodesOptions, rctd: bool, req_opcode: u8, req_serviceaction: u16, alloc_len: u32, control: u8) -> Self {
         Self {
@@ -115,6 +119,7 @@ pub struct CommandDescriptor {
     /// little endian
     pub cdb_len: u16,
 }
+
 #[repr(packed)]
 pub struct OneCommandParam {
     pub _rsvd: u8,
@@ -133,6 +138,7 @@ pub struct Inquiry {
     pub alloc_len: u16,
     pub control: u8,
 }
+unsafe impl plain::Plain for Inquiry {}
 
 impl Inquiry {
     pub fn new(evpd: bool, page_code: u8, alloc_len: u16, control: u8) -> Self {

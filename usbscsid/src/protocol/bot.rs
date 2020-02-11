@@ -4,7 +4,7 @@ use std::io::prelude::*;
 use std::{io, slice};
 
 use thiserror::Error;
-use xhcid_interface::{ConfDesc, DeviceReqData, EndpBinaryDirection, EndpDirection, EndpointStatus, IfDesc, Invalid, PortReqDirection, PortReqTy, PortReqRecipient, PortTransferStatus, XhciClientHandle, XhciClientHandleError, XhciEndpStatusHandle, XhciEndpTransferHandle};
+use xhcid_interface::{ConfDesc, DeviceReqData, EndpBinaryDirection, EndpDirection, EndpointStatus, IfDesc, Invalid, PortReqDirection, PortReqTy, PortReqRecipient, PortTransferStatus, XhciClientHandle, XhciClientHandleError, XhciEndpHandle};
 
 use super::{Protocol, ProtocolError};
 
@@ -77,10 +77,8 @@ impl CommandStatusWrapper {
 
 pub struct BulkOnlyTransport<'a> {
     handle: &'a XhciClientHandle,
-    bulk_in: XhciEndpTransferHandle,
-    bulk_out: XhciEndpTransferHandle,
-    bulk_in_status: XhciEndpStatusHandle,
-    bulk_out_status: XhciEndpStatusHandle,
+    bulk_in: XhciEndpHandle,
+    bulk_out: XhciEndpHandle,
     bulk_in_num: u8,
     bulk_out_num: u8,
     max_lun: u8,
@@ -103,10 +101,8 @@ impl<'a> BulkOnlyTransport<'a> {
         println!("BOT_MAX_LUN {}", max_lun);
 
         Ok(Self {
-            bulk_in: handle.open_endpoint(bulk_in_num, PortReqDirection::DeviceToHost)?,
-            bulk_out: handle.open_endpoint(bulk_out_num, PortReqDirection::HostToDevice)?,
-            bulk_in_status: handle.open_endpoint_status(bulk_in_num)?,
-            bulk_out_status: handle.open_endpoint_status(bulk_out_num)?,
+            bulk_in: handle.open_endpoint(bulk_in_num)?,
+            bulk_out: handle.open_endpoint(bulk_out_num)?,
             bulk_in_num,
             bulk_out_num,
             handle,
@@ -115,15 +111,20 @@ impl<'a> BulkOnlyTransport<'a> {
             interface_num: if_desc.number,
         })
     }
-    fn clear_stall(&mut self, endp_num: u8) -> Result<(), XhciClientHandleError> {
-        self.handle.clear_feature(PortReqRecipient::Endpoint, u16::from(endp_num), FEATURE_ENDPOINT_HALT)
+    fn clear_stall_in(&mut self) -> Result<(), XhciClientHandleError> {
+        self.bulk_in.reset(false);
+        self.handle.clear_feature(PortReqRecipient::Endpoint, u16::from(self.bulk_in_num), FEATURE_ENDPOINT_HALT)
+    }
+    fn clear_stall_out(&mut self) -> Result<(), XhciClientHandleError> {
+        self.bulk_out.reset(false);
+        self.handle.clear_feature(PortReqRecipient::Endpoint, u16::from(self.bulk_out_num), FEATURE_ENDPOINT_HALT)
     }
     fn reset_recovery(&mut self) -> Result<(), ProtocolError> {
         bulk_only_mass_storage_reset(self.handle, self.interface_num.into())?;
-        self.clear_stall(self.bulk_in_num.into())?;
-        self.clear_stall(self.bulk_out_num.into())?;
+        self.clear_stall_in()?;
+        self.clear_stall_out()?;
 
-        if self.bulk_in_status.current_status()? == EndpointStatus::Halted || self.bulk_out_status.current_status()? == EndpointStatus::Halted {
+        if self.bulk_in.status()? == EndpointStatus::Halted || self.bulk_out.status()? == EndpointStatus::Halted {
             return Err(ProtocolError::RecoveryFailed)
         }
         Ok(())
@@ -135,25 +136,23 @@ impl<'a> Protocol for BulkOnlyTransport<'a> {
         self.current_tag += 1;
         let tag = self.current_tag;
 
-        let mut command_block = [0u8; 16];
-        if cb.len() > 16 {
-            return Err(ProtocolError::TooLargeCommandBlock(cb.len()));
-        }
-        command_block[..cb.len()].copy_from_slice(&cb);
+        println!("{}", base64::encode(cb));
+        println!();
 
-        let cbw = CommandBlockWrapper {
-            signature: CBW_SIGNATURE,
-            tag,
-            data_transfer_len: data.len() as u32,
-            lun: 0, // TODO
-            flags: u8::from(data.direction() == PortReqDirection::DeviceToHost) << 7,
-            cb_len: cb.len().try_into().or(Err(ProtocolError::TooLargeCommandBlock(cb.len())))?,
-            command_block,
-        };
-        match self.bulk_out.transfer_write(unsafe { plain::as_bytes(&cbw) })? {
+        let mut cbw_bytes = [0u8; 31];
+        let cbw = plain::from_mut_bytes::<CommandBlockWrapper>(&mut cbw_bytes).unwrap();
+
+        *cbw = CommandBlockWrapper::new(tag, data.len() as u32, data.direction().into(), 0, cb)?;
+        println!("{}", base64::encode(&cbw_bytes));
+
+        dbg!(self.bulk_in.status()?, self.bulk_out.status()?);
+
+        match self.bulk_out.transfer_write(&cbw_bytes)? {
             PortTransferStatus::ShortPacket(31) => (),
             PortTransferStatus::Stalled => {
-                panic!("bulk out endpoint stalled when sending CBW");
+                println!("bulk out endpoint stalled when sending CBW");
+                self.reset_recovery()?;
+                dbg!(self.bulk_in.status()?, self.bulk_out.status()?);
             }
             _ => panic!("invalid number of CBW bytes written; expected a short packed of length 31 (0x1F)"),
         }
@@ -165,7 +164,7 @@ impl<'a> Protocol for BulkOnlyTransport<'a> {
                     PortTransferStatus::ShortPacket(len) => panic!("received short packed (len {}) when transferring data", len),
                     PortTransferStatus::Stalled => {
                         println!("bulk in endpoint stalled when reading data");
-                        self.clear_stall(self.bulk_in_num)?;
+                        self.clear_stall_in()?;
                     }
                     PortTransferStatus::Unknown => return Err(ProtocolError::XhciError(XhciClientHandleError::InvalidResponse(Invalid("unknown transfer status")))),
                 };
@@ -173,27 +172,29 @@ impl<'a> Protocol for BulkOnlyTransport<'a> {
             }
             DeviceReqData::Out(ref buffer) => todo!(),
             DeviceReqData::NoData => todo!(),
-        };
+        }
 
-        let mut csw = CommandStatusWrapper::default();
+        let mut csw_buffer = [0u8; 13];
 
-        match self.bulk_in.transfer_read(unsafe { plain::as_mut_bytes(&mut csw) })? {
+        match self.bulk_in.transfer_read(&mut csw_buffer)? {
             PortTransferStatus::ShortPacket(13) => (),
             PortTransferStatus::Stalled => {
                 println!("bulk in endpoint stalled when reading CSW");
-                self.clear_stall(self.bulk_in_num)?;
+                self.clear_stall_in()?;
             }
             _ => panic!("invalid number of CSW bytes read; expected a short packet of length 13 (0xD)"),
         };
+        println!("{}", base64::encode(&csw_buffer));
+        let csw = plain::from_bytes::<CommandStatusWrapper>(&csw_buffer).unwrap();
 
         if !csw.is_valid() {
             self.reset_recovery()?;
         }
         dbg!(csw);
 
-        if self.bulk_in_status.current_status()? == EndpointStatus::Halted || self.bulk_out_status.current_status()? == EndpointStatus::Halted {
+        if self.bulk_in.status()? == EndpointStatus::Halted || self.bulk_out.status()? == EndpointStatus::Halted {
             println!("Trying to recover from stall");
-            dbg!(self.bulk_in_status.current_status()?, self.bulk_out_status.current_status()?);
+            dbg!(self.bulk_in.status()?, self.bulk_out.status()?);
         }
 
         Ok(())
@@ -204,7 +205,7 @@ pub fn bulk_only_mass_storage_reset(handle: &XhciClientHandle, if_num: u16) -> R
     handle.device_request(PortReqTy::Class, PortReqRecipient::Interface, 0xFF, 0, if_num, DeviceReqData::NoData)
 }
 pub fn get_max_lun(handle: &XhciClientHandle, if_num: u16) -> Result<u8, XhciClientHandleError> {
-    let mut lun = 0;
+    let mut lun = 0u8;
     let buffer = slice::from_mut(&mut lun);
     handle.device_request(PortReqTy::Class, PortReqRecipient::Interface, 0xFE, 0, if_num, DeviceReqData::In(buffer))?;
     Ok(lun)

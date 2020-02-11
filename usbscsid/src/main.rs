@@ -47,8 +47,11 @@ fn main() {
         let control = 0; // TODO: NACA?
         scsi::cmds::ReportIdentInfo::new(alloc_len, info_ty, control)
     };*/
-    let inquiry = scsi::cmds::Inquiry::new(false, 0, 36, 0);
-    let mut buffer = [0u8; 36];
-    use protocol::Protocol;
-    protocol.send_command(unsafe { plain::as_bytes(&inquiry) }, DeviceReqData::In(&mut buffer)).expect("Failed to send command");
+    let mut buffer = [0u8; 5];
+    let mut command_buffer = [0u8; 6];
+    {
+        let mut inquiry = plain::from_mut_bytes(&mut command_buffer).unwrap();
+        *inquiry = scsi::cmds::Inquiry::new(false, 0, 5, 0);
+    }
+    protocol.send_command(&command_buffer, DeviceReqData::In(&mut buffer)).expect("Failed to send command");
 }

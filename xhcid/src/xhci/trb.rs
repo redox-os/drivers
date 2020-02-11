@@ -297,6 +297,7 @@ impl Trb {
         len: u16,
         cycle: bool,
         estimated_td_size: u8,
+        interrupter: u8,
         ent: bool,
         isp: bool,
         chain: bool,
@@ -308,11 +309,11 @@ impl Trb {
         // NOTE: The interrupter target and no snoop flags have been omitted.
         self.set(
             buffer,
-            u32::from(len) | (u32::from(estimated_td_size) << 17),
+            u32::from(len) | (u32::from(estimated_td_size) << 17) | (u32::from(interrupter) << 21),
             u32::from(cycle)
                 | (u32::from(ent) << 1)
                 | (u32::from(isp) << 2)
-                | (u32::from(ent) << 4)
+                | (u32::from(chain) << 4)
                 | (u32::from(ioc) << 5)
                 | (u32::from(idt) << 6)
                 | (u32::from(bei) << 9)
