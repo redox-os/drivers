@@ -95,8 +95,6 @@ impl<'a> BulkOnlyTransport<'a> {
         let bulk_in_num = (endpoints.iter().position(|endpoint| endpoint.direction() == EndpDirection::In).unwrap() + 1) as u8;
         let bulk_out_num = (endpoints.iter().position(|endpoint| endpoint.direction() == EndpDirection::Out).unwrap() + 1) as u8;
 
-        bulk_only_mass_storage_reset(handle, if_desc.number.into())?;
-
         let max_lun = get_max_lun(handle, 0)?;
         println!("BOT_MAX_LUN {}", max_lun);
 
@@ -147,6 +145,8 @@ impl<'a> Protocol for BulkOnlyTransport<'a> {
 
         dbg!(self.bulk_in.status()?, self.bulk_out.status()?);
 
+        bulk_only_mass_storage_reset(&self.handle, self.interface_num.into())?;
+
         match self.bulk_out.transfer_write(&cbw_bytes)? {
             PortTransferStatus::ShortPacket(31) => (),
             PortTransferStatus::Stalled => {
@@ -154,7 +154,7 @@ impl<'a> Protocol for BulkOnlyTransport<'a> {
                 self.clear_stall_out()?;
                 dbg!(self.bulk_in.status()?, self.bulk_out.status()?);
             }
-            _ => panic!("invalid number of CBW bytes written; expected a short packed of length 31 (0x1F)"),
+            _ => (),//panic!("invalid number of CBW bytes written; expected a short packet of length 31 (0x1F)"),
         }
 
         match data {

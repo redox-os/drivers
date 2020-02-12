@@ -217,7 +217,7 @@ impl Xhci {
             let (cmd, cycle) = ring.next();
             cmd.status(false, cycle);
         }
-        self.dbs[ps.slot as usize].write(1);
+        self.dbs[ps.slot as usize].write(Self::def_control_endp_doorbell());
 
         {
             let event = self.cmd.next_event();
@@ -259,33 +259,34 @@ impl Xhci {
     }
 
     fn reset_endpoint(&mut self, port_num: usize, endp_num: u8, tsp: bool) -> Result<()> {
+        let endp_num_xhc = Self::endp_num_to_dci(endp_num, self.endp_desc(port_num, endp_num)?);
+
         let slot = self
             .port_states
             .get(&port_num)
             .ok_or(Error::new(EBADF))?
             .slot;
-        {
-            let (cmd, cycle, event) = self.cmd.next();
-            cmd.reset_endpoint(slot, endp_num + 1, tsp, cycle);
 
-            self.dbs[0].write(0);
+        let (cmd, cycle, event) = self.cmd.next();
+        cmd.reset_endpoint(slot, endp_num_xhc, tsp, cycle);
 
-            while event.data.read() == 0 {
-                println!("    - Waiting for event");
-            }
+        self.dbs[0].write(0);
 
-            if event.completion_code() != TrbCompletionCode::Success as u8
-                || event.trb_type() != TrbType::CommandCompletion as u8
-            {
-                println!("RESET_ENDPOINT failed with event TRB ({:#0x} {:#0x} {:#0x}) and command TRB ({:#0x} {:#0x} {:#0x})", event.data.read(), event.status.read(), event.control.read(), cmd.data.read(), cmd.status.read(), cmd.control.read());
-                return Err(Error::new(EIO));
-            }
-
-            cmd.reserved(false);
-            event.reserved(false);
-
-            self.run.ints[0].erdp.write(self.cmd.erdp());
+        while event.data.read() == 0 {
+            println!("    - Waiting for event");
         }
+
+        if event.completion_code() != TrbCompletionCode::Success as u8
+            || event.trb_type() != TrbType::CommandCompletion as u8
+        {
+            println!("RESET_ENDPOINT failed with event TRB ({:#0x} {:#0x} {:#0x}) and command TRB ({:#0x} {:#0x} {:#0x})", event.data.read(), event.status.read(), event.control.read(), cmd.data.read(), cmd.status.read(), cmd.control.read());
+            return Err(Error::new(EIO));
+        }
+
+        cmd.reserved(false);
+        event.reserved(false);
+
+        self.run.ints[0].erdp.write(self.cmd.erdp());
         Ok(())
     }
 
@@ -391,7 +392,10 @@ impl Xhci {
             return Err(Error::new(EIO));
         }
 
-        let new_context_entries = 1 + endpoints.len() as u32;
+        let new_context_entries = match endpoints.last() {
+            Some(l) => Self::endp_num_to_dci(endpoints.len() as u8, l),
+            None => 1,
+        } + 1;
 
         input_context.device.slot.a.write(
             (current_slot_a & !CONTEXT_ENTRIES_MASK)
@@ -406,18 +410,19 @@ impl Xhci {
 
         let lec = self.cap.lec();
 
-        for index in 0..endpoints.len() as u8 {
-            let endp_num = index + 1;
-            let xhc_endp_num = endp_num + 1;
+        for endp_idx in 0..endpoints.len() as u8 {
+            let endp_num = endp_idx + 1;
 
-            input_context.add_context.writef(1 << xhc_endp_num, true);
+            let endp_desc = endpoints.get(endp_idx as usize).ok_or(Error::new(EIO))?;
+            let endp_num_xhc = Self::endp_num_to_dci(endp_num, endp_desc);
+
+            input_context.add_context.writef(1 << endp_num_xhc, true);
 
             let endp_ctx = input_context
                 .device
                 .endpoints
-                .get_mut(endp_num as usize)
+                .get_mut(endp_num_xhc as usize - 1)
                 .ok_or(Error::new(EIO))?;
-            let endp_desc = endpoints.get(index as usize).ok_or(Error::new(EIO))?;
 
             let max_streams = endp_desc.max_streams();
             let max_psa_size = self.cap.max_psa_size();
@@ -589,6 +594,30 @@ impl Xhci {
             },
         )
     }
+    const fn def_control_endp_doorbell() -> u32 {
+        1
+    }
+    // TODO: Wrap DCIs and driver-level endp_num into distinct types, due to the high chance of
+    // mixing the two up.
+    fn endp_num_to_dci(endp_num: u8, desc: &EndpDesc) -> u8 {
+        if endp_num == 0 { unreachable!("EndpDesc cannot be obtained from the default control endpoint") }
+
+        if desc.is_control() || desc.direction() == EndpDirection::In {
+            endp_num * 2 + 1
+        } else if desc.direction() == EndpDirection::Out {
+            endp_num * 2
+        } else { unreachable!() }
+    }
+    fn endp_desc(&self, port_num: usize, endp_num: u8) -> Result<&EndpDesc> {
+        self.port_states.get(&port_num).ok_or(Error::new(EIO))?.dev_desc.config_descs.first().ok_or(Error::new(EIO))?.interface_descs.first().ok_or(Error::new(EIO))?.endpoints.get(endp_num as usize - 1).ok_or(Error::new(EIO))
+    }
+    fn endp_doorbell(endp_num: u8, desc: &EndpDesc, stream_id: u16) -> u32 {
+        let db_target = Self::endp_num_to_dci(endp_num, desc);
+        let db_task_id: u16 = stream_id;
+
+        (u32::from(db_task_id) << 16)
+            | u32::from(db_target)
+    }
     // TODO: Rename DeviceReqData to something more general.
     fn transfer(
         &mut self,
@@ -598,7 +627,6 @@ impl Xhci {
     ) -> Result<(u8, u32)> {
         // TODO: Check that only readable enpoints are read, etc.
         let endp_num = endp_idx + 1;
-        let xhc_endp_num = endp_num + 1;
         // TODO: Check that buf has a nonzero size, otherwise (at least for Rust's GlobalAlloc),
         // UB.
         let dma_buffer = match buf {
@@ -629,12 +657,13 @@ impl Xhci {
             .get(endp_idx as usize)
             .ok_or(Error::new(EBADFD))?;
 
+        let direction = endp_desc.direction();
+
         if endp_desc.is_isoch() {
             return Err(Error::new(ENOSYS));
         }
 
         if EndpDirection::from(buf.direction()) != endp_desc.direction() {
-            dbg!(buf.direction(), endp_desc.direction());
             return Err(Error::new(EBADF));
         }
 
@@ -688,8 +717,7 @@ impl Xhci {
         }
 
         let stream_id = 1u16;
-        self.dbs[port_state.slot as usize]
-            .write(u32::from(xhc_endp_num) | (u32::from(stream_id) << 16));
+        self.dbs[port_state.slot as usize].write(Self::endp_doorbell(endp_num, self.endp_desc(port_num, endp_num)?, stream_id));
 
         let (completion_code, bytes_transferred) = {
             let event = self.cmd.next_event();
@@ -953,7 +981,7 @@ impl Xhci {
             let (cmd, cycle) = ring.next();
             cmd.status(transfer_kind == TransferKind::In, cycle);
         }
-        self.dbs[port_state.slot as usize].write(1);
+        self.dbs[port_state.slot as usize].write(Self::def_control_endp_doorbell());
 
         {
             let event = self.cmd.next_event();
@@ -1441,7 +1469,12 @@ impl SchemeMut for Xhci {
 impl Xhci {
     pub fn get_endp_status(&mut self, port_num: usize, endp_num: u8) -> Result<EndpointStatus> {
         let slot = self.port_states.get(&port_num).ok_or(Error::new(EBADFD))?.slot;
-        let raw = self.dev_ctx.contexts.get(slot as usize).ok_or(Error::new(EBADFD))?.endpoints.get(endp_num as usize).ok_or(Error::new(EBADFD))?.a.read() & super::context::ENDPOINT_CONTEXT_STATUS_MASK;
+        let endp_num_xhc = if endp_num != 0 {
+            Self::endp_num_to_dci(endp_num, self.endp_desc(port_num, endp_num)?)
+        } else {
+            1
+        };
+        let raw = self.dev_ctx.contexts.get(slot as usize).ok_or(Error::new(EBADFD))?.endpoints.get(endp_num_xhc as usize - 1).ok_or(Error::new(EBADFD))?.a.read() & super::context::ENDPOINT_CONTEXT_STATUS_MASK;
         Ok(match raw {
             0 => EndpointStatus::Disabled,
             1 => EndpointStatus::Enabled,
@@ -1473,6 +1506,12 @@ impl Xhci {
     }
     pub fn restart_endpoint(&mut self, port_num: usize, endp_num: u8) -> Result<()> {
         let port_state = self.port_states.get_mut(&port_num).ok_or(Error::new(EBADFD))?;
+        let direction = if endp_num != 0 {
+            let endp_desc = port_state.dev_desc.config_descs.get(0).ok_or(Error::new(EIO))?.interface_descs.get(0).ok_or(Error::new(EIO))?.endpoints.get(endp_num as usize - 1).ok_or(Error::new(EBADFD))?;
+            endp_desc.direction()
+        } else {
+            EndpDirection::Bidirectional
+        };
         let endpoint_state: &mut EndpointState = port_state.endpoint_states.get_mut(&endp_num).ok_or(Error::new(EBADFD))?;
         let ring = match &mut endpoint_state.transfer {
             &mut super::RingOrStreams::Ring(ref mut ring) => ring,
@@ -1483,17 +1522,21 @@ impl Xhci {
         let deque_ptr_and_cycle = ring.register();
         let slot = port_state.slot;
 
-        self.set_tr_deque_ptr(slot, endp_num, deque_ptr_and_cycle)?;
+        self.set_tr_deque_ptr(port_num, endp_num, deque_ptr_and_cycle)?;
 
-        let endp_num_xhc = endp_num + 1;
-        self.dbs[slot as usize].write(
-            (1 << 16) // stream id
-                | u32::from(endp_num_xhc)
-        );
+        let stream_id = 1u16;
+        self.dbs[slot as usize].write(Self::endp_doorbell(endp_num, self.endp_desc(port_num, endp_num)?, stream_id));
         Ok(())
     }
-    pub fn set_tr_deque_ptr(&mut self, slot: u8, endp_num: u8, deque_ptr_and_cycle: u64) -> Result<()> {
-        let endp_num_xhc = endp_num + 1;
+    pub fn endp_direction(&self, port_num: usize, endp_num: u8) -> Result<EndpDirection> {
+        Ok(self.port_states.get(&port_num).ok_or(Error::new(EIO))?.dev_desc.config_descs.first().ok_or(Error::new(EIO))?.interface_descs.first().ok_or(Error::new(EIO))?.endpoints.get(endp_num as usize).ok_or(Error::new(EIO))?.direction())
+    }
+    pub fn slot(&self, port_num: usize) -> Result<u8> {
+        Ok(self.port_states.get(&port_num).ok_or(Error::new(EIO))?.slot)
+    }
+    pub fn set_tr_deque_ptr(&mut self, port_num: usize, endp_num: u8, deque_ptr_and_cycle: u64) -> Result<()> {
+        let slot = self.slot(port_num)?;
+        let endp_num_xhc = Self::endp_num_to_dci(endp_num, self.endp_desc(port_num, endp_num)?);
 
         // TODO: Merge these command boilerplates into a single function.
         self.run.ints[0].erdp.write(self.cmd.erdp());

@@ -388,6 +388,9 @@ impl Xhci {
     }
 
     pub fn update_default_control_pipe(&mut self, input_context: &mut Dma<InputContext>, slot_id: u8, dev_desc: &DevDesc) -> Result<()> {
+        input_context.add_context.write(1 << 1);
+        input_context.drop_context.write(0);
+
         let new_max_packet_size = if dev_desc.major_version() == 2 {
             u32::from(dev_desc.packet_size)
         } else {
