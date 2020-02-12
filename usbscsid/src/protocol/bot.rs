@@ -138,23 +138,25 @@ impl<'a> Protocol for BulkOnlyTransport<'a> {
         println!();
 
         let mut cbw_bytes = [0u8; 31];
-        let cbw = plain::from_mut_bytes::<CommandBlockWrapper>(&mut cbw_bytes).unwrap();
-
-        *cbw = CommandBlockWrapper::new(tag, data.len() as u32, data.direction().into(), 0, cb)?;
         println!("{}", base64::encode(&cbw_bytes));
+        let cbw = plain::from_mut_bytes::<CommandBlockWrapper>(&mut cbw_bytes).unwrap();
+        *cbw = CommandBlockWrapper::new(tag, data.len() as u32, data.direction().into(), 0, cb)?;
+        let cbw = *cbw;
 
         dbg!(self.bulk_in.status()?, self.bulk_out.status()?);
 
         bulk_only_mass_storage_reset(&self.handle, self.interface_num.into())?;
 
         match self.bulk_out.transfer_write(&cbw_bytes)? {
-            PortTransferStatus::ShortPacket(31) => (),
             PortTransferStatus::Stalled => {
                 println!("bulk out endpoint stalled when sending CBW");
                 self.clear_stall_out()?;
                 dbg!(self.bulk_in.status()?, self.bulk_out.status()?);
             }
-            _ => (),//panic!("invalid number of CBW bytes written; expected a short packet of length 31 (0x1F)"),
+            PortTransferStatus::ShortPacket(n) if n != 31 => {
+                panic!("received short packet when sending CBW ({} != 31)", n);
+            }
+            _ => (),
         }
 
         match data {
@@ -170,24 +172,34 @@ impl<'a> Protocol for BulkOnlyTransport<'a> {
                 };
                 println!("{}", base64::encode(&buffer[..]));
             }
-            DeviceReqData::Out(ref buffer) => todo!(),
-            DeviceReqData::NoData => todo!(),
+            DeviceReqData::Out(buffer) => {
+                match self.bulk_out.transfer_write(buffer)? {
+                    PortTransferStatus::Success => (),
+                    PortTransferStatus::ShortPacket(len) => panic!("received short packed (len {}) when transferring data", len),
+                    PortTransferStatus::Stalled => {
+                        println!("bulk out endpoint stalled when reading data");
+                        self.clear_stall_out()?;
+                    }
+                    PortTransferStatus::Unknown => return Err(ProtocolError::XhciError(XhciClientHandleError::InvalidResponse(Invalid("unknown transfer status")))),
+                }
+            }
+            DeviceReqData::NoData => (),
         }
 
         let mut csw_buffer = [0u8; 13];
 
         match self.bulk_in.transfer_read(&mut csw_buffer)? {
-            PortTransferStatus::ShortPacket(13) => (),
             PortTransferStatus::Stalled => {
                 println!("bulk in endpoint stalled when reading CSW");
                 self.clear_stall_in()?;
             }
-            _ => panic!("invalid number of CSW bytes read; expected a short packet of length 13 (0xD)"),
+            PortTransferStatus::ShortPacket(n) if n != 13 => panic!("received a short packet when reading CSW ({} != 13)", n),
+            _ => (),
         };
         println!("{}", base64::encode(&csw_buffer));
         let csw = plain::from_bytes::<CommandStatusWrapper>(&csw_buffer).unwrap();
 
-        if !csw.is_valid() {
+        if !csw.is_valid() || csw.tag != cbw.tag {
             self.reset_recovery()?;
         }
         dbg!(csw);

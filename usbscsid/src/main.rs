@@ -5,6 +5,8 @@ use xhcid_interface::{ConfigureEndpointsReq, DeviceReqData, XhciClientHandle};
 pub mod protocol;
 pub mod scsi;
 
+use scsi::cmds::StandardInquiryData;
+
 fn main() {
     let mut args = env::args().skip(1);
 
@@ -39,19 +41,27 @@ fn main() {
 
     let mut protocol = protocol::setup(&handle, protocol, &desc, &conf_desc, &if_desc).expect("Failed to setup protocol");
 
-    /*let get_info = {
-        // Max number of bytes that can be recieved from a "REPORT IDENTIFYING INFORMATION"
-        // command.
-        let alloc_len = 256; 
-        let info_ty = scsi::cmds::ReportIdInfoInfoTy::IdentInfoSupp;
-        let control = 0; // TODO: NACA?
-        scsi::cmds::ReportIdentInfo::new(alloc_len, info_ty, control)
-    };*/
-    let mut buffer = [0u8; 5];
+    assert_eq!(std::mem::size_of::<StandardInquiryData>(), 96);
+    let mut inquiry_buffer = [0u8; 259]; // additional_len = 255
     let mut command_buffer = [0u8; 6];
+
+    let min_inquiry_len = 5u16;
+
+    let max_inquiry_len = {
+        {
+            let inquiry = plain::from_mut_bytes(&mut command_buffer).unwrap();
+            *inquiry = scsi::cmds::Inquiry::new(false, 0, min_inquiry_len, 0);
+        }
+        protocol.send_command(&command_buffer, DeviceReqData::In(&mut inquiry_buffer[..min_inquiry_len as usize])).expect("Failed to send command");
+        let standard_inquiry_data: &StandardInquiryData = dbg!(plain::from_bytes(&inquiry_buffer).unwrap());
+        4 + u16::from(standard_inquiry_data.additional_len)
+    };
     {
-        let mut inquiry = plain::from_mut_bytes(&mut command_buffer).unwrap();
-        *inquiry = scsi::cmds::Inquiry::new(false, 0, 5, 0);
+        {
+            let inquiry = plain::from_mut_bytes(&mut command_buffer).unwrap();
+            *inquiry = scsi::cmds::Inquiry::new(false, 0, max_inquiry_len, 0);
+        }
+        protocol.send_command(&command_buffer, DeviceReqData::In(&mut inquiry_buffer[..max_inquiry_len as usize])).expect("Failed to send command");
+        let standard_inquiry_data: &StandardInquiryData = dbg!(plain::from_bytes(&inquiry_buffer).unwrap());
     }
-    protocol.send_command(&command_buffer, DeviceReqData::In(&mut buffer)).expect("Failed to send command");
 }

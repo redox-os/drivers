@@ -151,3 +151,29 @@ impl Inquiry {
         }
     }
 }
+
+#[repr(packed)]
+#[derive(Clone, Copy, Debug)]
+pub struct StandardInquiryData {
+    /// Peripheral device type (bits 4:0), and peripheral device qualifier (bits 7:5).
+    pub a: u8,
+    /// Removable media bit (bit 7, bits 6:0 are reserved).
+    pub rmb: u8,
+    /// Version of the SCSI command set.
+    pub version: u8,
+    pub b: u8,
+    pub additional_len: u8,
+    pub c: u8,
+    pub d: u8,
+    pub e: u8,
+    pub t10_vendor_info: u64,
+    pub product_ident: [u8; 16],
+    pub product_rev_label: u32,
+    pub driver_serial_no: [u8; 8],
+    pub vendor_uniq: [u8; 12],
+    _rsvd1: [u8; 2],
+    pub vendor_descs: [u16; 8],
+    _rsvd2: [u8; 22],
+}
+
+unsafe impl plain::Plain for StandardInquiryData {}

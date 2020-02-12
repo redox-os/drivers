@@ -686,7 +686,7 @@ impl Xhci {
         let max_packet_size = endp_desc.max_packet_size;
         {
             let (trb, cycle) = ring.next();
-            let (buffer, idt) = if len <= 8 && max_packet_size >= 8 {
+            let (buffer, idt) = if len <= 8 && max_packet_size >= 8 && direction != EndpDirection::In {
                 buf.map_buf(|sbuf| {
                     let mut bytes = [0u8; 8];
                     bytes[..len as usize].copy_from_slice(&sbuf[..len as usize]);
