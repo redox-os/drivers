@@ -634,6 +634,7 @@ impl Xhci {
         }
 
         if EndpDirection::from(buf.direction()) != endp_desc.direction() {
+            dbg!(buf.direction(), endp_desc.direction());
             return Err(Error::new(EBADF));
         }
 
@@ -1450,11 +1451,25 @@ impl Xhci {
             _ => return Err(Error::new(EIO)),
         })
     }
-    pub fn on_req_reset_device(&mut self, port_num: usize, endp_num: u8, no_clear_feature: bool) -> Result<()> {
+    pub fn on_req_reset_device(&mut self, port_num: usize, endp_num: u8, clear_feature: bool) -> Result<()> {
+        if self.get_endp_status(port_num, endp_num)? != EndpointStatus::Halted {
+            return Err(Error::new(EBADF));
+        }
         // Change the endpoint state from anything, but most likely HALTED (otherwise resetting
         // would be quite meaningless), to stopped.
         self.reset_endpoint(port_num, endp_num, false)?;
-        self.restart_endpoint(port_num, endp_num)
+        self.restart_endpoint(port_num, endp_num)?;
+
+        if clear_feature {
+            self.device_req_no_data(port_num, usb::Setup {
+                kind: 0b0000_0010, // endpoint recipient
+                request: 0x01, // CLEAR_FEATURE
+                value: 0x00, // ENDPOINT_HALT
+                index: 0, // TODO: interface num
+                length: 0,
+            })?;
+        }
+        Ok(())
     }
     pub fn restart_endpoint(&mut self, port_num: usize, endp_num: u8) -> Result<()> {
         let port_state = self.port_states.get_mut(&port_num).ok_or(Error::new(EBADFD))?;
@@ -1464,7 +1479,7 @@ impl Xhci {
             &mut super::RingOrStreams::Streams(ref mut arr) => arr.rings.get_mut(&1).ok_or(Error::new(EBADFD))?,
         };
         let (cmd, cycle) = ring.next();
-        cmd.transfer_no_op(0, false, false, false, false);
+        cmd.transfer_no_op(0, false, false, false, cycle);
         let deque_ptr_and_cycle = ring.register();
         let slot = port_state.slot;
 
@@ -1518,7 +1533,7 @@ impl Xhci {
                 _ => return Err(Error::new(EBADF)),
             }
             XhciEndpCtlReq::Reset { no_clear_feature } => match ep_if_state {
-                EndpIfState::Init => self.on_req_reset_device(port_num, endp_num, no_clear_feature)?,
+                EndpIfState::Init => self.on_req_reset_device(port_num, endp_num, !no_clear_feature)?,
                 _ => return Err(Error::new(EBADF)),
             }
             XhciEndpCtlReq::Transfer(direction) => match ep_if_state {
@@ -1598,7 +1613,7 @@ impl Xhci {
             }
         }
         {
-            let (completion_code, bytes_transferred) = self.transfer_read(port_num, endp_num, buf)?;
+            let (completion_code, bytes_transferred) = self.transfer_read(port_num, endp_num - 1, buf)?;
             let result = Self::transfer_result(completion_code, bytes_transferred);
 
             let ep_if_state = &mut self.port_states.get_mut(&port_num).ok_or(Error::new(EBADF))?.endpoint_states.get_mut(&endp_num).ok_or(Error::new(EBADF))?.driver_if_state;

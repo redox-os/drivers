@@ -614,7 +614,7 @@ impl XhciEndpHandle {
         }
     }
     fn generic_transfer<F: FnOnce(&mut File) -> io::Result<usize>>(&mut self, direction: XhciEndpCtlDirection, f: F, expected_len: usize) -> result::Result<PortTransferStatus, XhciClientHandleError> {
-        let req = XhciEndpCtlReq::Transfer(XhciEndpCtlDirection::Out);
+        let req = XhciEndpCtlReq::Transfer(direction);
         self.ctl_req(&req)?;
 
         let bytes_read = f(&mut self.data)?;

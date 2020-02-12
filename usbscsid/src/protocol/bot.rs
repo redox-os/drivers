@@ -112,11 +112,11 @@ impl<'a> BulkOnlyTransport<'a> {
         })
     }
     fn clear_stall_in(&mut self) -> Result<(), XhciClientHandleError> {
-        self.bulk_in.reset(false);
+        self.bulk_in.reset(false)?;
         self.handle.clear_feature(PortReqRecipient::Endpoint, u16::from(self.bulk_in_num), FEATURE_ENDPOINT_HALT)
     }
     fn clear_stall_out(&mut self) -> Result<(), XhciClientHandleError> {
-        self.bulk_out.reset(false);
+        self.bulk_out.reset(false)?;
         self.handle.clear_feature(PortReqRecipient::Endpoint, u16::from(self.bulk_out_num), FEATURE_ENDPOINT_HALT)
     }
     fn reset_recovery(&mut self) -> Result<(), ProtocolError> {
