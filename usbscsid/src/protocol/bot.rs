@@ -151,7 +151,7 @@ impl<'a> Protocol for BulkOnlyTransport<'a> {
             PortTransferStatus::ShortPacket(31) => (),
             PortTransferStatus::Stalled => {
                 println!("bulk out endpoint stalled when sending CBW");
-                self.reset_recovery()?;
+                self.clear_stall_out()?;
                 dbg!(self.bulk_in.status()?, self.bulk_out.status()?);
             }
             _ => panic!("invalid number of CBW bytes written; expected a short packed of length 31 (0x1F)"),

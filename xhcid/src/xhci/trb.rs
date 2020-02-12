@@ -2,6 +2,8 @@ use crate::usb;
 use std::{fmt, mem};
 use syscall::io::{Io, Mmio};
 
+use super::context::StreamContextType;
+
 #[repr(u8)]
 pub enum TrbType {
     Reserved,
@@ -242,6 +244,20 @@ impl Trb {
                 | u32::from(cycle),
         );
     }
+    /// The deque_ptr has to contain the DCS bit (bit 0).
+    pub fn set_tr_deque_ptr(&mut self, deque_ptr: u64, cycle: bool, sct: StreamContextType, stream_id: u16, endp_num_xhc: u8, slot: u8) {
+        assert_eq!(deque_ptr & 0xFFFF_FFFF_FFFF_FFF1, deque_ptr);
+        assert_eq!(endp_num_xhc & 0x1F, endp_num_xhc);
+
+        self.set(
+            deque_ptr | ((sct as u64) << 1),
+            u32::from(stream_id) << 16,
+            (u32::from(slot) << 24)
+                | (u32::from(endp_num_xhc) << 16)
+                | ((TrbType::SetTrDequeuePointer as u32) << 10)
+                | u32::from(cycle),
+        )
+    }
     pub fn stop_endpoint(&mut self, slot_id: u8, endp_num_xhc: u8, suspend: bool, cycle: bool) {
         assert_eq!(endp_num_xhc & 0x1F, endp_num_xhc);
         self.set(
@@ -259,6 +275,18 @@ impl Trb {
             0,
             0,
             (u32::from(slot_id) << 24) | ((TrbType::ResetDevice as u32) << 10) | u32::from(cycle),
+        );
+    }
+
+    pub fn transfer_no_op(&mut self, interrupter: u8, ent: bool, ch: bool, ioc: bool, cycle: bool) {
+        self.set(
+            0,
+            u32::from(interrupter) << 22,
+            ((TrbType::NoOp as u32) << 10)
+                | (u32::from(ioc) << 5)
+                | (u32::from(ch) << 4)
+                | (u32::from(ent) << 1)
+                | u32::from(cycle)
         );
     }
 
@@ -309,7 +337,7 @@ impl Trb {
         // NOTE: The interrupter target and no snoop flags have been omitted.
         self.set(
             buffer,
-            u32::from(len) | (u32::from(estimated_td_size) << 17) | (u32::from(interrupter) << 21),
+            u32::from(len) | (u32::from(estimated_td_size) << 17) | (u32::from(interrupter) << 22),
             u32::from(cycle)
                 | (u32::from(ent) << 1)
                 | (u32::from(isp) << 2)

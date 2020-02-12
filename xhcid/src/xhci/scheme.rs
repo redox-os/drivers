@@ -18,7 +18,7 @@ use super::{Device, EndpointState, Xhci};
 
 use super::command::CommandRing;
 use super::context::{
-    InputContext, SlotState, StreamContext, StreamContextArray, ENDPOINT_CONTEXT_STATUS_MASK,
+    InputContext, SlotState, StreamContext, StreamContextArray, StreamContextType, ENDPOINT_CONTEXT_STATUS_MASK,
 };
 use super::doorbell::Doorbell;
 use super::extended::ProtocolSpeed;
@@ -1450,7 +1450,64 @@ impl Xhci {
             _ => return Err(Error::new(EIO)),
         })
     }
-    pub fn on_req_reset_device(&mut self, port_num: usize, endp_num: u8, no_clear_feature: bool) {
+    pub fn on_req_reset_device(&mut self, port_num: usize, endp_num: u8, no_clear_feature: bool) -> Result<()> {
+        // Change the endpoint state from anything, but most likely HALTED (otherwise resetting
+        // would be quite meaningless), to stopped.
+        self.reset_endpoint(port_num, endp_num, false)?;
+        self.restart_endpoint(port_num, endp_num)
+    }
+    pub fn restart_endpoint(&mut self, port_num: usize, endp_num: u8) -> Result<()> {
+        let port_state = self.port_states.get_mut(&port_num).ok_or(Error::new(EBADFD))?;
+        let endpoint_state: &mut EndpointState = port_state.endpoint_states.get_mut(&endp_num).ok_or(Error::new(EBADFD))?;
+        let ring = match &mut endpoint_state.transfer {
+            &mut super::RingOrStreams::Ring(ref mut ring) => ring,
+            &mut super::RingOrStreams::Streams(ref mut arr) => arr.rings.get_mut(&1).ok_or(Error::new(EBADFD))?,
+        };
+        let (cmd, cycle) = ring.next();
+        cmd.transfer_no_op(0, false, false, false, false);
+        let deque_ptr_and_cycle = ring.register();
+        let slot = port_state.slot;
+
+        self.set_tr_deque_ptr(slot, endp_num, deque_ptr_and_cycle)?;
+
+        let endp_num_xhc = endp_num + 1;
+        self.dbs[slot as usize].write(
+            (1 << 16) // stream id
+                | u32::from(endp_num_xhc)
+        );
+        Ok(())
+    }
+    pub fn set_tr_deque_ptr(&mut self, slot: u8, endp_num: u8, deque_ptr_and_cycle: u64) -> Result<()> {
+        let endp_num_xhc = endp_num + 1;
+
+        // TODO: Merge these command boilerplates into a single function.
+        self.run.ints[0].erdp.write(self.cmd.erdp());
+
+        {
+            let (cmd, cycle, event) = self.cmd.next();
+
+
+            // TODO: I guess this very command is the one used to actually multiplex between
+            // streams.
+            cmd.set_tr_deque_ptr(deque_ptr_and_cycle, cycle, StreamContextType::PrimaryRing, 1, endp_num_xhc, slot);
+
+            self.dbs[0].write(0);
+
+            while event.data.read() == 0 {
+                println!("    - Waiting for event");
+            }
+
+            if event.completion_code() != TrbCompletionCode::Success as u8
+                || event.trb_type() != TrbType::CommandCompletion as u8
+            {
+                println!("SET_TR_DEQUEUE_POINTER failed with event TRB ({:#0x} {:#0x} {:#0x}) and command TRB ({:#0x} {:#0x} {:#0x})", event.data.read(), event.status.read(), event.control.read(), cmd.data.read(), cmd.status.read(), cmd.control.read());
+                return Err(Error::new(EIO));
+            }
+
+            cmd.reserved(false);
+            event.reserved(false);
+        }
+        Ok(())
     }
     pub fn on_write_endp_ctl(&mut self, port_num: usize, endp_num: u8, buf: &[u8]) -> Result<usize> {
         let ep_if_state = &mut self.port_states.get_mut(&port_num).ok_or(Error::new(EBADF))?.endpoint_states.get_mut(&endp_num).ok_or(Error::new(EBADF))?.driver_if_state;
@@ -1461,7 +1518,7 @@ impl Xhci {
                 _ => return Err(Error::new(EBADF)),
             }
             XhciEndpCtlReq::Reset { no_clear_feature } => match ep_if_state {
-                EndpIfState::Init => self.on_req_reset_device(port_num, endp_num, no_clear_feature),
+                EndpIfState::Init => self.on_req_reset_device(port_num, endp_num, no_clear_feature)?,
                 _ => return Err(Error::new(EBADF)),
             }
             XhciEndpCtlReq::Transfer(direction) => match ep_if_state {
