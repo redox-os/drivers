@@ -1402,6 +1402,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.11.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "plain 0.2.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "redox_syscall 0.1.56 (git+https://gitlab.redox-os.org/redox-os/syscall.git)",
  "thiserror 1.0.10 (registry+https://github.com/rust-lang/crates.io-index)",
  "xhcid 0.1.0",
 ]

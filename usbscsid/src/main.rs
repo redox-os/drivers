@@ -1,11 +1,18 @@
 use std::env;
+use std::fs::File;
+use std::io::prelude::*;
+use std::os::unix::io::{FromRawFd, RawFd};
 
+use syscall::{CloneFlags, Packet, SchemeMut};
 use xhcid_interface::{ConfigureEndpointsReq, DeviceReqData, XhciClientHandle};
 
 pub mod protocol;
 pub mod scsi;
 
-use scsi::cmds::StandardInquiryData;
+mod scheme;
+
+use scheme::ScsiScheme;
+use scsi::Scsi;
 
 fn main() {
     let mut args = env::args().skip(1);
@@ -18,6 +25,15 @@ fn main() {
 
     println!("USB SCSI driver spawned with scheme `{}`, port {}, protocol {}", scheme, port, protocol);
 
+    // Daemonize so that xhcid can continue to do other useful work (until proper IRQs,
+    // async-await, and multithreading :D)
+    if unsafe { syscall::clone(CloneFlags::empty()).unwrap() } != 0 {
+        return
+    }
+
+    let disk_scheme_name = format!(":disk/{}-{}_scsi", scheme, port);
+
+    // TODO: Use eventfds.
     let handle = XhciClientHandle::new(scheme, port);
 
     let desc = handle.get_standard_descs().expect("Failed to get standard descriptors");
@@ -41,27 +57,23 @@ fn main() {
 
     let mut protocol = protocol::setup(&handle, protocol, &desc, &conf_desc, &if_desc).expect("Failed to setup protocol");
 
-    assert_eq!(std::mem::size_of::<StandardInquiryData>(), 96);
-    let mut inquiry_buffer = [0u8; 259]; // additional_len = 255
-    let mut command_buffer = [0u8; 6];
+    // TODO: Let all of the USB drivers syscall clone(2), and xhcid won't have to keep track of all
+    // the drivers.
+    let socket_fd = syscall::open(disk_scheme_name, syscall::O_RDWR | syscall::O_CREAT).expect("usbscsid: failed to create disk scheme");
+    let mut socket_file = unsafe { File::from_raw_fd(socket_fd as RawFd) };
 
-    let min_inquiry_len = 5u16;
+    //syscall::setrens(0, 0).expect("scsid: failed to enter null namespace");
+    let mut scsi = Scsi::new(&mut *protocol);
+    let mut scsi_scheme = ScsiScheme::new(&mut scsi);
 
-    let max_inquiry_len = {
-        {
-            let inquiry = plain::from_mut_bytes(&mut command_buffer).unwrap();
-            *inquiry = scsi::cmds::Inquiry::new(false, 0, min_inquiry_len, 0);
+    // TODO: Use nonblocking and put all pending calls in a todo VecDeque. Use an eventfd as well.
+    'scheme_loop: loop {
+        let mut packet = Packet::default();
+        match socket_file.read(&mut packet) {
+            Ok(0) => break 'scheme_loop,
+            Ok(_) => (),
+            Err(err) => panic!("scsid: failed to read disk scheme: {}", err),
         }
-        protocol.send_command(&command_buffer, DeviceReqData::In(&mut inquiry_buffer[..min_inquiry_len as usize])).expect("Failed to send command");
-        let standard_inquiry_data: &StandardInquiryData = dbg!(plain::from_bytes(&inquiry_buffer).unwrap());
-        4 + u16::from(standard_inquiry_data.additional_len)
-    };
-    {
-        {
-            let inquiry = plain::from_mut_bytes(&mut command_buffer).unwrap();
-            *inquiry = scsi::cmds::Inquiry::new(false, 0, max_inquiry_len, 0);
-        }
-        protocol.send_command(&command_buffer, DeviceReqData::In(&mut inquiry_buffer[..max_inquiry_len as usize])).expect("Failed to send command");
-        let standard_inquiry_data: &StandardInquiryData = dbg!(plain::from_bytes(&inquiry_buffer).unwrap());
+        scsi_scheme.handle(&mut packet);
     }
 }

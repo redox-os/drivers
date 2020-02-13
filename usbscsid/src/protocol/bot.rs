@@ -1,12 +1,9 @@
-use std::convert::TryInto;
-use std::fs::File;
-use std::io::prelude::*;
-use std::{io, slice};
+use std::num::NonZeroU32;
+use std::slice;
 
-use thiserror::Error;
-use xhcid_interface::{ConfDesc, DeviceReqData, EndpBinaryDirection, EndpDirection, EndpointStatus, IfDesc, Invalid, PortReqDirection, PortReqTy, PortReqRecipient, PortTransferStatus, XhciClientHandle, XhciClientHandleError, XhciEndpHandle};
+use xhcid_interface::{ConfDesc, DeviceReqData, EndpBinaryDirection, EndpDirection, EndpointStatus, IfDesc, Invalid, PortReqTy, PortReqRecipient, PortTransferStatus, XhciClientHandle, XhciClientHandleError, XhciEndpHandle};
 
-use super::{Protocol, ProtocolError};
+use super::{Protocol, ProtocolError, SendCommandStatus};
 
 pub const CBW_SIGNATURE: u32 = 0x43425355;
 
@@ -130,7 +127,7 @@ impl<'a> BulkOnlyTransport<'a> {
 }
 
 impl<'a> Protocol for BulkOnlyTransport<'a> {
-    fn send_command(&mut self, cb: &[u8], data: DeviceReqData) -> Result<(), ProtocolError> {
+    fn send_command(&mut self, cb: &[u8], data: DeviceReqData) -> Result<SendCommandStatus, ProtocolError> {
         self.current_tag += 1;
         let tag = self.current_tag;
 
@@ -138,10 +135,10 @@ impl<'a> Protocol for BulkOnlyTransport<'a> {
         println!();
 
         let mut cbw_bytes = [0u8; 31];
-        println!("{}", base64::encode(&cbw_bytes));
         let cbw = plain::from_mut_bytes::<CommandBlockWrapper>(&mut cbw_bytes).unwrap();
         *cbw = CommandBlockWrapper::new(tag, data.len() as u32, data.direction().into(), 0, cb)?;
         let cbw = *cbw;
+        println!("{}", base64::encode(&cbw_bytes));
 
         dbg!(self.bulk_in.status()?, self.bulk_out.status()?);
 
@@ -209,7 +206,13 @@ impl<'a> Protocol for BulkOnlyTransport<'a> {
             dbg!(self.bulk_in.status()?, self.bulk_out.status()?);
         }
 
-        Ok(())
+        Ok(if csw.status == CswStatus::Passed as u8 {
+            SendCommandStatus::Success
+        } else if csw.status == CswStatus::Failed as u8 {
+            SendCommandStatus::Failed { residue: NonZeroU32::new(csw.data_residue) }
+        } else {
+            return Err(ProtocolError::ProtocolError("bulk-only transport phase error, or other"));
+        })
     }
 }
 

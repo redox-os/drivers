@@ -1,4 +1,5 @@
 use std::io;
+use std::num::NonZeroU32;
 
 use thiserror::Error;
 use xhcid_interface::{DeviceReqData, DevDesc, ConfDesc, IfDesc, XhciClientHandle, XhciClientHandleError};
@@ -16,10 +17,24 @@ pub enum ProtocolError {
 
     #[error("attempted recovery failed")]
     RecoveryFailed,
+
+    #[error("protocol error")]
+    ProtocolError(&'static str),
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum SendCommandStatus {
+    Success,
+    Failed { residue: Option<NonZeroU32> },
+}
+impl Default for SendCommandStatus {
+    fn default() -> Self {
+        Self::Success
+    }
 }
 
 pub trait Protocol {
-    fn send_command(&mut self, command: &[u8], data: DeviceReqData) -> Result<(), ProtocolError>;
+    fn send_command(&mut self, command: &[u8], data: DeviceReqData) -> Result<SendCommandStatus, ProtocolError>;
 }
 
 /// Bulk-only transport
