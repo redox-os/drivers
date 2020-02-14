@@ -213,7 +213,10 @@ impl Trb {
         self.set(
             input_ctx_ptr as u64,
             0,
-            (u32::from(slot_id) << 24) | ((TrbType::AddressDevice as u32) << 10) | (u32::from(bsr) << 9) | u32::from(cycle),
+            (u32::from(slot_id) << 24)
+                | ((TrbType::AddressDevice as u32) << 10)
+                | (u32::from(bsr) << 9)
+                | u32::from(cycle),
         );
     }
     // Synchronizes the input context endpoints with the device context endpoints, I think.
@@ -241,7 +244,10 @@ impl Trb {
         self.set(
             input_ctx_ptr as u64,
             0,
-            (u32::from(slot_id) << 24) | ((TrbType::EvaluateContext as u32) << 10) | (u32::from(bsr) << 9) | u32::from(cycle),
+            (u32::from(slot_id) << 24)
+                | ((TrbType::EvaluateContext as u32) << 10)
+                | (u32::from(bsr) << 9)
+                | u32::from(cycle),
         );
     }
     pub fn reset_endpoint(&mut self, slot_id: u8, endp_num_xhc: u8, tsp: bool, cycle: bool) {
@@ -257,7 +263,15 @@ impl Trb {
         );
     }
     /// The deque_ptr has to contain the DCS bit (bit 0).
-    pub fn set_tr_deque_ptr(&mut self, deque_ptr: u64, cycle: bool, sct: StreamContextType, stream_id: u16, endp_num_xhc: u8, slot: u8) {
+    pub fn set_tr_deque_ptr(
+        &mut self,
+        deque_ptr: u64,
+        cycle: bool,
+        sct: StreamContextType,
+        stream_id: u16,
+        endp_num_xhc: u8,
+        slot: u8,
+    ) {
         assert_eq!(deque_ptr & 0xFFFF_FFFF_FFFF_FFF1, deque_ptr);
         assert_eq!(endp_num_xhc & 0x1F, endp_num_xhc);
 
@@ -298,7 +312,7 @@ impl Trb {
                 | (u32::from(ioc) << 5)
                 | (u32::from(ch) << 4)
                 | (u32::from(ent) << 1)
-                | u32::from(cycle)
+                | u32::from(cycle),
         );
     }
 
@@ -334,7 +348,7 @@ impl Trb {
     pub fn normal(
         &mut self,
         buffer: u64,
-        len: u16,
+        len: u32,
         cycle: bool,
         estimated_td_size: u8,
         interrupter: u8,
@@ -349,7 +363,7 @@ impl Trb {
         // NOTE: The interrupter target and no snoop flags have been omitted.
         self.set(
             buffer,
-            u32::from(len) | (u32::from(estimated_td_size) << 17) | (u32::from(interrupter) << 22),
+            len | (u32::from(estimated_td_size) << 17) | (u32::from(interrupter) << 22),
             u32::from(cycle)
                 | (u32::from(ent) << 1)
                 | (u32::from(isp) << 2)

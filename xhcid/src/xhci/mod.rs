@@ -301,7 +301,8 @@ impl Xhci {
     pub fn enable_port_slot(&mut self, slot_ty: u8) -> Result<u8> {
         assert_eq!(slot_ty & 0x1F, slot_ty);
 
-        let cloned_event_trb = self.execute_command("ENABLE_SLOT", |cmd, cycle| cmd.enable_slot(0, cycle))?;
+        let cloned_event_trb =
+            self.execute_command("ENABLE_SLOT", |cmd, cycle| cmd.enable_slot(0, cycle))?;
         Ok(cloned_event_trb.event_slot())
     }
     pub fn disable_port_slot(&mut self, slot: u8) -> Result<()> {
@@ -329,7 +330,10 @@ impl Xhci {
 
                 println!("    - Enable slot");
 
-                let slot_ty = self.supported_protocol(i as u8).expect("Failed to find supported protocol information for port").proto_slot_ty();
+                let slot_ty = self
+                    .supported_protocol(i as u8)
+                    .expect("Failed to find supported protocol information for port")
+                    .proto_slot_ty();
                 let slot = self.enable_port_slot(slot_ty)?;
 
                 println!("    - Slot {}", slot);
@@ -358,7 +362,7 @@ impl Xhci {
                         EndpointState {
                             transfer: RingOrStreams::Ring(ring),
                             driver_if_state: EndpIfState::Init,
-                        }
+                        },
                     ))
                     .collect::<BTreeMap<_, _>>(),
                 };
@@ -379,7 +383,12 @@ impl Xhci {
         Ok(())
     }
 
-    pub fn update_default_control_pipe(&mut self, input_context: &mut Dma<InputContext>, slot_id: u8, dev_desc: &DevDesc) -> Result<()> {
+    pub fn update_default_control_pipe(
+        &mut self,
+        input_context: &mut Dma<InputContext>,
+        slot_id: u8,
+        dev_desc: &DevDesc,
+    ) -> Result<()> {
         input_context.add_context.write(1 << 1);
         input_context.drop_context.write(0);
 
@@ -393,14 +402,21 @@ impl Xhci {
         b &= 0x0000_FFFF;
         b |= (new_max_packet_size) << 16;
         endp_ctx.b.write(b);
-        
+
         self.execute_command("EVALUATE_CONTEXT", |trb, cycle| {
             trb.evaluate_context(slot_id, input_context.physical(), false, cycle)
         })?;
         Ok(())
     }
 
-    pub fn address_device(&mut self, input_context: &mut Dma<InputContext>, i: usize, slot_ty: u8, slot: u8, speed: u8) -> Result<Ring> {
+    pub fn address_device(
+        &mut self,
+        input_context: &mut Dma<InputContext>,
+        i: usize,
+        slot_ty: u8,
+        slot: u8,
+        speed: u8,
+    ) -> Result<Ring> {
         let mut ring = Ring::new(true)?;
 
         {
@@ -418,7 +434,7 @@ impl Xhci {
                 route_string
                     | (u32::from(mtt) << 25)
                     | (u32::from(hub) << 26)
-                    | (u32::from(context_entries) << 27)
+                    | (u32::from(context_entries) << 27),
             );
 
             let max_exit_latency = 0u16;
@@ -427,7 +443,7 @@ impl Xhci {
             slot_ctx.b.write(
                 u32::from(max_exit_latency)
                     | (u32::from(root_hub_port_num) << 16)
-                    | (u32::from(number_of_ports) << 24)
+                    | (u32::from(number_of_ports) << 24),
             );
 
             // TODO
@@ -441,12 +457,14 @@ impl Xhci {
                 u32::from(parent_hud_slot_id)
                     | (u32::from(parent_port_num) << 8)
                     | (u32::from(ttt) << 16)
-                    | (u32::from(interrupter) << 22)
+                    | (u32::from(interrupter) << 22),
             );
 
             let endp_ctx = &mut input_context.device.endpoints[0];
 
-            let speed_id = self.lookup_psiv(root_hub_port_num, speed).expect("Failed to retrieve speed ID");
+            let speed_id = self
+                .lookup_psiv(root_hub_port_num, speed)
+                .expect("Failed to retrieve speed ID");
 
             let max_error_count = 3u8; // recommended value according to the XHCI spec
             let ep_ty = 4u8; // control endpoint, bidirectional
@@ -470,19 +488,20 @@ impl Xhci {
                     | (u32::from(ep_ty) << 3)
                     | (u32::from(host_initiate_disable) << 7)
                     | (u32::from(max_burst_size) << 8)
-                    | (u32::from(max_packet_size) << 16)
+                    | (u32::from(max_packet_size) << 16),
             );
 
             let tr = ring.register();
             endp_ctx.trh.write((tr >> 32) as u32);
             endp_ctx.trl.write(tr as u32);
         }
-        
+
         let input_context_physical = input_context.physical();
 
         self.execute_command("ADDRESS_DEVICE", |trb, cycle| {
             trb.address_device(slot, input_context_physical, false, cycle)
-        }).expect("ADDRESS_DEVICE failed");
+        })
+        .expect("ADDRESS_DEVICE failed");
         Ok(ring)
     }
 
@@ -584,8 +603,7 @@ impl Xhci {
             })
     }
     pub fn supported_protocol(&self, port: u8) -> Option<&'static SupportedProtoCap> {
-        self
-            .supported_protocols_iter()
+        self.supported_protocols_iter()
             .find(|supp_proto| supp_proto.compat_port_range().contains(&port))
     }
     pub fn supported_protocol_speeds(

@@ -1,5 +1,5 @@
-use std::{mem, ops};
 use std::convert::TryFrom;
+use std::{mem, ops};
 
 pub mod cmds;
 pub mod opcodes;
@@ -29,6 +29,9 @@ const MIN_REPORT_SUPP_OPCODES_ALLOC_LEN: u32 = 4;
 pub enum ScsiError {
     #[error("protocol error when sending command: {0}")]
     ProtocolError(#[from] ProtocolError),
+
+    #[error("overflow")]
+    Overflow(&'static str),
 }
 
 impl Scsi {
@@ -70,31 +73,67 @@ impl Scsi {
         let inquiry = self.cmd_inquiry();
         *inquiry = cmds::Inquiry::new(false, 0, max_inquiry_len, 0);
 
-        protocol.send_command(&self.command_buffer[..INQUIRY_CMD_LEN as usize], DeviceReqData::In(&mut self.inquiry_buffer[..max_inquiry_len as usize])).expect("Failed to send INQUIRY command");
+        protocol
+            .send_command(
+                &self.command_buffer[..INQUIRY_CMD_LEN as usize],
+                DeviceReqData::In(&mut self.inquiry_buffer[..max_inquiry_len as usize]),
+            )
+            .expect("Failed to send INQUIRY command");
     }
     pub fn get_ff_sense(&mut self, protocol: &mut dyn Protocol, alloc_len: u8) {
         let request_sense = self.cmd_request_sense();
         *request_sense = cmds::RequestSense::new(false, alloc_len, 0);
         self.data_buffer.resize(alloc_len.into(), 0);
-        protocol.send_command(&self.command_buffer[..REQUEST_SENSE_CMD_LEN as usize], DeviceReqData::In(&mut self.data_buffer[..alloc_len as usize])).expect("Failed to send REQUEST_SENSE command");
+        protocol
+            .send_command(
+                &self.command_buffer[..REQUEST_SENSE_CMD_LEN as usize],
+                DeviceReqData::In(&mut self.data_buffer[..alloc_len as usize]),
+            )
+            .expect("Failed to send REQUEST_SENSE command");
     }
-    pub fn get_mode_sense10(&mut self, protocol: &mut dyn Protocol) -> Result<(&cmds::ModeParamHeader10, BlkDescSlice, impl Iterator<Item = cmds::AnyModePage>), ScsiError> {
+    pub fn get_mode_sense10(
+        &mut self,
+        protocol: &mut dyn Protocol,
+    ) -> Result<
+        (
+            &cmds::ModeParamHeader10,
+            BlkDescSlice,
+            impl Iterator<Item = cmds::AnyModePage>,
+        ),
+        ScsiError,
+    > {
         let initial_alloc_len = 4; // covers both mode_data_len and blk_desc_len.
         let mode_sense10 = self.cmd_mode_sense10();
         *mode_sense10 = cmds::ModeSense10::get_block_desc(initial_alloc_len, 0);
-        self.data_buffer.resize(mem::size_of::<cmds::ModeParamHeader10>(), 0);
-        if let SendCommandStatus { kind: SendCommandStatusKind::Failed, .. } = protocol.send_command(&self.command_buffer[..10], DeviceReqData::In(&mut self.data_buffer[..initial_alloc_len as usize]))? {
+        self.data_buffer
+            .resize(mem::size_of::<cmds::ModeParamHeader10>(), 0);
+        if let SendCommandStatus {
+            kind: SendCommandStatusKind::Failed,
+            ..
+        } = protocol.send_command(
+            &self.command_buffer[..10],
+            DeviceReqData::In(&mut self.data_buffer[..initial_alloc_len as usize]),
+        )? {
             self.get_ff_sense(protocol, 252);
             panic!("{:?}", self.res_ff_sense_data());
         }
 
-        let optimal_alloc_len = self.res_mode_param_header10().block_desc_len() + self.res_mode_param_header10().mode_data_len() + mem::size_of::<cmds::ModeParamHeader10>() as u16;
+        let optimal_alloc_len = self.res_mode_param_header10().block_desc_len()
+            + self.res_mode_param_header10().mode_data_len()
+            + mem::size_of::<cmds::ModeParamHeader10>() as u16;
 
         let mode_sense10 = self.cmd_mode_sense10();
         *mode_sense10 = cmds::ModeSense10::get_block_desc(optimal_alloc_len, 0);
         self.data_buffer.resize(optimal_alloc_len as usize, 0);
-        protocol.send_command(&self.command_buffer[..10], DeviceReqData::In(&mut self.data_buffer[..optimal_alloc_len as usize]))?;
-        Ok((self.res_mode_param_header10(), self.res_blkdesc_mode10(), self.res_mode_pages10()))
+        protocol.send_command(
+            &self.command_buffer[..10],
+            DeviceReqData::In(&mut self.data_buffer[..optimal_alloc_len as usize]),
+        )?;
+        Ok((
+            self.res_mode_param_header10(),
+            self.res_blkdesc_mode10(),
+            self.res_mode_pages10(),
+        ))
     }
 
     pub fn cmd_inquiry(&mut self) -> &mut cmds::Inquiry {
@@ -112,6 +151,9 @@ impl Scsi {
     pub fn cmd_read16(&mut self) -> &mut cmds::Read16 {
         plain::from_mut_bytes(&mut self.command_buffer).unwrap()
     }
+    pub fn cmd_write16(&mut self) -> &mut cmds::Write16 {
+        plain::from_mut_bytes(&mut self.command_buffer).unwrap()
+    }
     pub fn res_standard_inquiry_data(&self) -> &StandardInquiryData {
         plain::from_bytes(&self.inquiry_buffer).unwrap()
     }
@@ -127,17 +169,41 @@ impl Scsi {
     pub fn res_blkdesc_mode6(&self) -> &[cmds::ShortLbaModeParamBlkDesc] {
         let header = self.res_mode_param_header6();
         let descs_start = mem::size_of::<cmds::ModeParamHeader6>();
-        plain::slice_from_bytes(&self.data_buffer[descs_start..descs_start + usize::from(header.block_desc_len)]).unwrap()
+        plain::slice_from_bytes(
+            &self.data_buffer[descs_start..descs_start + usize::from(header.block_desc_len)],
+        )
+        .unwrap()
     }
     pub fn res_blkdesc_mode10(&self) -> BlkDescSlice {
         let header = self.res_mode_param_header10();
         let descs_start = mem::size_of::<cmds::ModeParamHeader10>();
         if header.longlba() {
-            BlkDescSlice::Long(plain::slice_from_bytes(&self.data_buffer[descs_start..descs_start + usize::from(header.block_desc_len())]).unwrap())
-        } else if self.res_standard_inquiry_data().periph_dev_ty() != cmds::PeriphDeviceType::DirectAccess as u8 && self.res_standard_inquiry_data().version() == cmds::InquiryVersion::Spc3 as u8 {
-            BlkDescSlice::General(plain::slice_from_bytes(&self.data_buffer[descs_start..descs_start + usize::from(header.block_desc_len())]).unwrap())
+            BlkDescSlice::Long(
+                plain::slice_from_bytes(
+                    &self.data_buffer
+                        [descs_start..descs_start + usize::from(header.block_desc_len())],
+                )
+                .unwrap(),
+            )
+        } else if self.res_standard_inquiry_data().periph_dev_ty()
+            != cmds::PeriphDeviceType::DirectAccess as u8
+            && self.res_standard_inquiry_data().version() == cmds::InquiryVersion::Spc3 as u8
+        {
+            BlkDescSlice::General(
+                plain::slice_from_bytes(
+                    &self.data_buffer
+                        [descs_start..descs_start + usize::from(header.block_desc_len())],
+                )
+                .unwrap(),
+            )
         } else {
-            BlkDescSlice::Short(plain::slice_from_bytes(&self.data_buffer[descs_start..descs_start + usize::from(header.block_desc_len())]).unwrap())
+            BlkDescSlice::Short(
+                plain::slice_from_bytes(
+                    &self.data_buffer
+                        [descs_start..descs_start + usize::from(header.block_desc_len())],
+                )
+                .unwrap(),
+            )
         }
     }
 
@@ -150,15 +216,51 @@ impl Scsi {
     pub fn get_disk_size(&mut self) -> u64 {
         self.block_count * u64::from(self.block_size)
     }
-    pub fn read(&mut self, protocol: &mut dyn Protocol, lba: u64, buffer: &mut [u8]) -> Result<u32, ScsiError> {
+    pub fn read(
+        &mut self,
+        protocol: &mut dyn Protocol,
+        lba: u64,
+        buffer: &mut [u8],
+    ) -> Result<u32, ScsiError> {
         let blocks_to_read = buffer.len() as u64 / u64::from(self.block_size);
-        let transfer_len = u32::try_from(blocks_to_read * u64::from(self.block_size)).ok().unwrap_or(std::u32::MAX);
+        let bytes_to_read = blocks_to_read as usize * self.block_size as usize;
+        let transfer_len = u32::try_from(blocks_to_read).or(Err(ScsiError::Overflow(
+            "number of blocks to read couldn't fit inside a u32",
+        )))?;
         {
             let read = self.cmd_read16();
             *read = cmds::Read16::new(lba, transfer_len, 0);
         }
-        let status = protocol.send_command(&self.command_buffer[..16], DeviceReqData::In(&mut buffer[..transfer_len as usize]))?;
-        Ok(status.bytes_transferred(transfer_len))
+        // TODO: Use the to-be-written TransferReadStream instead of relying on everything being
+        // able to fit within a single buffer.
+        let status = protocol.send_command(
+            &self.command_buffer[..16],
+            DeviceReqData::In(&mut buffer[..bytes_to_read]),
+        )?;
+        Ok(status.bytes_transferred(bytes_to_read as u32))
+    }
+    pub fn write(
+        &mut self,
+        protocol: &mut dyn Protocol,
+        lba: u64,
+        buffer: &[u8],
+    ) -> Result<u32, ScsiError> {
+        let blocks_to_write = buffer.len() as u64 / u64::from(self.block_size);
+        let bytes_to_write = blocks_to_write as usize * self.block_size as usize;
+        let transfer_len = u32::try_from(blocks_to_write).or(Err(ScsiError::Overflow(
+            "number of blocks to write couldn't fit inside a u32",
+        )))?;
+        {
+            let read = self.cmd_write16();
+            *read = cmds::Write16::new(lba, transfer_len, 0);
+        }
+        // TODO: Use the to-be-written TransferReadStream instead of relying on everything being
+        // able to fit within a single buffer.
+        let status = protocol.send_command(
+            &self.command_buffer[..16],
+            DeviceReqData::Out(&buffer[..bytes_to_write]),
+        )?;
+        Ok(status.bytes_transferred(bytes_to_write as u32))
     }
 }
 #[derive(Debug)]

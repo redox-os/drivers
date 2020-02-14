@@ -4,12 +4,12 @@ use std::{cmp, str};
 use crate::protocol::Protocol;
 use crate::scsi::Scsi;
 
-use syscall::SchemeMut;
 use syscall::error::{Error, Result};
 use syscall::error::{EACCES, EBADF, EINVAL, EIO, ENOENT, ENOSYS};
-use syscall::flag::{O_DIRECTORY, O_STAT};
 use syscall::flag::{MODE_CHR, MODE_DIR};
+use syscall::flag::{O_DIRECTORY, O_STAT};
 use syscall::flag::{SEEK_CUR, SEEK_END, SEEK_SET};
+use syscall::SchemeMut;
 
 // TODO: Only one disk, right?
 const LIST_CONTENTS: &'static [u8] = b"0\n";
@@ -43,7 +43,9 @@ impl<'a> SchemeMut for ScsiScheme<'a> {
         if uid != 0 {
             return Err(Error::new(EACCES));
         }
-        let path_str = str::from_utf8(path).or(Err(Error::new(ENOENT)))?.trim_start_matches('/');
+        let path_str = str::from_utf8(path)
+            .or(Err(Error::new(ENOENT)))?
+            .trim_start_matches('/');
         let handle = if path_str.is_empty() {
             // List
             Handle::List(0)
@@ -55,7 +57,7 @@ impl<'a> SchemeMut for ScsiScheme<'a> {
         };
         self.next_fd += 1;
         self.handles.insert(self.next_fd, handle);
-        Err(Error::new(ENOSYS))
+        Ok(self.next_fd)
     }
     fn fstat(&mut self, fd: usize, stat: &mut syscall::Stat) -> Result<usize> {
         match self.handles.get(&fd).ok_or(Error::new(EBADF))? {
@@ -70,10 +72,17 @@ impl<'a> SchemeMut for ScsiScheme<'a> {
                 stat.st_size = LIST_CONTENTS.len() as u64;
             }
         }
-        Err(Error::new(ENOSYS))
+        Ok(0)
     }
-    fn fpath(&mut self, fd: usize, path: &mut [u8]) -> Result<usize> {
-        Err(Error::new(ENOSYS))
+    fn fpath(&mut self, fd: usize, buf: &mut [u8]) -> Result<usize> {
+        let path = match self.handles.get_mut(&fd).ok_or(Error::new(EBADF))? {
+            Handle::Disk(_) => "0",
+            Handle::List(_) => "",
+        }
+        .as_bytes();
+        let min = std::cmp::min(path.len(), buf.len());
+        buf[..min].copy_from_slice(&path[..min]);
+        Ok(min)
     }
     fn seek(&mut self, fd: usize, pos: usize, whence: usize) -> Result<usize> {
         match self.handles.get_mut(&fd).ok_or(Error::new(EBADF))? {
@@ -102,11 +111,18 @@ impl<'a> SchemeMut for ScsiScheme<'a> {
     fn read(&mut self, fd: usize, buf: &mut [u8]) -> Result<usize> {
         match self.handles.get_mut(&fd).ok_or(Error::new(EBADF))? {
             Handle::Disk(ref mut offset) => {
-                if *offset as u64 % u64::from(self.scsi.block_size) != 0 || buf.len() as u64 % u64::from(self.scsi.block_size) != 0 {
+                if *offset as u64 % u64::from(self.scsi.block_size) != 0
+                    || buf.len() as u64 % u64::from(self.scsi.block_size) != 0
+                {
                     return Err(Error::new(EINVAL));
                 }
                 let lba = *offset as u64 / u64::from(self.scsi.block_size);
-                let bytes_read = self.scsi.read(self.protocol, lba, buf).map_err(|err| dbg!(err)).or(Err(Error::new(EIO)))?;
+                let bytes_read = self
+                    .scsi
+                    .read(self.protocol, lba, buf)
+                    .map_err(|err| dbg!(err))
+                    .or(Err(Error::new(EIO)))?;
+                *offset += bytes_read as usize;
                 Ok(bytes_read as usize)
             }
             Handle::List(ref mut offset) => {
@@ -121,6 +137,23 @@ impl<'a> SchemeMut for ScsiScheme<'a> {
         }
     }
     fn write(&mut self, fd: usize, buf: &[u8]) -> Result<usize> {
-        Err(Error::new(ENOSYS))
+        match self.handles.get_mut(&fd).ok_or(Error::new(EBADF))? {
+            Handle::Disk(ref mut offset) => {
+                if *offset as u64 % u64::from(self.scsi.block_size) != 0
+                    || buf.len() as u64 % u64::from(self.scsi.block_size) != 0
+                {
+                    return Err(Error::new(EINVAL));
+                }
+                let lba = *offset as u64 / u64::from(self.scsi.block_size);
+                let bytes_written = self
+                    .scsi
+                    .write(self.protocol, lba, buf)
+                    .map_err(|err| dbg!(err))
+                    .or(Err(Error::new(EIO)))?;
+                *offset += bytes_written as usize;
+                Ok(bytes_written as usize)
+            }
+            Handle::List(_) => Err(Error::new(EBADF)),
+        }
     }
 }

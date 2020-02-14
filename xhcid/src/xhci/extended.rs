@@ -126,16 +126,28 @@ impl ProtocolSpeed {
         self.psim() == 5 && self.psie() == Psie::Gbps && self.pfd() && self.lp() == Lp::SuperSpeed
     }
     pub fn is_superspeedplus_gen2x1(&self) -> bool {
-        self.psim() == 10 && self.psie() == Psie::Gbps && self.pfd() && self.lp() == Lp::SuperSpeedPlus
+        self.psim() == 10
+            && self.psie() == Psie::Gbps
+            && self.pfd()
+            && self.lp() == Lp::SuperSpeedPlus
     }
     pub fn is_superspeedplus_gen1x2(&self) -> bool {
-        self.psim() == 10 && self.psie() == Psie::Gbps && self.pfd() && self.lp() == Lp::SuperSpeedPlus
+        self.psim() == 10
+            && self.psie() == Psie::Gbps
+            && self.pfd()
+            && self.lp() == Lp::SuperSpeedPlus
     }
     pub fn is_superspeedplus_gen2x2(&self) -> bool {
-        self.psim() == 20 && self.psie() == Psie::Gbps && self.pfd() && self.lp() == Lp::SuperSpeedPlus
+        self.psim() == 20
+            && self.psie() == Psie::Gbps
+            && self.pfd()
+            && self.lp() == Lp::SuperSpeedPlus
     }
     pub fn is_superspeed_gen_x(&self) -> bool {
-        self.is_superspeed_gen1x1() || self.is_superspeedplus_gen2x1() || self.is_superspeedplus_gen1x2() || self.is_superspeedplus_gen2x2()
+        self.is_superspeed_gen1x1()
+            || self.is_superspeedplus_gen2x1()
+            || self.is_superspeedplus_gen1x2()
+            || self.is_superspeedplus_gen2x2()
     }
     /// Protocol speed ID value
     pub fn psiv(&self) -> u8 {

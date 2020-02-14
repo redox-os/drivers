@@ -2,7 +2,9 @@ use std::io;
 use std::num::NonZeroU32;
 
 use thiserror::Error;
-use xhcid_interface::{DeviceReqData, DevDesc, ConfDesc, IfDesc, XhciClientHandle, XhciClientHandleError};
+use xhcid_interface::{
+    ConfDesc, DevDesc, DeviceReqData, IfDesc, XhciClientHandle, XhciClientHandleError,
+};
 
 #[derive(Debug, Error)]
 pub enum ProtocolError {
@@ -40,7 +42,6 @@ pub enum SendCommandStatusKind {
     Failed,
 }
 
-
 impl Default for SendCommandStatusKind {
     fn default() -> Self {
         Self::Success
@@ -48,7 +49,11 @@ impl Default for SendCommandStatusKind {
 }
 
 pub trait Protocol {
-    fn send_command(&mut self, command: &[u8], data: DeviceReqData) -> Result<SendCommandStatus, ProtocolError>;
+    fn send_command(
+        &mut self,
+        command: &[u8],
+        data: DeviceReqData,
+    ) -> Result<SendCommandStatus, ProtocolError>;
 }
 
 /// Bulk-only transport
@@ -60,9 +65,17 @@ mod uas {
 
 use bot::BulkOnlyTransport;
 
-pub fn setup<'a>(handle: &'a XhciClientHandle, protocol: u8, dev_desc: &DevDesc, conf_desc: &ConfDesc, if_desc: &IfDesc) -> Option<Box<dyn Protocol + 'a>> {
+pub fn setup<'a>(
+    handle: &'a XhciClientHandle,
+    protocol: u8,
+    dev_desc: &DevDesc,
+    conf_desc: &ConfDesc,
+    if_desc: &IfDesc,
+) -> Option<Box<dyn Protocol + 'a>> {
     match protocol {
-        0x50 => Some(Box::new(BulkOnlyTransport::init(handle, conf_desc, if_desc).unwrap())),
+        0x50 => Some(Box::new(
+            BulkOnlyTransport::init(handle, conf_desc, if_desc).unwrap(),
+        )),
         _ => None,
     }
 }

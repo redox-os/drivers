@@ -75,7 +75,12 @@ impl BosSuperSpeedPlusDesc {
         (self.attrs & 0x0000_000F) as u8
     }
     pub fn sublink_speed_attr(&self) -> &[u32] {
-        unsafe { slice::from_raw_parts(&self.sublink_speed_attr as *const u32, self.ssac() as usize + 1) }
+        unsafe {
+            slice::from_raw_parts(
+                &self.sublink_speed_attr as *const u32,
+                self.ssac() as usize + 1,
+            )
+        }
     }
 }
 
@@ -155,7 +160,9 @@ impl<'a> Iterator for BosAnyDevDescIter<'a> {
         } else if base.cap_ty == DeviceCapability::SuperSpeed as u8 {
             Some(BosAnyDevDesc::SuperSpeed(*plain::from_bytes(slice).ok()?))
         } else if base.cap_ty == DeviceCapability::SuperSpeedPlus as u8 {
-            Some(BosAnyDevDesc::SuperSpeedPlus(*plain::from_bytes(slice).ok()?))
+            Some(BosAnyDevDesc::SuperSpeedPlus(
+                *plain::from_bytes(slice).ok()?,
+            ))
         } else if base.cap_ty == 0 {
             // TODO
             return None;

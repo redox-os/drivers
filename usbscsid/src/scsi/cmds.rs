@@ -1,5 +1,5 @@
-use std::{fmt, mem, slice};
 use super::opcodes::Opcode;
+use std::{fmt, mem, slice};
 
 #[repr(packed)]
 pub struct Inquiry {
@@ -124,7 +124,10 @@ impl FixedFormatSenseData {
         self.add_sense_len as u16 + 7
     }
     pub unsafe fn add_sense_bytes(&self) -> &[u8] {
-        slice::from_raw_parts(&self.add_sense_len as *const u8, self.add_sense_len as usize - 18)
+        slice::from_raw_parts(
+            &self.add_sense_len as *const u8,
+            self.add_sense_len as usize - 18,
+        )
     }
     pub fn sense_key(&self) -> SenseKey {
         let sense_key_raw = self.b & 0b1111;
@@ -191,6 +194,32 @@ impl Read16 {
 
 #[repr(packed)]
 #[derive(Clone, Copy, Debug)]
+pub struct Write16 {
+    pub opcode: u8,
+    pub a: u8,
+    pub lba: u64, // big endian
+    pub transfer_len: u32,
+    pub b: u8,
+    pub control: u8,
+}
+unsafe impl plain::Plain for Write16 {}
+
+impl Write16 {
+    pub const fn new(lba: u64, transfer_len: u32, control: u8) -> Self {
+        Self {
+            // TODO
+            opcode: Opcode::Write16 as u8,
+            a: 0,
+            lba,
+            transfer_len,
+            b: 0,
+            control,
+        }
+    }
+}
+
+#[repr(packed)]
+#[derive(Clone, Copy, Debug)]
 pub struct ModeSense6 {
     pub opcode: u8,
     pub a: u8,
@@ -202,7 +231,14 @@ pub struct ModeSense6 {
 unsafe impl plain::Plain for ModeSense6 {}
 
 impl ModeSense6 {
-    pub const fn new(dbd: bool, page_code: u8, pc: u8, subpage_code: u8, alloc_len: u8, control: u8) -> Self {
+    pub const fn new(
+        dbd: bool,
+        page_code: u8,
+        pc: u8,
+        subpage_code: u8,
+        alloc_len: u8,
+        control: u8,
+    ) -> Self {
         Self {
             opcode: Opcode::ModeSense6 as u8,
             a: (dbd as u8) << 3,
@@ -228,7 +264,15 @@ pub struct ModeSense10 {
 unsafe impl plain::Plain for ModeSense10 {}
 
 impl ModeSense10 {
-    pub const fn new(dbd: bool, llbaa: bool, page_code: u8, pc: ModePageControl, subpage_code: u8, alloc_len: u16, control: u8) -> Self {
+    pub const fn new(
+        dbd: bool,
+        llbaa: bool,
+        page_code: u8,
+        pc: ModePageControl,
+        subpage_code: u8,
+        alloc_len: u16,
+        control: u8,
+    ) -> Self {
         Self {
             opcode: Opcode::ModeSense10 as u8,
             a: ((dbd as u8) << 3) | ((llbaa as u8) << 4),
@@ -240,7 +284,15 @@ impl ModeSense10 {
         }
     }
     pub const fn get_block_desc(alloc_len: u16, control: u8) -> Self {
-        Self::new(false, true, 0x3F, ModePageControl::CurrentValues, 0x00, alloc_len, control)
+        Self::new(
+            false,
+            true,
+            0x3F,
+            ModePageControl::CurrentValues,
+            0x00,
+            alloc_len,
+            control,
+        )
     }
 }
 
@@ -279,9 +331,7 @@ impl fmt::Debug for ShortLbaModeParamBlkDesc {
 }
 
 const fn u24_be_to_u32(u24: [u8; 3]) -> u32 {
-        ((u24[0] as u32) << 16)
-            | ((u24[1] as u32) << 8)
-            | (u24[2] as u32)
+    ((u24[0] as u32) << 16) | ((u24[1] as u32) << 8) | (u24[2] as u32)
 }
 
 /// From SPC-3, when LONGLBA is not set, and the peripheral device type of the INQUIRY data indicates that the device is not a direct access device. Otherwise, `ShortLbaModeParamBlkDesc` is used instead.
@@ -434,7 +484,9 @@ impl<'a> Iterator for ModePageIter<'a> {
 
         if !spf {
             if page_code == 0x01 {
-                Some(AnyModePage::RwErrorRecovery(plain::from_bytes(next_buf).ok()?))
+                Some(AnyModePage::RwErrorRecovery(
+                    plain::from_bytes(next_buf).ok()?,
+                ))
             } else {
                 println!("Unimplemented sub_page {}", base64::encode(next_buf));
                 None
@@ -447,5 +499,7 @@ impl<'a> Iterator for ModePageIter<'a> {
 }
 
 pub fn mode_page_iter(buffer: &[u8]) -> impl Iterator<Item = AnyModePage> {
-    ModePageIter { raw: ModePageIterRaw { buffer } }
+    ModePageIter {
+        raw: ModePageIterRaw { buffer },
+    }
 }

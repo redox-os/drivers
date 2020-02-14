@@ -190,7 +190,9 @@ impl EndpDesc {
     }
     pub fn isoch_mult(&self, lec: bool) -> u8 {
         if !lec && self.is_isoch() {
-            if self.is_superspeedplus() { return 0 }
+            if self.is_superspeedplus() {
+                return 0;
+            }
             self.ssc
                 .as_ref()
                 .map(|ssc| ssc.attributes & 0x3)
@@ -203,7 +205,9 @@ impl EndpDesc {
         self.ssc.map(|ssc| ssc.max_burst).unwrap_or(0)
     }
     pub fn has_ssp_companion(&self) -> bool {
-        self.ssc.map(|ssc| ssc.attributes & (1 << 7) != 0).unwrap_or(false)
+        self.ssc
+            .map(|ssc| ssc.attributes & (1 << 7) != 0)
+            .unwrap_or(false)
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -421,21 +425,12 @@ impl XhciClientHandle {
         let string = std::fs::read_to_string(path)?;
         Ok(string.parse()?)
     }
-    pub fn open_endpoint_ctl(
-        &self,
-        num: u8,
-    ) -> result::Result<File, XhciClientHandleError> {
+    pub fn open_endpoint_ctl(&self, num: u8) -> result::Result<File, XhciClientHandleError> {
         let path = format!("{}:port{}/endpoints/{}/ctl", self.scheme, self.port, num);
         Ok(File::open(path)?)
     }
-    pub fn open_endpoint_data(
-        &self,
-        num: u8,
-    ) -> result::Result<File, XhciClientHandleError> {
-        let path = format!(
-            "{}:port{}/endpoints/{}/data",
-            self.scheme, self.port, num
-        );
+    pub fn open_endpoint_data(&self, num: u8) -> result::Result<File, XhciClientHandleError> {
+        let path = format!("{}:port{}/endpoints/{}/data", self.scheme, self.port, num);
         Ok(File::open(path)?)
     }
     pub fn open_endpoint(&self, num: u8) -> result::Result<XhciEndpHandle, XhciClientHandleError> {
@@ -541,13 +536,18 @@ pub struct XhciEndpHandle {
     ctl: File,
 }
 
+/// The direction of a transfer.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub enum XhciEndpCtlDirection {
+    /// Host to device
     Out,
+    /// Device to host
     In,
+    /// No data, and hence no I/O on the Data interface file at all.
     NoData,
 }
 
+/// A request to an endpoint Ctl interface file. Currently serialized with JSON.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum XhciEndpCtlReq {
@@ -555,9 +555,19 @@ pub enum XhciEndpCtlReq {
     // TODO: Allow to send multiple buffers in one transfer.
     /// Tells xhcid that a buffer is about to be sent from the Data interface file, to the
     /// endpoint.
-    Transfer(XhciEndpCtlDirection),
-    // TODO: Allow clients to specify what to reset.
+    Transfer {
+        /// The direction of the transfer. If the direction is `XhciEndpCtlDirection::NoData`, no
+        /// bytes will be transferred, and therefore no reads or writes shall be done to the Data
+        /// driver interface file.
+        direction: XhciEndpCtlDirection,
 
+        /// The number of bytes to be read or written. This field must be set to zero if the
+        /// direction is `XhciEndpCtlDirection::NoData`. When all bytes have been read or written,
+        /// the transfer will be considered complete by xhcid, and a non-pending status will be
+        /// returned.
+        count: u32,
+    },
+    // TODO: Allow clients to specify what to reset.
     /// Tells xhcid that the endpoint is going to be reset.
     Reset {
         /// Only issue the Reset Endpoint and Set TR Dequeue Pointer commands, and let the client
@@ -568,6 +578,7 @@ pub enum XhciEndpCtlReq {
     /// Tells xhcid that the endpoint status is going to be retrieved from the Ctl interface file.
     Status,
 }
+/// A response from an endpoint Ctl interface file. Currently serialized with JSON.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum XhciEndpCtlRes {
@@ -586,9 +597,9 @@ pub enum XhciEndpCtlRes {
 
 impl XhciEndpHandle {
     fn ctl_req(&mut self, ctl_req: &XhciEndpCtlReq) -> result::Result<(), XhciClientHandleError> {
-        let ctl_buffer = serde_json::to_vec(ctl_req)?;
+        let ctl_buffer = serde_json::to_vec(ctl_req).expect("serde");
 
-        let ctl_bytes_written = self.ctl.write(&ctl_buffer)?;
+        let ctl_bytes_written = self.ctl.write(&ctl_buffer).expect("ctlwrite");
         if ctl_bytes_written != ctl_buffer.len() {
             return Err(Invalid("xhcid didn't process all of the ctl bytes").into());
         }
@@ -598,7 +609,7 @@ impl XhciEndpHandle {
     fn ctl_res(&mut self) -> result::Result<XhciEndpCtlRes, XhciClientHandleError> {
         // a response must never exceed 256 bytes
         let mut ctl_buffer = [0u8; 256];
-        let ctl_bytes_read = self.ctl.read(&mut ctl_buffer)?;
+        let ctl_bytes_read = self.ctl.read(&mut ctl_buffer).expect("ctlread");
 
         let ctl_res = serde_json::from_slice(&ctl_buffer[..ctl_bytes_read as usize])?;
         Ok(ctl_res)
@@ -607,35 +618,89 @@ impl XhciEndpHandle {
         self.ctl_req(&XhciEndpCtlReq::Reset { no_clear_feature })
     }
     pub fn status(&mut self) -> result::Result<EndpointStatus, XhciClientHandleError> {
-        self.ctl_req(&XhciEndpCtlReq::Status)?;
-        match self.ctl_res()? {
+        self.ctl_req(&XhciEndpCtlReq::Status)
+            .expect("status ctlreq");
+        match self.ctl_res().expect("status ctlres") {
             XhciEndpCtlRes::Status(s) => Ok(s),
             _ => Err(Invalid("expected status response").into()),
         }
     }
-    fn generic_transfer<F: FnOnce(&mut File) -> io::Result<usize>>(&mut self, direction: XhciEndpCtlDirection, f: F, expected_len: usize) -> result::Result<PortTransferStatus, XhciClientHandleError> {
-        let req = XhciEndpCtlReq::Transfer(direction);
-        self.ctl_req(&req)?;
+    fn generic_transfer<F: FnOnce(&mut File) -> io::Result<usize>>(
+        &mut self,
+        direction: XhciEndpCtlDirection,
+        f: F,
+        expected_len: u32,
+    ) -> result::Result<PortTransferStatus, XhciClientHandleError> {
+        let req = XhciEndpCtlReq::Transfer {
+            direction,
+            count: expected_len,
+        };
+        self.ctl_req(&req).expect("ctl_req");
 
-        let bytes_read = f(&mut self.data)?;
-        let res = self.ctl_res()?;
+        let bytes_read = f(&mut self.data).expect("f");
+        let res = self.ctl_res().expect("ctl_res");
 
         match res {
-            XhciEndpCtlRes::TransferResult(PortTransferStatus::Success) if bytes_read != expected_len => Err(Invalid("no short packet, but fewer bytes were read/written").into()),
+            XhciEndpCtlRes::TransferResult(PortTransferStatus::Success)
+                if bytes_read != expected_len as usize =>
+            {
+                Err(Invalid("no short packet, but fewer bytes were read/written").into())
+            }
             XhciEndpCtlRes::TransferResult(r) => Ok(r),
             _ => Err(Invalid("expected transfer result").into()),
         }
     }
-    pub fn transfer_write(&mut self, buf: &[u8]) -> result::Result<PortTransferStatus, XhciClientHandleError> {
-        self.generic_transfer(XhciEndpCtlDirection::Out, |data| data.write(buf), buf.len())
+    pub fn transfer_write(
+        &mut self,
+        buf: &[u8],
+    ) -> result::Result<PortTransferStatus, XhciClientHandleError> {
+        self.generic_transfer(
+            XhciEndpCtlDirection::Out,
+            |data| data.write(buf),
+            buf.len() as u32,
+        )
     }
-    pub fn transfer_read(&mut self, buf: &mut [u8]) -> result::Result<PortTransferStatus, XhciClientHandleError> {
-        let len = buf.len();
+    pub fn transfer_read(
+        &mut self,
+        buf: &mut [u8],
+    ) -> result::Result<PortTransferStatus, XhciClientHandleError> {
+        let len = buf.len() as u32;
         self.generic_transfer(XhciEndpCtlDirection::In, |data| data.read(buf), len)
     }
-    pub fn transfer_nodata(&mut self, buf: &[u8]) -> result::Result<PortTransferStatus, XhciClientHandleError> {
-        self.generic_transfer(XhciEndpCtlDirection::NoData, |_| Ok(0), buf.len())
+    pub fn transfer_nodata(&mut self) -> result::Result<PortTransferStatus, XhciClientHandleError> {
+        self.generic_transfer(XhciEndpCtlDirection::NoData, |_| Ok(0), 0)
     }
+    fn transfer_stream(&mut self, total_len: u32) -> TransferStream {
+        TransferStream {
+            bytes_to_transfer: total_len,
+            bytes_transferred: 0,
+            bytes_per_transfer: 32768, // TODO
+            endp_handle: self,
+        }
+    }
+    pub fn transfer_write_stream(&mut self, total_len: u32) -> TransferWriteStream {
+        TransferWriteStream {
+            inner: self.transfer_stream(total_len),
+        }
+    }
+    pub fn transfer_read_stream(&mut self, total_len: u32) -> TransferReadStream {
+        TransferReadStream {
+            inner: self.transfer_stream(total_len),
+        }
+    }
+}
+
+pub struct TransferWriteStream<'a> {
+    inner: TransferStream<'a>,
+}
+pub struct TransferReadStream<'a> {
+    inner: TransferStream<'a>,
+}
+struct TransferStream<'a> {
+    bytes_to_transfer: u32,
+    bytes_transferred: u32,
+    bytes_per_transfer: u32,
+    endp_handle: &'a mut XhciEndpHandle,
 }
 
 #[derive(Debug, Error)]
@@ -651,4 +716,7 @@ pub enum XhciClientHandleError {
 
     #[error("transfer buffer too large ({0} > 65536)")]
     TransferBufTooLarge(usize),
+
+    #[error("unexpected short packet of size {0}")]
+    UnexpectedShortPacket(usize),
 }
