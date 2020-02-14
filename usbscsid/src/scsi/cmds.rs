@@ -1,187 +1,5 @@
 use std::{fmt, mem, slice};
-use super::opcodes::{Opcode, ServiceActionA3};
-
-#[repr(packed)]
-pub struct ReportIdentInfo {
-    pub opcode: u8,
-    /// bits 7:5 reserved
-    pub serviceaction: u8,
-    pub _rsvd: u16,
-    pub restricted: u16,
-    /// little endian
-    pub alloc_len: u32,
-    /// bit 0 reserved
-    pub info_ty: u8,
-    pub control: u8,
-}
-unsafe impl plain::Plain for ReportIdentInfo {}
-
-impl ReportIdentInfo {
-    pub const fn new(alloc_len: u32, info_ty: ReportIdInfoInfoTy, control: u8) -> Self {
-        Self {
-            opcode: Opcode::ServiceActionA3 as u8,
-            serviceaction: ServiceActionA3::ReportIdentInfo as u8,
-            _rsvd: 0,
-            restricted: 0,
-            alloc_len: u32::to_le(alloc_len),
-            info_ty: (info_ty as u8) << REP_ID_INFO_INFO_TY_SHIFT,
-            control,
-        }
-    }
-}
-#[repr(u8)]
-pub enum ReportIdInfoInfoTy {
-    PeripheralDevIdInfo = 0b000_0000,
-    PeripheralDevTextIdInfo = 0b000_0010,
-    IdentInfoSupp = 0b111_1111,
-    // every other number ending with a 1 is restricted
-}
-
-pub const REP_ID_INFO_INFO_TY_MASK: u8 = 0xFE;
-pub const REP_ID_INFO_INFO_TY_SHIFT: u8 = 1;
-
-#[repr(packed)]
-pub struct ReportSuppOpcodes {
-    pub opcode: u8, 
-    /// bits 7:5 reserved
-    pub serviceaction: u8,
-    /// bits 2:0 represent "REPORTING OPTIONS", bits 6:3 are reserved, and bit 7 is RCTD
-    pub rep_opts: u8,
-    pub req_opcode: u8,
-    /// little endian
-    pub req_serviceaction: u16,
-    /// little endian
-    pub alloc_len: u32,
-    pub _rsvd: u8,
-    pub control: u8,
-}
-unsafe impl plain::Plain for ReportSuppOpcodes {}
-
-impl ReportSuppOpcodes {
-    pub const fn new(rep_opts: ReportSuppOpcodesOptions, rctd: bool, req_opcode: u8, req_serviceaction: u16, alloc_len: u32, control: u8) -> Self {
-        Self {
-            opcode: Opcode::ServiceActionA3 as u8,
-            serviceaction: ServiceActionA3::ReportSuppOpcodes as u8,
-            rep_opts: ((rctd as u8) << REP_OPTS_RCTD_SHIFT) | rep_opts as u8,
-            req_opcode,
-            req_serviceaction: u16::to_le(req_serviceaction),
-            alloc_len: u32::to_le(alloc_len),
-            _rsvd: 0,
-            control,
-        }
-    }
-    pub const fn get_all(rctd: bool, alloc_len: u32, control: u8) -> Self {
-        Self::new(ReportSuppOpcodesOptions::ListAll, rctd, 0, 0, alloc_len, control)
-    }
-    pub const fn get_supp_no_sa(rctd: bool, opcode: Opcode, alloc_len: u32, control: u8) -> Self {
-        Self::new(ReportSuppOpcodesOptions::NoServicaction, rctd, opcode as u8, 0, alloc_len, control)
-    }
-    pub const fn get_supp(rctd: bool, opcode: Opcode, serviceaction: u16, alloc_len: u32, control: u8) -> Self {
-        Self::new(ReportSuppOpcodesOptions::ExplicitBoth, rctd, opcode as u8, serviceaction, alloc_len, control)
-    }
-}
-
-pub const REP_OPTS_MAIN_MASK: u8 = 0b0000_0111;
-pub const REP_OPTS_MAIN_SHIFT: u8 = 0;
-pub const REP_OPTS_RCTD_BIT: u8 = 1 << REP_OPTS_RCTD_SHIFT;
-pub const REP_OPTS_RCTD_SHIFT: u8 = 7;
-
-/// Valid values of the `req_opts` field of `ReportSuppOpcodes`.
-#[repr(u8)]
-pub enum ReportSuppOpcodesOptions {
-    /// Returns all commands, no matter what parameters are set.
-    ListAll,
-
-    /// Returns one command with the requested opcode. If the command has service actions, this
-    /// command fails.
-    NoServicaction,
-
-    /// Returns one command with the requested opcode and service action. If the command doesn't
-    /// support service actions, this command fails.
-    ExplicitBoth,
-
-    /// Returns one command with the requested opcode and service action. The command may or may
-    /// not implement service actions, but if it does, it has to be correct for the return value to
-    /// indicate SUPPORTED.
-    ///
-    /// This option seems to be reserved for SPC-3 (inquiry version value of 5).
-    IndicateSupport,
-
-}
-
-#[repr(packed)]
-pub struct AllCommandsParam {
-    /// Little endian
-    pub data_len: u32,
-    pub descs: [CommandDescriptor; 0],
-}
-
-impl AllCommandsParam {
-    pub const fn alloc_len(&self) -> u32 {
-        3 + u32::from_le(self.data_len)
-    }
-    pub unsafe fn descs(&self) -> &[CommandDescriptor] {
-        assert_eq!(mem::size_of::<CommandDescriptor>(), 20);
-        slice::from_raw_parts(&self.descs as *const CommandDescriptor, (self.alloc_len() as usize - 4) / mem::size_of::<CommandDescriptor>())
-    }
-}
-
-unsafe impl plain::Plain for AllCommandsParam {}
-
-#[repr(packed)]
-#[derive(Clone, Copy, Debug)]
-pub struct CommandDescriptor {
-    pub opcode: u8,
-    pub _rsvd1: u8,
-    /// little endian
-    pub serviceaction: u16,
-    pub _rsvd2: u8,
-    /// bit 0 is SERVACTV, bit 1 is CTDP, and bits 7:2 reserved
-    pub a: u8,
-    /// little endian
-    pub cdb_len: u16,
-    pub cmd_timeouts_desc: [u8; 12],
-}
-
-#[repr(packed)]
-pub struct OneCommandParam {
-    pub _rsvd: u8,
-    pub a: u8,
-    pub cdb_size: u16,
-    pub usage_data: [u8; 0],
-}
-unsafe impl plain::Plain for OneCommandParam {}
-
-impl OneCommandParam {
-    pub const fn ctdp(&self) -> bool {
-        self.a & (1 << 7) != 0
-    }
-    pub fn support(&self) -> OneCommandParamSupport {
-        let raw = self.a & 0b111;
-        // Safe because all possible values are covered by the enum.
-        unsafe { mem::transmute(raw) }
-    }
-    pub const fn total_len(&self) -> u16 {
-        self.cdb_size as u16 + 3
-    }
-    /// Unsafe because the reference to self has to be valid for an additional (self.cdb_size - 1) bytes.
-    pub unsafe fn cdb_usage_data(&self) -> &[u8] {
-        slice::from_raw_parts(&self.usage_data as *const u8, self.total_len() as usize - 4)
-    }
-}
-
-#[repr(u8)]
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum OneCommandParamSupport {
-    NoDataAvail = 0b000,
-    NotSupported = 0b001,
-    Rsvd2 = 0b010,
-    Supported = 0b011,
-    Rsvd4 = 0b100,
-    SupportedVendor = 0b101,
-    Rsvd6 = 0b110,
-    Rsvd7 = 0b111,
-}
+use super::opcodes::Opcode;
 
 #[repr(packed)]
 pub struct Inquiry {
@@ -189,7 +7,7 @@ pub struct Inquiry {
     /// bits 7:2 are reserved, bit 1 (CMDDT) is obsolete, bit 0 is EVPD
     pub evpd: u8,
     pub page_code: u8,
-    /// little endian
+    /// big endian
     pub alloc_len: u16,
     pub control: u8,
 }
@@ -201,7 +19,7 @@ impl Inquiry {
             opcode: Opcode::Inquiry as u8,
             evpd: evpd as u8,
             page_code,
-            alloc_len: u16::to_le(alloc_len),
+            alloc_len: u16::to_be(alloc_len),
             control,
         }
     }
@@ -231,6 +49,33 @@ pub struct StandardInquiryData {
     _rsvd2: [u8; 22],
 }
 unsafe impl plain::Plain for StandardInquiryData {}
+impl StandardInquiryData {
+    pub const fn periph_dev_ty(&self) -> u8 {
+        self.a & 0x1F
+    }
+    pub const fn periph_dev_qual(&self) -> u8 {
+        (self.a & 0xE0) >> 5
+    }
+    pub const fn version(&self) -> u8 {
+        self.version
+    }
+}
+
+#[repr(u8)]
+pub enum PeriphDeviceType {
+    DirectAccess,
+    SeqAccess,
+    // there are more
+}
+#[repr(u8)]
+pub enum InquiryVersion {
+    NoConformance,
+    Spc,
+    Spc2,
+    Spc3,
+    Spc4,
+    Spc5,
+}
 
 #[repr(packed)]
 #[derive(Clone, Copy, Debug)]
@@ -269,7 +114,7 @@ pub struct FixedFormatSenseData {
     pub add_sense_code: u8,
     pub add_sense_code_qual: u8,
     pub field_replacable_unit_code: u8,
-    pub sense_key_specific: [u8; 3], // little endian
+    pub sense_key_specific: [u8; 3], // big endian
     pub add_sense_bytes: [u8; 0],
 }
 unsafe impl plain::Plain for FixedFormatSenseData {}
@@ -326,6 +171,7 @@ pub struct Read16 {
     pub b: u8,
     pub control: u8,
 }
+unsafe impl plain::Plain for Read16 {}
 
 impl Read16 {
     pub const fn new(lba: u64, transfer_len: u32, control: u8) -> Self {
@@ -335,8 +181,8 @@ impl Read16 {
         Self {
             opcode: Opcode::Read16 as u8,
             a: 0,
-            lba: u64::to_le(lba),
-            transfer_len: u32::to_le(transfer_len),
+            lba: u64::to_be(lba),
+            transfer_len: u32::to_be(transfer_len),
             b: 0,
             control,
         }
@@ -389,7 +235,7 @@ impl ModeSense10 {
             b: page_code | ((pc as u8) << 6),
             subpage_code,
             _rsvd: [0u8; 3],
-            alloc_len: u16::from_le(alloc_len),
+            alloc_len: u16::from_be(alloc_len),
             control,
         }
     }
@@ -407,7 +253,7 @@ pub enum ModePageControl {
 }
 
 #[repr(packed)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct ShortLbaModeParamBlkDesc {
     pub block_count: u32,
     _rsvd: u8,
@@ -417,21 +263,28 @@ unsafe impl plain::Plain for ShortLbaModeParamBlkDesc {}
 
 impl ShortLbaModeParamBlkDesc {
     pub const fn block_count(&self) -> u32 {
-        u32::from_le(self.block_count)
+        u32::from_be(self.block_count)
     }
     pub const fn logical_block_len(&self) -> u32 {
-        u24_le_to_u32(self.logical_block_len)
+        u24_be_to_u32(self.logical_block_len)
+    }
+}
+impl fmt::Debug for ShortLbaModeParamBlkDesc {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("ShortLbaModeParamBlkDesc")
+            .field("block_count", &self.block_count())
+            .field("logical_block_len", &self.logical_block_len())
+            .finish()
     }
 }
 
-const fn u24_le_to_u32(u24: [u8; 3]) -> u32 {
+const fn u24_be_to_u32(u24: [u8; 3]) -> u32 {
         ((u24[0] as u32) << 16)
             | ((u24[1] as u32) << 8)
             | (u24[2] as u32)
 }
 
-/// From SPC-3, when LONGLBA is set. For newer devices, `ShortLbaModeParamBlkDesc` is used instead (I
-/// think).
+/// From SPC-3, when LONGLBA is not set, and the peripheral device type of the INQUIRY data indicates that the device is not a direct access device. Otherwise, `ShortLbaModeParamBlkDesc` is used instead.
 #[repr(packed)]
 #[derive(Clone, Copy)]
 pub struct GeneralModeParamBlkDesc {
@@ -442,12 +295,21 @@ pub struct GeneralModeParamBlkDesc {
 }
 unsafe impl plain::Plain for GeneralModeParamBlkDesc {}
 
+impl GeneralModeParamBlkDesc {
+    pub fn block_count(&self) -> u32 {
+        u24_be_to_u32(self.block_count)
+    }
+    pub fn logical_block_len(&self) -> u32 {
+        u24_be_to_u32(self.block_length)
+    }
+}
+
 impl fmt::Debug for GeneralModeParamBlkDesc {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("GeneralModeParamBlkDesc")
             .field("density_code", &self.density_code)
-            .field("block_count", &u24_le_to_u32(self.block_count))
-            .field("block_length", &u24_le_to_u32(self.block_length))
+            .field("block_count", &u24_be_to_u32(self.block_count))
+            .field("block_length", &u24_be_to_u32(self.block_length))
             .finish()
     }
 }
@@ -463,10 +325,10 @@ unsafe impl plain::Plain for LongLbaModeParamBlkDesc {}
 
 impl LongLbaModeParamBlkDesc {
     pub const fn block_count(&self) -> u64 {
-        u64::from_le(self.block_count)
+        u64::from_be(self.block_count)
     }
     pub const fn logical_block_len(&self) -> u32 {
-        u32::from_le(self.logical_block_len)
+        u32::from_be(self.logical_block_len)
     }
 }
 
@@ -493,12 +355,97 @@ pub struct ModeParamHeader10 {
 unsafe impl plain::Plain for ModeParamHeader10 {}
 impl ModeParamHeader10 {
     pub const fn mode_data_len(&self) -> u16 {
-        u16::from_le(self.mode_data_len)
+        u16::from_be(self.mode_data_len)
     }
     pub const fn block_desc_len(&self) -> u16 {
-        u16::from_le(self.block_desc_len)
+        u16::from_be(self.block_desc_len)
     }
     pub const fn longlba(&self) -> bool {
         (self.b & 0x01) != 0
     }
+}
+
+#[repr(packed)]
+#[derive(Clone, Copy, Debug)]
+pub struct RwErrorRecoveryPage {
+    pub a: u8,
+    pub page_length: u8,
+    pub b: u8,
+    pub read_retry_count: u8,
+    _obsolete: [u8; 3],
+    _rsvd: u8,
+    pub recovery_time_limit: u16,
+}
+unsafe impl plain::Plain for RwErrorRecoveryPage {}
+
+pub(crate) struct ModePageIterRaw<'a> {
+    buffer: &'a [u8],
+}
+
+impl<'a> Iterator for ModePageIterRaw<'a> {
+    type Item = &'a [u8];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.buffer.len() < 2 {
+            return None;
+        }
+
+        let a = self.buffer[0];
+        let page_len = if a & (1 << 6) == 0 {
+            // item is page_0 mode
+            self.buffer[1] as usize + 1
+        } else {
+            // item is sub_page mode
+            self.buffer[2] as usize + 3
+        };
+        if self.buffer.len() < page_len {
+            return None;
+        }
+        let buffer = &self.buffer[..page_len];
+
+        self.buffer = if page_len == self.buffer.len() {
+            &[]
+        } else {
+            &self.buffer[page_len..]
+        };
+
+        Some(buffer)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum AnyModePage<'a> {
+    RwErrorRecovery(&'a RwErrorRecoveryPage),
+}
+
+struct ModePageIter<'a> {
+    raw: ModePageIterRaw<'a>,
+}
+
+impl<'a> Iterator for ModePageIter<'a> {
+    type Item = AnyModePage<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let next_buf = self.raw.next()?;
+        let a = next_buf[0];
+
+        let page_code = a & 0x1F;
+        let spf = a & (1 << 6) != 0;
+
+        if !spf {
+            if page_code == 0x01 {
+                Some(AnyModePage::RwErrorRecovery(plain::from_bytes(next_buf).ok()?))
+            } else {
+                println!("Unimplemented sub_page {}", base64::encode(next_buf));
+                None
+            }
+        } else {
+            println!("Unimplemented page_0 {}", base64::encode(next_buf));
+            None
+        }
+    }
+}
+
+pub fn mode_page_iter(buffer: &[u8]) -> impl Iterator<Item = AnyModePage> {
+    ModePageIter { raw: ModePageIterRaw { buffer } }
 }

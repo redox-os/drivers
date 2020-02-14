@@ -3,7 +3,7 @@ use std::slice;
 
 use xhcid_interface::{ConfDesc, DeviceReqData, EndpBinaryDirection, EndpDirection, EndpointStatus, IfDesc, Invalid, PortReqTy, PortReqRecipient, PortTransferStatus, XhciClientHandle, XhciClientHandleError, XhciEndpHandle};
 
-use super::{Protocol, ProtocolError, SendCommandStatus};
+use super::{Protocol, ProtocolError, SendCommandStatus, SendCommandStatusKind};
 
 pub const CBW_SIGNATURE: u32 = 0x43425355;
 
@@ -206,12 +206,15 @@ impl<'a> Protocol for BulkOnlyTransport<'a> {
             dbg!(self.bulk_in.status()?, self.bulk_out.status()?);
         }
 
-        Ok(if csw.status == CswStatus::Passed as u8 {
-            SendCommandStatus::Success
-        } else if csw.status == CswStatus::Failed as u8 {
-            SendCommandStatus::Failed { residue: NonZeroU32::new(csw.data_residue) }
-        } else {
-            return Err(ProtocolError::ProtocolError("bulk-only transport phase error, or other"));
+        Ok(SendCommandStatus {
+            kind: if csw.status == CswStatus::Passed as u8 {
+                SendCommandStatusKind::Success
+            } else if csw.status == CswStatus::Failed as u8 {
+                SendCommandStatusKind::Failed
+            } else {
+                return Err(ProtocolError::ProtocolError("bulk-only transport phase error, or other"));
+            },
+            residue: NonZeroU32::new(csw.data_residue),
         })
     }
 }

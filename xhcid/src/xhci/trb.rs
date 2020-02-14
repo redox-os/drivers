@@ -112,6 +112,15 @@ pub struct Trb {
     pub status: Mmio<u32>,
     pub control: Mmio<u32>,
 }
+impl Clone for Trb {
+    fn clone(&self) -> Self {
+        Self {
+            data: Mmio::from(self.data.read()),
+            status: Mmio::from(self.status.read()),
+            control: Mmio::from(self.control.read()),
+        }
+    }
+}
 
 pub const TRB_STATUS_COMPLETION_CODE_SHIFT: u8 = 24;
 pub const TRB_STATUS_COMPLETION_CODE_MASK: u32 = 0xFF00_0000;
@@ -147,6 +156,9 @@ impl Trb {
     }
     pub fn completion_param(&self) -> u32 {
         self.status.read() & TRB_STATUS_COMPLETION_PARAM_MASK
+    }
+    pub fn event_slot(&self) -> u8 {
+        (self.control.read() >> 24) as u8
     }
     /// Returns the number of bytes that should have been transmitten, but weren't.
     pub fn transfer_length(&self) -> u32 {

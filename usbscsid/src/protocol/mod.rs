@@ -22,12 +22,26 @@ pub enum ProtocolError {
     ProtocolError(&'static str),
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum SendCommandStatus {
-    Success,
-    Failed { residue: Option<NonZeroU32> },
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub struct SendCommandStatus {
+    pub residue: Option<NonZeroU32>,
+    pub kind: SendCommandStatusKind,
 }
-impl Default for SendCommandStatus {
+
+impl SendCommandStatus {
+    pub fn bytes_transferred(&self, transfer_len: u32) -> u32 {
+        transfer_len - self.residue.map(u32::from).unwrap_or(0)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum SendCommandStatusKind {
+    Success,
+    Failed,
+}
+
+
+impl Default for SendCommandStatusKind {
     fn default() -> Self {
         Self::Success
     }

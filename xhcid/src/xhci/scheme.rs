@@ -25,10 +25,15 @@ use super::extended::ProtocolSpeed;
 use super::operational::OperationalRegs;
 use super::ring::Ring;
 use super::runtime::RuntimeRegs;
-use super::trb::{TransferKind, TrbCompletionCode, TrbType};
+use super::trb::{TransferKind, Trb, TrbCompletionCode, TrbType};
 use super::usb::endpoint::{EndpointTy, ENDP_ATTR_TY_MASK};
 
 use crate::driver_interface::*;
+
+pub enum ControlFlow {
+    Continue,
+    Break,
+}
 
 #[derive(Clone, Copy, Debug)]
 pub enum EndpIfState {
@@ -200,47 +205,149 @@ impl AnyDescriptor {
 }
 
 impl Xhci {
-    fn device_req_no_data(&mut self, port: usize, req: usb::Setup) -> Result<()> {
-        let ps = self.port_states.get_mut(&port).ok_or(Error::new(EIO))?;
-        let ring = ps
-            .endpoint_states
-            .get_mut(&0)
-            .ok_or(Error::new(EIO))?
-            .ring()
-            .ok_or(Error::new(EIO))?;
+    pub fn execute_command<F: FnOnce(&mut Trb, bool)>(&mut self, cmd_name: &str, f: F) -> Result<Trb> {
+        self.run.ints[0].erdp.write(self.cmd.erdp());
+        let (cmd, cycle, event) = self.cmd.next();
+
+        f(cmd, cycle);
+
+        self.dbs[0].write(0);
+
+        while event.data.read() == 0 {
+            println!("    - {} Waiting for event", cmd_name);
+        }
+
+        if event.completion_code() != TrbCompletionCode::Success as u8
+            || event.trb_type() != TrbType::CommandCompletion as u8
+        {
+            println!("{} failed with event TRB ({:#0x} {:#0x} {:#0x}) and command TRB ({:#0x} {:#0x} {:#0x})", cmd_name, event.data.read(), event.status.read(), event.control.read(), cmd.data.read(), cmd.status.read(), cmd.control.read());
+            return Err(Error::new(EIO));
+        }
+
+        let ret = event.clone();
+
+        cmd.reserved(false);
+        event.reserved(false);
+
+        self.run.ints[0].erdp.write(self.cmd.erdp());
+        Ok(ret)
+    }
+    pub fn execute_control_transfer<D>(&mut self, port_num: usize, setup: usb::Setup, tk: TransferKind, name: &str, mut d: D) -> Result<Trb>
+        where
+            D: FnMut(&mut Trb, bool) -> ControlFlow,
+    {
+        let slot = self.port_state(port_num)?.slot;
+        let ring = self.endpoint_state_mut(port_num, 0)?.ring().ok_or(Error::new(EIO))?;
 
         {
             let (cmd, cycle) = ring.next();
-            cmd.setup(req, TransferKind::NoData, cycle);
+            cmd.setup(setup, tk, cycle);
+        }
+        if tk != TransferKind::NoData {
+            loop {
+                let (trb, cycle) = ring.next();
+                match d(trb, cycle) {
+                    ControlFlow::Break => break,
+                    ControlFlow::Continue => continue,
+                }
+            }
         }
         {
             let (cmd, cycle) = ring.next();
-            cmd.status(false, cycle);
+            cmd.status(tk == TransferKind::In, cycle);
         }
-        self.dbs[ps.slot as usize].write(Self::def_control_endp_doorbell());
+        self.dbs[usize::from(slot)].write(Self::def_control_endp_doorbell());
 
-        {
+        let cloned_trb = {
             let event = self.cmd.next_event();
             while event.data.read() == 0 {
-                println!("  - Waiting for event");
-            }
-            let status = event.status.read();
-            let control = event.control.read();
-
-            if (status >> 24) != TrbCompletionCode::Success as u32 {
-                println!("DEVICE_REQ ERROR, COMPLETION CODE {:#0x}", (status >> 24));
+                println!("  - {} Waiting for event", name);
             }
 
-            println!(
-                "DEVICE_REQ EVENT {:#0x} {:#0x} {:#0x}",
-                event.data.read(),
-                status,
-                control
-            );
-        }
+            if event.completion_code() != TrbCompletionCode::Success as u8 || event.trb_type() != TrbType::Transfer as u8 {
+                println!("{} CONTROL TRANSFER ERROR, EVENT TRB {:#0x} {:#0x} {:#0}»", name, event.data.read(), event.status.read(), event.control.read());
+            }
+            event.clone()
+        };
 
         self.run.ints[0].erdp.write(self.cmd.erdp());
 
+        Ok(cloned_trb)
+    }
+    /// NOTE: There has to be AT LEAST one successful invocation of `d`, that actually updates the
+    /// TRB (it could be a NO-OP in the worst case).
+    pub fn execute_transfer<D>(&mut self, port_num: usize, endp_num: u8, stream_id: u16, name: &str, mut d: D) -> Result<Trb>
+        where
+            D: FnMut(&mut Trb, bool) -> ControlFlow,
+    {
+        let port_state = self.port_state_mut(port_num)?;
+        let slot = port_state.slot;
+        let endp_state = port_state
+            .endpoint_states
+            .get_mut(&endp_num)
+            .ok_or(Error::new(EBADF))?;
+
+
+        let ring: &mut Ring = match endp_state {
+            EndpointState { transfer: super::RingOrStreams::Ring(ref mut ring), .. } => ring,
+            EndpointState { transfer: super::RingOrStreams::Streams(stream_ctx_array), .. } => {
+                stream_ctx_array
+                    .rings
+                    .get_mut(&1)
+                    .ok_or(Error::new(EBADF))?
+            }
+        };
+
+        loop {
+            let (trb, cycle) = ring.next();
+            match d(trb, cycle) {
+                ControlFlow::Break => break,
+                ControlFlow::Continue => continue,
+            }
+        }
+
+        self.dbs[usize::from(slot)].write(Self::endp_doorbell(endp_num, self.endp_desc(port_num, endp_num)?, stream_id));
+
+        let cloned_trb = {
+            let event = self.cmd.next_event();
+            while event.data.read() == 0 {
+                println!("  - {} Waiting for event", name);
+            }
+
+            // FIXME: EDTLA if event data was set
+            if event.completion_code() != TrbCompletionCode::ShortPacket as u8
+                && event.transfer_length() != 0
+            {
+                println!(
+                    "Event trb didn't yield a short packet, but some bytes were not transferred"
+                );
+            }
+
+            if event.completion_code() != TrbCompletionCode::Success as u8
+                || event.trb_type() != TrbType::Transfer as u8
+            {
+                println!(
+                    "Custom transfer event failed with {:#0x} {:#0x} {:#0x}",
+                    event.data.read(),
+                    event.status.read(),
+                    event.control.read()
+                );
+            }
+            // TODO: Handle event data
+            println!("EVENT DATA: {:?}", event.event_data());
+
+            let cloned_trb = event.clone();
+            event.reserved(false);
+
+            cloned_trb
+        };
+
+        self.run.ints[0].erdp.write(self.cmd.erdp());
+
+        Ok(cloned_trb)
+    }
+    fn device_req_no_data(&mut self, port: usize, req: usb::Setup) -> Result<()> {
+        self.execute_control_transfer(port, req, TransferKind::NoData, "DEVICE_REQ_NO_DATA", |_, _| ControlFlow::Break)?;
         Ok(())
     }
     fn set_configuration(&mut self, port: usize, config: u8) -> Result<()> {
@@ -267,26 +374,7 @@ impl Xhci {
             .ok_or(Error::new(EBADF))?
             .slot;
 
-        let (cmd, cycle, event) = self.cmd.next();
-        cmd.reset_endpoint(slot, endp_num_xhc, tsp, cycle);
-
-        self.dbs[0].write(0);
-
-        while event.data.read() == 0 {
-            println!("    - Waiting for event");
-        }
-
-        if event.completion_code() != TrbCompletionCode::Success as u8
-            || event.trb_type() != TrbType::CommandCompletion as u8
-        {
-            println!("RESET_ENDPOINT failed with event TRB ({:#0x} {:#0x} {:#0x}) and command TRB ({:#0x} {:#0x} {:#0x})", event.data.read(), event.status.read(), event.control.read(), cmd.data.read(), cmd.status.read(), cmd.control.read());
-            return Err(Error::new(EIO));
-        }
-
-        cmd.reserved(false);
-        event.reserved(false);
-
-        self.run.ints[0].erdp.write(self.cmd.erdp());
+        self.execute_command("RESET_ENDPOINT", |trb, cycle| trb.reset_endpoint(slot, endp_num_xhc, tsp, cycle))?;
         Ok(())
     }
 
@@ -349,6 +437,37 @@ impl Xhci {
         }
     }
 
+    fn port_state(&self, port: usize) -> Result<&super::PortState> {
+        self.port_states.get(&port).ok_or(Error::new(EBADF))
+    }
+    fn port_state_mut(&mut self, port: usize) -> Result<&mut super::PortState> {
+        self.port_states.get_mut(&port).ok_or(Error::new(EBADF))
+    }
+    fn endpoint_state_mut(&mut self, port: usize, endp_num: u8) -> Result<&mut EndpointState> {
+        self.port_state_mut(port)?.endpoint_states.get_mut(&endp_num).ok_or(Error::new(EBADF))
+    }
+    fn input_context(&mut self, port: usize) -> Result<&mut Dma<InputContext>> {
+        Ok(&mut self.port_state_mut(port)?.input_context)
+    }
+    fn endp_ctx(&mut self, port: usize, endp_num_xhc: u8) -> Result<&mut super::context::EndpointContext> {
+        Ok(self.input_context(port)?
+            .device
+            .endpoints
+            .get_mut(endp_num_xhc as usize - 1)
+            .ok_or(Error::new(EIO))?)
+    }
+    fn dev_desc(&self, port: usize) -> Result<&DevDesc> {
+        Ok(&self.port_state(port)?.dev_desc)
+    }
+    fn config_descs(&self, port: usize) -> Result<&[ConfDesc]> {
+        Ok(&self.dev_desc(port)?.config_descs)
+    }
+    fn config_desc(&self, port: usize, desc: u8) -> Result<&ConfDesc> {
+        Ok(self.config_descs(port)?.get(usize::from(desc)).ok_or(Error::new(EBADF))?)
+    }
+    fn endp_descs(&self, port: usize, config_desc: u8, if_desc: u8) -> Result<&[EndpDesc]> {
+        Ok(&self.port_state(port)?.dev_desc.config_descs.get(usize::from(config_desc)).ok_or(Error::new(EIO))?.interface_descs.get(usize::from(if_desc)).ok_or(Error::new(EIO))?.endpoints)
+    }
     fn configure_endpoints(&mut self, port: usize, json_buf: &[u8]) -> Result<()> {
         let mut req: ConfigureEndpointsReq =
             serde_json::from_slice(json_buf).or(Err(Error::new(EBADMSG)))?;
@@ -365,67 +484,59 @@ impl Xhci {
             return Err(Error::new(EBADMSG));
         }
 
+        let (endp_desc_count, new_context_entries) = {
+            let endpoints = self.endp_descs(port, req.config_desc, req.interface_desc.unwrap_or(0))?;
+
+            if endpoints.len() >= 31 {
+                return Err(Error::new(EIO));
+            }
+
+            (endpoints.len(), (match endpoints.last() {
+                Some(l) => Self::endp_num_to_dci(endpoints.len() as u8, l),
+                None => 1,
+            }) + 1)
+        };
+        let lec = self.cap.lec();
+        let max_psa_size = self.cap.max_psa_size();
+
         let port_speed_id = self.ports[port].speed();
         let speed_id: &ProtocolSpeed = self.lookup_psiv(port as u8, port_speed_id).ok_or(Error::new(EIO))?;
 
-        let port_state = self.port_states.get_mut(&port).ok_or(Error::new(ENOENT))?;
-        let input_context: &mut Dma<InputContext> = &mut port_state.input_context;
+        {
+            let input_context = self.input_context(port)?;
 
-        // Configure the slot context as well, which holds the last index of the endp descs.
-        input_context.add_context.write(1);
-        input_context.drop_context.write(0);
+            // Configure the slot context as well, which holds the last index of the endp descs.
+            input_context.add_context.write(1);
+            input_context.drop_context.write(0);
 
-        const CONTEXT_ENTRIES_MASK: u32 = 0xF800_0000;
-        const CONTEXT_ENTRIES_SHIFT: u8 = 27;
+            const CONTEXT_ENTRIES_MASK: u32 = 0xF800_0000;
+            const CONTEXT_ENTRIES_SHIFT: u8 = 27;
 
-        let current_slot_a = input_context.device.slot.a.read();
+            let current_slot_a = input_context.device.slot.a.read();
 
-        let dev_desc = &port_state.dev_desc;
-        let endpoints = &dev_desc
-            .config_descs
-            .get(req.config_desc as usize)
-            .ok_or(Error::new(EBADMSG))?
-            .interface_descs.get(req.interface_desc.unwrap_or(0) as usize).ok_or(Error::new(EBADMSG))?
-            .endpoints;
-
-        if endpoints.len() >= 31 {
-            return Err(Error::new(EIO));
+            input_context.device.slot.a.write(
+                (current_slot_a & !CONTEXT_ENTRIES_MASK)
+                    | ((u32::from(new_context_entries) << CONTEXT_ENTRIES_SHIFT)
+                        & CONTEXT_ENTRIES_MASK),
+            );
+            input_context.control.write(
+                (u32::from(req.alternate_setting.unwrap_or(0)) << 16)
+                    | (u32::from(req.interface_desc.unwrap_or(0)) << 8)
+                    | u32::from(req.config_desc),
+            );
         }
 
-        let new_context_entries = match endpoints.last() {
-            Some(l) => Self::endp_num_to_dci(endpoints.len() as u8, l),
-            None => 1,
-        } + 1;
 
-        input_context.device.slot.a.write(
-            (current_slot_a & !CONTEXT_ENTRIES_MASK)
-                | ((u32::from(new_context_entries) << CONTEXT_ENTRIES_SHIFT)
-                    & CONTEXT_ENTRIES_MASK),
-        );
-        input_context.control.write(
-            (u32::from(req.alternate_setting.unwrap_or(0)) << 16)
-                | (u32::from(req.interface_desc.unwrap_or(0)) << 8)
-                | u32::from(req.config_desc),
-        );
-
-        let lec = self.cap.lec();
-
-        for endp_idx in 0..endpoints.len() as u8 {
+        for endp_idx in 0..endp_desc_count as u8 {
             let endp_num = endp_idx + 1;
 
+            let endpoints = self.endp_descs(port, req.config_desc, req.interface_desc.unwrap_or(0))?;
+            let dev_desc = self.dev_desc(port)?;
             let endp_desc = endpoints.get(endp_idx as usize).ok_or(Error::new(EIO))?;
+
             let endp_num_xhc = Self::endp_num_to_dci(endp_num, endp_desc);
 
-            input_context.add_context.writef(1 << endp_num_xhc, true);
-
-            let endp_ctx = input_context
-                .device
-                .endpoints
-                .get_mut(endp_num_xhc as usize - 1)
-                .ok_or(Error::new(EIO))?;
-
             let max_streams = endp_desc.max_streams();
-            let max_psa_size = self.cap.max_psa_size();
 
             // TODO: Secondary streams.
             let primary_streams = if max_streams != 0 {
@@ -467,6 +578,8 @@ impl Xhci {
             assert_eq!(max_error_count & 0x3, max_error_count);
             assert_ne!(ep_ty, 0); // 0 means invalid.
 
+            let port_state = self.port_state_mut(port)?;
+
             let ring_ptr = if max_streams != 0 {
                 let mut array = StreamContextArray::new(1 << (max_streams + 1))?;
 
@@ -502,6 +615,11 @@ impl Xhci {
             };
             assert_eq!(primary_streams & 0x1F, primary_streams);
 
+            let input_context = self.input_context(port)?;
+            input_context.add_context.writef(1 << endp_num_xhc, true);
+
+            let endp_ctx = self.endp_ctx(port, endp_num_xhc)?;
+
             endp_ctx.a.write(
                 u32::from(mult) << 8
                     | u32::from(primary_streams) << 10
@@ -526,37 +644,12 @@ impl Xhci {
             );
         }
 
-        self.run.ints[0].erdp.write(self.cmd.erdp());
-
-        {
-            let (cmd, cycle, event) = self.cmd.next();
-            cmd.configure_endpoint(port_state.slot, input_context.physical(), cycle);
-
-            self.dbs[0].write(0);
-
-            while event.data.read() == 0 {
-                println!("    - Waiting for event");
-            }
-
-            if event.completion_code() != TrbCompletionCode::Success as u8
-                || event.trb_type() != TrbType::CommandCompletion as u8
-            {
-                println!("CONFIGURE_ENDPOINT failed with event TRB ({:#0x} {:#0x} {:#0x}) and command TRB ({:#0x} {:#0x} {:#0x})", event.data.read(), event.status.read(), event.control.read(), cmd.data.read(), cmd.status.read(), cmd.control.read());
-                return Err(Error::new(EIO));
-            }
-
-            cmd.reserved(false);
-            event.reserved(false);
-        }
+        let slot = self.port_state(port)?.slot;
+        let input_context_physical = self.input_context(port)?.physical();
+        self.execute_command("CONFIGURE_ENDPOINT", |trb, cycle| trb.configure_endpoint(slot, input_context_physical, cycle));
 
         // Tell the device about this configuration.
-
-        let configuration_value = port_state
-            .dev_desc
-            .config_descs
-            .get(req.config_desc as usize)
-            .ok_or(Error::new(EIO))?
-            .configuration_value;
+        let configuration_value = self.config_desc(port, req.config_desc)?.configuration_value;
         self.set_configuration(port, configuration_value)?;
 
         if let (Some(interface_num), Some(alternate_setting)) =
@@ -609,7 +702,7 @@ impl Xhci {
         } else { unreachable!() }
     }
     fn endp_desc(&self, port_num: usize, endp_num: u8) -> Result<&EndpDesc> {
-        self.port_states.get(&port_num).ok_or(Error::new(EIO))?.dev_desc.config_descs.first().ok_or(Error::new(EIO))?.interface_descs.first().ok_or(Error::new(EIO))?.endpoints.get(endp_num as usize - 1).ok_or(Error::new(EIO))
+        Ok(self.endp_descs(port_num, 0, 0)?.get(usize::from(endp_num) - 1).ok_or(Error::new(EBADF))?)
     }
     fn endp_doorbell(endp_num: u8, desc: &EndpDesc, stream_id: u16) -> u32 {
         let db_target = Self::endp_num_to_dci(endp_num, desc);
@@ -667,25 +760,11 @@ impl Xhci {
             return Err(Error::new(EBADF));
         }
 
-        let endp_state = port_state
-            .endpoint_states
-            .get_mut(&endp_num)
-            .ok_or(Error::new(EBADF))?;
-
-        let ring: &mut Ring = match endp_state {
-            EndpointState { transfer: super::RingOrStreams::Ring(ref mut ring), .. } => ring,
-            EndpointState { transfer: super::RingOrStreams::Streams(stream_ctx_array), .. } => {
-                stream_ctx_array
-                    .rings
-                    .get_mut(&1)
-                    .ok_or(Error::new(EBADF))?
-            }
-        };
         // TODO: Scatter-gather transfers, possibly allowing >64KiB sizes.
         let len = u16::try_from(buf.len()).or(Err(Error::new(ENOSYS)))?;
         let max_packet_size = endp_desc.max_packet_size;
-        {
-            let (trb, cycle) = ring.next();
+
+        let (buffer, idt, estimated_td_size) = {
             let (buffer, idt) = if len <= 8 && max_packet_size >= 8 && direction != EndpDirection::In {
                 buf.map_buf(|sbuf| {
                     let mut bytes = [0u8; 8];
@@ -700,7 +779,12 @@ impl Xhci {
                     false,
                 )
             };
-            let estimated_td_size = mem::size_of_val(&trb) as u8; // one trb per td
+            let estimated_td_size = mem::size_of::<Trb>() as u8; // one trb per td
+            (buffer, idt, estimated_td_size)
+        };
+
+        let stream_id = 1u16;
+        let event = self.execute_transfer(port_num, endp_num, stream_id, "CUSTOM_TRANSFER", |trb, cycle| {
             trb.normal(
                 buffer,
                 len,
@@ -714,50 +798,16 @@ impl Xhci {
                 idt,
                 false,
             );
-        }
+            ControlFlow::Break
+        })?;
 
-        let stream_id = 1u16;
-        self.dbs[port_state.slot as usize].write(Self::endp_doorbell(endp_num, self.endp_desc(port_num, endp_num)?, stream_id));
-
-        let (completion_code, bytes_transferred) = {
-            let event = self.cmd.next_event();
-            while event.data.read() == 0 {
-                println!("  - Waiting for event");
-            }
-
-            // FIXME: EDTLA if event data was set
-            if event.completion_code() != TrbCompletionCode::ShortPacket as u8
-                && event.transfer_length() != 0
-            {
-                println!(
-                    "Event trb didn't yield a short packet, but some bytes were not transferred"
-                );
-            }
-
-            if event.completion_code() != TrbCompletionCode::Success as u8
-                || event.trb_type() != TrbType::Transfer as u8
-            {
-                println!(
-                    "Custom transfer event failed with {:#0x} {:#0x} {:#0x}",
-                    event.data.read(),
-                    event.status.read(),
-                    event.control.read()
-                );
-            }
-            // TODO: Handle event data
-            println!("EVENT DATA: {:?}", event.event_data());
-
-            (
-                event.completion_code(),
-                u32::from(len) - event.transfer_length(),
-            )
-        };
+        let bytes_transferred = u32::from(len) - event.transfer_length();
 
         if let DeviceReqData::In(dbuf) = &mut buf {
             dbuf.copy_from_slice(&*dma_buffer.as_ref().unwrap());
         }
 
-        Ok((completion_code, bytes_transferred as u32))
+        Ok((event.completion_code(), bytes_transferred))
     }
     pub(crate) fn get_dev_desc(&mut self, port_id: usize) -> Result<DevDesc> {
         let st = self
@@ -947,58 +997,10 @@ impl Xhci {
         // be better. Maybe something simple like bincode could be used, if a custom binary struct
         // is too much overkill.
 
-        let port_state = self
-            .port_states
-            .get_mut(&port_num)
-            .ok_or(Error::new(EBADF))?;
-
-        let ring = match port_state
-            .endpoint_states
-            .get_mut(&0)
-            .ok_or(Error::new(EIO))?
-        {
-            EndpointState { transfer: super::RingOrStreams::Ring(ref mut ring), .. } => ring,
-
-            // Control endpoints never use streams
-            _ => return Err(Error::new(EIO)),
-        };
-
-        {
-            let (cmd, cycle) = ring.next();
-            cmd.setup(setup, TransferKind::In, cycle);
-        }
-        if transfer_kind != TransferKind::NoData {
-            let (cmd, cycle) = ring.next();
-
-            cmd.data(
-                data_buffer.as_ref().map(|dma| dma.physical()).unwrap_or(0),
-                setup.length,
-                transfer_kind == TransferKind::In,
-                cycle,
-            );
-        }
-        {
-            let (cmd, cycle) = ring.next();
-            cmd.status(transfer_kind == TransferKind::In, cycle);
-        }
-        self.dbs[port_state.slot as usize].write(Self::def_control_endp_doorbell());
-
-        {
-            let event = self.cmd.next_event();
-            while event.data.read() == 0 {
-                println!("  - Waiting for event");
-            }
-            if event.completion_code() != TrbCompletionCode::Success as u8
-                || event.trb_type() != TrbType::Transfer as u8
-            {
-                println!(
-                    "Custom device request failed with EVENT {:#0x} {:#0x} {:#0x}",
-                    event.data.read(),
-                    event.status.read(),
-                    event.control.read()
-                );
-            }
-        }
+        self.execute_control_transfer(port_num, setup, transfer_kind, "CUSTOM_DEVICE_REQ", |trb, cycle| {
+            trb.data(data_buffer.as_ref().map(|dma| dma.physical()).unwrap_or(0), setup.length, transfer_kind == TransferKind::In, cycle);
+            ControlFlow::Break
+        })?;
         Ok(())
     }
     fn port_req_init_st(&mut self, port_num: usize, req: &PortReq) -> Result<PortReqState> {
@@ -1517,8 +1519,10 @@ impl Xhci {
             &mut super::RingOrStreams::Ring(ref mut ring) => ring,
             &mut super::RingOrStreams::Streams(ref mut arr) => arr.rings.get_mut(&1).ok_or(Error::new(EBADFD))?,
         };
+
         let (cmd, cycle) = ring.next();
         cmd.transfer_no_op(0, false, false, false, cycle);
+
         let deque_ptr_and_cycle = ring.register();
         let slot = port_state.slot;
 
@@ -1538,33 +1542,8 @@ impl Xhci {
         let slot = self.slot(port_num)?;
         let endp_num_xhc = Self::endp_num_to_dci(endp_num, self.endp_desc(port_num, endp_num)?);
 
-        // TODO: Merge these command boilerplates into a single function.
-        self.run.ints[0].erdp.write(self.cmd.erdp());
+        self.execute_command("SET_TR_DEQUEUE_POINTER", |trb, cycle| trb.set_tr_deque_ptr(deque_ptr_and_cycle, cycle, StreamContextType::PrimaryRing, 1, endp_num_xhc, slot))?;
 
-        {
-            let (cmd, cycle, event) = self.cmd.next();
-
-
-            // TODO: I guess this very command is the one used to actually multiplex between
-            // streams.
-            cmd.set_tr_deque_ptr(deque_ptr_and_cycle, cycle, StreamContextType::PrimaryRing, 1, endp_num_xhc, slot);
-
-            self.dbs[0].write(0);
-
-            while event.data.read() == 0 {
-                println!("    - Waiting for event");
-            }
-
-            if event.completion_code() != TrbCompletionCode::Success as u8
-                || event.trb_type() != TrbType::CommandCompletion as u8
-            {
-                println!("SET_TR_DEQUEUE_POINTER failed with event TRB ({:#0x} {:#0x} {:#0x}) and command TRB ({:#0x} {:#0x} {:#0x})", event.data.read(), event.status.read(), event.control.read(), cmd.data.read(), cmd.status.read(), cmd.control.read());
-                return Err(Error::new(EIO));
-            }
-
-            cmd.reserved(false);
-            event.reserved(false);
-        }
         Ok(())
     }
     pub fn on_write_endp_ctl(&mut self, port_num: usize, endp_num: u8, buf: &[u8]) -> Result<usize> {

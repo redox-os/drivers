@@ -298,22 +298,15 @@ impl Xhci {
         println!("  - XHCI initialized");
     }
 
-    pub fn enable_port_slot(cmd: &mut CommandRing, dbs: &mut [Doorbell]) -> u8 {
-        let (cmd, cycle, event) = cmd.next();
+    pub fn enable_port_slot(&mut self, slot_ty: u8) -> Result<u8> {
+        assert_eq!(slot_ty & 0x1F, slot_ty);
 
-        cmd.enable_slot(0, cycle);
-
-        dbs[0].write(0);
-
-        while event.data.read() == 0 {
-            println!("    - Waiting for event");
-        }
-        let slot = (event.control.read() >> 24) as u8;
-
-        cmd.reserved(false);
-        event.reserved(false);
-
-        slot
+        let cloned_event_trb = self.execute_command("ENABLE_SLOT", |cmd, cycle| cmd.enable_slot(0, cycle))?;
+        Ok(cloned_event_trb.event_slot())
+    }
+    pub fn disable_port_slot(&mut self, slot: u8) -> Result<()> {
+        self.execute_command("DISABLE_SLOT", |cmd, cycle| cmd.enable_slot(0, cycle))?;
+        Ok(())
     }
 
     pub fn slot_state(&self, slot: usize) -> u8 {
@@ -336,14 +329,13 @@ impl Xhci {
 
                 println!("    - Enable slot");
 
-                self.run.ints[0].erdp.write(self.cmd.erdp());
-
-                let slot = Self::enable_port_slot(&mut self.cmd, &mut self.dbs);
+                let slot_ty = self.supported_protocol(i as u8).expect("Failed to find supported protocol information for port").proto_slot_ty();
+                let slot = self.enable_port_slot(slot_ty)?;
 
                 println!("    - Slot {}", slot);
 
                 let mut input = Dma::<InputContext>::zeroed()?;
-                let mut ring = self.address_device(&mut input, i, slot, speed)?;
+                let mut ring = self.address_device(&mut input, i, slot_ty, slot, speed)?;
 
                 let dev_desc = Self::get_dev_desc_raw(
                     &mut self.ports,
@@ -401,31 +393,14 @@ impl Xhci {
         b &= 0x0000_FFFF;
         b |= (new_max_packet_size) << 16;
         endp_ctx.b.write(b);
-
-        {
-            let (cmd, cycle, event) = self.cmd.next();
-
-            cmd.evaluate_context(slot_id, input_context.physical(), false, cycle);
-
-            self.dbs[0].write(0);
-
-            while event.data.read() == 0 {
-                println!("    - Waiting for event");
-            }
-
-            if event.completion_code() != TrbCompletionCode::Success as u8
-                || event.trb_type() != TrbType::CommandCompletion as u8
-            {
-                panic!("EVALUATE_CONTEXT failed with {:#0x} {:#0x} {:#0x}", event.data.read(), event.status.read(), event.control.read());
-            }
-
-            cmd.reserved(false);
-            event.reserved(false);
-        }
+        
+        self.execute_command("EVALUATE_CONTEXT", |trb, cycle| {
+            trb.evaluate_context(slot_id, input_context.physical(), false, cycle)
+        })?;
         Ok(())
     }
 
-    pub fn address_device(&mut self, input_context: &mut Dma<InputContext>, i: usize, slot: u8, speed: u8) -> Result<Ring> {
+    pub fn address_device(&mut self, input_context: &mut Dma<InputContext>, i: usize, slot_ty: u8, slot: u8, speed: u8) -> Result<Ring> {
         let mut ring = Ring::new(true)?;
 
         {
@@ -502,27 +477,12 @@ impl Xhci {
             endp_ctx.trh.write((tr >> 32) as u32);
             endp_ctx.trl.write(tr as u32);
         }
+        
+        let input_context_physical = input_context.physical();
 
-        {
-            let (cmd, cycle, event) = self.cmd.next();
-
-            cmd.address_device(slot, input_context.physical(), false, cycle);
-
-            self.dbs[0].write(0);
-
-            while event.data.read() == 0 {
-                println!("    - Waiting for event");
-            }
-
-            if event.completion_code() != TrbCompletionCode::Success as u8
-                || event.trb_type() != TrbType::CommandCompletion as u8
-            {
-                panic!("ADDRESS DEVICE FAILED");
-            }
-
-            cmd.reserved(false);
-            event.reserved(false);
-        }
+        self.execute_command("ADDRESS_DEVICE", |trb, cycle| {
+            trb.address_device(slot, input_context_physical, false, cycle)
+        }).expect("ADDRESS_DEVICE failed");
         Ok(ring)
     }
 
@@ -623,6 +583,11 @@ impl Xhci {
                 }
             })
     }
+    pub fn supported_protocol(&self, port: u8) -> Option<&'static SupportedProtoCap> {
+        self
+            .supported_protocols_iter()
+            .find(|supp_proto| supp_proto.compat_port_range().contains(&port))
+    }
     pub fn supported_protocol_speeds(
         &self,
         port: u8,
@@ -690,9 +655,8 @@ impl Xhci {
                     | 7 << PROTO_SPEED_PSIV_SHIFT,
             ),
         ];
-        let supp_proto = self
-            .supported_protocols_iter()
-            .find(|supp_proto| supp_proto.compat_port_range().contains(&port))?;
+
+        let supp_proto = self.supported_protocol(port)?;
 
         Some(if supp_proto.psic() != 0 {
             unsafe { supp_proto.protocol_speeds().iter() }

@@ -64,7 +64,10 @@ fn main() {
 
     //syscall::setrens(0, 0).expect("scsid: failed to enter null namespace");
     let mut scsi = Scsi::new(&mut *protocol);
-    let mut scsi_scheme = ScsiScheme::new(&mut scsi);
+    let mut buffer = [0u8; 512];
+    scsi.read(&mut *protocol, 0, &mut buffer).unwrap();
+    println!("DISK CONTENT: {}", base64::encode(&buffer[..]));
+    let mut scsi_scheme = ScsiScheme::new(&mut scsi, &mut *protocol);
 
     // TODO: Use nonblocking and put all pending calls in a todo VecDeque. Use an eventfd as well.
     'scheme_loop: loop {

@@ -1,4 +1,5 @@
-use std::mem;
+use std::{mem, ops};
+use std::convert::TryFrom;
 
 pub mod cmds;
 pub mod opcodes;
@@ -6,7 +7,7 @@ pub mod opcodes;
 use thiserror::Error;
 use xhcid_interface::DeviceReqData;
 
-use crate::protocol::{Protocol, ProtocolError, SendCommandStatus};
+use crate::protocol::{Protocol, ProtocolError, SendCommandStatus, SendCommandStatusKind};
 use cmds::{SenseKey, StandardInquiryData};
 use opcodes::Opcode;
 
@@ -14,6 +15,8 @@ pub struct Scsi {
     command_buffer: [u8; 16],
     inquiry_buffer: [u8; 259],
     data_buffer: Vec<u8>,
+    pub block_size: u32,
+    pub block_count: u64,
 }
 
 const INQUIRY_CMD_LEN: u8 = 6;
@@ -35,6 +38,8 @@ impl Scsi {
             command_buffer: [0u8; 16],
             inquiry_buffer: [0u8; 259], // additional_len = 255 max
             data_buffer: Vec::new(),
+            block_size: 0,
+            block_count: 0,
         };
 
         // Get the max length that the device supports, of the Standard Inquiry Data.
@@ -43,7 +48,16 @@ impl Scsi {
         this.get_standard_inquiry_data(protocol, max_inquiry_len);
         this.res_standard_inquiry_data();
 
-        dbg!(this.get_mode_sense10(protocol).unwrap());
+        let (block_size, block_count) = {
+            let (_, blkdescs, mode_page_iter) = this.get_mode_sense10(protocol).unwrap();
+
+            // TODO: Can there be multiple disks at all?
+            let only_blkdesc = blkdescs.get(0).unwrap();
+            (only_blkdesc.block_size(), only_blkdesc.block_count())
+        };
+
+        this.block_size = block_size;
+        this.block_count = block_count;
 
         this
     }
@@ -58,51 +72,18 @@ impl Scsi {
 
         protocol.send_command(&self.command_buffer[..INQUIRY_CMD_LEN as usize], DeviceReqData::In(&mut self.inquiry_buffer[..max_inquiry_len as usize])).expect("Failed to send INQUIRY command");
     }
-    /*/// Similar to `check_supp_opcode_sized`, but simply checks whether the opcode is supported,
-    /// without fetching any actual data.
-    pub fn check_supp_opcode(&mut self, protocol: &mut dyn Protocol, opcode: Opcode, sa: Option<u16>) -> Result<bool, ScsiError> {
-        self.check_supp_opcode_sized(protocol, opcode, sa, 2)
-    }
-    pub fn check_supp_opcode_sized(&mut self, protocol: &mut dyn Protocol, opcode: Opcode, sa: Option<u16>, alloc_len: u32) -> Result<bool, ScsiError> {
-        let report_supp_opcodes = self.cmd_report_supp_opcodes();
-        *report_supp_opcodes = if let Some(serviceaction) = sa {
-            cmds::ReportSuppOpcodes::get_supp(false, opcode, serviceaction, alloc_len, 0)
-        } else {
-            cmds::ReportSuppOpcodes::get_supp_no_sa(false, opcode, alloc_len, 0)
-        };
-        self.data_buffer.resize(std::mem::size_of::<cmds::OneCommandParam>(), 0);
-        protocol.send_command(&self.command_buffer[..REPORT_SUPP_OPCODES_CMD_LEN as usize], DeviceReqData::In(&mut self.data_buffer[..alloc_len as usize]))?;
-        Ok(self.res_one_command().support() == cmds::OneCommandParamSupport::Supported)
-    }*/
-    
-    /*pub fn get_supp_opcodes_alloc_len(&mut self, protocol: &mut dyn Protocol) -> u32 {
-        self.get_supp_opcodes(protocol, MIN_REPORT_SUPP_OPCODES_ALLOC_LEN);
-        self.res_all_commands().alloc_len()
-    }*/
-    /*pub fn get_supp_opcodes(&mut self, protocol: &mut dyn Protocol, alloc_len: u32) {
-        let report_supp_opcodes = self.cmd_report_supp_opcodes();
-        *report_supp_opcodes = cmds::ReportSuppOpcodes::get_all(false, alloc_len, 0);
-        self.data_buffer.resize(alloc_len as usize, 0);
-        let status = protocol.send_command(&self.command_buffer[..REPORT_SUPP_OPCODES_CMD_LEN as usize], DeviceReqData::In(&mut self.data_buffer[..alloc_len as usize])).expect("Failed to send REPORT_SUPP_OPCODES command");
-        if status != SendCommandStatus::Success {
-            self.get_ff_sense(protocol, cmds::RequestSense::MINIMAL_ALLOC_LEN);
-            let data = self.res_ff_sense_data();
-            if data.sense_key() == SenseKey::IllegalRequest && data.add_sense_code == cmds::ADD_SENSE_CODE05_INVAL_CDB_FIELD {
-            }
-        }
-    }*/
     pub fn get_ff_sense(&mut self, protocol: &mut dyn Protocol, alloc_len: u8) {
         let request_sense = self.cmd_request_sense();
         *request_sense = cmds::RequestSense::new(false, alloc_len, 0);
         self.data_buffer.resize(alloc_len.into(), 0);
         protocol.send_command(&self.command_buffer[..REQUEST_SENSE_CMD_LEN as usize], DeviceReqData::In(&mut self.data_buffer[..alloc_len as usize])).expect("Failed to send REQUEST_SENSE command");
     }
-    pub fn get_mode_sense10(&mut self, protocol: &mut dyn Protocol) -> Result<(&cmds::ModeParamHeader10, BlkDescSlice), ScsiError> {
+    pub fn get_mode_sense10(&mut self, protocol: &mut dyn Protocol) -> Result<(&cmds::ModeParamHeader10, BlkDescSlice, impl Iterator<Item = cmds::AnyModePage>), ScsiError> {
         let initial_alloc_len = 4; // covers both mode_data_len and blk_desc_len.
         let mode_sense10 = self.cmd_mode_sense10();
         *mode_sense10 = cmds::ModeSense10::get_block_desc(initial_alloc_len, 0);
         self.data_buffer.resize(mem::size_of::<cmds::ModeParamHeader10>(), 0);
-        if let SendCommandStatus::Failed { .. } = protocol.send_command(&self.command_buffer[..10], DeviceReqData::In(&mut self.data_buffer[..initial_alloc_len as usize]))? {
+        if let SendCommandStatus { kind: SendCommandStatusKind::Failed, .. } = protocol.send_command(&self.command_buffer[..10], DeviceReqData::In(&mut self.data_buffer[..initial_alloc_len as usize]))? {
             self.get_ff_sense(protocol, 252);
             panic!("{:?}", self.res_ff_sense_data());
         }
@@ -113,7 +94,7 @@ impl Scsi {
         *mode_sense10 = cmds::ModeSense10::get_block_desc(optimal_alloc_len, 0);
         self.data_buffer.resize(optimal_alloc_len as usize, 0);
         protocol.send_command(&self.command_buffer[..10], DeviceReqData::In(&mut self.data_buffer[..optimal_alloc_len as usize]))?;
-        Ok((self.res_mode_param_header10(), self.res_blkdesc_mode10()))
+        Ok((self.res_mode_param_header10(), self.res_blkdesc_mode10(), self.res_mode_pages10()))
     }
 
     pub fn cmd_inquiry(&mut self) -> &mut cmds::Inquiry {
@@ -125,22 +106,15 @@ impl Scsi {
     pub fn cmd_mode_sense10(&mut self) -> &mut cmds::ModeSense10 {
         plain::from_mut_bytes(&mut self.command_buffer).unwrap()
     }
-    /*pub fn cmd_report_supp_opcodes(&mut self) -> &mut cmds::ReportSuppOpcodes {
-        plain::from_mut_bytes(&mut self.command_buffer).unwrap()
-    }*/
     pub fn cmd_request_sense(&mut self) -> &mut cmds::RequestSense {
+        plain::from_mut_bytes(&mut self.command_buffer).unwrap()
+    }
+    pub fn cmd_read16(&mut self) -> &mut cmds::Read16 {
         plain::from_mut_bytes(&mut self.command_buffer).unwrap()
     }
     pub fn res_standard_inquiry_data(&self) -> &StandardInquiryData {
         plain::from_bytes(&self.inquiry_buffer).unwrap()
     }
-    /*
-    pub fn res_all_commands(&self) -> &cmds::AllCommandsParam {
-        plain::from_bytes(&self.data_buffer).unwrap()
-    }
-    pub fn res_one_command(&self) -> &cmds::OneCommandParam {
-        plain::from_bytes(&self.data_buffer).unwrap()
-    }*/
     pub fn res_ff_sense_data(&self) -> &cmds::FixedFormatSenseData {
         plain::from_bytes(&self.data_buffer).unwrap()
     }
@@ -158,21 +132,71 @@ impl Scsi {
     pub fn res_blkdesc_mode10(&self) -> BlkDescSlice {
         let header = self.res_mode_param_header10();
         let descs_start = mem::size_of::<cmds::ModeParamHeader10>();
-        println!("MODE_SENSE PAGES: {}", base64::encode(&self.data_buffer[descs_start + header.block_desc_len() as usize..]));
         if header.longlba() {
-            BlkDescSlice::Long(plain::slice_from_bytes(&self.data_buffer[descs_start..descs_start + usize::from(header.block_desc_len)]).unwrap())
+            BlkDescSlice::Long(plain::slice_from_bytes(&self.data_buffer[descs_start..descs_start + usize::from(header.block_desc_len())]).unwrap())
+        } else if self.res_standard_inquiry_data().periph_dev_ty() != cmds::PeriphDeviceType::DirectAccess as u8 && self.res_standard_inquiry_data().version() == cmds::InquiryVersion::Spc3 as u8 {
+            BlkDescSlice::General(plain::slice_from_bytes(&self.data_buffer[descs_start..descs_start + usize::from(header.block_desc_len())]).unwrap())
         } else {
-            //BlkDescSlice::Short(plain::slice_from_bytes(&self.data_buffer[descs_start..descs_start + usize::from(header.block_desc_len)]).unwrap())
-            BlkDescSlice::General(plain::slice_from_bytes(&self.data_buffer[descs_start..descs_start + usize::from(header.block_desc_len)]).unwrap())
+            BlkDescSlice::Short(plain::slice_from_bytes(&self.data_buffer[descs_start..descs_start + usize::from(header.block_desc_len())]).unwrap())
         }
     }
+
+    pub fn res_mode_pages10(&self) -> impl Iterator<Item = cmds::AnyModePage> {
+        let header = self.res_mode_param_header10();
+        let descs_start = mem::size_of::<cmds::ModeParamHeader10>();
+        let buffer = &self.data_buffer[descs_start + header.block_desc_len() as usize..];
+        cmds::mode_page_iter(buffer)
+    }
     pub fn get_disk_size(&mut self) -> u64 {
-        todo!()
+        self.block_count * u64::from(self.block_size)
+    }
+    pub fn read(&mut self, protocol: &mut dyn Protocol, lba: u64, buffer: &mut [u8]) -> Result<u32, ScsiError> {
+        let blocks_to_read = buffer.len() as u64 / u64::from(self.block_size);
+        let transfer_len = u32::try_from(blocks_to_read * u64::from(self.block_size)).ok().unwrap_or(std::u32::MAX);
+        {
+            let read = self.cmd_read16();
+            *read = cmds::Read16::new(lba, transfer_len, 0);
+        }
+        let status = protocol.send_command(&self.command_buffer[..16], DeviceReqData::In(&mut buffer[..transfer_len as usize]))?;
+        Ok(status.bytes_transferred(transfer_len))
     }
 }
 #[derive(Debug)]
 pub enum BlkDescSlice<'a> {
-    //Short(&'a [cmds::ShortLbaModeParamBlkDesc]),
+    Short(&'a [cmds::ShortLbaModeParamBlkDesc]),
     General(&'a [cmds::GeneralModeParamBlkDesc]),
     Long(&'a [cmds::LongLbaModeParamBlkDesc]),
+}
+
+#[derive(Debug)]
+pub enum BlkDesc<'a> {
+    Short(&'a cmds::ShortLbaModeParamBlkDesc),
+    General(&'a cmds::GeneralModeParamBlkDesc),
+    Long(&'a cmds::LongLbaModeParamBlkDesc),
+}
+impl<'a> BlkDesc<'a> {
+    fn block_size(&self) -> u32 {
+        match self {
+            Self::Short(s) => s.logical_block_len(),
+            Self::General(g) => g.logical_block_len(),
+            Self::Long(l) => l.logical_block_len(),
+        }
+    }
+    fn block_count(&self) -> u64 {
+        match self {
+            Self::Short(s) => s.block_count().into(),
+            Self::General(g) => g.block_count().into(),
+            Self::Long(l) => l.block_count(),
+        }
+    }
+}
+
+impl<'a> BlkDescSlice<'a> {
+    fn get(&self, idx: usize) -> Option<BlkDesc<'a>> {
+        match self {
+            Self::Short(s) => s.get(idx).map(BlkDesc::Short),
+            Self::Long(l) => l.get(idx).map(BlkDesc::Long),
+            Self::General(g) => g.get(idx).map(BlkDesc::General),
+        }
+    }
 }
