@@ -918,6 +918,10 @@ impl Xhci {
             |trb, cycle| {
                 let len = cmp::min(bytes_left, max_transfer_size as usize) as u32;
 
+                // set the interrupt on completion (IOC) flag for the last trb.
+                let ioc = bytes_left <= max_transfer_size as usize;
+                let chain = !ioc;
+
                 trb.normal(
                     buffer,
                     len,
@@ -926,7 +930,7 @@ impl Xhci {
                     0,
                     false,
                     true,
-                    false,
+                    chain,
                     true,
                     idt,
                     false,
