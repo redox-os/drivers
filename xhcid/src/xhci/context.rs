@@ -141,7 +141,7 @@ impl StreamContextArray {
         // NOTE: stream_id 0 is reserved
         assert_ne!(stream_id, 0);
 
-        let ring = Ring::new(link)?;
+        let ring = Ring::new(16, link)?;
         let pointer = ring.register();
         let sct = StreamContextType::PrimaryRing;
 

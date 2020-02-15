@@ -167,27 +167,23 @@ impl<'a> Protocol for BulkOnlyTransport<'a> {
         self.current_tag += 1;
         let tag = self.current_tag;
 
-        println!("{}", base64::encode(cb));
-        println!();
-
         let mut cbw_bytes = [0u8; 31];
         let cbw = plain::from_mut_bytes::<CommandBlockWrapper>(&mut cbw_bytes).unwrap();
         *cbw = CommandBlockWrapper::new(tag, data.len() as u32, data.direction().into(), 0, cb)?;
         let cbw = *cbw;
-        println!("{}", base64::encode(&cbw_bytes));
 
-        dbg!(self.bulk_in.status()?, self.bulk_out.status()?);
-
+        // TODO: Is this needed?
         bulk_only_mass_storage_reset(&self.handle, self.interface_num.into())?;
 
         match self.bulk_out.transfer_write(&cbw_bytes)? {
             PortTransferStatus::Stalled => {
-                println!("bulk out endpoint stalled when sending CBW");
-                self.clear_stall_out()?;
-                dbg!(self.bulk_in.status()?, self.bulk_out.status()?);
+                // TODO: Error handling
+                panic!("bulk out endpoint stalled when sending CBW {:?}", cbw);
+                //self.clear_stall_out()?;
+                //dbg!(self.bulk_in.status()?, self.bulk_out.status()?);
             }
             PortTransferStatus::ShortPacket(n) if n != 31 => {
-                panic!("received short packet when sending CBW ({} != 31)", n);
+                //panic!("received short packet when sending CBW ({} != 31)", n);
             }
             _ => (),
         }
@@ -200,8 +196,8 @@ impl<'a> Protocol for BulkOnlyTransport<'a> {
                         panic!("received short packed (len {}) when transferring data", len)
                     }
                     PortTransferStatus::Stalled => {
-                        println!("bulk in endpoint stalled when reading data");
-                        self.clear_stall_in()?;
+                        panic!("bulk in endpoint stalled when reading data");
+                        //self.clear_stall_in()?;
                     }
                     PortTransferStatus::Unknown => {
                         return Err(ProtocolError::XhciError(
@@ -211,16 +207,15 @@ impl<'a> Protocol for BulkOnlyTransport<'a> {
                         ))
                     }
                 };
-                println!("{}", base64::encode(&buffer[..]));
             }
             DeviceReqData::Out(buffer) => match self.bulk_out.transfer_write(buffer)? {
                 PortTransferStatus::Success => (),
                 PortTransferStatus::ShortPacket(len) => {
-                    panic!("received short packed (len {}) when transferring data", len)
+                    panic!("received short packet (len {}) when transferring data", len)
                 }
                 PortTransferStatus::Stalled => {
-                    println!("bulk out endpoint stalled when reading data");
-                    self.clear_stall_out()?;
+                    panic!("bulk out endpoint stalled when reading data");
+                    //self.clear_stall_out()?;
                 }
                 PortTransferStatus::Unknown => {
                     return Err(ProtocolError::XhciError(
@@ -235,28 +230,27 @@ impl<'a> Protocol for BulkOnlyTransport<'a> {
 
         match self.bulk_in.transfer_read(&mut csw_buffer)? {
             PortTransferStatus::Stalled => {
-                println!("bulk in endpoint stalled when reading CSW");
-                self.clear_stall_in()?;
+                panic!("bulk in endpoint stalled when reading CSW");
+                //self.clear_stall_in()?;
             }
             PortTransferStatus::ShortPacket(n) if n != 13 => {
                 panic!("received a short packet when reading CSW ({} != 13)", n)
             }
             _ => (),
         };
-        println!("{}", base64::encode(&csw_buffer));
         let csw = plain::from_bytes::<CommandStatusWrapper>(&csw_buffer).unwrap();
 
-        dbg!(csw);
         if !csw.is_valid() || csw.tag != cbw.tag {
-            self.reset_recovery()?;
+            panic!("Invald CSW {:?} (for CBW {:?})", csw, cbw);
+            //self.reset_recovery()?;
         }
 
-        if self.bulk_in.status()? == EndpointStatus::Halted
+        /*if self.bulk_in.status()? == EndpointStatus::Halted
             || self.bulk_out.status()? == EndpointStatus::Halted
         {
             println!("Trying to recover from stall");
             dbg!(self.bulk_in.status()?, self.bulk_out.status()?);
-        }
+        }*/
 
         Ok(SendCommandStatus {
             kind: if csw.status == CswStatus::Passed as u8 {

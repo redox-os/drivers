@@ -25,8 +25,12 @@ const REQUEST_SENSE_CMD_LEN: u8 = 6;
 const MIN_INQUIRY_ALLOC_LEN: u16 = 5;
 const MIN_REPORT_SUPP_OPCODES_ALLOC_LEN: u32 = 4;
 
+type Result<T, E = ScsiError> = Result<T, E>;
+
 #[derive(Debug, Error)]
 pub enum ScsiError {
+    // TODO: Add some kind of context here, since it's very useful indeed to be able to see which
+    // command returned the protocol error.
     #[error("protocol error when sending command: {0}")]
     ProtocolError(#[from] ProtocolError),
 
@@ -35,10 +39,13 @@ pub enum ScsiError {
 }
 
 impl Scsi {
-    pub fn new(protocol: &mut dyn Protocol) -> Self {
+    pub fn new(protocol: &mut dyn Protocol) -> Result<Self> {
         assert_eq!(std::mem::size_of::<StandardInquiryData>(), 96);
+
         let mut this = Self {
             command_buffer: [0u8; 16],
+            // separate buffer since the inquiry data is most likely going to be used in the
+            // future.
             inquiry_buffer: [0u8; 259], // additional_len = 255 max
             data_buffer: Vec::new(),
             block_size: 0,
@@ -46,13 +53,15 @@ impl Scsi {
         };
 
         // Get the max length that the device supports, of the Standard Inquiry Data.
-        let max_inquiry_len = this.get_inquiry_alloc_len(protocol);
+        let max_inquiry_len = this.get_inquiry_alloc_len(protocol)?;
         // Get the Standard Inquiry Data.
-        this.get_standard_inquiry_data(protocol, max_inquiry_len);
-        this.res_standard_inquiry_data();
+        this.get_standard_inquiry_data(protocol, max_inquiry_len)?;
+        
+        let version = this.res_standard_inquiry_data().version();
+        println!("Inquiry version: {}", version);
 
         let (block_size, block_count) = {
-            let (_, blkdescs, mode_page_iter) = this.get_mode_sense10(protocol).unwrap();
+            let (_, blkdescs, mode_page_iter) = this.get_mode_sense10(protocol)?;
 
             // TODO: Can there be multiple disks at all?
             let only_blkdesc = blkdescs.get(0).unwrap();
@@ -62,14 +71,14 @@ impl Scsi {
         this.block_size = block_size;
         this.block_count = block_count;
 
-        this
+        Ok(this)
     }
-    pub fn get_inquiry_alloc_len(&mut self, protocol: &mut dyn Protocol) -> u16 {
-        self.get_standard_inquiry_data(protocol, MIN_INQUIRY_ALLOC_LEN);
+    pub fn get_inquiry_alloc_len(&mut self, protocol: &mut dyn Protocol) -> Result<u16> {
+        self.get_standard_inquiry_data(protocol, MIN_INQUIRY_ALLOC_LEN)?;
         let standard_inquiry_data = self.res_standard_inquiry_data();
-        4 + u16::from(standard_inquiry_data.additional_len)
+        Ok(4 + u16::from(standard_inquiry_data.additional_len))
     }
-    pub fn get_standard_inquiry_data(&mut self, protocol: &mut dyn Protocol, max_inquiry_len: u16) {
+    pub fn get_standard_inquiry_data(&mut self, protocol: &mut dyn Protocol, max_inquiry_len: u16) -> Result<()> {
         let inquiry = self.cmd_inquiry();
         *inquiry = cmds::Inquiry::new(false, 0, max_inquiry_len, 0);
 
@@ -77,10 +86,10 @@ impl Scsi {
             .send_command(
                 &self.command_buffer[..INQUIRY_CMD_LEN as usize],
                 DeviceReqData::In(&mut self.inquiry_buffer[..max_inquiry_len as usize]),
-            )
-            .expect("Failed to send INQUIRY command");
+            )?;
+        Ok(())
     }
-    pub fn get_ff_sense(&mut self, protocol: &mut dyn Protocol, alloc_len: u8) {
+    pub fn get_ff_sense(&mut self, protocol: &mut dyn Protocol, alloc_len: u8) -> Result<()> {
         let request_sense = self.cmd_request_sense();
         *request_sense = cmds::RequestSense::new(false, alloc_len, 0);
         self.data_buffer.resize(alloc_len.into(), 0);
@@ -88,8 +97,7 @@ impl Scsi {
             .send_command(
                 &self.command_buffer[..REQUEST_SENSE_CMD_LEN as usize],
                 DeviceReqData::In(&mut self.data_buffer[..alloc_len as usize]),
-            )
-            .expect("Failed to send REQUEST_SENSE command");
+            )?;
     }
     pub fn get_mode_sense10(
         &mut self,

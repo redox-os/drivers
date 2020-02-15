@@ -417,7 +417,7 @@ impl Xhci {
         slot: u8,
         speed: u8,
     ) -> Result<Ring> {
-        let mut ring = Ring::new(true)?;
+        let mut ring = Ring::new(16, true)?;
 
         {
             input_context.add_context.write(1 << 1 | 1); // Enable the slot (zeroth bit) and the control endpoint (first bit).
@@ -505,12 +505,6 @@ impl Xhci {
         Ok(ring)
     }
 
-    pub fn ring_command_doorbell(&mut self) {
-        self.dbs[0].write(0);
-    }
-    pub fn ring_port_doorbell(&mut self, slot: u8, endpoint: u8, stream_id: u16) {
-        self.dbs[slot as usize].write(u32::from(endpoint) | (u32::from(stream_id) << 16));
-    }
 
     pub fn trigger_irq(&mut self) -> bool {
         // Read the Interrupter Pending bit.

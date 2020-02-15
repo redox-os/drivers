@@ -4,6 +4,7 @@ pub extern crate smallvec;
 use std::convert::TryFrom;
 use std::fs::{File, OpenOptions};
 use std::io::prelude::*;
+use std::num::NonZeroU8;
 use std::{io, result, str};
 
 use serde::{Deserialize, Serialize};
@@ -176,17 +177,17 @@ impl EndpDesc {
             self.is_isoch()
         }
     }
-    pub fn max_streams(&self) -> u8 {
+    pub fn log_max_streams(&self) -> Option<NonZeroU8> {
         self.ssc
             .as_ref()
             .map(|ssc| {
                 if self.is_bulk() {
-                    1 << (ssc.attributes & 0x1F)
+                    let raw = ssc.attributes & 0x1F;
+                    NonZeroU8::new(raw)
                 } else {
-                    0
+                    None
                 }
-            })
-            .unwrap_or(0)
+            }).flatten()
     }
     pub fn isoch_mult(&self, lec: bool) -> u8 {
         if !lec && self.is_isoch() {
@@ -597,9 +598,9 @@ pub enum XhciEndpCtlRes {
 
 impl XhciEndpHandle {
     fn ctl_req(&mut self, ctl_req: &XhciEndpCtlReq) -> result::Result<(), XhciClientHandleError> {
-        let ctl_buffer = serde_json::to_vec(ctl_req).expect("serde");
+        let ctl_buffer = serde_json::to_vec(ctl_req)?;
 
-        let ctl_bytes_written = self.ctl.write(&ctl_buffer).expect("ctlwrite");
+        let ctl_bytes_written = self.ctl.write(&ctl_buffer)?;
         if ctl_bytes_written != ctl_buffer.len() {
             return Err(Invalid("xhcid didn't process all of the ctl bytes").into());
         }
@@ -609,7 +610,7 @@ impl XhciEndpHandle {
     fn ctl_res(&mut self) -> result::Result<XhciEndpCtlRes, XhciClientHandleError> {
         // a response must never exceed 256 bytes
         let mut ctl_buffer = [0u8; 256];
-        let ctl_bytes_read = self.ctl.read(&mut ctl_buffer).expect("ctlread");
+        let ctl_bytes_read = self.ctl.read(&mut ctl_buffer)?;
 
         let ctl_res = serde_json::from_slice(&ctl_buffer[..ctl_bytes_read as usize])?;
         Ok(ctl_res)
@@ -618,9 +619,8 @@ impl XhciEndpHandle {
         self.ctl_req(&XhciEndpCtlReq::Reset { no_clear_feature })
     }
     pub fn status(&mut self) -> result::Result<EndpointStatus, XhciClientHandleError> {
-        self.ctl_req(&XhciEndpCtlReq::Status)
-            .expect("status ctlreq");
-        match self.ctl_res().expect("status ctlres") {
+        self.ctl_req(&XhciEndpCtlReq::Status)?;
+        match self.ctl_res()? {
             XhciEndpCtlRes::Status(s) => Ok(s),
             _ => Err(Invalid("expected status response").into()),
         }
@@ -635,10 +635,10 @@ impl XhciEndpHandle {
             direction,
             count: expected_len,
         };
-        self.ctl_req(&req).expect("ctl_req");
+        self.ctl_req(&req)?;
 
-        let bytes_read = f(&mut self.data).expect("f");
-        let res = self.ctl_res().expect("ctl_res");
+        let bytes_read = f(&mut self.data)?;
+        let res = self.ctl_res()?;
 
         match res {
             XhciEndpCtlRes::TransferResult(PortTransferStatus::Success)

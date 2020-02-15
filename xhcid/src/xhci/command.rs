@@ -12,7 +12,7 @@ pub struct CommandRing {
 impl CommandRing {
     pub fn new() -> Result<CommandRing> {
         Ok(CommandRing {
-            ring: Ring::new(true)?,
+            ring: Ring::new(16, true)?,
             events: EventRing::new()?,
         })
     }

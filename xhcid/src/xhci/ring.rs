@@ -5,16 +5,16 @@ use super::trb::Trb;
 
 pub struct Ring {
     pub link: bool,
-    pub trbs: Dma<[Trb; 16]>,
+    pub trbs: Dma<[Trb]>,
     pub i: usize,
     pub cycle: bool,
 }
 
 impl Ring {
-    pub fn new(link: bool) -> Result<Ring> {
+    pub fn new(length: usize, link: bool) -> Result<Ring> {
         Ok(Ring {
             link: link,
-            trbs: Dma::zeroed()?,
+            trbs: unsafe { Dma::zeroed_unsized(length)? },
             i: 0,
             cycle: link,
         })
