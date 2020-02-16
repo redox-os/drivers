@@ -329,12 +329,23 @@ pub enum EndpointStatus {
     Error,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, Serialize, Deserialize)]
+pub struct PortTransferStatus {
+    pub kind: PortTransferStatusKind,
+    pub bytes_transferred: u32,
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
-pub enum PortTransferStatus {
+pub enum PortTransferStatusKind {
     Success,
-    ShortPacket(u16),
+    ShortPacket,
     Stalled,
     Unknown,
+}
+impl Default for PortTransferStatusKind {
+    fn default() -> Self {
+        Self::Success
+    }
 }
 
 impl EndpointStatus {
@@ -641,7 +652,7 @@ impl XhciEndpHandle {
         let res = self.ctl_res()?;
 
         match res {
-            XhciEndpCtlRes::TransferResult(PortTransferStatus::Success)
+            XhciEndpCtlRes::TransferResult(PortTransferStatus { kind: PortTransferStatusKind::Success, .. })
                 if bytes_read != expected_len as usize =>
             {
                 Err(Invalid("no short packet, but fewer bytes were read/written").into())

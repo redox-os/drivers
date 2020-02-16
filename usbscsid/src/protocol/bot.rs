@@ -3,7 +3,7 @@ use std::slice;
 
 use xhcid_interface::{
     ConfDesc, DeviceReqData, EndpBinaryDirection, EndpDirection, EndpointStatus, IfDesc, Invalid,
-    PortReqRecipient, PortReqTy, PortTransferStatus, XhciClientHandle, XhciClientHandleError,
+    PortReqRecipient, PortReqTy, PortTransferStatus, PortTransferStatusKind, XhciClientHandle, XhciClientHandleError,
     XhciEndpHandle,
 };
 
@@ -129,20 +129,26 @@ impl<'a> BulkOnlyTransport<'a> {
         })
     }
     fn clear_stall_in(&mut self) -> Result<(), XhciClientHandleError> {
-        self.bulk_in.reset(false)?;
-        self.handle.clear_feature(
-            PortReqRecipient::Endpoint,
-            u16::from(self.bulk_in_num),
-            FEATURE_ENDPOINT_HALT,
-        )
+        if self.bulk_in.status()? == EndpointStatus::Halted {
+            self.bulk_in.reset(false)?;
+            self.handle.clear_feature(
+                PortReqRecipient::Endpoint,
+                u16::from(self.bulk_in_num),
+                FEATURE_ENDPOINT_HALT,
+            )?;
+        }
+        Ok(())
     }
     fn clear_stall_out(&mut self) -> Result<(), XhciClientHandleError> {
-        self.bulk_out.reset(false)?;
-        self.handle.clear_feature(
-            PortReqRecipient::Endpoint,
-            u16::from(self.bulk_out_num),
-            FEATURE_ENDPOINT_HALT,
-        )
+        if self.bulk_out.status()? == EndpointStatus::Halted {
+            self.bulk_out.reset(false)?;
+            self.handle.clear_feature(
+                PortReqRecipient::Endpoint,
+                u16::from(self.bulk_out_num),
+                FEATURE_ENDPOINT_HALT,
+            )?;
+        }
+        Ok(())
     }
     fn reset_recovery(&mut self) -> Result<(), ProtocolError> {
         bulk_only_mass_storage_reset(self.handle, self.interface_num.into())?;
@@ -155,6 +161,26 @@ impl<'a> BulkOnlyTransport<'a> {
             return Err(ProtocolError::RecoveryFailed);
         }
         Ok(())
+    }
+    fn read_csw_raw(&mut self, csw_buffer: &mut [u8; 13], already: bool) -> Result<(), ProtocolError> {
+        match self.bulk_in.transfer_read(&mut csw_buffer[..])? {
+            PortTransferStatus { kind: PortTransferStatusKind::Stalled, .. } => {
+                if already {
+                    self.reset_recovery()?;
+                }
+                println!("bulk in endpoint stalled when reading CSW");
+                self.clear_stall_in()?;
+                self.read_csw_raw(csw_buffer, true)?;
+            }
+            PortTransferStatus { kind: PortTransferStatusKind::ShortPacket, bytes_transferred } if bytes_transferred != 13 => {
+                panic!("received a short packet when reading CSW ({} != 13)", bytes_transferred)
+            }
+            _ => (),
+        }
+        Ok(())
+    }
+    fn read_csw(&mut self, csw_buffer: &mut [u8; 13]) -> Result<(), ProtocolError> {
+        self.read_csw_raw(csw_buffer, false)
     }
 }
 
@@ -172,77 +198,78 @@ impl<'a> Protocol for BulkOnlyTransport<'a> {
         *cbw = CommandBlockWrapper::new(tag, data.len() as u32, data.direction().into(), 0, cb)?;
         let cbw = *cbw;
 
-        // TODO: Is this needed?
-        bulk_only_mass_storage_reset(&self.handle, self.interface_num.into())?;
-
         match self.bulk_out.transfer_write(&cbw_bytes)? {
-            PortTransferStatus::Stalled => {
+            PortTransferStatus { kind: PortTransferStatusKind::Stalled, .. } => {
                 // TODO: Error handling
                 panic!("bulk out endpoint stalled when sending CBW {:?}", cbw);
                 //self.clear_stall_out()?;
                 //dbg!(self.bulk_in.status()?, self.bulk_out.status()?);
             }
-            PortTransferStatus::ShortPacket(n) if n != 31 => {
-                //panic!("received short packet when sending CBW ({} != 31)", n);
+            PortTransferStatus { bytes_transferred, .. } if bytes_transferred != 31 => {
+                panic!("received short packet when sending CBW ({} != 31)", bytes_transferred);
             }
             _ => (),
         }
 
-        match data {
-            DeviceReqData::In(buffer) => {
-                match self.bulk_in.transfer_read(buffer)? {
-                    PortTransferStatus::Success => (),
-                    PortTransferStatus::ShortPacket(len) => {
-                        panic!("received short packed (len {}) when transferring data", len)
+        let early_residue: Option<NonZeroU32> = match data {
+            DeviceReqData::In(buffer) => match self.bulk_in.transfer_read(buffer)? {
+                PortTransferStatus { kind, bytes_transferred } => match kind {
+                    PortTransferStatusKind::Success => None,
+                    PortTransferStatusKind::ShortPacket => {
+                        println!("received short packet (len {}) when transferring data", bytes_transferred);
+                        NonZeroU32::new(bytes_transferred)
                     }
-                    PortTransferStatus::Stalled => {
+                    PortTransferStatusKind::Stalled => {
                         panic!("bulk in endpoint stalled when reading data");
                         //self.clear_stall_in()?;
                     }
-                    PortTransferStatus::Unknown => {
+                    PortTransferStatusKind::Unknown => {
                         return Err(ProtocolError::XhciError(
                             XhciClientHandleError::InvalidResponse(Invalid(
                                 "unknown transfer status",
                             )),
-                        ))
+                        ));
                     }
-                };
+                }
             }
             DeviceReqData::Out(buffer) => match self.bulk_out.transfer_write(buffer)? {
-                PortTransferStatus::Success => (),
-                PortTransferStatus::ShortPacket(len) => {
-                    panic!("received short packet (len {}) when transferring data", len)
-                }
-                PortTransferStatus::Stalled => {
-                    panic!("bulk out endpoint stalled when reading data");
-                    //self.clear_stall_out()?;
-                }
-                PortTransferStatus::Unknown => {
-                    return Err(ProtocolError::XhciError(
-                        XhciClientHandleError::InvalidResponse(Invalid("unknown transfer status")),
-                    ))
+                PortTransferStatus { kind, bytes_transferred } => match kind {
+                    PortTransferStatusKind::Success => None,
+                    PortTransferStatusKind::ShortPacket => {
+                        println!("received short packet (len {}) when transferring data", bytes_transferred);
+                        NonZeroU32::new(bytes_transferred)
+                    }
+                    PortTransferStatusKind::Stalled => {
+                        panic!("bulk out endpoint stalled when reading data");
+                        //self.clear_stall_out()?;
+                    }
+                    PortTransferStatusKind::Unknown => {
+                        return Err(ProtocolError::XhciError(
+                            XhciClientHandleError::InvalidResponse(Invalid("unknown transfer status")),
+                        ));
+                    }
                 }
             },
-            DeviceReqData::NoData => (),
-        }
+            DeviceReqData::NoData => None,
+        };
 
         let mut csw_buffer = [0u8; 13];
-
-        match self.bulk_in.transfer_read(&mut csw_buffer)? {
-            PortTransferStatus::Stalled => {
-                panic!("bulk in endpoint stalled when reading CSW");
-                //self.clear_stall_in()?;
-            }
-            PortTransferStatus::ShortPacket(n) if n != 13 => {
-                panic!("received a short packet when reading CSW ({} != 13)", n)
-            }
-            _ => (),
-        };
+        self.read_csw(&mut csw_buffer)?;
         let csw = plain::from_bytes::<CommandStatusWrapper>(&csw_buffer).unwrap();
 
+        let residue = early_residue.or(NonZeroU32::new(csw.data_residue));
+
+        if csw.status == CswStatus::Failed as u8 {
+            println!("CSW indicated failure (CSW {:?}, CBW {:?})", csw, cbw);
+        }
+
         if !csw.is_valid() || csw.tag != cbw.tag {
-            panic!("Invald CSW {:?} (for CBW {:?})", csw, cbw);
-            //self.reset_recovery()?;
+            println!("Invald CSW {:?} (for CBW {:?})", csw, cbw);
+            self.reset_recovery()?;
+            if self.bulk_in.status()? == EndpointStatus::Halted || self.bulk_out.status()? == EndpointStatus::Halted {
+                return Err(ProtocolError::ProtocolError("Reset Recovery didn't reset endpoints"));
+            }
+            return Err(ProtocolError::ProtocolError("CSW invalid, but a recover was successful"));
         }
 
         /*if self.bulk_in.status()? == EndpointStatus::Halted
@@ -262,7 +289,7 @@ impl<'a> Protocol for BulkOnlyTransport<'a> {
                     "bulk-only transport phase error, or other",
                 ));
             },
-            residue: NonZeroU32::new(csw.data_residue),
+            residue,
         })
     }
 }

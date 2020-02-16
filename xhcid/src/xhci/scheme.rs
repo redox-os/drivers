@@ -1849,14 +1849,18 @@ impl Xhci {
         Ok(buf.len())
     }
     fn transfer_result(completion_code: u8, bytes_transferred: u32) -> PortTransferStatus {
-        if completion_code == TrbCompletionCode::Success as u8 {
-            PortTransferStatus::Success
+        let kind = if completion_code == TrbCompletionCode::Success as u8 {
+            PortTransferStatusKind::Success
         } else if completion_code == TrbCompletionCode::ShortPacket as u8 {
-            PortTransferStatus::ShortPacket(bytes_transferred as u16)
+            PortTransferStatusKind::ShortPacket
         } else if completion_code == TrbCompletionCode::Stall as u8 {
-            PortTransferStatus::Stalled
+            PortTransferStatusKind::Stalled
         } else {
-            PortTransferStatus::Unknown
+            PortTransferStatusKind::Unknown
+        };
+        PortTransferStatus {
+            kind,
+            bytes_transferred,
         }
     }
     pub fn on_write_endp_data(
@@ -1891,8 +1895,7 @@ impl Xhci {
                     ref mut bytes_transferred,
                 } = ep_if_state
                 {
-                    if *bytes_transferred + some_bytes_transferred == bytes_to_transfer || completion_code == TrbCompletionCode::ShortPacket as u8 {
-                        // TODO: Add an error flag to WaitingForTransferResult.
+                    if *bytes_transferred + some_bytes_transferred == bytes_to_transfer || completion_code != TrbCompletionCode::Success as u8 {
                         *ep_if_state = EndpIfState::WaitingForTransferResult(result);
                     } else {
                         *bytes_transferred += some_bytes_transferred;
@@ -1984,7 +1987,7 @@ impl Xhci {
                     ref mut bytes_transferred,
                 } = ep_if_state
                 {
-                    if *bytes_transferred + some_bytes_transferred == bytes_to_transfer || completion_code == TrbCompletionCode::ShortPacket as u8 {
+                    if *bytes_transferred + some_bytes_transferred == bytes_to_transfer || completion_code != TrbCompletionCode::Success as u8 {
                         *ep_if_state = EndpIfState::WaitingForTransferResult(result);
                     } else {
                         *bytes_transferred += some_bytes_transferred;

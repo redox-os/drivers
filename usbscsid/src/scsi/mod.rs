@@ -25,7 +25,7 @@ const REQUEST_SENSE_CMD_LEN: u8 = 6;
 const MIN_INQUIRY_ALLOC_LEN: u16 = 5;
 const MIN_REPORT_SUPP_OPCODES_ALLOC_LEN: u32 = 4;
 
-type Result<T, E = ScsiError> = Result<T, E>;
+type Result<T, E = ScsiError> = std::result::Result<T, E>;
 
 #[derive(Debug, Error)]
 pub enum ScsiError {
@@ -57,7 +57,7 @@ impl Scsi {
         // Get the Standard Inquiry Data.
         this.get_standard_inquiry_data(protocol, max_inquiry_len)?;
         
-        let version = this.res_standard_inquiry_data().version();
+        let version = dbg!(this.res_standard_inquiry_data()).version();
         println!("Inquiry version: {}", version);
 
         let (block_size, block_count) = {
@@ -98,6 +98,7 @@ impl Scsi {
                 &self.command_buffer[..REQUEST_SENSE_CMD_LEN as usize],
                 DeviceReqData::In(&mut self.data_buffer[..alloc_len as usize]),
             )?;
+        Ok(())
     }
     pub fn get_mode_sense10(
         &mut self,
@@ -107,10 +108,9 @@ impl Scsi {
             &cmds::ModeParamHeader10,
             BlkDescSlice,
             impl Iterator<Item = cmds::AnyModePage>,
-        ),
-        ScsiError,
+        )
     > {
-        let initial_alloc_len = 4; // covers both mode_data_len and blk_desc_len.
+        let initial_alloc_len = mem::size_of::<cmds::ModeParamHeader10>() as u16; // covers both mode_data_len and blk_desc_len.
         let mode_sense10 = self.cmd_mode_sense10();
         *mode_sense10 = cmds::ModeSense10::get_block_desc(initial_alloc_len, 0);
         self.data_buffer
@@ -122,13 +122,13 @@ impl Scsi {
             &self.command_buffer[..10],
             DeviceReqData::In(&mut self.data_buffer[..initial_alloc_len as usize]),
         )? {
-            self.get_ff_sense(protocol, 252);
+            self.get_ff_sense(protocol, 252)?;
             panic!("{:?}", self.res_ff_sense_data());
         }
 
-        let optimal_alloc_len = self.res_mode_param_header10().block_desc_len()
-            + self.res_mode_param_header10().mode_data_len()
-            + mem::size_of::<cmds::ModeParamHeader10>() as u16;
+        let optimal_alloc_len = 
+            self.res_mode_param_header10().mode_data_len()
+            + 2; // the length of the mode data field itself
 
         let mode_sense10 = self.cmd_mode_sense10();
         *mode_sense10 = cmds::ModeSense10::get_block_desc(optimal_alloc_len, 0);
@@ -229,7 +229,7 @@ impl Scsi {
         protocol: &mut dyn Protocol,
         lba: u64,
         buffer: &mut [u8],
-    ) -> Result<u32, ScsiError> {
+    ) -> Result<u32> {
         let blocks_to_read = buffer.len() as u64 / u64::from(self.block_size);
         let bytes_to_read = blocks_to_read as usize * self.block_size as usize;
         let transfer_len = u32::try_from(blocks_to_read).or(Err(ScsiError::Overflow(
@@ -252,7 +252,7 @@ impl Scsi {
         protocol: &mut dyn Protocol,
         lba: u64,
         buffer: &[u8],
-    ) -> Result<u32, ScsiError> {
+    ) -> Result<u32> {
         let blocks_to_write = buffer.len() as u64 / u64::from(self.block_size);
         let bytes_to_write = blocks_to_write as usize * self.block_size as usize;
         let transfer_len = u32::try_from(blocks_to_write).or(Err(ScsiError::Overflow(
