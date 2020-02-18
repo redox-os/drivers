@@ -1,5 +1,6 @@
 use super::opcodes::Opcode;
 use std::{fmt, mem, slice};
+use std::convert::TryInto;
 
 #[repr(packed)]
 pub struct Inquiry {
@@ -417,6 +418,47 @@ impl ModeParamHeader10 {
 
 #[repr(packed)]
 #[derive(Clone, Copy, Debug)]
+pub struct ReadCapacity10 {
+    pub opcode: u8,
+    _rsvd1: u8,
+    obsolete_lba: u32,
+    _rsvd2: [u8; 3],
+    pub control: u8,
+}
+unsafe impl plain::Plain for ReadCapacity10 {}
+
+impl ReadCapacity10 {
+    pub const fn new(control: u8) -> Self {
+        Self {
+            opcode: Opcode::ReadCapacity10 as u8,
+            _rsvd1: 0,
+            obsolete_lba: 0,
+            _rsvd2: [0; 3],
+            control,
+        }
+    }
+}
+// TODO: ReadCapacity16
+
+#[repr(packed)]
+#[derive(Clone, Copy, Debug)]
+pub struct ReadCapacity10ParamData {
+    pub max_lba: u32,
+    pub block_len: u32,
+}
+unsafe impl plain::Plain for ReadCapacity10ParamData {}
+
+impl ReadCapacity10ParamData {
+    pub const fn block_count(&self) -> u32 {
+        u32::from_be(self.max_lba)
+    }
+    pub const fn logical_block_len(&self) -> u32 {
+        u32::from_be(self.block_len)
+    }
+}
+
+#[repr(packed)]
+#[derive(Clone, Copy, Debug)]
 pub struct RwErrorRecoveryPage {
     pub a: u8,
     pub page_length: u8,
@@ -427,6 +469,15 @@ pub struct RwErrorRecoveryPage {
     pub recovery_time_limit: u16,
 }
 unsafe impl plain::Plain for RwErrorRecoveryPage {}
+
+#[repr(packed)]
+#[derive(Clone, Copy, Debug)]
+pub struct CachingModePage {
+    pub a: u8,
+    pub page_length: u8,
+    // TODO: more
+}
+unsafe impl plain::Plain for CachingModePage {}
 
 pub(crate) struct ModePageIterRaw<'a> {
     buffer: &'a [u8],
@@ -446,7 +497,7 @@ impl<'a> Iterator for ModePageIterRaw<'a> {
             self.buffer[1] as usize + 1
         } else {
             // item is sub_page mode
-            self.buffer[2] as usize + 3
+            u16::from_be_bytes((&self.buffer[2..3]).try_into().ok()?) as usize + 3
         };
         if self.buffer.len() < page_len {
             return None;
@@ -466,6 +517,7 @@ impl<'a> Iterator for ModePageIterRaw<'a> {
 #[derive(Clone, Copy, Debug)]
 pub enum AnyModePage<'a> {
     RwErrorRecovery(&'a RwErrorRecoveryPage),
+    Caching(&'a CachingModePage)
 }
 
 struct ModePageIter<'a> {
@@ -485,6 +537,10 @@ impl<'a> Iterator for ModePageIter<'a> {
         if !spf {
             if page_code == 0x01 {
                 Some(AnyModePage::RwErrorRecovery(
+                    plain::from_bytes(next_buf).ok()?,
+                ))
+            } else if page_code == 0x08 {
+                Some(AnyModePage::Caching(
                     plain::from_bytes(next_buf).ok()?,
                 ))
             } else {

@@ -63,9 +63,20 @@ impl Scsi {
         let (block_size, block_count) = {
             let (_, blkdescs, mode_page_iter) = this.get_mode_sense10(protocol)?;
 
+            for page in mode_page_iter {
+                println!("PAGE: {:?}", page);
+            }
+
             // TODO: Can there be multiple disks at all?
-            let only_blkdesc = blkdescs.get(0).unwrap();
-            (only_blkdesc.block_size(), only_blkdesc.block_count())
+            if let Some(only_blkdesc) = blkdescs.get(0) {
+                println!("Found block desc: {:?}", only_blkdesc);
+                (only_blkdesc.block_size(), only_blkdesc.block_count())
+            } else {
+                println!("read_capacity10");
+                let r = this.read_capacity(protocol)?;
+                println!("read_capacity10 result: {:?}", r);
+                (r.logical_block_len(), r.block_count().into())
+            }
         };
 
         this.block_size = block_size;
@@ -99,6 +110,18 @@ impl Scsi {
                 DeviceReqData::In(&mut self.data_buffer[..alloc_len as usize]),
             )?;
         Ok(())
+    }
+    pub fn read_capacity(&mut self, protocol: &mut dyn Protocol) -> Result<&cmds::ReadCapacity10ParamData> {
+        // The spec explicitly states that the allocation length is 8 bytes.
+        let read_capacity10 = self.cmd_read_capacity10();
+        *read_capacity10 = cmds::ReadCapacity10::new(0);
+        self.data_buffer.resize(10usize, 0u8);
+        protocol
+            .send_command(
+                &self.command_buffer[..10],
+                DeviceReqData::In(&mut self.data_buffer[..8]),
+            )?;
+        Ok(self.res_read_capacity10())
     }
     pub fn get_mode_sense10(
         &mut self,
@@ -154,6 +177,9 @@ impl Scsi {
         plain::from_mut_bytes(&mut self.command_buffer).unwrap()
     }
     pub fn cmd_request_sense(&mut self) -> &mut cmds::RequestSense {
+        plain::from_mut_bytes(&mut self.command_buffer).unwrap()
+    }
+    pub fn cmd_read_capacity10(&mut self) -> &mut cmds::ReadCapacity10 {
         plain::from_mut_bytes(&mut self.command_buffer).unwrap()
     }
     pub fn cmd_read16(&mut self) -> &mut cmds::Read16 {
@@ -221,6 +247,9 @@ impl Scsi {
         let buffer = &self.data_buffer[descs_start + header.block_desc_len() as usize..];
         cmds::mode_page_iter(buffer)
     }
+    pub fn res_read_capacity10(&self) -> &cmds::ReadCapacity10ParamData {
+        plain::from_bytes(&self.data_buffer).unwrap()
+    }
     pub fn get_disk_size(&mut self) -> u64 {
         self.block_count * u64::from(self.block_size)
     }
@@ -230,21 +259,23 @@ impl Scsi {
         lba: u64,
         buffer: &mut [u8],
     ) -> Result<u32> {
-        let blocks_to_read = buffer.len() as u64 / u64::from(self.block_size);
-        let bytes_to_read = blocks_to_read as usize * self.block_size as usize;
-        let transfer_len = u32::try_from(blocks_to_read).or(Err(ScsiError::Overflow(
+        let blocks_to_read = dbg!(buffer.len() as u64 / u64::from(dbg!(self.block_size)));
+        let bytes_to_read = dbg!(blocks_to_read as usize * self.block_size as usize);
+        let transfer_len = dbg!(u32::try_from(blocks_to_read).or(Err(ScsiError::Overflow(
             "number of blocks to read couldn't fit inside a u32",
-        )))?;
+        )))?);
         {
             let read = self.cmd_read16();
             *read = cmds::Read16::new(lba, transfer_len, 0);
         }
         // TODO: Use the to-be-written TransferReadStream instead of relying on everything being
         // able to fit within a single buffer.
+        self.data_buffer.resize(bytes_to_read, 0u8);
         let status = protocol.send_command(
             &self.command_buffer[..16],
-            DeviceReqData::In(&mut buffer[..bytes_to_read]),
+            DeviceReqData::In(&mut self.data_buffer[..bytes_to_read]),
         )?;
+        buffer[..bytes_to_read].copy_from_slice(&self.data_buffer[..bytes_to_read]);
         Ok(status.bytes_transferred(bytes_to_read as u32))
     }
     pub fn write(
