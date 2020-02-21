@@ -57,7 +57,7 @@ impl Scsi {
         // Get the Standard Inquiry Data.
         this.get_standard_inquiry_data(protocol, max_inquiry_len)?;
         
-        let version = dbg!(this.res_standard_inquiry_data()).version();
+        let version = this.res_standard_inquiry_data().version();
         println!("Inquiry version: {}", version);
 
         let (block_size, block_count) = {
@@ -259,11 +259,11 @@ impl Scsi {
         lba: u64,
         buffer: &mut [u8],
     ) -> Result<u32> {
-        let blocks_to_read = dbg!(buffer.len() as u64 / u64::from(dbg!(self.block_size)));
-        let bytes_to_read = dbg!(blocks_to_read as usize * self.block_size as usize);
-        let transfer_len = dbg!(u32::try_from(blocks_to_read).or(Err(ScsiError::Overflow(
+        let blocks_to_read = buffer.len() as u64 / u64::from(self.block_size);
+        let bytes_to_read = blocks_to_read as usize * self.block_size as usize;
+        let transfer_len = u32::try_from(blocks_to_read).or(Err(ScsiError::Overflow(
             "number of blocks to read couldn't fit inside a u32",
-        )))?);
+        )))?;
         {
             let read = self.cmd_read16();
             *read = cmds::Read16::new(lba, transfer_len, 0);
@@ -295,6 +295,8 @@ impl Scsi {
         }
         // TODO: Use the to-be-written TransferReadStream instead of relying on everything being
         // able to fit within a single buffer.
+        self.data_buffer.resize(bytes_to_write, 0u8);
+        self.data_buffer[..bytes_to_write].copy_from_slice(&buffer[..bytes_to_write]);
         let status = protocol.send_command(
             &self.command_buffer[..16],
             DeviceReqData::Out(&buffer[..bytes_to_write]),

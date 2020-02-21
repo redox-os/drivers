@@ -295,6 +295,7 @@ impl Xhci {
                     event.control.read()
                 );
             }
+            event.reserved(false);
             event.clone()
         };
 
@@ -936,7 +937,7 @@ impl Xhci {
                     false,
                     true,
                     chain,
-                    true,
+                    ioc,
                     idt,
                     false,
                 );

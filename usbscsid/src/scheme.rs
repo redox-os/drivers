@@ -22,7 +22,7 @@ enum Handle {
 
 pub struct ScsiScheme<'a> {
     scsi: &'a mut Scsi,
-    protocol: &'a mut Protocol,
+    protocol: &'a mut dyn Protocol,
     handles: BTreeMap<usize, Handle>,
     next_fd: usize,
 }
@@ -39,8 +39,11 @@ impl<'a> ScsiScheme<'a> {
 }
 
 impl<'a> SchemeMut for ScsiScheme<'a> {
-    fn open(&mut self, path: &[u8], flags: usize, uid: u32, gid: u32) -> Result<usize> {
+    fn open(&mut self, path: &[u8], flags: usize, uid: u32, _gid: u32) -> Result<usize> {
         if uid != 0 {
+            return Err(Error::new(EACCES));
+        }
+        if flags & O_DIRECTORY != 0 && flags & O_STAT == 0 {
             return Err(Error::new(EACCES));
         }
         let path_str = str::from_utf8(path)
@@ -49,7 +52,7 @@ impl<'a> SchemeMut for ScsiScheme<'a> {
         let handle = if path_str.is_empty() {
             // List
             Handle::List(0)
-        } else if let Some(p_pos) = path_str.chars().position(|c| c == 'p') {
+        } else if let Some(_p_pos) = path_str.chars().position(|c| c == 'p') {
             // TODO: Partitions.
             return Err(Error::new(ENOSYS));
         } else {
