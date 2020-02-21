@@ -5,16 +5,16 @@ use super::trb::Trb;
 
 pub struct Ring {
     pub link: bool,
-    pub trbs: Dma<[Trb; 16]>,
+    pub trbs: Dma<[Trb]>,
     pub i: usize,
     pub cycle: bool,
 }
 
 impl Ring {
-    pub fn new(link: bool) -> Result<Ring> {
+    pub fn new(length: usize, link: bool) -> Result<Ring> {
         Ok(Ring {
             link: link,
-            trbs: Dma::zeroed()?,
+            trbs: unsafe { Dma::zeroed_unsized(length)? },
             i: 0,
             cycle: link,
         })
@@ -48,4 +48,42 @@ impl Ring {
 
         (&mut self.trbs[i], self.cycle)
     }
+    /// Endless iterator that iterates through the ring items, over and over again. The iterator
+    /// doesn't enqueue or dequeue anything.
+    pub fn iter(&self) -> impl Iterator<Item = &Trb> + '_ {
+        Iter { ring: self, i: self.i }
+    }
+    /*
+    /// Endless mutable iterator that iterates through the ring items, over and over again. The
+    /// iterator doesn't enqueue or dequeue anything, but the trbs are mutably borrowed.
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Trb> + '_ {
+        IterMut { ring: self, i: self.i }
+    }*/
 }
+struct Iter<'ring> {
+    ring: &'ring Ring,
+    i: usize,
+
+}
+impl<'ring> Iterator for Iter<'ring> {
+    type Item = &'ring Trb;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let i = self.i;
+        self.i = (self.i + 1) % self.ring.trbs.len();
+        Some(&self.ring.trbs[i])
+    }
+}
+/*struct IterMut<'ring> {
+    ring: &'ring mut Ring,
+    i: usize,
+}
+impl<'ring> Iterator for IterMut<'ring> {
+    type Item = &'ring mut Trb;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let i = self.i;
+        self.i = (self.i + 1) % self.ring.trbs.len();
+        Some(&mut self.ring.trbs[i])
+    }
+}*/

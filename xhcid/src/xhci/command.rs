@@ -1,6 +1,5 @@
 use syscall::error::Result;
 
-
 use super::event::EventRing;
 use super::ring::Ring;
 use super::trb::Trb;
@@ -13,7 +12,7 @@ pub struct CommandRing {
 impl CommandRing {
     pub fn new() -> Result<CommandRing> {
         Ok(CommandRing {
-            ring: Ring::new(true)?,
+            ring: Ring::new(16, true)?,
             events: EventRing::new()?,
         })
     }

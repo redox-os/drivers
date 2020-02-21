@@ -13,19 +13,19 @@ pub struct EventRingSte {
 }
 
 pub struct EventRing {
-    pub ste: Dma<EventRingSte>,
+    pub ste: Dma<[EventRingSte]>,
     pub ring: Ring,
 }
 
 impl EventRing {
     pub fn new() -> Result<EventRing> {
         let mut ring = EventRing {
-            ste: Dma::zeroed()?,
-            ring: Ring::new(false)?,
+            ste: unsafe { Dma::zeroed_unsized(1)? },
+            ring: Ring::new(256, false)?,
         };
 
-        ring.ste.address.write(ring.ring.trbs.physical() as u64);
-        ring.ste.size.write(ring.ring.trbs.len() as u16);
+        ring.ste[0].address.write(ring.ring.trbs.physical() as u64);
+        ring.ste[0].size.write(ring.ring.trbs.len() as u16);
 
         Ok(ring)
     }

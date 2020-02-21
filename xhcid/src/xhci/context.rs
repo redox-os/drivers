@@ -1,5 +1,9 @@
+use std::collections::BTreeMap;
+
 use syscall::error::Result;
-use syscall::io::{Dma, Mmio};
+use syscall::io::{Dma, Io, Mmio};
+
+use super::ring::Ring;
 
 #[repr(packed)]
 pub struct SlotContext {
@@ -8,6 +12,23 @@ pub struct SlotContext {
     pub c: Mmio<u32>,
     pub d: Mmio<u32>,
     _rsvd: [Mmio<u32>; 4],
+}
+
+pub const SLOT_CONTEXT_STATE_MASK: u32 = 0xF800_0000;
+pub const SLOT_CONTEXT_STATE_SHIFT: u8 = 27;
+
+impl SlotContext {
+    pub fn state(&self) -> u8 {
+        ((self.d.read() & SLOT_CONTEXT_STATE_MASK) >> SLOT_CONTEXT_STATE_SHIFT) as u8
+    }
+}
+
+#[repr(u8)]
+pub enum SlotState {
+    EnabledOrDisabled = 0,
+    Default = 1,
+    Addressed = 2,
+    Configured = 3,
 }
 
 #[repr(packed)]
@@ -20,10 +41,12 @@ pub struct EndpointContext {
     _rsvd: [Mmio<u32>; 3],
 }
 
+pub const ENDPOINT_CONTEXT_STATUS_MASK: u32 = 0x7;
+
 #[repr(packed)]
 pub struct DeviceContext {
     pub slot: SlotContext,
-    pub endpoints: [EndpointContext; 15]
+    pub endpoints: [EndpointContext; 31],
 }
 
 #[repr(packed)]
@@ -33,6 +56,21 @@ pub struct InputContext {
     _rsvd: [Mmio<u32>; 5],
     pub control: Mmio<u32>,
     pub device: DeviceContext,
+}
+impl InputContext {
+    pub fn dump_control(&self) {
+        println!(
+            "INPUT CONTEXT: {} {} [{} {} {} {} {}] {}",
+            self.drop_context.read(),
+            self.add_context.read(),
+            self._rsvd[0].read(),
+            self._rsvd[1].read(),
+            self._rsvd[2].read(),
+            self._rsvd[3].read(),
+            self._rsvd[4].read(),
+            self.control.read()
+        );
+    }
 }
 
 pub struct DeviceContextList {
@@ -54,11 +92,70 @@ impl DeviceContextList {
 
         Ok(DeviceContextList {
             dcbaa: dcbaa,
-            contexts: contexts
+            contexts: contexts,
         })
     }
 
     pub fn dcbaap(&self) -> u64 {
         self.dcbaa.physical() as u64
+    }
+}
+
+#[repr(packed)]
+pub struct StreamContext {
+    trl: Mmio<u32>,
+    trh: Mmio<u32>,
+    edtla: Mmio<u32>,
+    rsvd: Mmio<u32>,
+}
+
+unsafe impl plain::Plain for StreamContext {}
+
+#[repr(u8)]
+pub enum StreamContextType {
+    SecondaryRing,
+    PrimaryRing,
+    PrimarySsa8,
+    PrimarySsa16,
+    PrimarySsa32,
+    PrimarySsa64,
+    PrimarySsa128,
+    PrimarySsa256,
+}
+
+pub struct StreamContextArray {
+    pub contexts: Dma<[StreamContext]>,
+    pub rings: BTreeMap<u16, Ring>,
+}
+
+impl StreamContextArray {
+    pub fn new(count: usize) -> Result<Self> {
+        unsafe {
+            Ok(Self {
+                contexts: Dma::zeroed_unsized(count)?,
+                rings: BTreeMap::new(),
+            })
+        }
+    }
+    pub fn add_ring(&mut self, stream_id: u16, link: bool) -> Result<()> {
+        // NOTE: stream_id 0 is reserved
+        assert_ne!(stream_id, 0);
+
+        let ring = Ring::new(16, link)?;
+        let pointer = ring.register();
+        let sct = StreamContextType::PrimaryRing;
+
+        assert_eq!(pointer & (!0xE), pointer);
+        {
+            let context = &mut self.contexts[stream_id as usize];
+            context.trl.write((pointer as u32) | ((sct as u32) << 1));
+            context.trh.write((pointer >> 32) as u32);
+            // TODO: stopped edtla
+        }
+        self.rings.insert(stream_id, ring);
+        Ok(())
+    }
+    pub fn register(&self) -> u64 {
+        self.contexts.physical() as u64
     }
 }

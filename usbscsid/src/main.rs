@@ -1,0 +1,114 @@
+use std::env;
+use std::fs::File;
+use std::io::prelude::*;
+use std::os::unix::io::{FromRawFd, RawFd};
+
+use syscall::{CloneFlags, Packet, SchemeMut};
+use xhcid_interface::{ConfigureEndpointsReq, DeviceReqData, XhciClientHandle};
+
+pub mod protocol;
+pub mod scsi;
+
+mod scheme;
+
+use scheme::ScsiScheme;
+use scsi::Scsi;
+
+fn main() {
+    let mut args = env::args().skip(1);
+
+    const USAGE: &'static str = "usbscsid <scheme> <port> <protocol>";
+
+    let scheme = args.next().expect(USAGE);
+    let port = args
+        .next()
+        .expect(USAGE)
+        .parse::<usize>()
+        .expect("port has to be a number");
+    let protocol = args
+        .next()
+        .expect(USAGE)
+        .parse::<u8>()
+        .expect("protocol has to be a number 0-255");
+
+    println!(
+        "USB SCSI driver spawned with scheme `{}`, port {}, protocol {}",
+        scheme, port, protocol
+    );
+
+    // Daemonize so that xhcid can continue to do other useful work (until proper IRQs,
+    // async-await, and multithreading :D)
+    if unsafe { syscall::clone(CloneFlags::empty()).unwrap() } != 0 {
+        return;
+    }
+
+    let disk_scheme_name = format!(":disk/{}-{}_scsi", scheme, port);
+
+    // TODO: Use eventfds.
+    let handle = XhciClientHandle::new(scheme, port);
+
+    let desc = handle
+        .get_standard_descs()
+        .expect("Failed to get standard descriptors");
+
+    // TODO: Perhaps the drivers should just be given the config, interface, and alternate setting
+    // from xhcid.
+    let (conf_desc, configuration_value, (if_desc, interface_num, alternate_setting)) = desc
+        .config_descs
+        .iter()
+        .find_map(|config_desc| {
+            let interface_desc = config_desc.interface_descs.iter().find_map(|if_desc| {
+                if if_desc.class == 8 && if_desc.sub_class == 6 && if_desc.protocol == 0x50 {
+                    Some((if_desc.clone(), if_desc.number, if_desc.alternate_setting))
+                } else {
+                    None
+                }
+            })?;
+            Some((
+                config_desc.clone(),
+                config_desc.configuration_value,
+                interface_desc,
+            ))
+        })
+        .expect("Failed to find suitable configuration");
+
+    handle
+        .configure_endpoints(&ConfigureEndpointsReq {
+            config_desc: configuration_value,
+            interface_desc: Some(interface_num),
+            alternate_setting: Some(alternate_setting),
+        })
+        .expect("Failed to configure endpoints");
+
+    let mut protocol = protocol::setup(&handle, protocol, &desc, &conf_desc, &if_desc)
+        .expect("Failed to setup protocol");
+
+    // TODO: Let all of the USB drivers syscall clone(2), and xhcid won't have to keep track of all
+    // the drivers.
+    let socket_fd = syscall::open(disk_scheme_name, syscall::O_RDWR | syscall::O_CREAT)
+        .expect("usbscsid: failed to create disk scheme");
+    let mut socket_file = unsafe { File::from_raw_fd(socket_fd as RawFd) };
+
+    //syscall::setrens(0, 0).expect("scsid: failed to enter null namespace");
+    let mut scsi = Scsi::new(&mut *protocol).expect("usbscsid: failed to setup SCSI");
+    println!("SCSI initialized");
+    let mut buffer = [0u8; 512];
+    scsi.read(&mut *protocol, 0, &mut buffer).unwrap();
+    println!("DISK CONTENT: {}", base64::encode(&buffer[..]));
+
+    let mut scsi_scheme = ScsiScheme::new(&mut scsi, &mut *protocol);
+
+    // TODO: Use nonblocking and put all pending calls in a todo VecDeque. Use an eventfd as well.
+    'scheme_loop: loop {
+        let mut packet = Packet::default();
+        match socket_file.read(&mut packet) {
+            Ok(0) => break 'scheme_loop,
+            Ok(_) => (),
+            Err(err) => panic!("scsid: failed to read disk scheme: {}", err),
+        }
+        scsi_scheme.handle(&mut packet);
+        socket_file
+            .write(&packet)
+            .expect("scsid: failed to write packet");
+    }
+}
