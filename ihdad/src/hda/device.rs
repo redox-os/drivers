@@ -764,18 +764,16 @@ impl IntelHDA {
 
 	pub fn handle_interrupts(&mut self) -> bool {
 		let intsts = self.regs.intsts.read();
-		let sis = intsts & 0x3FFFFFFF;
-		//print!("IHDA INTSTS: {:08X}\n", intsts);
 		if ((intsts >> 31) & 1) == 1 {           // Global Interrupt Status
 			if ((intsts >> 30) & 1) == 1 {   // Controller Interrupt Status
 				self.handle_controller_interrupt();
 			}
 
+			let sis = intsts & 0x3FFFFFFF;
 			if sis != 0 {
 				self.handle_stream_interrupts(sis);
 			}
 		}
-
 		intsts != 0
 	}
 

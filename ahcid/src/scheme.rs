@@ -95,7 +95,7 @@ impl DiskWrapper {
 
 impl std::ops::Deref for DiskWrapper {
     type Target = dyn Disk;
-    
+
     fn deref(&self) -> &Self::Target {
         &*self.disk
     }
@@ -128,22 +128,22 @@ impl DiskScheme {
 
 impl DiskScheme {
     pub fn irq(&mut self) -> bool {
-        let pi = self.hba_mem.pi.read();
         let is = self.hba_mem.is.read();
-        let pi_is = pi & is;
-
-        for i in 0..self.hba_mem.ports.len() {
-            if pi_is & 1 << i > 0 {
-                let port = &mut self.hba_mem.ports[i];
-                let is = port.is.read();
-                //println!("IRQ Port {}: {:#>08x}", i, is);
-                //TODO: Handle requests for only this port here
-                port.is.write(is);
+        if is > 0 {
+            let pi = self.hba_mem.pi.read();
+            let pi_is = pi & is;
+            for i in 0..self.hba_mem.ports.len() {
+                if pi_is & 1 << i > 0 {
+                    let port = &mut self.hba_mem.ports[i];
+                    let is = port.is.read();
+                    port.is.write(is);
+                }
             }
+            self.hba_mem.is.write(is);
+            true
+        } else {
+            false
         }
-
-        self.hba_mem.is.write(is);
-        is != 0
     }
 }
 

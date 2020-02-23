@@ -1,4 +1,4 @@
-//#![deny(warnings)]
+#![feature(asm)]
 
 extern crate syscall;
 extern crate byteorder;

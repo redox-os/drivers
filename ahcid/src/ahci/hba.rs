@@ -1,6 +1,6 @@
 use std::mem::size_of;
 use std::ops::DerefMut;
-use std::{ptr, u32, thread};
+use std::{ptr, u32};
 
 use syscall::io::{Dma, Io, Mmio};
 use syscall::error::{Error, Result, EIO};
@@ -75,7 +75,7 @@ impl HbaPort {
 
     pub fn start(&mut self) {
         while self.cmd.readf(HBA_PORT_CMD_CR) {
-            thread::yield_now();
+            unsafe { asm!("pause"); }
         }
 
         self.cmd.writef(HBA_PORT_CMD_FRE | HBA_PORT_CMD_ST, true);
@@ -85,7 +85,7 @@ impl HbaPort {
         self.cmd.writef(HBA_PORT_CMD_ST, false);
 
         while self.cmd.readf(HBA_PORT_CMD_FR | HBA_PORT_CMD_CR) {
-            thread::yield_now();
+            unsafe { asm!("pause"); }
         }
 
         self.cmd.writef(HBA_PORT_CMD_FRE, false);
@@ -305,7 +305,7 @@ impl HbaPort {
             }
 
             while self.tfd.readf((ATA_DEV_BUSY | ATA_DEV_DRQ) as u32) {
-                thread::yield_now();
+                unsafe { asm!("pause"); }
             }
 
             self.ci.writef(1 << slot, true);
@@ -325,7 +325,7 @@ impl HbaPort {
 
     pub fn ata_stop(&mut self, slot: u32) -> Result<()> {
         while self.ata_running(slot) {
-            thread::yield_now();
+            unsafe { asm!("pause"); }
         }
 
         self.stop();
