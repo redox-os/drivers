@@ -116,7 +116,7 @@ impl HbaPort {
         self.fb[1].write((fb.physical() >> 32) as u32);
         let is = self.is.read();
         self.is.write(is);
-        self.ie.write(0 /*TODO: Enable interrupts: 0b10111*/);
+        self.ie.write(0b10111);
         let serr = self.serr.read();
         self.serr.write(serr);
 
