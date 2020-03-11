@@ -508,9 +508,8 @@ impl Xhci {
 
     pub fn trigger_irq(&mut self) -> bool {
         // Read the Interrupter Pending bit.
-        println!("preinterrupt");
         if self.run.ints[0].iman.readf(1) {
-            println!("XHCI Interrupt");
+            //println!("XHCI Interrupt");
 
             // If set, set it back to zero, so that new interrupts can be triggered.
             // FIXME: MSI and MSI-X systems
