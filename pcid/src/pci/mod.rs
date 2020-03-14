@@ -1,3 +1,5 @@
+use std::sync::Mutex;
+
 pub use self::bar::PciBar;
 pub use self::bus::{PciBus, PciBusIter};
 pub use self::class::PciClass;
@@ -13,11 +15,15 @@ mod dev;
 mod func;
 pub mod header;
 
-pub struct Pci;
+pub struct Pci {
+    lock: Mutex<()>,
+}
 
 impl Pci {
     pub fn new() -> Self {
-        Pci
+        Self {
+            lock: Mutex::new(()),
+        }
     }
 
     pub fn buses<'pci>(&'pci self) -> PciIter<'pci> {
@@ -25,7 +31,7 @@ impl Pci {
     }
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    pub unsafe fn read(&self, bus: u8, dev: u8, func: u8, offset: u8) -> u32 {
+    pub unsafe fn read_nolock(&self, bus: u8, dev: u8, func: u8, offset: u8) -> u32 {
         let address = 0x80000000 | ((bus as u32) << 16) | ((dev as u32) << 11) | ((func as u32) << 8) | ((offset as u32) & 0xFC);
         let value: u32;
         asm!("mov dx, 0xCF8
@@ -37,7 +43,13 @@ impl Pci {
     }
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    pub unsafe fn write(&self, bus: u8, dev: u8, func: u8, offset: u8, value: u32) {
+    pub unsafe fn read(&self, bus: u8, dev: u8, func: u8, offset: u8) -> u32 {
+        let _guard = self.lock.lock().unwrap();
+        self.read_nolock(bus, dev, func, offset)
+    }
+
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    pub unsafe fn write_nolock(&self, bus: u8, dev: u8, func: u8, offset: u8, value: u32) {
         let address = 0x80000000 | ((bus as u32) << 16) | ((dev as u32) << 11) | ((func as u32) << 8) | ((offset as u32) & 0xFC);
         asm!("mov dx, 0xCF8
               out dx, eax"
@@ -45,6 +57,11 @@ impl Pci {
         asm!("mov dx, 0xCFC
               out dx, eax"
              : : "{eax}"(value) : "dx" : "intel", "volatile");
+    }
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    pub unsafe fn write(&self, bus: u8, dev: u8, func: u8, offset: u8, value: u32) {
+        let _guard = self.lock.lock().unwrap();
+        self.write_nolock(bus, dev, func, offset, value)
     }
 }
 

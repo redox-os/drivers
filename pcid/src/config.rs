@@ -3,12 +3,12 @@ use std::ops::Range;
 
 use serde::Deserialize;
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 pub struct Config {
     pub drivers: Vec<DriverConfig>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 pub struct DriverConfig {
     pub name: Option<String>,
     pub class: Option<u8>,

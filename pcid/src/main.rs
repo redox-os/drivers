@@ -5,24 +5,132 @@ extern crate byteorder;
 extern crate syscall;
 extern crate toml;
 
-use std::{env, io, i64};
 use std::fs::{File, metadata, read_dir};
 use std::io::prelude::*;
 use std::os::unix::io::{FromRawFd, RawFd};
 use std::process::Command;
+use std::sync::{Arc, Mutex};
+use std::{env, io, i64, thread};
+
 use syscall::iopl;
 
-use std::os::unix::process::CommandExt;
-
 use crate::config::Config;
-use crate::pci::{Pci, PciBar, PciClass, PciHeader, PciHeaderError, PciHeaderType};
+use crate::pci::{Pci, PciBar, PciBus, PciClass, PciDev, PciFunc, PciHeader, PciHeaderError, PciHeaderType};
+use crate::pci::cap::Capability as PciCapability;
 
 mod config;
 mod driver_interface;
 mod pci;
 
-fn handle_parsed_header(config: &Config, pci: &Pci, bus_num: u8,
+pub struct DriverHandler {
+    config: config::DriverConfig,
+    bus_num: u8,
+    dev_num: u8,
+    func_num: u8,
+    header: PciHeader,
+    capabilities: Vec<(u8, PciCapability)>,
+
+    state: Arc<State>,
+}
+fn with_pci_func_raw<T, F: FnOnce(&PciFunc) -> T>(pci: &Pci, bus_num: u8, dev_num: u8, func_num: u8, function: F) -> T {
+    let bus = PciBus {
+        pci,
+        num: bus_num,
+    };
+    let dev = PciDev {
+        bus: &bus,
+        num: dev_num,
+    };
+    let func = PciFunc {
+        dev: &dev,
+        num: func_num,
+    };
+    function(&func)
+}
+impl DriverHandler {
+    fn with_pci_func_raw<T, F: FnOnce(&PciFunc) -> T>(&self, function: F) -> T {
+        with_pci_func_raw(&self.state.pci, self.bus_num, self.dev_num, self.func_num, function)
+    }
+    fn respond(&mut self, request: driver_interface::PcidClientRequest, args: &driver_interface::SubdriverArguments) -> driver_interface::PcidClientResponse {
+        use driver_interface::*;
+        use crate::pci::cap::{MsiCapability, MsixCapability};
+
+        match request {
+            PcidClientRequest::RequestConfig => {
+                PcidClientResponse::Config(args.clone())
+            }
+            PcidClientRequest::RequestFeatures => {
+                PcidClientResponse::AllFeatures(self.capabilities.iter().filter_map(|(_, capability)| match capability {
+                    PciCapability::Msi(msi) => Some((PciFeature::Msi, FeatureStatus::enabled(msi.enabled()))),
+                    // TODO: For MSI-X to actually be enabled, MSI also has to be enabled.
+                    // How should this be reported to the subdrivers?
+                    PciCapability::MsiX(msix) => Some((PciFeature::MsiX, FeatureStatus::enabled(msix.msix_enabled()))),
+                    _ => None,
+                }).collect())
+            }
+            PcidClientRequest::EnableFeature(feature) => match feature {
+                PciFeature::Msi => {
+                    let (offset, capability): (u8, &mut MsiCapability) = match self.capabilities.iter_mut().find_map(|&mut (offset, ref mut capability)| capability.as_msi_mut().map(|cap| (offset, cap))) {
+                        Some(tuple) => tuple,
+                        None => return PcidClientResponse::Error(PcidServerResponseError::NonexistentFeature(feature)),
+                    };
+                    unsafe {
+                        with_pci_func_raw(&self.state.pci, self.bus_num, self.dev_num, self.func_num, |func| capability.set_enabled(func, offset, true));
+                    }
+                    PcidClientResponse::FeatureEnabled(feature)
+                }
+                PciFeature::MsiX => {
+                    let (offset, capability): (u8, &mut MsixCapability) = match self.capabilities.iter_mut().find_map(|&mut (offset, ref mut capability)| capability.as_msix_mut().map(|cap| (offset, cap))) {
+                        Some(tuple) => tuple,
+                        None => return PcidClientResponse::Error(PcidServerResponseError::NonexistentFeature(feature)),
+                    };
+                    unsafe {
+                        with_pci_func_raw(&self.state.pci, self.bus_num, self.dev_num, self.func_num, |func| {
+                            capability.set_msix_enabled(true);
+                            capability.write_a(func, offset);
+                        });
+                    }
+                    PcidClientResponse::FeatureEnabled(feature)
+                }
+            }
+            PcidClientRequest::FeatureStatus(feature) => PcidClientResponse::FeatureStatus(feature, match feature {
+                PciFeature::Msi => self.capabilities.iter().find_map(|(_, capability)| if let PciCapability::Msi(msi) = capability {
+                    Some(FeatureStatus::enabled(msi.enabled()))
+                } else {
+                    None
+                }).unwrap_or(FeatureStatus::Disabled),
+                PciFeature::MsiX => self.capabilities.iter().find_map(|(_, capability)| if let PciCapability::MsiX(msix) = capability {
+                    Some(FeatureStatus::enabled(msix.msix_enabled()))
+                } else {
+                    None
+                }).unwrap_or(FeatureStatus::Disabled),
+            }),
+        }
+    }
+    fn handle_spawn(mut self, pcid_to_client_write: Option<usize>, pcid_from_client_read: Option<usize>, args: driver_interface::SubdriverArguments) {
+        use driver_interface::*;
+
+        if let (Some(pcid_to_client_fd), Some(pcid_from_client_fd)) = (pcid_to_client_write, pcid_from_client_read) {
+            let mut pcid_to_client = unsafe { File::from_raw_fd(pcid_to_client_fd as RawFd) };
+            let mut pcid_from_client = unsafe { File::from_raw_fd(pcid_from_client_fd as RawFd) };
+
+            while let Ok(msg) = recv(&mut pcid_from_client) {
+                let response = self.respond(msg, &args);
+                send(&mut pcid_to_client, &response);
+            }
+        }
+    }
+}
+
+pub struct State {
+    threads: Mutex<Vec<thread::JoinHandle<()>>>,
+    pci: Pci,
+}
+
+fn handle_parsed_header(state: Arc<State>, config: &Config, bus_num: u8,
                         dev_num: u8, func_num: u8, header: PciHeader) {
+    let pci = &state.pci;
+
     let raw_class: u8 = header.class().into();
     let mut string = format!("PCI {:>02X}/{:>02X}/{:>02X} {:>04X}:{:>04X} {:>02X}.{:>02X}.{:>02X}.{:>02X} {:?}",
                              bus_num, dev_num, func_num, header.vendor_id(), header.device_id(), raw_class,
@@ -171,6 +279,22 @@ fn handle_parsed_header(config: &Config, pci: &Pci, bus_num: u8,
                 }
             }
 
+            let capabilities = {
+                let bus = PciBus {
+                    pci,
+                    num: bus_num,
+                };
+                let dev = PciDev {
+                    bus: &bus,
+                    num: dev_num
+                };
+                let func = PciFunc {
+                    dev: &dev,
+                    num: func_num,
+                };
+                crate::pci::cap::CapabilitiesIter { inner: crate::pci::cap::CapabilityOffsetsIter::new(header.cap_pointer(), &func) }.collect::<Vec<_>>()
+            };
+
             let func = driver_interface::PciFunction {
                 bars,
                 bar_sizes,
@@ -181,10 +305,8 @@ fn handle_parsed_header(config: &Config, pci: &Pci, bus_num: u8,
                 legacy_interrupt_line: irq,
                 venid: header.vendor_id(),
             };
-            let capabilities = Vec::new();
 
             let subdriver_args = driver_interface::SubdriverArguments {
-                capabilities,
                 func,
             };
 
@@ -239,32 +361,24 @@ fn handle_parsed_header(config: &Config, pci: &Pci, bus_num: u8,
 
                 match command.envs(envs).spawn() {
                     Ok(mut child) => {
-                        handle_spawn(pcid_to_client_write, pcid_from_client_read, subdriver_args);
+                        let driver_handler = DriverHandler {
+                            bus_num,
+                            dev_num,
+                            func_num,
+                            config: driver.clone(),
+                            header,
+                            state: Arc::clone(&state),
+                            capabilities,
+                        };
+                        let thread = thread::spawn(move || {
+                            driver_handler.handle_spawn(pcid_to_client_write, pcid_from_client_read, subdriver_args);
+                        });
                         match child.wait() {
                             Ok(_status) => (),
                             Err(err) => println!("pcid: failed to wait for {:?}: {}", command, err),
                         }
                     }
                     Err(err) => println!("pcid: failed to execute {:?}: {}", command, err)
-                }
-            }
-        }
-    }
-    fn handle_spawn(pcid_to_client_write: Option<usize>, pcid_from_client_read: Option<usize>, args: driver_interface::SubdriverArguments) {
-        use driver_interface::*;
-
-        // TODO: Instead of relying on the subdriver to correctly close the pipe, there should be a
-        // dedicated thread responsible for this. Or alternatively, a thread pool with Futures.
-
-        if let (Some(pcid_to_client_fd), Some(pcid_from_client_fd)) = (pcid_to_client_write, pcid_from_client_read) {
-            let mut pcid_to_client = unsafe { File::from_raw_fd(pcid_to_client_fd as RawFd) };
-            let mut pcid_from_client = unsafe { File::from_raw_fd(pcid_from_client_fd as RawFd) };
-
-            if let Ok(msg) = recv(&mut pcid_from_client) {
-                match msg {
-                    PcidClientRequest::RequestConfig => {
-                        send(&mut pcid_to_client, &PcidClientResponse::Config(args.clone())).unwrap();
-                    }
                 }
             }
         }
@@ -301,18 +415,24 @@ fn main() {
         }
     }
 
+    let state = Arc::new(State {
+        pci: Pci::new(),
+        threads: Mutex::new(Vec::new()),
+    });
+
+    let pci = &state.pci;
+
     unsafe { iopl(3).unwrap() };
 
     print!("PCI BS/DV/FN VEND:DEVI CL.SC.IN.RV\n");
 
-    let pci = Pci::new();
     'bus: for bus in pci.buses() {
         'dev: for dev in bus.devs() {
             for func in dev.funcs() {
                 let func_num = func.num;
                 match PciHeader::from_reader(func) {
                     Ok(header) => {
-                        handle_parsed_header(&config, &pci, bus.num, dev.num, func_num, header);
+                        handle_parsed_header(Arc::clone(&state), &config, bus.num, dev.num, func_num, header);
                     }
                     Err(PciHeaderError::NoDevice) => {
                         if func_num == 0 {
@@ -331,5 +451,9 @@ fn main() {
                 }
             }
         }
+    }
+
+    for thread in state.threads.lock().unwrap().drain(..) {
+        thread.join().unwrap();
     }
 }

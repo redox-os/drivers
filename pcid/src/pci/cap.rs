@@ -134,7 +134,7 @@ impl MsiCapability {
     pub fn message_control(&self) -> u16 {
         self.message_control_raw() as u16
     }
-    pub unsafe fn set_message_control<W: ConfigWriter>(&mut self, writer: &mut W, offset: u8, value: u16) {
+    pub unsafe fn set_message_control<W: ConfigWriter>(&mut self, writer: &W, offset: u8, value: u16) {
         let mut new_message_control = self.message_control_raw();
         new_message_control &= 0x0000_FFFF;
         new_message_control |= u32::from(value) << 16;
@@ -156,7 +156,7 @@ impl MsiCapability {
     pub fn enabled(&self) -> bool {
         self.message_control() & Self::MC_MSI_ENABLED_BIT != 0
     }
-    pub unsafe fn set_enabled<W: ConfigWriter>(&mut self, writer: &mut W, offset: u8, enabled: bool) {
+    pub unsafe fn set_enabled<W: ConfigWriter>(&mut self, writer: &W, offset: u8, enabled: bool) {
         let mut new_message_control = self.message_control() & (!Self::MC_MSI_ENABLED_BIT);
         new_message_control |= u16::from(enabled);
         self.set_message_control(writer, offset, new_message_control)
@@ -192,6 +192,7 @@ impl MsixCapability {
     pub const fn message_control(&self) -> u16 {
         (self.a >> 16) as u16
     }
+
     pub fn set_message_control(&mut self, message_control: u16) {
         self.a &= 0x0000_FFFF;
         self.a |= u32::from(message_control) << 16;
@@ -294,6 +295,42 @@ pub enum Capability {
 }
 
 impl Capability {
+    pub fn as_msi(&self) -> Option<&MsiCapability> {
+        match self {
+            &Self::Msi(ref msi) => Some(msi),
+            _ => None,
+        }
+    }
+    pub fn as_msix(&self) -> Option<&MsixCapability> {
+        match self {
+            &Self::MsiX(ref msix) => Some(msix),
+            _ => None,
+        }
+    }
+    pub fn as_msi_mut(&mut self) -> Option<&mut MsiCapability> {
+        match self {
+            &mut Self::Msi(ref mut msi) => Some(msi),
+            _ => None,
+        }
+    }
+    pub fn as_msix_mut(&mut self) -> Option<&mut MsixCapability> {
+        match self {
+            &mut Self::MsiX(ref mut msix) => Some(msix),
+            _ => None,
+        }
+    }
+    pub fn into_msi(self) -> Option<MsiCapability> {
+        match self {
+            Self::Msi(msi) => Some(msi),
+            _ => None,
+        }
+    }
+    pub fn into_msix(self) -> Option<MsixCapability> {
+        match self {
+            Self::MsiX(msix) => Some(msix),
+            _ => None,
+        }
+    }
     unsafe fn parse_msi<R: ConfigReader>(reader: &R, offset: u8) -> Self {
         Self::Msi(MsiCapability::parse(reader, offset))
     }
@@ -335,10 +372,10 @@ impl<'a, R> Iterator for CapabilitiesIter<'a, R>
 where
     R: ConfigReader
 {
-    type Item = Capability;
+    type Item = (u8, Capability);
 
     fn next(&mut self) -> Option<Self::Item> {
         let offset = self.inner.next()?;
-        Some(unsafe { Capability::parse(self.inner.reader, offset) })
+        Some((offset, unsafe { Capability::parse(self.inner.reader, offset) }))
     }
 }

@@ -27,7 +27,7 @@ bitflags! {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PciHeader {
     General {
         vendor_id: u16,
@@ -125,8 +125,6 @@ impl PciHeader {
                     let subsystem_id = LittleEndian::read_u16(&bytes[30..32]);
                     let expansion_rom_bar = LittleEndian::read_u32(&bytes[32..36]);
                     let cap_pointer = bytes[36];
-                    println!("PCI DEVICE CAPABILITIES: {:?}", crate::pci::cap::CapabilitiesIter { inner: crate::pci::cap::CapabilityOffsetsIter::new(cap_pointer, &reader) }.collect::<Vec<_>>());
-
                     let interrupt_line = bytes[44];
                     let interrupt_pin = bytes[45];
                     let min_grant = bytes[46];
@@ -266,6 +264,11 @@ impl PciHeader {
         }
     }
 
+    pub fn cap_pointer(&self) -> u8 {
+        match self {
+            &PciHeader::General { cap_pointer, .. } | &PciHeader::PciToPci { cap_pointer, .. } => cap_pointer,
+        }
+    }
 }
 
 #[cfg(test)]

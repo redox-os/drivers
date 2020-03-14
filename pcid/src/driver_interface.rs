@@ -33,11 +33,26 @@ pub struct PciFunction {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SubdriverArguments {
     pub func: PciFunction,
-    pub capabilities: Vec<PciCapabilitiy>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum PciCapabilitiy {
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+pub enum FeatureStatus {
+    Enabled,
+    Disabled,
+}
+
+impl FeatureStatus {
+    pub fn enabled(enabled: bool) -> Self {
+        if enabled {
+            Self::Enabled
+        } else {
+            Self::Disabled
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+pub enum PciFeature {
     Msi,
     MsiX,
 }
@@ -48,7 +63,7 @@ pub enum PcidClientHandleError {
     IoError(#[from] io::Error),
 
     #[error("JSON ser/de error: {0}")]
-    SerializationError(#[from] serde_json::Error),
+    SerializationError(#[from] bincode::Error),
 
     #[error("environment variable error: {0}")]
     EnvError(#[from] env::VarError),
@@ -65,18 +80,31 @@ pub type Result<T, E = PcidClientHandleError> = std::result::Result<T, E>;
 #[non_exhaustive]
 pub enum PcidClientRequest {
     RequestConfig,
+    RequestFeatures,
+    EnableFeature(PciFeature),
+    FeatureStatus(PciFeature),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum PcidServerResponseError {
+    NonexistentFeature(PciFeature),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum PcidClientResponse {
     Config(SubdriverArguments),
+    AllFeatures(Vec<(PciFeature, FeatureStatus)>),
+    FeatureEnabled(PciFeature),
+    FeatureStatus(PciFeature, FeatureStatus),
+    Error(PcidServerResponseError),
 }
 
 // TODO: Ideally, pcid might have its own scheme, like lots of other Redox drivers, where this kind of IPC is done. Otherwise, instead of writing serde messages over
 // a channel, the communication could potentially be done via mmap, using a channel
 // very similar to crossbeam-channel or libstd's mpsc (except the cycle, enqueue and dequeue fields
-// are stored in the same buffer).
+// are stored in the same buffer as the actual data).
 /// A handle from a `pcid` client (e.g. `ahcid`) to `pcid`.
 pub struct PcidServerHandle {
     pcid_to_client: File,
@@ -84,8 +112,8 @@ pub struct PcidServerHandle {
 }
 
 pub(crate) fn send<W: Write, T: Serialize>(w: &mut W, message: &T) -> Result<()> {
-    // TODO: Use bincode.
-    let data = serde_json::to_vec(message)?;
+    let mut data = Vec::new();
+    bincode::serialize_into(&mut data, message)?;
     let length_bytes = u64::to_le_bytes(data.len() as u64);
     w.write_all(&length_bytes)?;
     w.write_all(&data)?;
@@ -96,12 +124,12 @@ pub(crate) fn recv<R: Read, T: DeserializeOwned>(r: &mut R) -> Result<T> {
     r.read_exact(&mut length_bytes)?;
     let length = u64::from_le_bytes(length_bytes);
     if length > 0x100_000 {
-        panic!("pcid_interface: Too large buffer");
+        panic!("pcid_interface: buffer too large");
     }
     let mut data = vec! [0u8; length as usize];
     r.read_exact(&mut data)?;
 
-    Ok(serde_json::from_slice(&data)?)
+    Ok(bincode::deserialize_from(&data[..])?)
 }
 
 impl PcidServerHandle {
@@ -127,6 +155,7 @@ impl PcidServerHandle {
         self.send(&PcidClientRequest::RequestConfig)?;
         match self.recv()? {
             PcidClientResponse::Config(a) => Ok(a),
+            other => Err(PcidClientHandleError::InvalidResponse(other)),
         }
     }
 }
