@@ -1,0 +1,132 @@
+use std::fs::{File, OpenOptions};
+use std::io::prelude::*;
+use std::{env, io};
+
+use std::os::unix::io::{FromRawFd, RawFd};
+
+use serde::{Serialize, Deserialize, de::DeserializeOwned};
+use thiserror::Error;
+
+use crate::pci;
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct PciFunction {
+    /// Number of PCI bus
+    pub bus_num: u8,
+    /// Number of PCI device
+    pub dev_num: u8,
+    /// Number of PCI function
+    pub func_num: u8,
+    /// PCI Base Address Registers
+    pub bars: [pci::PciBar; 6],
+    /// BAR sizes
+    pub bar_sizes: [u32; 6],
+    /// Legacy IRQ line
+    // TODO: Stop using legacy IRQ lines, and physical pins, but MSI/MSI-X instead.
+    pub legacy_interrupt_line: u8,
+    /// Vendor ID
+    pub venid: u16,
+    /// Device ID
+    pub devid: u16,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SubdriverArguments {
+    pub func: PciFunction,
+    pub capabilities: Vec<PciCapabilitiy>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum PciCapabilitiy {
+    Msi,
+    MsiX,
+}
+
+#[derive(Debug, Error)]
+pub enum PcidClientHandleError {
+    #[error("i/o error: {0}")]
+    IoError(#[from] io::Error),
+
+    #[error("JSON ser/de error: {0}")]
+    SerializationError(#[from] serde_json::Error),
+
+    #[error("environment variable error: {0}")]
+    EnvError(#[from] env::VarError),
+
+    #[error("malformed fd: {0}")]
+    EnvValidityError(std::num::ParseIntError),
+
+    #[error("invalid response: {0:?}")]
+    InvalidResponse(PcidClientResponse),
+}
+pub type Result<T, E = PcidClientHandleError> = std::result::Result<T, E>;
+
+#[derive(Debug, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum PcidClientRequest {
+    RequestConfig,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum PcidClientResponse {
+    Config(SubdriverArguments),
+}
+
+// TODO: Ideally, pcid might have its own scheme, like lots of other Redox drivers, where this kind of IPC is done. Otherwise, instead of writing serde messages over
+// a channel, the communication could potentially be done via mmap, using a channel
+// very similar to crossbeam-channel or libstd's mpsc (except the cycle, enqueue and dequeue fields
+// are stored in the same buffer).
+/// A handle from a `pcid` client (e.g. `ahcid`) to `pcid`.
+pub struct PcidServerHandle {
+    pcid_to_client: File,
+    pcid_from_client: File,
+}
+
+pub(crate) fn send<W: Write, T: Serialize>(w: &mut W, message: &T) -> Result<()> {
+    // TODO: Use bincode.
+    let data = serde_json::to_vec(message)?;
+    let length_bytes = u64::to_le_bytes(data.len() as u64);
+    w.write_all(&length_bytes)?;
+    w.write_all(&data)?;
+    Ok(())
+}
+pub(crate) fn recv<R: Read, T: DeserializeOwned>(r: &mut R) -> Result<T> {
+    let mut length_bytes = [0u8; 8];
+    r.read_exact(&mut length_bytes)?;
+    let length = u64::from_le_bytes(length_bytes);
+    if length > 0x100_000 {
+        panic!("pcid_interface: Too large buffer");
+    }
+    let mut data = vec! [0u8; length as usize];
+    r.read_exact(&mut data)?;
+
+    Ok(serde_json::from_slice(&data)?)
+}
+
+impl PcidServerHandle {
+    pub fn connect(pcid_to_client: RawFd, pcid_from_client: RawFd) -> Result<Self> {
+        Ok(Self {
+            pcid_to_client: unsafe { File::from_raw_fd(pcid_to_client) },
+            pcid_from_client: unsafe { File::from_raw_fd(pcid_from_client) },
+        })
+    }
+    pub fn connect_default() -> Result<Self> {
+        let pcid_to_client_fd = env::var("PCID_TO_CLIENT_FD")?.parse::<RawFd>().map_err(PcidClientHandleError::EnvValidityError)?;
+        let pcid_from_client_fd = env::var("PCID_FROM_CLIENT_FD")?.parse::<RawFd>().map_err(PcidClientHandleError::EnvValidityError)?;
+
+        Self::connect(pcid_to_client_fd, pcid_from_client_fd)
+    }
+    pub(crate) fn send(&mut self, req: &PcidClientRequest) -> Result<()> {
+        send(&mut self.pcid_from_client, req)
+    }
+    pub(crate) fn recv(&mut self) -> Result<PcidClientResponse> {
+        recv(&mut self.pcid_to_client)
+    }
+    pub fn fetch_config(&mut self) -> Result<SubdriverArguments> {
+        self.send(&PcidClientRequest::RequestConfig)?;
+        match self.recv()? {
+            PcidClientResponse::Config(a) => Ok(a),
+        }
+    }
+}

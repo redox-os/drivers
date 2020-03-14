@@ -23,6 +23,15 @@ mod usb;
 mod xhci;
 
 fn main() {
+    println!("xhcid started");
+    let mut pcid_handle = pcid_interface::PcidServerHandle::connect_default().expect("xhcid: failed to setup channel to pcid");
+    dbg!();
+    println!("XHCI from PCI config: {:?}", pcid_handle.fetch_config().expect("xhcid: failed to fetch config"));
+
+    // Close the pipe, allowing pcid to continue.
+    drop(pcid_handle);
+
+
     let mut args = env::args().skip(1);
 
     let mut name = args.next().expect("xhcid: no name provided");

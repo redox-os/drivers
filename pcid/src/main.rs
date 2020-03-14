@@ -1,21 +1,24 @@
 #![feature(asm)]
 
-#[macro_use] extern crate bitflags;
+extern crate bitflags;
 extern crate byteorder;
-#[macro_use] extern crate serde_derive;
 extern crate syscall;
 extern crate toml;
 
-use std::{env, i64};
+use std::{env, io, i64};
 use std::fs::{File, metadata, read_dir};
-use std::io::Read;
+use std::io::prelude::*;
+use std::os::unix::io::{FromRawFd, RawFd};
 use std::process::Command;
 use syscall::iopl;
+
+use std::os::unix::process::CommandExt;
 
 use crate::config::Config;
 use crate::pci::{Pci, PciBar, PciClass, PciHeader, PciHeaderError, PciHeaderType};
 
 mod config;
+mod driver_interface;
 mod pci;
 
 fn handle_parsed_header(config: &Config, pci: &Pci, bus_num: u8,
@@ -24,14 +27,16 @@ fn handle_parsed_header(config: &Config, pci: &Pci, bus_num: u8,
     let mut string = format!("PCI {:>02X}/{:>02X}/{:>02X} {:>04X}:{:>04X} {:>02X}.{:>02X}.{:>02X}.{:>02X} {:?}",
                              bus_num, dev_num, func_num, header.vendor_id(), header.device_id(), raw_class,
                              header.subclass(), header.interface(), header.revision(), header.class());
-
     match header.class() {
+        PciClass::Legacy if header.subclass() == 1 => string.push_str("  VGA CTL"),
         PciClass::Storage => match header.subclass() {
             0x01 => {
                 string.push_str(" IDE");
             },
-            0x06 => {
-                string.push_str(" SATA");
+            0x06 => if header.interface() == 0 {
+                string.push_str(" SATA VND");
+            } else if header.interface() == 1 {
+                string.push_str(" SATA AHCI");
             },
             _ => ()
         },
@@ -166,6 +171,23 @@ fn handle_parsed_header(config: &Config, pci: &Pci, bus_num: u8,
                 }
             }
 
+            let func = driver_interface::PciFunction {
+                bars,
+                bar_sizes,
+                bus_num,
+                dev_num,
+                func_num,
+                devid: header.device_id(),
+                legacy_interrupt_line: irq,
+                venid: header.vendor_id(),
+            };
+            let capabilities = Vec::new();
+
+            let subdriver_args = driver_interface::SubdriverArguments {
+                capabilities,
+                func,
+            };
+
             // TODO: find a better way to pass the header data down to the
             // device driver, making passing the capabilities list etc
             // posible.
@@ -199,12 +221,50 @@ fn handle_parsed_header(config: &Config, pci: &Pci, bus_num: u8,
                 }
 
                 println!("PCID SPAWN {:?}", command);
-                match command.spawn() {
-                    Ok(mut child) => match child.wait() {
-                        Ok(_status) => (), //println!("pcid: waited for {}: {:?}", line, status.code()),
-                        Err(err) => println!("pcid: failed to wait for {:?}: {}", command, err)
-                    },
+
+                let (pcid_to_client_write, pcid_from_client_read, envs) = if driver.channel_name.is_some() {
+                    let mut fds1 = [0usize; 2];
+                    let mut fds2 = [0usize; 2];
+
+                    syscall::pipe2(&mut fds1, 0).expect("pcid: failed to create pcid->client pipe");
+                    syscall::pipe2(&mut fds2, 0).expect("pcid: failed to create client->pcid pipe");
+
+                    let [pcid_to_client_read, pcid_to_client_write] = fds1;
+                    let [pcid_from_client_read, pcid_from_client_write] = fds2;
+
+                    (Some(pcid_to_client_write), Some(pcid_from_client_read), vec! [("PCID_TO_CLIENT_FD", format!("{}", pcid_to_client_read)), ("PCID_FROM_CLIENT_FD", format!("{}", pcid_from_client_write))])
+                } else {
+                    (None, None, vec! [])
+                };
+
+                match command.envs(envs).spawn() {
+                    Ok(mut child) => {
+                        handle_spawn(pcid_to_client_write, pcid_from_client_read, subdriver_args);
+                        match child.wait() {
+                            Ok(_status) => (),
+                            Err(err) => println!("pcid: failed to wait for {:?}: {}", command, err),
+                        }
+                    }
                     Err(err) => println!("pcid: failed to execute {:?}: {}", command, err)
+                }
+            }
+        }
+    }
+    fn handle_spawn(pcid_to_client_write: Option<usize>, pcid_from_client_read: Option<usize>, args: driver_interface::SubdriverArguments) {
+        use driver_interface::*;
+
+        // TODO: Instead of relying on the subdriver to correctly close the pipe, there should be a
+        // dedicated thread responsible for this. Or alternatively, a thread pool with Futures.
+
+        if let (Some(pcid_to_client_fd), Some(pcid_from_client_fd)) = (pcid_to_client_write, pcid_from_client_read) {
+            let mut pcid_to_client = unsafe { File::from_raw_fd(pcid_to_client_fd as RawFd) };
+            let mut pcid_from_client = unsafe { File::from_raw_fd(pcid_from_client_fd as RawFd) };
+
+            if let Ok(msg) = recv(&mut pcid_from_client) {
+                match msg {
+                    PcidClientRequest::RequestConfig => {
+                        send(&mut pcid_to_client, &PcidClientResponse::Config(args.clone())).unwrap();
+                    }
                 }
             }
         }

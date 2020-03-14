@@ -7,6 +7,7 @@ pub use self::header::{PciHeader, PciHeaderError, PciHeaderType};
 
 mod bar;
 mod bus;
+pub mod cap;
 mod class;
 mod dev;
 mod func;

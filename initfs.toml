@@ -22,7 +22,7 @@ vendor = 33006
 device = 48879
 command = ["bgad", "$NAME", "$BAR0"]
 
-#nvmed
+# nvmed
 [[drivers]]
 name = "NVME storage"
 class = 1
@@ -37,9 +37,11 @@ vendor = 33006
 device = 51966
 command = ["vboxd", "$NAME", "$BAR0", "$BAR1", "$IRQ"]
 
+# xhcid
 [[drivers]]
 name = "XHCI"
 class = 12
 subclass = 3
 interface = 48
 command = ["xhcid", "$NAME", "$BAR0", "$IRQ"]
+channel_name = "pcid-xhcid"
