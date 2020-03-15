@@ -7,7 +7,8 @@ use std::os::unix::io::{FromRawFd, RawFd};
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use thiserror::Error;
 
-use crate::pci;
+pub use crate::pci::PciBar;
+pub use crate::pci::msi::{MsiCapability, MsixCapability, MsixTableEntry};
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct PciFunction {
@@ -18,7 +19,7 @@ pub struct PciFunction {
     /// Number of PCI function
     pub func_num: u8,
     /// PCI Base Address Registers
-    pub bars: [pci::PciBar; 6],
+    pub bars: [PciBar; 6],
     /// BAR sizes
     pub bar_sizes: [u32; 6],
     /// Legacy IRQ line
@@ -49,12 +50,28 @@ impl FeatureStatus {
             Self::Disabled
         }
     }
+    pub fn is_enabled(&self) -> bool {
+        if let &Self::Enabled = self { true } else { false }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub enum PciFeature {
     Msi,
     MsiX,
+}
+impl PciFeature {
+    pub fn is_msi(&self) -> bool {
+        if let &Self::Msi = self { true } else { false }
+    }
+    pub fn is_msix(&self) -> bool {
+        if let &Self::MsiX = self { true } else { false }
+    }
+}
+#[derive(Debug, Serialize, Deserialize)]
+pub enum PciFeatureInfo {
+    Msi(MsiCapability),
+    MsiX(MsixCapability),
 }
 
 #[derive(Debug, Error)]
@@ -83,6 +100,7 @@ pub enum PcidClientRequest {
     RequestFeatures,
     EnableFeature(PciFeature),
     FeatureStatus(PciFeature),
+    FeatureInfo(PciFeature),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -99,6 +117,7 @@ pub enum PcidClientResponse {
     FeatureEnabled(PciFeature),
     FeatureStatus(PciFeature, FeatureStatus),
     Error(PcidServerResponseError),
+    FeatureInfo(PciFeature, PciFeatureInfo),
 }
 
 // TODO: Ideally, pcid might have its own scheme, like lots of other Redox drivers, where this kind of IPC is done. Otherwise, instead of writing serde messages over
@@ -155,6 +174,34 @@ impl PcidServerHandle {
         self.send(&PcidClientRequest::RequestConfig)?;
         match self.recv()? {
             PcidClientResponse::Config(a) => Ok(a),
+            other => Err(PcidClientHandleError::InvalidResponse(other)),
+        }
+    }
+    pub fn fetch_all_features(&mut self) -> Result<Vec<(PciFeature, FeatureStatus)>> {
+        self.send(&PcidClientRequest::RequestFeatures)?;
+        match self.recv()? {
+            PcidClientResponse::AllFeatures(a) => Ok(a),
+            other => Err(PcidClientHandleError::InvalidResponse(other)),
+        }
+    }
+    pub fn feature_status(&mut self, feature: PciFeature) -> Result<FeatureStatus> {
+        self.send(&PcidClientRequest::FeatureStatus(feature))?;
+        match self.recv()? {
+            PcidClientResponse::FeatureStatus(feat, status) if feat == feature => Ok(status),
+            other => Err(PcidClientHandleError::InvalidResponse(other)),
+        }
+    }
+    pub fn enable_feature(&mut self, feature: PciFeature) -> Result<()> {
+        self.send(&PcidClientRequest::EnableFeature(feature))?;
+        match self.recv()? {
+            PcidClientResponse::FeatureEnabled(feat) if feat == feature => Ok(()),
+            other => Err(PcidClientHandleError::InvalidResponse(other)),
+        }
+    }
+    pub fn feature_info(&mut self, feature: PciFeature) -> Result<PciFeatureInfo> {
+        self.send(&PcidClientRequest::FeatureInfo(feature))?;
+        match self.recv()? {
+            PcidClientResponse::FeatureInfo(feat, info) if feat == feature => Ok(info),
             other => Err(PcidClientHandleError::InvalidResponse(other)),
         }
     }

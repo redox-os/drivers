@@ -203,6 +203,15 @@ impl Trb {
                 | (cycle as u32),
         );
     }
+    pub fn disable_slot(&mut self, slot: u8, cycle: bool) {
+        self.set(
+            0,
+            0,
+            (u32::from(slot) << 24)
+                | ((TrbType::DisableSlot as u32) << 10)
+                | u32::from(cycle)
+        );
+    }
 
     pub fn address_device(&mut self, slot_id: u8, input_ctx_ptr: usize, bsr: bool, cycle: bool) {
         assert_eq!(

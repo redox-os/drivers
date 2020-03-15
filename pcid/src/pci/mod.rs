@@ -14,6 +14,7 @@ mod class;
 mod dev;
 mod func;
 pub mod header;
+pub mod msi;
 
 pub struct Pci {
     lock: Mutex<()>,

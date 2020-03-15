@@ -2003,7 +2003,7 @@ impl Xhci {
     }
 }
 use std::ops::{Add, Div, Rem};
-fn div_round_up<T>(a: T, b: T) -> T
+pub fn div_round_up<T>(a: T, b: T) -> T
 where
     T: Add<Output = T> + Div<Output = T> + Rem<Output = T> + PartialEq + From<u8> + Copy,
 {

@@ -21,7 +21,7 @@ mod operational;
 mod port;
 mod ring;
 mod runtime;
-mod scheme;
+pub mod scheme;
 mod trb;
 
 use self::capability::CapabilityRegs;
@@ -306,7 +306,7 @@ impl Xhci {
         Ok(cloned_event_trb.event_slot())
     }
     pub fn disable_port_slot(&mut self, slot: u8) -> Result<()> {
-        self.execute_command("DISABLE_SLOT", |cmd, cycle| cmd.enable_slot(0, cycle))?;
+        self.execute_command("DISABLE_SLOT", |cmd, cycle| cmd.disable_slot(0, cycle))?;
         Ok(())
     }
 

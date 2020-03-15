@@ -105,6 +105,18 @@ impl DriverHandler {
                     None
                 }).unwrap_or(FeatureStatus::Disabled),
             }),
+            PcidClientRequest::FeatureInfo(feature) => PcidClientResponse::FeatureInfo(feature, match feature {
+                PciFeature::Msi => if let Some(info) = self.capabilities.iter().find_map(|(_, capability)| capability.as_msi()) {
+                    PciFeatureInfo::Msi(*info)
+                } else {
+                    return PcidClientResponse::Error(PcidServerResponseError::NonexistentFeature(feature));
+                }
+                PciFeature::MsiX => if let Some(info) = self.capabilities.iter().find_map(|(_, capability)| capability.as_msix()) {
+                    PciFeatureInfo::MsiX(*info)
+                } else {
+                    return PcidClientResponse::Error(PcidServerResponseError::NonexistentFeature(feature));
+                }
+            }),
         }
     }
     fn handle_spawn(mut self, pcid_to_client_write: Option<usize>, pcid_from_client_read: Option<usize>, args: driver_interface::SubdriverArguments) {
@@ -116,7 +128,7 @@ impl DriverHandler {
 
             while let Ok(msg) = recv(&mut pcid_from_client) {
                 let response = self.respond(msg, &args);
-                send(&mut pcid_to_client, &response);
+                send(&mut pcid_to_client, &response).unwrap();
             }
         }
     }
@@ -294,6 +306,7 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, bus_num: u8,
                 };
                 crate::pci::cap::CapabilitiesIter { inner: crate::pci::cap::CapabilityOffsetsIter::new(header.cap_pointer(), &func) }.collect::<Vec<_>>()
             };
+            println!("PCI DEVICE CAPABILITIES for {}: {:?}", args.iter().map(|string| string.as_ref()).nth(0).unwrap_or("[unknown]"), capabilities);
 
             let func = driver_interface::PciFunction {
                 bars,
