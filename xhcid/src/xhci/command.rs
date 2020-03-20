@@ -22,7 +22,8 @@ impl CommandRing {
     }
 
     pub fn erdp(&self) -> u64 {
-        self.events.ring.register()
+        let address = self.events.ring.register();
+        address & 0xFFFF_FFFF_FFFF_FFF0
     }
 
     pub fn erstba(&self) -> u64 {

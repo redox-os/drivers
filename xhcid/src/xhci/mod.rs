@@ -11,11 +11,14 @@ use syscall::io::{Dma, Io};
 
 use crate::usb;
 
+use pcid_interface::msi::{MsixTableEntry, MsixCapability};
+
 mod capability;
 mod command;
 mod context;
 mod doorbell;
 mod event;
+pub mod executor;
 mod extended;
 mod operational;
 mod port;
@@ -38,6 +41,33 @@ use self::trb::{TransferKind, TrbCompletionCode, TrbType};
 use self::scheme::EndpIfState;
 
 use crate::driver_interface::*;
+
+pub struct MsixInfo {
+    pub virt_table_base: NonNull<MsixTableEntry>,
+    pub virt_pba_base: NonNull<u64>,
+    pub capability: MsixCapability,
+}
+impl MsixInfo {
+    pub unsafe fn table_entry_pointer_unchecked(&mut self, k: usize) -> &mut MsixTableEntry {
+        &mut *self.virt_table_base.as_ptr().offset(k as isize)
+    }
+    pub fn table_entry_pointer(&mut self, k: usize) -> &mut MsixTableEntry {
+        assert!(k < self.capability.table_size() as usize);
+        unsafe { self.table_entry_pointer_unchecked(k) }
+    }
+    pub unsafe fn pba_pointer_unchecked(&mut self, k: usize) -> &mut u64 {
+        &mut *self.virt_pba_base.as_ptr().offset(k as isize)
+    }
+    pub fn pba_pointer(&mut self, k: usize) -> &mut u64 {
+        assert!(k < self.capability.table_size() as usize);
+        unsafe { self.pba_pointer_unchecked(k) }
+    }
+    pub fn pba(&mut self, k: usize) -> bool {
+        let byte = k / 64;
+        let bit = k % 64;
+        *self.pba_pointer(byte) & (1 << bit) != 0
+    }
+}
 
 struct Device<'a> {
     ring: &'a mut Ring,
@@ -139,6 +169,10 @@ pub struct Xhci {
 
     drivers: BTreeMap<usize, process::Child>,
     scheme_name: String,
+
+    msi: bool,
+    msix: bool,
+    msix_info: Option<MsixInfo>,
 }
 
 struct PortState {
@@ -167,7 +201,7 @@ impl EndpointState {
 }
 
 impl Xhci {
-    pub fn new(scheme_name: String, address: usize) -> Result<Xhci> {
+    pub fn new(scheme_name: String, address: usize, msi: bool, msix: bool, msix_info: Option<MsixInfo>) -> Result<Xhci> {
         let cap = unsafe { &mut *(address as *mut CapabilityRegs) };
         println!("  - CAP {:X}", address);
 
@@ -239,6 +273,9 @@ impl Xhci {
             }),
             drivers: BTreeMap::new(),
             scheme_name,
+            msi,
+            msix,
+            msix_info,
         };
 
         xhci.init(max_slots);
@@ -277,7 +314,11 @@ impl Xhci {
             println!("  - Write ERSTBA: {:X}", erstba);
             self.run.ints[0].erstba.write(erstba as u64);
 
+            println!("  - Write IMODC and IMODI: {} and {}", 0, 0);
+            self.run.ints[0].imod.write(0);
+
             println!("  - Enable interrupts");
+            self.run.ints[0].iman.writef(1, true); // clear interrupt pending if set earlier by the BIOS
             self.run.ints[0].iman.writef(1 << 1, true);
         }
 
@@ -506,23 +547,32 @@ impl Xhci {
     }
 
 
-    pub fn trigger_irq(&mut self) -> bool {
-        // Read the Interrupter Pending bit.
-        if self.run.ints[0].iman.readf(1) {
-            //println!("XHCI Interrupt");
-
-            // If set, set it back to zero, so that new interrupts can be triggered.
-            // FIXME: MSI and MSI-X systems
+    /// Checks whether an IRQ has been received from *this* device, in case of an interrupt. Always
+    /// true when using MSI/MSI-X.
+    pub fn received_irq(&mut self) -> bool {
+        if self.msi || self.msix {
+            // Since using MSI and MSI-X implies having no IRQ sharing whatsoever, the IP bit
+            // doesn't have to be touched.
+            println!("Successfully received MSI/MSI-X interrupt, IP={}, EHB={}", self.run.ints[0].iman.readf(1), self.run.ints[0].erdp.readf(3));
+            println!("MSI-X PB={}", self.msix_info.as_ref().unwrap().pba(0));
+            true
+        } else if self.run.ints[0].iman.readf(1) {
+            // If MSI and/or MSI-X are not used, the interrupt has to be shared, and thus there is
+            // a special register to specify whether the IRQ actually came from the xHC.
             self.run.ints[0].iman.writef(1, true);
 
-            // Wake all futures awaiting the IRQ.
-            for waker in self.irq_state.wakers.lock().unwrap().drain(..) {
-                waker.wake();
-            }
-
+            // The interrupt came from the xHC.
             true
         } else {
+            // The interrupt came from a different device.
             false
+        }
+    }
+    /// Handle an IRQ event.
+    pub fn on_irq(&mut self) {
+        // Wake all futures awaiting the IRQ.
+        for waker in self.irq_state.wakers.lock().unwrap().drain(..) {
+            waker.wake();
         }
     }
     pub(crate) fn irq(&self) -> IrqFuture {

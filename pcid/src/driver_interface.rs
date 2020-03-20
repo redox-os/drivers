@@ -8,7 +8,7 @@ use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use thiserror::Error;
 
 pub use crate::pci::PciBar;
-pub use crate::pci::msi::{MsiCapability, MsixCapability, MsixTableEntry};
+pub use crate::pci::msi;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct PciFunction {
@@ -70,8 +70,8 @@ impl PciFeature {
 }
 #[derive(Debug, Serialize, Deserialize)]
 pub enum PciFeatureInfo {
-    Msi(MsiCapability),
-    MsiX(MsixCapability),
+    Msi(msi::MsiCapability),
+    MsiX(msi::MsixCapability),
 }
 
 #[derive(Debug, Error)]
