@@ -12,6 +12,7 @@ use syscall::io::{Dma, Io};
 use crate::usb;
 
 use pcid_interface::msi::{MsixTableEntry, MsixCapability};
+use pcid_interface::{PcidServerHandle, PciFeature};
 
 mod capability;
 mod command;
@@ -108,7 +109,7 @@ impl<'a> Device<'a> {
             }
         }
 
-        self.int.erdp.write(self.cmd.erdp());
+        self.int.erdp.write(self.cmd.erdp() | (1 << 3));
     }
 
     fn get_device(&mut self) -> Result<usb::DeviceDescriptor> {
@@ -173,6 +174,8 @@ pub struct Xhci {
     msi: bool,
     msix: bool,
     msix_info: Option<MsixInfo>,
+
+    pcid_handle: PcidServerHandle,
 }
 
 struct PortState {
@@ -201,7 +204,7 @@ impl EndpointState {
 }
 
 impl Xhci {
-    pub fn new(scheme_name: String, address: usize, msi: bool, msix: bool, msix_info: Option<MsixInfo>) -> Result<Xhci> {
+    pub fn new(scheme_name: String, address: usize, msi: bool, msix: bool, msix_info: Option<MsixInfo>, handle: PcidServerHandle) -> Result<Xhci> {
         let cap = unsafe { &mut *(address as *mut CapabilityRegs) };
         println!("  - CAP {:X}", address);
 
@@ -276,6 +279,7 @@ impl Xhci {
             msi,
             msix,
             msix_info,
+            pcid_handle: handle,
         };
 
         xhci.init(max_slots);
@@ -302,13 +306,29 @@ impl Xhci {
         // Set event ring segment table registers
         println!("  - Interrupter 0: {:X}", self.run.ints.as_ptr() as usize);
         {
+            self.run.ints[0].iman.writef(1, true); // clear interrupt pending if set earlier by the BIOS
+
+            println!("IP={}", self.run.ints[0].iman.readf(1));
+
+            /*if self.msi {
+                self.pcid_handle.enable_feature(PciFeature::Msi).expect("xhcid: failed to enable MSI");
+                println!("Enabled MSI");
+            }*/
+            if self.msix {
+                self.pcid_handle.enable_feature(PciFeature::MsiX).expect("xhcid: failed to enable MSI-X");
+                println!("Enabled MSI-X");
+            }
+
+            dbg!(self.pcid_handle.feature_info(PciFeature::MsiX).unwrap());
+            dbg!(self.pcid_handle.feature_info(PciFeature::Msi).unwrap());
+
             let erstz = 1;
             println!("  - Write ERSTZ: {}", erstz);
             self.run.ints[0].erstsz.write(erstz);
 
             let erdp = self.cmd.erdp();
             println!("  - Write ERDP: {:X}", erdp);
-            self.run.ints[0].erdp.write(erdp as u64);
+            self.run.ints[0].erdp.write(erdp as u64 | (1 << 3));
 
             let erstba = self.cmd.erstba();
             println!("  - Write ERSTBA: {:X}", erstba);
@@ -318,19 +338,22 @@ impl Xhci {
             self.run.ints[0].imod.write(0);
 
             println!("  - Enable interrupts");
-            self.run.ints[0].iman.writef(1, true); // clear interrupt pending if set earlier by the BIOS
             self.run.ints[0].iman.writef(1 << 1, true);
+
         }
+        self.op.usb_cmd.writef(1 << 2, true);
 
         // Set run/stop to 1
         println!("  - Start");
-        self.op.usb_cmd.writef(1 | 1 << 2, true);
+        self.op.usb_cmd.writef(1, true);
 
         // Wait until controller is running
         println!("  - Wait for running");
         while self.op.usb_sts.readf(1) {
             println!("  - Waiting for XHCI running");
         }
+
+        println!("IP={}", self.run.ints[0].iman.readf(1));
 
         // Ring command doorbell
         println!("  - Ring doorbell");
@@ -356,6 +379,7 @@ impl Xhci {
     }
 
     pub fn probe(&mut self) -> Result<()> {
+        println!("XHCI capabilities: {:?}", self.capabilities_iter().collect::<Vec<_>>());
         for i in 0..self.ports.len() {
             let (data, state, speed, flags) = {
                 let port = &self.ports[i];
@@ -554,10 +578,12 @@ impl Xhci {
             // Since using MSI and MSI-X implies having no IRQ sharing whatsoever, the IP bit
             // doesn't have to be touched.
             println!("Successfully received MSI/MSI-X interrupt, IP={}, EHB={}", self.run.ints[0].iman.readf(1), self.run.ints[0].erdp.readf(3));
-            println!("MSI-X PB={}", self.msix_info.as_ref().unwrap().pba(0));
+            println!("MSI-X PB={}", self.msix_info.as_mut().unwrap().pba(0));
+            let entry = self.msix_info.as_mut().unwrap().table_entry_pointer(0);
+            println!("MSI-X entry (addr_lo, addr_hi, msg_data, vec_ctl: {:#0x} {:#0x} {:#0x} {:#0x}", entry.addr_lo.read(), entry.addr_hi.read(), entry.msg_data.read(), entry.vec_ctl.read());
             true
         } else if self.run.ints[0].iman.readf(1) {
-            // If MSI and/or MSI-X are not used, the interrupt has to be shared, and thus there is
+            // If MSI and/or MSI-X are not used, the interrupt might have to be shared, and thus there is
             // a special register to specify whether the IRQ actually came from the xHC.
             self.run.ints[0].iman.writef(1, true);
 
@@ -567,6 +593,7 @@ impl Xhci {
             // The interrupt came from a different device.
             false
         }
+
     }
     /// Handle an IRQ event.
     pub fn on_irq(&mut self) {

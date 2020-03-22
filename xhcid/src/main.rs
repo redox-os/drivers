@@ -104,14 +104,10 @@ fn main() {
     dbg!(has_msix, msix_enabled);
 
     if has_msi && !msi_enabled {
-        pcid_handle.enable_feature(PciFeature::Msi).expect("xhcid: failed to enable MSI");
         msi_enabled = true;
-        println!("Enabled MSI");
     }
-    if has_msi && msi_enabled && has_msix && !msix_enabled {
-        pcid_handle.enable_feature(PciFeature::MsiX).expect("xhcid: failed to enable MSI-X");
+    if has_msix && !msix_enabled {
         msix_enabled = true;
-        println!("Enabled MSI-X");
     }
 
     let (mut irq_file, msix_info) = if msi_enabled && !msix_enabled {
@@ -200,7 +196,7 @@ fn main() {
 
     {
         let hci = Arc::new(RefCell::new(
-            Xhci::new(name, address, msi_enabled, msix_enabled, msix_info).expect("xhcid: failed to allocate device"),
+            Xhci::new(name, address, msi_enabled, msix_enabled, msix_info, pcid_handle).expect("xhcid: failed to allocate device"),
         ));
 
         hci.borrow_mut().probe().expect("xhcid: failed to probe");

@@ -263,8 +263,8 @@ pub struct MsixTableEntry {
 pub mod x86_64 {
     #[repr(u8)]
     pub enum TriggerMode {
-        Level = 0,
-        Edge = 1,
+        Edge = 0,
+        Level = 1,
     }
 
     #[repr(u8)]

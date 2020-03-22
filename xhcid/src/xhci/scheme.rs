@@ -216,16 +216,20 @@ impl Xhci {
         cmd_name: &str,
         f: F,
     ) -> Result<Trb> {
-        self.run.ints[0].erdp.write(self.cmd.erdp());
+        self.run.ints[0].erdp.write(self.cmd.erdp() | (1 << 3));
         let (cmd, cycle, event) = self.cmd.next();
 
         f(cmd, cycle);
 
+        println!("INTE={}", self.op.usb_cmd.readf(1 << 2));
+        println!("IP={}", self.run.ints[0].iman.readf(1));
         self.dbs[0].write(0);
+        println!("IP={}", self.run.ints[0].iman.readf(1));
 
-        while event.data.read() == 0 {
+        while event.data.read() == 0/* || self.run.ints[0].iman.readf(1)*/ {
             println!("    - {} Waiting for event", cmd_name);
         }
+        println!("IP={}", self.run.ints[0].iman.readf(1));
 
         if event.completion_code() != TrbCompletionCode::Success as u8
             || event.trb_type() != TrbType::CommandCompletion as u8
@@ -239,7 +243,7 @@ impl Xhci {
         cmd.reserved(false);
         event.reserved(false);
 
-        self.run.ints[0].erdp.write(self.cmd.erdp());
+        self.run.ints[0].erdp.write(self.cmd.erdp() | (1 << 3));
         Ok(ret)
     }
     pub fn execute_control_transfer<D>(
@@ -299,7 +303,7 @@ impl Xhci {
             event.clone()
         };
 
-        self.run.ints[0].erdp.write(self.cmd.erdp());
+        self.run.ints[0].erdp.write(self.cmd.erdp() | (1 << 3));
 
         Ok(cloned_trb)
     }
@@ -385,7 +389,7 @@ impl Xhci {
             cloned_trb
         };
 
-        self.run.ints[0].erdp.write(self.cmd.erdp());
+        self.run.ints[0].erdp.write(self.cmd.erdp() | (1 << 3));
 
         Ok(cloned_trb)
     }
@@ -995,7 +999,7 @@ impl Xhci {
 
         // TODO: Should the descriptors be stored in PortState?
 
-        run.ints[0].erdp.write(cmd.erdp());
+        run.ints[0].erdp.write(cmd.erdp() | (1 << 3));
 
         let mut dev = Device {
             ring,
