@@ -5,6 +5,7 @@ use syscall::io::{Io, Mmio};
 use super::context::StreamContextType;
 
 #[repr(u8)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum TrbType {
     Reserved,
     /* Transfer */
@@ -33,8 +34,8 @@ pub enum TrbType {
     ForceHeader,
     NoOpCmd,
     /* Reserved */
-    Rsv24,
-    Rsv25,
+    GetExtendedProperty,
+    SetExtendedProperty,
     Rsv26,
     Rsv27,
     Rsv28,
@@ -54,6 +55,7 @@ pub enum TrbType {
 }
 
 #[repr(u8)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum TrbCompletionCode {
     Invalid,
     Success,
@@ -157,6 +159,34 @@ impl Trb {
     pub fn completion_param(&self) -> u32 {
         self.status.read() & TRB_STATUS_COMPLETION_PARAM_MASK
     }
+    fn has_completion_trb_pointer(&self) -> bool {
+        if self.completion_code() == TrbCompletionCode::RingUnderrun as u8 || self.completion_code() == TrbCompletionCode::RingOverrun as u8 {
+            false
+        } else if self.completion_code() == TrbCompletionCode::VfEventRingFull as u8 {
+            false
+        } else {
+            true
+        }
+    }
+    pub fn completion_trb_pointer(&self) -> Option<u64> {
+        debug_assert_eq!(self.trb_type(), TrbType::CommandCompletion as u8);
+
+        if self.has_completion_trb_pointer() {
+            Some(self.data.read())
+        } else {
+            None
+        }
+    }
+    pub fn transfer_event_trb_pointer(&self) -> Option<u64> {
+        debug_assert_eq!(self.trb_type(), TrbType::Transfer as u8);
+
+        if self.has_completion_trb_pointer() {
+            Some(self.data.read())
+        } else {
+            None
+        }
+    }
+
     pub fn event_slot(&self) -> u8 {
         (self.control.read() >> 24) as u8
     }
@@ -382,6 +412,43 @@ impl Trb {
                 | (u32::from(bei) << 9)
                 | ((TrbType::Normal as u32) << 10),
         )
+    }
+    pub fn is_command_trb(&self) -> bool {
+        let valid_trb_types = [
+            TrbType::NoOpCmd as u8,
+            TrbType::EnableSlot as u8,
+            TrbType::DisableSlot as u8,
+            TrbType::AddressDevice as u8,
+            TrbType::ConfigureEndpoint as u8,
+            TrbType::EvaluateContext as u8,
+            TrbType::ResetEndpoint as u8,
+            TrbType::StopEndpoint as u8,
+            TrbType::SetTrDequeuePointer as u8,
+            TrbType::ResetDevice as u8,
+            TrbType::ForceEvent as u8,
+            TrbType::NegotiateBandwidth as u8,
+            TrbType::SetLatencyToleranceValue as u8,
+            TrbType::GetPortBandwidth as u8,
+            TrbType::ForceHeader as u8,
+            TrbType::GetExtendedProperty as u8,
+            TrbType::SetExtendedProperty as u8,
+        ];
+        valid_trb_types.contains(&self.trb_type())
+    }
+    pub fn is_transfer_trb(&self) -> bool {
+        // XXX: Unfortunately, the only way to use match statements with integer constants, is to
+        // precast them into valid enum values, which either requires a derive macro such as
+        // num_traits's #[derive(FromPrimitive)], or manually writing the reverse match statement
+        // first.
+        let valid_trb_types = [
+            TrbType::Normal as u8,
+            TrbType::SetupStage as u8,
+            TrbType::DataStage as u8,
+            TrbType::StatusStage as u8,
+            TrbType::Isoch as u8,
+            TrbType::NoOp as u8,
+        ];
+        valid_trb_types.contains(&self.trb_type())
     }
 }
 

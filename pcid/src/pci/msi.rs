@@ -68,11 +68,10 @@ impl MsiCapability {
     pub fn message_control(&self) -> u16 {
         (self.message_control_raw() >> 16) as u16
     }
-    pub unsafe fn set_message_control<W: ConfigWriter>(&mut self, writer: &W, offset: u8, value: u16) {
+    pub fn set_message_control(&mut self, value: u16) {
         let mut new_message_control = self.message_control_raw();
         new_message_control &= 0x0000_FFFF;
         new_message_control |= u32::from(value) << 16;
-        writer.write_u32(offset, new_message_control);
 
         match self {
             Self::_32BitAddress { ref mut message_control, .. }
@@ -80,6 +79,9 @@ impl MsiCapability {
                 | Self::_32BitAddressWithPvm { ref mut message_control, .. }
                 | Self::_64BitAddressWithPvm { ref mut message_control, .. } => *message_control = new_message_control,
         }
+    }
+    pub unsafe fn write_message_control<W: ConfigWriter>(&mut self, writer: &W, offset: u8) {
+        writer.write_u32(offset, self.message_control_raw());
     }
     pub fn is_pvt_capable(&self) -> bool {
         self.message_control() & Self::MC_PVT_CAPABLE_BIT != 0
@@ -90,16 +92,21 @@ impl MsiCapability {
     pub fn enabled(&self) -> bool {
         self.message_control() & Self::MC_MSI_ENABLED_BIT != 0
     }
-    pub unsafe fn set_enabled<W: ConfigWriter>(&mut self, writer: &W, offset: u8, enabled: bool) {
+    pub fn set_enabled(&mut self, enabled: bool) {
         let mut new_message_control = self.message_control() & (!Self::MC_MSI_ENABLED_BIT);
         new_message_control |= u16::from(enabled);
-        self.set_message_control(writer, offset, new_message_control)
+        self.set_message_control(new_message_control);
     }
     pub fn multi_message_capable(&self) -> u8 {
         ((self.message_control() & Self::MC_MULTI_MESSAGE_MASK) >> Self::MC_MULTI_MESSAGE_SHIFT) as u8
     }
     pub fn multi_message_enabled(&self) -> u8 {
         ((self.message_control() & Self::MC_MULTI_MESSAGE_ENABLE_MASK) >> Self::MC_MULTI_MESSAGE_ENABLE_SHIFT) as u8
+    }
+    pub fn set_multi_message_enabled(&mut self, log_mme: u8) {
+        let mut new_message_control = self.message_control() & (!Self::MC_MULTI_MESSAGE_ENABLE_MASK);
+        new_message_control |= (u16::from(log_mme) << Self::MC_MULTI_MESSAGE_ENABLE_SHIFT);
+        self.set_message_control(new_message_control);
     }
 }
 

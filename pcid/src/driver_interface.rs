@@ -11,20 +11,41 @@ pub use crate::pci::PciBar;
 pub use crate::pci::msi;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum LegacyInterruptPin {
+    /// INTa#
+    IntA = 1,
+    /// INTb#
+    IntB = 2,
+    /// INTc#
+    IntC = 3,
+    /// INTd#
+    IntD = 4,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct PciFunction {
     /// Number of PCI bus
     pub bus_num: u8,
+
     /// Number of PCI device
     pub dev_num: u8,
+
     /// Number of PCI function
     pub func_num: u8,
+
     /// PCI Base Address Registers
     pub bars: [PciBar; 6],
+
     /// BAR sizes
     pub bar_sizes: [u32; 6],
+
     /// Legacy IRQ line
-    // TODO: Stop using legacy IRQ lines, and physical pins, but MSI/MSI-X instead.
     pub legacy_interrupt_line: u8,
+
+    /// Legacy interrupt pin (INTx#), none if INTx# interrupts aren't supported at all.
+    pub legacy_interrupt_pin: Option<LegacyInterruptPin>,
+
     /// Vendor ID
     pub venid: u16,
     /// Device ID

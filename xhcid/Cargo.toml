@@ -13,6 +13,9 @@ path = "src/lib.rs"
 
 [dependencies]
 bitflags = "1"
+chashmap = "2.2.2"
+crossbeam-channel = "0.4"
+futures = "0.3"
 plain = "0.2"
 lazy_static = "1.4"
 spin = "0.4"

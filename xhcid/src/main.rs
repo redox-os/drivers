@@ -8,13 +8,14 @@ use pcid_interface::{PcidServerHandle, PciFeature, PciFeatureInfo};
 use pcid_interface::msi::{MsiCapability, MsixCapability, MsixTableEntry};
 
 use event::{Event, EventQueue};
-use std::cell::RefCell;
 use std::convert::TryInto;
 use std::fs::{self, File};
+use std::future::Future;
 use std::io::{self, Read, Write};
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
+use std::pin::Pin;
 use std::ptr::NonNull;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::env;
 use syscall::data::Packet;
 use syscall::error::EWOULDBLOCK;
@@ -22,7 +23,7 @@ use syscall::flag::{CloneFlags, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
 use syscall::scheme::SchemeMut;
 use syscall::io::Io;
 
-use crate::xhci::Xhci;
+use crate::xhci::{InterruptMethod, Xhci};
 
 mod driver_interface;
 mod usb;
@@ -71,6 +72,10 @@ fn allocate_interrupt_vector() -> io::Result<Option<(u8, File)>> {
     Ok(None)
 }
 
+async fn handle_packet(hci: Arc<Xhci>, packet: Packet) -> Packet {
+    todo!()
+}
+
 fn main() {
     // Daemonize
     if unsafe { syscall::clone(CloneFlags::empty()).unwrap() } != 0 {
@@ -103,15 +108,26 @@ fn main() {
     dbg!(has_msi, msi_enabled);
     dbg!(has_msix, msix_enabled);
 
-    if has_msi && !msi_enabled {
+    if has_msi && !msi_enabled && !has_msix {
+        pcid_handle.enable_feature(PciFeature::Msi).expect("xhcid: failed to enable MSI");
+        println!("Enabled MSI");
         msi_enabled = true;
     }
     if has_msix && !msix_enabled {
+        pcid_handle.enable_feature(PciFeature::MsiX).expect("xhcid: failed to enable MSI-X");
+        println!("Enabled MSI-X");
         msix_enabled = true;
     }
 
-    let (mut irq_file, msix_info) = if msi_enabled && !msix_enabled {
-        todo!("only msi-x is currently implemented")
+    let (mut irq_file, interrupt_method) = if msi_enabled && !msix_enabled {
+        let mut capability = match pcid_handle.feature_info(PciFeature::MsiX).expect("xhcid: failed to retrieve the MSI capability structure from pcid") {
+            PciFeatureInfo::Msi(s) => s,
+            PciFeatureInfo::MsiX(_) => panic!(),
+        };
+        // use one vector
+        capability.set_multi_message_enabled(0);
+
+        todo!("msi (msix is implemented though)")
     } else if msix_enabled {
         let capability = match pcid_handle.feature_info(PciFeature::MsiX).expect("xhcid: failed to retrieve the MSI-X capability structure from pcid") {
             PciFeatureInfo::Msi(_) => panic!(),
@@ -160,17 +176,19 @@ fn main() {
             let (vector, interrupt_handle) = allocate_interrupt_vector().expect("xhcid: failed to allocate interrupt vector").expect("xhcid: no interrupt vectors left");
             let msg_data = x86_64_msix::message_data_edge_triggered(DeliveryMode::Fixed, vector);
 
-            dbg!(vector, destination_id);
-
             table_entry_pointer.addr_lo.write(addr);
             table_entry_pointer.addr_hi.write(0);
             table_entry_pointer.msg_data.write(msg_data);
             table_entry_pointer.vec_ctl.writef(MsixTableEntry::VEC_CTL_MASK_BIT, false);
 
-            (interrupt_handle, Some(info))
+            (Some(interrupt_handle), InterruptMethod::MsiX(info))
         }
+    } else if pci_config.func.legacy_interrupt_pin.is_some() {
+        // legacy INTx# interrupt pins.
+        (Some(File::open(format!("irq:{}", irq)).expect("xhcid: failed to open legacy IRQ file")), InterruptMethod::Intx)
     } else {
-        (File::open(format!("irq:{}", irq)).expect("xhcid: failed to open legacy IRQ file"), None)
+        // no interrupts at all
+        (None, InterruptMethod::Polling)
     };
 
     std::thread::sleep(std::time::Duration::from_millis(300));
@@ -187,27 +205,25 @@ fn main() {
 
     let socket_fd = syscall::open(
         format!(":usb/{}", name),
-        syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK,
+        syscall::O_RDWR | syscall::O_CREAT,
     )
     .expect("xhcid: failed to create usb scheme");
-    let socket = Arc::new(RefCell::new(unsafe {
+    let socket = Arc::new(Mutex::new(unsafe {
         File::from_raw_fd(socket_fd as RawFd)
     }));
 
-    {
-        let hci = Arc::new(RefCell::new(
-            Xhci::new(name, address, msi_enabled, msix_enabled, msix_info, pcid_handle).expect("xhcid: failed to allocate device"),
-        ));
+    let hci = Arc::new(Xhci::new(name, address, interrupt_method, irq_file.as_mut(), pcid_handle).expect("xhcid: failed to allocate device"));
+    hci.probe().expect("xhcid: failed to probe");
 
-        hci.borrow_mut().probe().expect("xhcid: failed to probe");
+    let mut event_queue =
+        EventQueue::<()>::new().expect("xhcid: failed to create event queue");
 
-        let mut event_queue =
-            EventQueue::<()>::new().expect("xhcid: failed to create event queue");
+    syscall::setrens(0, 0).expect("xhcid: failed to enter null namespace");
 
-        syscall::setrens(0, 0).expect("xhcid: failed to enter null namespace");
+    let todo = Arc::new(Mutex::new(Vec::<Packet>::new()));
+    let todo_futures = Arc::new(Mutex::new(Vec::<Pin<Box<dyn Future<Output = usize> + Send + Sync + 'static>>>::new()));
 
-        let todo = Arc::new(RefCell::new(Vec::<Packet>::new()));
-
+    if let Some(irq_file) = irq_file {
         let hci_irq = hci.clone();
         let socket_irq = socket.clone();
         let todo_irq = todo.clone();
@@ -216,21 +232,24 @@ fn main() {
                 let mut irq = [0; 8];
                 irq_file.read(&mut irq)?;
 
-                if hci_irq.borrow_mut().received_irq() {
-                    hci_irq.borrow_mut().on_irq();
+                let hci = hci_irq.lock().unwrap();
+                let socket = socket_irq.lock().unwrap();
+                let todo = todo_irq.lock().unwrap();
+
+                if hci.received_irq() {
+                    hci.on_irq();
 
                     irq_file.write(&mut irq)?;
 
-                    let mut todo = todo_irq.borrow_mut();
                     let mut i = 0;
                     while i < todo.len() {
                         let a = todo[i].a;
-                        hci_irq.borrow_mut().handle(&mut todo[i]);
+                        hci.handle(&mut todo[i]);
                         if todo[i].a == (-EWOULDBLOCK) as usize {
                             todo[i].a = a;
                             i += 1;
                         } else {
-                            socket_irq.borrow_mut().write(&mut todo[i])?;
+                            socket.write(&todo[i])?;
                             todo.remove(i);
                         }
                     }
@@ -239,39 +258,43 @@ fn main() {
                 Ok(None)
             })
             .expect("xhcid: failed to catch events on IRQ file");
-
-        let socket_fd = socket.borrow().as_raw_fd();
-        let socket_packet = socket.clone();
-        event_queue
-            .add(socket_fd, move |_| -> io::Result<Option<()>> {
-                loop {
-                    let mut packet = Packet::default();
-                    match socket_packet.borrow_mut().read(&mut packet) {
-                        Ok(0) => break,
-                        Err(err) if err.kind() == io::ErrorKind::WouldBlock => break,
-                        Ok(_) => (),
-                        Err(err) => return Err(err),
-                    }
-
-                    let a = packet.a;
-                    hci.borrow_mut().handle(&mut packet);
-                    if packet.a == (-EWOULDBLOCK) as usize {
-                        packet.a = a;
-                        todo.borrow_mut().push(packet);
-                    } else {
-                        socket_packet.borrow_mut().write(&mut packet)?;
-                    }
-                }
-                Ok(None)
-            })
-            .expect("xhcid: failed to catch events on scheme file");
-
-        event_queue
-            .trigger_all(Event { fd: 0, flags: 0 })
-            .expect("xhcid: failed to trigger events");
-
-        event_queue.run().expect("xhcid: failed to handle events");
     }
+
+    let socket_fd = socket.lock().unwrap().as_raw_fd();
+    let socket_packet = socket.clone();
+    event_queue
+        .add(socket_fd, move |_| -> io::Result<Option<()>> {
+            let mut socket = socket_packet.lock().unwrap();
+            let mut hci = hci.lock().unwrap();
+            let mut todo = todo.lock().unwrap();
+
+            loop {
+                let mut packet = Packet::default();
+                match socket.read(&mut packet) {
+                    Ok(0) => break,
+                    Ok(_) => (),
+                    Err(err) => return Err(err),
+                }
+
+                let a = packet.a;
+                hci.handle(&mut packet);
+                if packet.a == (-EWOULDBLOCK) as usize {
+                    packet.a = a;
+                    todo.push(packet);
+                } else {
+                    socket.write(&packet)?;
+                }
+            }
+            Ok(None)
+        })
+        .expect("xhcid: failed to catch events on scheme file");
+
+    event_queue
+        .trigger_all(Event { fd: 0, flags: 0 })
+        .expect("xhcid: failed to trigger events");
+
+    event_queue.run().expect("xhcid: failed to handle events");
+
     unsafe {
         let _ = syscall::physunmap(address);
     }

@@ -75,7 +75,10 @@ impl DriverHandler {
                         None => return PcidClientResponse::Error(PcidServerResponseError::NonexistentFeature(feature)),
                     };
                     unsafe {
-                        with_pci_func_raw(&self.state.pci, self.bus_num, self.dev_num, self.func_num, |func| capability.set_enabled(func, offset, true));
+                        with_pci_func_raw(&self.state.pci, self.bus_num, self.dev_num, self.func_num, |func| {
+                            capability.set_enabled(true);
+                            capability.write_message_control(func, offset);
+                        });
                     }
                     PcidClientResponse::FeatureEnabled(feature)
                 }
@@ -255,6 +258,8 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, bus_num: u8,
                 pci.write(bus_num, dev_num, func_num, 0x3C, data);
             }
 
+            let interrupt_pin = unsafe { pci.read(bus_num, dev_num, func_num, 0x3B) };
+
             // Find BAR sizes
             let mut bars = [PciBar::None; 6];
             let mut bar_sizes = [0; 6];
@@ -308,6 +313,21 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, bus_num: u8,
             };
             println!("PCI DEVICE CAPABILITIES for {}: {:?}", args.iter().map(|string| string.as_ref()).nth(0).unwrap_or("[unknown]"), capabilities);
 
+            use driver_interface::LegacyInterruptPin;
+
+            let legacy_interrupt_pin = match interrupt_pin {
+                0 => None,
+                1 => Some(LegacyInterruptPin::IntA),
+                2 => Some(LegacyInterruptPin::IntB),
+                3 => Some(LegacyInterruptPin::IntC),
+                4 => Some(LegacyInterruptPin::IntD),
+
+                other => {
+                    println!("pcid: invalid interrupt pin: {}", other);
+                    None
+                }
+            };
+
             let func = driver_interface::PciFunction {
                 bars,
                 bar_sizes,
@@ -316,6 +336,7 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, bus_num: u8,
                 func_num,
                 devid: header.device_id(),
                 legacy_interrupt_line: irq,
+                legacy_interrupt_pin,
                 venid: header.vendor_id(),
             };
 

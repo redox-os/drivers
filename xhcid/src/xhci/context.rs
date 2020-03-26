@@ -75,7 +75,7 @@ impl InputContext {
 
 pub struct DeviceContextList {
     pub dcbaa: Dma<[u64; 256]>,
-    pub contexts: Vec<Dma<DeviceContext>>,
+    pub contexts: Box<[Dma<DeviceContext>]>,
 }
 
 impl DeviceContextList {
@@ -91,8 +91,8 @@ impl DeviceContextList {
         }
 
         Ok(DeviceContextList {
-            dcbaa: dcbaa,
-            contexts: contexts,
+            dcbaa,
+            contexts: contexts.into_boxed_slice(),
         })
     }
 
@@ -157,5 +157,43 @@ impl StreamContextArray {
     }
     pub fn register(&self) -> u64 {
         self.contexts.physical() as u64
+    }
+}
+
+#[repr(packed)]
+#[derive(Clone, Debug)]
+pub struct ScratchpadBufferEntry {
+    pub value: Mmio<u64>,
+}
+impl ScratchpadBufferEntry {
+    pub fn set_addr(&mut self, addr: u64) {
+        self.value.write(addr);
+    }
+}
+
+pub struct ScratchpadBufferArray {
+    pub entries: Dma<[ScratchpadBufferEntry]>,
+    pub pages: Vec<usize>,
+}
+impl ScratchpadBufferArray {
+    pub fn new(entries: u16) -> Result<Self> {
+        let mut entries = unsafe { Dma::zeroed_unsized(entries as usize)? };
+
+        let pages = entries.iter_mut().map(|entry| {
+            // TODO: When a better memory allocation API arrives (like the `mem:` scheme which I think is
+            // being worked on), no assumptions about the page size always being 4k will have to be
+            // made.
+            let pointer = syscall::physalloc(4096);
+            assert_eq!(pointer & 0xFFFF_FFFF_FFFF_F000, pointer, "physically allocated pointer (physalloc) wasn't 4k page-aligned");
+            entry.set_addr(pointer);
+        });
+
+        Ok(Self {
+            entries,
+            pages,
+        })
+    }
+    pub fn register(&self) -> u64 {
+        self.entries.physical()
     }
 }
