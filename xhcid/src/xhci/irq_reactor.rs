@@ -357,14 +357,13 @@ impl Xhci {
         }
 
         let command_ring = self.cmd.lock().unwrap();
-        let ring = &command_ring.ring;
 
         EventTrbFuture::Pending {
             state: FutureState {
                 // This is only possible for transfers if they are isochronous, or for Force Event TRBs (virtualization).
                 is_isoch_or_vf: false,
                 state_kind: StateKind::CommandCompletion {
-                    phys_ptr: ring.trb_phys_ptr(trb),//.expect("Invalid TRB: expected a command TRB within the address range of the command TRB ({:p} {:p}), found TRB {:?} at {:p}", ring.start_addr(), ring.end_addr(), trb, trb)
+                    phys_ptr: command_ring.trb_phys_ptr(trb),//.expect("Invalid TRB: expected a command TRB within the address range of the command TRB ({:p} {:p}), found TRB {:?} at {:p}", ring.start_addr(), ring.end_addr(), trb, trb)
                 },
                 message: Arc::new(Mutex::new(None)),
             },

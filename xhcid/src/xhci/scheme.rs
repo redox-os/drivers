@@ -306,7 +306,9 @@ impl Xhci {
     }
     /// NOTE: There has to be AT LEAST one successful invocation of `d`, that actually updates the
     /// TRB (it could be a NO-OP in the worst case).
-    pub fn execute_transfer<D>(
+    /// The function is also required to set the Interrupt on Completion flag, or this function
+    /// will never complete.
+    pub async fn execute_transfer<D>(
         &mut self,
         port_num: usize,
         endp_num: u8,
@@ -318,6 +320,14 @@ impl Xhci {
         D: FnMut(&mut Trb, bool) -> ControlFlow,
     {
         let port_state = self.port_state_mut(port_num)?;
+
+        let (cfg_idx, if_idx) = match (port_state.cfg_idx, port_state.if_idx) {
+            (Some(c), Some(i)) => (c, i),
+            _ => return Err(Error::new(EIO)),
+        };
+
+        let endp_desc = port_state.dev_desc.config_descs[usize::from(cfg_idx)].interface_descs[usize::from(if_idx)].endpoints.get(usize::from(endp_num)).ok_or(Error::new(EBADFD))?;
+
         let slot = port_state.slot;
         let endp_state = port_state
             .endpoint_states
@@ -338,57 +348,43 @@ impl Xhci {
                 .ok_or(Error::new(EBADF))?),
         };
 
-        loop {
+        let future = loop {
             let (trb, cycle) = ring.next();
+
             match d(trb, cycle) {
-                ControlFlow::Break => break,
+                ControlFlow::Break => {
+                    break self.next_transfer_event_trb(super::irq_reactor::RingId { slot, endpoint_num: endp_num, stream_id }, &trb);
+                }
                 ControlFlow::Continue => continue,
             }
-        }
+        };
 
-        self.dbs[usize::from(slot)].write(Self::endp_doorbell(
+        self.dbs.lock().unwrap()[usize::from(slot)].write(Self::endp_doorbell(
             endp_num,
-            self.endp_desc(port_num, endp_num)?,
+            endp_desc,
             if has_streams { stream_id } else { 0 },
         ));
 
-        let cloned_trb = {
-            let event = self.cmd.next_event();
-            while event.data.read() == 0 {
-                println!("  - {} Waiting for event", name);
-            }
+        let trbs = future.await;
+        let event_trb = trbs.event_trb;
+        let transfer_trb = trbs.src_trb.unwrap();
 
-            // FIXME: EDTLA if event data was set
-            if event.completion_code() != TrbCompletionCode::ShortPacket as u8
-                && event.transfer_length() != 0
-            {
-                println!(
-                    "Event trb didn't yield a short packet, but some bytes were not transferred"
-                );
-            }
+        handle_transfer_event_trb("EXECUTE_TRANSFER", &event_trb, &transfer_trb)?;
 
-            if event.completion_code() != TrbCompletionCode::Success as u8
-                || event.trb_type() != TrbType::Transfer as u8
-            {
-                println!(
-                    "Custom transfer event failed with {:#0x} {:#0x} {:#0x}",
-                    event.data.read(),
-                    event.status.read(),
-                    event.control.read()
-                );
-            }
-            // TODO: Handle event data
-            println!("EVENT DATA: {:?}", event.event_data());
+        // FIXME: EDTLA if event data was set
+        if event_trb.completion_code() != TrbCompletionCode::ShortPacket as u8
+            && event_trb.transfer_length() != 0
+        {
+            println!(
+                "Event trb didn't yield a short packet, but some bytes were not transferred"
+            );
+            return Err(Error::new(EIO));
+        }
 
-            let cloned_trb = event.clone();
-            event.reserved(false);
+        // TODO: Handle event data
+        println!("EVENT DATA: {:?}", event_trb.event_data());
 
-            cloned_trb
-        };
-
-        self.run.ints[0].erdp.write(self.cmd.erdp() | (1 << 3));
-
-        Ok(cloned_trb)
+        Ok(event_trb)
     }
     fn device_req_no_data(&mut self, port: usize, req: usb::Setup) -> Result<()> {
         self.execute_control_transfer(
@@ -435,6 +431,8 @@ impl Xhci {
         let (event_trb, command_trb) = self.execute_command(|trb, cycle| {
             trb.reset_endpoint(slot, endp_num_xhc, tsp, cycle);
         }).await;
+        self.event_handler_finished();
+
         handle_event_trb("RESET_ENDPOINT", &event_trb, &command_trb)
     }
 
@@ -512,8 +510,11 @@ impl Xhci {
         }
     }
 
-    fn port_state(&self, port: usize) -> Result<chashmap::ReadGuard<'_, usize, PortState>> {
+    fn port_state(&self, port: usize) -> Result<chashmap::ReadGuard<'_, usize, super::PortState>> {
         self.port_states.get(&port).ok_or(Error::new(EBADF))
+    }
+    fn port_state_mut(&self, port: usize) -> Result<chashmap::WriteGuard<'_, usize, super::PortState>> {
+        self.port_states.get_mut(&port).ok_or(Error::new(EBADF))
     }
     async fn configure_endpoints(&mut self, port: usize, json_buf: &[u8]) -> Result<()> {
         let mut req: ConfigureEndpointsReq =
@@ -725,6 +726,7 @@ impl Xhci {
         let (event_trb, command_trb) = self.execute_command(|trb, cycle| {
             trb.configure_endpoint(slot, input_context_physical, cycle)
         }).await;
+        self.event_handler_finished();
 
         handle_event_trb("CONFIGURE_ENDPOINT", &event_trb, &command_trb)?;
 
@@ -739,7 +741,7 @@ impl Xhci {
 
         Ok(())
     }
-    fn transfer_read(
+    async fn transfer_read(
         &mut self,
         port_num: usize,
         endp_idx: u8,
@@ -753,9 +755,9 @@ impl Xhci {
             } else {
                 DeviceReqData::NoData
             },
-        )
+        ).await
     }
-    fn transfer_write(&mut self, port_num: usize, endp_idx: u8, buf: &[u8]) -> Result<(u8, u32)> {
+    async fn transfer_write(&mut self, port_num: usize, endp_idx: u8, buf: &[u8]) -> Result<(u8, u32)> {
         self.transfer(
             port_num,
             endp_idx,
@@ -764,7 +766,7 @@ impl Xhci {
             } else {
                 DeviceReqData::NoData
             },
-        )
+        ).await
     }
     const fn def_control_endp_doorbell() -> u32 {
         1
@@ -791,7 +793,7 @@ impl Xhci {
         (u32::from(db_task_id) << 16) | u32::from(db_target)
     }
     // TODO: Rename DeviceReqData to something more general.
-    fn transfer(
+    async fn transfer(
         &mut self,
         port_num: usize,
         endp_idx: u8,
@@ -913,7 +915,8 @@ impl Xhci {
                     ControlFlow::Break
                 }
             },
-        )?;
+        ).await?;
+        self.event_handler_finished();
 
         let bytes_transferred = buf.len() as u32 - event.transfer_length();
 
@@ -1615,6 +1618,7 @@ impl Xhci {
         } else {
             1
         };
+
         let raw = self
             .dev_ctx
             .contexts
@@ -1626,6 +1630,7 @@ impl Xhci {
             .a
             .read()
             & super::context::ENDPOINT_CONTEXT_STATUS_MASK;
+
         Ok(match raw {
             0 => EndpointStatus::Disabled,
             1 => EndpointStatus::Enabled,
@@ -1698,6 +1703,7 @@ impl Xhci {
                 (true, arr.rings.get_mut(&1).ok_or(Error::new(EBADFD))?)
             }
         };
+        let stream_id = 1u16;
         let doorbell = Self::endp_doorbell(
             endp_num,
             endp_desc,
@@ -1712,9 +1718,6 @@ impl Xhci {
 
         self.set_tr_deque_ptr(port_num, endp_num, deque_ptr_and_cycle).await?;
 
-
-
-        let stream_id = 1u16;
         self.dbs.lock().unwrap()[slot as usize].write(doorbell);
         Ok(())
     }
@@ -1765,6 +1768,7 @@ impl Xhci {
                 slot,
             )
         }).await;
+        self.event_handler_finished();
 
         handle_event_trb("SET_TR_DEQUEUE_PTR", &event_trb, &command_trb)
     }
@@ -1802,7 +1806,7 @@ impl Xhci {
                         // Yield the result directly because no bytes have to be sent or received
                         // beforehand.
                         let (completion_code, bytes_transferred) =
-                            self.transfer(port_num, endp_num - 1, DeviceReqData::NoData)?;
+                            self.transfer(port_num, endp_num - 1, DeviceReqData::NoData).await?;
                         if bytes_transferred > 0 {
                             return Err(Error::new(EIO));
                         }
@@ -2002,6 +2006,14 @@ fn handle_event_trb(name: &str, event_trb: &Trb, command_trb: &Trb) -> Result<()
         Ok(())
     } else {
         println!("{} command (TRB {:?}) failed with event trb {:?}", name, command_trb, event_trb);
+        Err(Error::new(EIO))
+    }
+}
+fn handle_transfer_event_trb(name: &str, event_trb: &Trb, transfer_trb: &Trb) -> Result<()> {
+    if event_trb.completion_code() == TrbCompletionCode::Success as u8 || event_trb.completion_code() == TrbCompletionCode::ShortPacket as u8 {
+        Ok(())
+    } else {
+        println!("{} transfer (TRB {:?}) failed with event trb {:?}", name, transfer_trb, event_trb);
         Err(Error::new(EIO))
     }
 }
