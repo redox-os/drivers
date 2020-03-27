@@ -161,7 +161,6 @@ impl StreamContextArray {
 }
 
 #[repr(packed)]
-#[derive(Clone, Debug)]
 pub struct ScratchpadBufferEntry {
     pub value: Mmio<u64>,
 }
@@ -179,21 +178,20 @@ impl ScratchpadBufferArray {
     pub fn new(entries: u16) -> Result<Self> {
         let mut entries = unsafe { Dma::zeroed_unsized(entries as usize)? };
 
-        let pages = entries.iter_mut().map(|entry| {
-            // TODO: When a better memory allocation API arrives (like the `mem:` scheme which I think is
-            // being worked on), no assumptions about the page size always being 4k will have to be
-            // made.
-            let pointer = syscall::physalloc(4096);
+        let pages = entries.iter_mut().map(|entry: &mut ScratchpadBufferEntry| -> Result<usize> {
+            // TODO: Get the page size using fstatvfs on the `memory:` scheme.
+            let pointer = syscall::physalloc(4096)?;
             assert_eq!(pointer & 0xFFFF_FFFF_FFFF_F000, pointer, "physically allocated pointer (physalloc) wasn't 4k page-aligned");
-            entry.set_addr(pointer);
-        });
+            entry.set_addr(pointer as u64);
+            Ok(pointer)
+        }).collect::<Result<Vec<usize>, _>>()?;
 
         Ok(Self {
             entries,
             pages,
         })
     }
-    pub fn register(&self) -> u64 {
+    pub fn register(&self) -> usize {
         self.entries.physical()
     }
 }

@@ -4,13 +4,16 @@ use std::fs::File;
 use std::future::Future;
 use std::pin::Pin;
 use std::ptr::NonNull;
-use std::sync::{atomic::AtomicBool, Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, Weak};
+use std::sync::atomic::{AtomicBool, AtomicUsize};
+
 use std::{mem, process, slice, sync::atomic, task, thread};
 
 use chashmap::CHashMap;
-use crossbeam_channel::Sender;
+use crossbeam_channel::{Receiver, Sender};
 use serde::Deserialize;
 use syscall::error::{Error, Result, EBADF, EBADMSG, ENOENT};
+use syscall::flag::O_RDONLY;
 use syscall::io::{Dma, Io};
 
 use crate::usb;
@@ -34,14 +37,14 @@ mod trb;
 use self::capability::CapabilityRegs;
 use self::context::{DeviceContextList, InputContext, ScratchpadBufferArray, StreamContextArray};
 use self::doorbell::Doorbell;
-use self::irq_reactor::NewPendingTrb;
+use self::irq_reactor::{IrqReactor, NewPendingTrb, RingId};
 use self::event::EventRing;
 use self::extended::{CapabilityId, ExtendedCapabilitiesIter, ProtocolSpeed, SupportedProtoCap};
 use self::operational::OperationalRegs;
 use self::port::Port;
 use self::ring::Ring;
 use self::runtime::{Interrupter, RuntimeRegs};
-use self::trb::{TransferKind, TrbCompletionCode, TrbType};
+use self::trb::{TransferKind, Trb, TrbCompletionCode, TrbType};
 
 use self::scheme::EndpIfState;
 
@@ -88,70 +91,61 @@ impl MsixInfo {
     }
 }
 
-struct Device<'a> {
-    ring: &'a mut Ring,
-    cmd: &'a mut Ring,
-    db: &'a mut Doorbell,
-    int: &'a mut Interrupter,
-}
-
-impl<'a> Device<'a> {
-    fn get_desc<T>(&mut self, kind: usb::DescriptorKind, index: u8, desc: &mut Dma<T>) {
+impl Xhci {
+    /// Gets descriptors, before the port state is initiated.
+    async fn get_desc_raw<T>(&self, port: usize, slot: u8, kind: usb::DescriptorKind, index: u8, ring: &mut Ring, desc: &mut Dma<T>) -> Result<()> {
         let len = mem::size_of::<T>();
 
-        {
-            let (cmd, cycle) = self.ring.next();
+        let future = {
+            let (cmd, cycle) = ring.next();
             cmd.setup(
                 usb::Setup::get_descriptor(kind, index, 0, len as u16),
                 TransferKind::In,
                 cycle,
             );
-        }
 
-        {
-            let (cmd, cycle) = self.ring.next();
+            let (cmd, cycle) = ring.next();
             cmd.data(desc.physical(), len as u16, true, cycle);
-        }
 
-        {
-            let (cmd, cycle) = self.ring.next();
-            cmd.status(false, cycle);
-        }
+            let (cmd, cycle) = ring.next();
+            cmd.status(0, true, true, false, false, cycle);
 
-        self.db.write(1);
+            self.next_transfer_event_trb(RingId::default_control_pipe(port as u8), &cmd)
+        };
 
-        {
-            let event = self.cmd.next_event();
-            // TODO: Replace polling here as well.
-            while event.data.read() == 0 {
-                println!("  - Waiting for event");
-            }
-        }
+        self.dbs.lock().unwrap()[usize::from(slot)].write(Self::def_control_endp_doorbell());
 
-        self.int.erdp.write(self.cmd.erdp() | (1 << 3));
+        let trbs = future.await;
+        let event_trb = trbs.event_trb;
+        let status_trb = trbs.src_trb.unwrap();
+
+        self::scheme::handle_transfer_event_trb("GET_DESC", &event_trb, &status_trb)?;
+
+        self.event_handler_finished();
+        Ok(())
     }
 
-    fn get_device(&mut self) -> Result<usb::DeviceDescriptor> {
+    async fn fetch_dev_desc(&mut self, port: usize, slot: u8, ring: &mut Ring) -> Result<usb::DeviceDescriptor> {
         let mut desc = Dma::<usb::DeviceDescriptor>::zeroed()?;
-        self.get_desc(usb::DescriptorKind::Device, 0, &mut desc);
+        self.get_desc_raw(port, slot, usb::DescriptorKind::Device, 0, ring, &mut desc).await?;
         Ok(*desc)
     }
 
-    fn get_config(&mut self, config: u8) -> Result<(usb::ConfigDescriptor, [u8; 4087])> {
+    async fn fetch_config_desc(&mut self, port: usize, slot: u8, ring: &mut Ring, config: u8) -> Result<(usb::ConfigDescriptor, [u8; 4087])> {
         let mut desc = Dma::<(usb::ConfigDescriptor, [u8; 4087])>::zeroed()?;
-        self.get_desc(usb::DescriptorKind::Configuration, config, &mut desc);
+        self.get_desc_raw(port, slot, usb::DescriptorKind::Configuration, config, ring, &mut desc).await?;
         Ok(*desc)
     }
 
-    fn get_bos(&mut self) -> Result<(usb::BosDescriptor, [u8; 4087])> {
+    async fn fetch_bos_desc(&mut self, port: usize, slot: u8, ring: &mut Ring) -> Result<(usb::BosDescriptor, [u8; 4087])> {
         let mut desc = Dma::<(usb::BosDescriptor, [u8; 4087])>::zeroed()?;
-        self.get_desc(usb::DescriptorKind::BinaryObjectStorage, 0, &mut desc);
+        self.get_desc_raw(port, slot, usb::DescriptorKind::BinaryObjectStorage, 0, ring, &mut desc).await?;
         Ok(*desc)
     }
 
-    fn get_string(&mut self, index: u8) -> Result<String> {
+    async fn fetch_string_desc(&mut self, port: usize, slot: u8, ring: &mut Ring, index: u8) -> Result<String> {
         let mut sdesc = Dma::<(u8, u8, [u16; 127])>::zeroed()?;
-        self.get_desc(usb::DescriptorKind::String, index, &mut sdesc);
+        self.get_desc_raw(port, slot, usb::DescriptorKind::String, index, ring, &mut sdesc).await?;
 
         let len = sdesc.0 as usize;
         if len > 2 {
@@ -165,6 +159,7 @@ impl<'a> Device<'a> {
 pub struct Xhci {
     // immutable
     cap: &'static CapabilityRegs,
+    page_size: usize,
 
     // XXX: It would be really useful to be able to mutably access individual elements of a slice,
     // without having to wrap every element in a lock (which wouldn't work since they're packed).
@@ -183,7 +178,7 @@ pub struct Xhci {
     base: *const u8,
 
     handles: CHashMap<usize, scheme::Handle>,
-    next_handle: usize,
+    next_handle: AtomicUsize,
     port_states: CHashMap<usize, PortState>,
 
     drivers: CHashMap<usize, process::Child>,
@@ -191,16 +186,25 @@ pub struct Xhci {
 
     interrupt_method: InterruptMethod,
     pcid_handle: Mutex<PcidServerHandle>,
-    irq_reactor: Option<thread::JoinHandle<()>>,
+
+    irq_reactor: Mutex<Option<thread::JoinHandle<()>>>,
+
     irq_reactor_sender: Sender<NewPendingTrb>,
+
+    // not used, but still stored so that the thread, when created, can get the channel without the
+    // channel being in a mutex.
+    irq_reactor_receiver: Receiver<NewPendingTrb>,
 }
+
+unsafe impl Send for Xhci {}
+unsafe impl Sync for Xhci {}
 
 struct PortState {
     slot: u8,
     cfg_idx: Option<u8>,
     if_idx: Option<u8>,
     input_context: Mutex<Dma<InputContext>>,
-    dev_desc: DevDesc,
+    dev_desc: Option<DevDesc>,
     endpoint_states: BTreeMap<u8, EndpointState>,
 }
 
@@ -226,6 +230,13 @@ impl Xhci {
     pub fn new(scheme_name: String, address: usize, interrupt_method: InterruptMethod, pcid_handle: PcidServerHandle) -> Result<Xhci> {
         let cap = unsafe { &mut *(address as *mut CapabilityRegs) };
         println!("  - CAP {:X}", address);
+
+        let page_size = {
+            let memory_fd = syscall::open("memory:", O_RDONLY)?;
+            let mut stat = syscall::data::StatVfs::default();
+            syscall::fstatvfs(memory_fd, &mut stat)?;
+            stat.f_bsize as usize
+        };
 
         let op_base = address + cap.len.read() as usize;
         let op = unsafe { &mut *(op_base as *mut OperationalRegs) };
@@ -276,25 +287,42 @@ impl Xhci {
         let run = unsafe { &mut *(run_base as *mut RuntimeRegs) };
         println!("  - RUNTIME {:X}", run_base);
 
-        let mut xhci = Xhci {
-            base: address as *const u8,
-            cap,
-            op,
-            ports,
-            dbs,
-            run,
-            dev_ctx: DeviceContextList::new(max_slots)?,
-            cmd: Ring::new(),
-            primary_event_ring: EventRing::new(),
-            handles: BTreeMap::new(),
-            next_handle: 0,
-            port_states: BTreeMap::new(),
+        // Create the command ring with 4096 / 16 (TRB size) entries, so that it uses all of the
+        // DMA allocation (which is at least a 4k page).
+        let entries_per_page = page_size / mem::size_of::<Trb>();
+        let cmd = Ring::new(entries_per_page, true)?;
 
-            drivers: BTreeMap::new(),
+        let (irq_reactor_sender, irq_reactor_receiver) = crossbeam_channel::unbounded();
+
+        let mut xhci = Self {
+            base: address as *const u8,
+
+            cap,
+            page_size,
+
+            op: Mutex::new(op),
+            ports: Mutex::new(ports),
+            dbs: Mutex::new(dbs),
+            run: Mutex::new(run),
+
+            dev_ctx: DeviceContextList::new(max_slots)?,
+            scratchpad_buf_arr: None, // initialized in init()
+
+            cmd: Mutex::new(cmd),
+            primary_event_ring: Mutex::new(EventRing::new()?),
+            handles: CHashMap::new(),
+            next_handle: AtomicUsize::new(0),
+            port_states: CHashMap::new(),
+
+            drivers: CHashMap::new(),
             scheme_name,
 
             interrupt_method,
             pcid_handle: Mutex::new(pcid_handle),
+
+            irq_reactor: Mutex::new(None),
+            irq_reactor_sender,
+            irq_reactor_receiver,
         };
 
         xhci.init(max_slots);
@@ -302,37 +330,37 @@ impl Xhci {
         Ok(xhci)
     }
 
-    pub fn init(&mut self, max_slots: u8) {
+    pub fn init(&mut self, max_slots: u8) -> Result<()> {
         // Set enabled slots
         println!("  - Set enabled slots to {}", max_slots);
-        self.op.get_mut().config.write(max_slots as u32);
-        println!("  - Enabled Slots: {}", self.op.get_mut().config.read() & 0xFF);
+        self.op.get_mut().unwrap().config.write(max_slots as u32);
+        println!("  - Enabled Slots: {}", self.op.get_mut().unwrap().config.read() & 0xFF);
 
         // Set device context address array pointer
         let dcbaap = self.dev_ctx.dcbaap();
         println!("  - Write DCBAAP: {:X}", dcbaap);
-        self.op.get_mut().dcbaap.write(dcbaap as u64);
+        self.op.get_mut().unwrap().dcbaap.write(dcbaap as u64);
 
         // Set command ring control register
-        let crcr = self.cmd.get_mut().register();
+        let crcr = self.cmd.get_mut().unwrap().register();
         assert_eq!(crcr & 0xFFFF_FFFF_FFFF_FFC1, crcr, "unaligned CRCR");
         println!("  - Write CRCR: {:X}", crcr);
-        self.op.get_mut().crcr.write(crcr as u64);
+        self.op.get_mut().unwrap().crcr.write(crcr as u64);
 
         // Set event ring segment table registers
-        println!("  - Interrupter 0: {:X}", self.run.ints.as_ptr() as usize);
+        println!("  - Interrupter 0: {:X}", self.run.get_mut().unwrap().ints.as_ptr() as usize);
         {
-            let int = &mut self.run.get_mut().ints[0];
+            let int = &mut self.run.get_mut().unwrap().ints[0];
 
             let erstz = 1;
             println!("  - Write ERSTZ: {}", erstz);
             int.erstsz.write(erstz);
 
-            let erdp = self.primary_event_ring.get_mut().erdp();
+            let erdp = self.primary_event_ring.get_mut().unwrap().erdp() | (!1);
             println!("  - Write ERDP: {:X}", erdp);
             int.erdp.write(erdp as u64 | (1 << 3));
 
-            let erstba = self.primary_event_ring.get_mut().erstba();
+            let erstba = self.primary_event_ring.get_mut().unwrap().erstba();
             println!("  - Write ERSTBA: {:X}", erstba);
             int.erstba.write(erstba as u64);
 
@@ -343,49 +371,66 @@ impl Xhci {
             int.iman.writef(1 << 1, true);
 
         }
-        self.op.get_mut().usb_cmd.writef(1 << 2, true);
+        self.op.get_mut().unwrap().usb_cmd.writef(1 << 2, true);
 
         // Setup the scratchpad buffers that are required for the xHC to function.
-        self.setup_scratchpads();
+        self.setup_scratchpads()?;
 
         // Set run/stop to 1
         println!("  - Start");
-        self.op.get_mut().usb_cmd.writef(1, true);
+        self.op.get_mut().unwrap().usb_cmd.writef(1, true);
 
         // Wait until controller is running
         println!("  - Wait for running");
-        while self.op.get_mut().usb_sts.readf(1) {
+        while self.op.get_mut().unwrap().usb_sts.readf(1) {
             println!("  - Waiting for XHCI running");
         }
 
-        println!("IP={}", self.run.get_mut().ints[0].iman.readf(1));
+        println!("IP={}", self.run.get_mut().unwrap().ints[0].iman.readf(1));
 
         // Ring command doorbell
         println!("  - Ring doorbell");
-        self.dbs.get_mut()[0].write(0);
+        self.dbs.get_mut().unwrap()[0].write(0);
 
         println!("  - XHCI initialized");
+
+        if self.cap.cic() {
+            self.op.lock().unwrap().set_cie(true);
+        }
+
+        Ok(())
     }
 
     pub fn setup_scratchpads(&mut self) -> Result<()> {
         let buf_count = self.cap.max_scratchpad_bufs();
 
         if buf_count == 0 {
-            return;
+            return Ok(());
         }
-        self.scratchpad_buf_arr = Some(ScratchpadBufferArray::new(buf_count)?);
-        self.dev_ctx.dcbaa[0] = self.scratchpad_buf_arr.register();
+        let scratchpad_buf_arr = ScratchpadBufferArray::new(buf_count)?;
+        self.dev_ctx.dcbaa[0] = scratchpad_buf_arr.register() as u64;
+        self.scratchpad_buf_arr = Some(scratchpad_buf_arr);
+
+        Ok(())
     }
 
-    pub fn enable_port_slot(&mut self, slot_ty: u8) -> Result<u8> {
+    pub async fn enable_port_slot(&mut self, slot_ty: u8) -> Result<u8> {
         assert_eq!(slot_ty & 0x1F, slot_ty);
 
-        let cloned_event_trb =
-            self.execute_command("ENABLE_SLOT", |cmd, cycle| cmd.enable_slot(slot_ty, cycle))?;
-        Ok(cloned_event_trb.event_slot())
+        let (event_trb, command_trb) =
+            self.execute_command(|cmd, cycle| cmd.enable_slot(slot_ty, cycle)).await;
+
+        self::scheme::handle_event_trb("ENABLE_SLOT", &event_trb, &command_trb);
+        self.event_handler_finished();
+
+        Ok(event_trb.event_slot())
     }
-    pub fn disable_port_slot(&mut self, slot: u8) -> Result<()> {
-        self.execute_command("DISABLE_SLOT", |cmd, cycle| cmd.disable_slot(slot, cycle))?;
+    pub async fn disable_port_slot(&mut self, slot: u8) -> Result<()> {
+        let (event_trb, command_trb) = self.execute_command(|cmd, cycle| cmd.disable_slot(slot, cycle)).await;
+
+        self::scheme::handle_event_trb("DISABLE_SLOT", &event_trb, &command_trb);
+        self.event_handler_finished();
+
         Ok(())
     }
 
@@ -415,29 +460,19 @@ impl Xhci {
                     .supported_protocol(i as u8)
                     .expect("Failed to find supported protocol information for port")
                     .proto_slot_ty();
-                let slot = self.enable_port_slot(slot_ty)?;
+                let slot = self.enable_port_slot(slot_ty).await?;
 
                 println!("    - Slot {}", slot);
 
                 let mut input = Dma::<InputContext>::zeroed()?;
                 let mut ring = self.address_device(&mut input, i, slot_ty, slot, speed).await?;
 
-                let dev_desc = Self::get_dev_desc_raw(
-                    &mut *self.ports.lock().unwrap(),
-                    &mut *self.run.lock().unwrap(),
-                    &mut *self.cmd.lock().unwrap(),
-                    &mut *self.dbs.lock().unwrap(),
-                    i,
-                    slot,
-                    &mut ring,
-                )?;
-
-                self.update_default_control_pipe(&mut input, slot, &dev_desc)?;
+                // TODO: Should the descriptors be cached in PortState, or refetched?
 
                 let mut port_state = PortState {
                     slot,
                     input_context: Mutex::new(input),
-                    dev_desc,
+                    dev_desc: None,
                     cfg_idx: None,
                     if_idx: None,
                     endpoint_states: std::iter::once((
@@ -450,9 +485,9 @@ impl Xhci {
                     .collect::<BTreeMap<_, _>>(),
                 };
 
-                if self.cap.cic() {
-                    self.op.lock().unwrap().set_cie(true);
-                }
+                let dev_desc = self.get_desc(i, slot, &mut ring).await?;
+                port_state.dev_desc = Some(dev_desc);
+                self.update_default_control_pipe(&mut input, slot, &dev_desc).await?;
 
                 /*match self.spawn_drivers(i, &mut port_state) {
                     Ok(()) => (),
@@ -466,7 +501,7 @@ impl Xhci {
         Ok(())
     }
 
-    pub fn update_default_control_pipe(
+    pub async fn update_default_control_pipe(
         &mut self,
         input_context: &mut Dma<InputContext>,
         slot_id: u8,
@@ -486,9 +521,13 @@ impl Xhci {
         b |= (new_max_packet_size) << 16;
         endp_ctx.b.write(b);
 
-        self.execute_command("EVALUATE_CONTEXT", |trb, cycle| {
+        let (event_trb, command_trb) = self.execute_command(|trb, cycle| {
             trb.evaluate_context(slot_id, input_context.physical(), false, cycle)
-        })?;
+        }).await;
+
+        self::scheme::handle_event_trb("EVALUATE_CONTEXT", &event_trb, &command_trb);
+        self.event_handler_finished();
+
         Ok(())
     }
 
@@ -598,15 +637,16 @@ impl Xhci {
     pub fn uses_msix(&self) -> bool {
         if let InterruptMethod::MsiX(_) = self.interrupt_method { true } else { false }
     }
-    pub fn msix_info(&self) -> Option<&MsixInfo> {
+    // TODO: Perhaps use an rwlock?
+    pub fn msix_info(&self) -> Option<MutexGuard<'_, MsixInfo>> {
         match self.interrupt_method {
-            InterruptMethod::MsiX(ref info) => Some(info),
+            InterruptMethod::MsiX(ref info) => Some(info.lock().unwrap()),
             _ => None,
         }
     }
-    pub fn msix_info_mut(&mut self) -> Option<&mut MsixInfo> {
+    pub fn msix_info_mut(&mut self) -> Option<MutexGuard<'_, MsixInfo>> {
         match self.interrupt_method {
-            InterruptMethod::MsiX(ref mut info) => Some(info),
+            InterruptMethod::MsiX(ref info) => Some(info.lock().unwrap()),
             _ => None,
         }
     }
@@ -614,18 +654,20 @@ impl Xhci {
     /// Checks whether an IRQ has been received from *this* device, in case of an interrupt. Always
     /// true when using MSI/MSI-X.
     pub fn received_irq(&mut self) -> bool {
+        let runtime_regs = self.run.lock().unwrap();
+
         if self.uses_msi() || self.uses_msix() {
             // Since using MSI and MSI-X implies having no IRQ sharing whatsoever, the IP bit
             // doesn't have to be touched.
-            println!("Successfully received MSI/MSI-X interrupt, IP={}, EHB={}", self.run.ints[0].iman.readf(1), self.run.ints[0].erdp.readf(3));
+            println!("Successfully received MSI/MSI-X interrupt, IP={}, EHB={}", runtime_regs.ints[0].iman.readf(1), runtime_regs.ints[0].erdp.readf(3));
             println!("MSI-X PB={}", self.msix_info_mut().unwrap().pba(0));
             let entry = self.msix_info_mut().unwrap().table_entry_pointer(0);
             println!("MSI-X entry (addr_lo, addr_hi, msg_data, vec_ctl: {:#0x} {:#0x} {:#0x} {:#0x}", entry.addr_lo.read(), entry.addr_hi.read(), entry.msg_data.read(), entry.vec_ctl.read());
             true
-        } else if self.run.ints[0].iman.readf(1) {
+        } else if runtime_regs.ints[0].iman.readf(1) {
             // If MSI and/or MSI-X are not used, the interrupt might have to be shared, and thus there is
             // a special register to specify whether the IRQ actually came from the xHC.
-            self.run.ints[0].iman.writef(1, true);
+            runtime_regs.ints[0].iman.writef(1, true);
 
             // The interrupt came from the xHC.
             true
@@ -635,8 +677,6 @@ impl Xhci {
         }
 
     }
-    pub fn on_irq(&mut self) {
-    }
     fn spawn_drivers(&mut self, port: usize, ps: &mut PortState) -> Result<()> {
         // TODO: There should probably be a way to select alternate interfaces, and not just the
         // first one.
@@ -645,12 +685,14 @@ impl Xhci {
 
         let ifdesc = &ps
             .dev_desc
+            .as_ref().unwrap()
             .config_descs
             .first()
             .ok_or(Error::new(EBADF))?
             .interface_descs
             .first()
             .ok_or(Error::new(EBADF))?;
+
         let drivers_usercfg: &DriversConfig = &DRIVERS_CONFIG;
 
         if let Some(driver) = drivers_usercfg.drivers.iter().find(|driver| {
@@ -787,6 +829,15 @@ impl Xhci {
             .find(|speed| speed.psiv() == psiv)
     }
 }
+pub fn start_irq_reactor(hci: &Arc<Xhci>, irq_file: Option<File>) {
+    let receiver = hci.irq_reactor_receiver.clone();
+    let hci_clone = Arc::clone(&hci);
+
+    *hci.irq_reactor.lock().unwrap() = Some(thread::spawn(move || {
+        IrqReactor::new(hci_clone, receiver, irq_file).run()
+    }));
+}
+
 #[derive(Deserialize)]
 struct DriverConfig {
     name: String,

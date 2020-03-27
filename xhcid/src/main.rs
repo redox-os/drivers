@@ -25,7 +25,11 @@ use syscall::io::Io;
 
 use crate::xhci::{InterruptMethod, Xhci};
 
-mod driver_interface;
+// Declare as pub so that no warnings appear due to parts of the interface code not being used by
+// the driver. Since there's also a dedicated crate for the driver interface, those warnings don't
+// mean anything.
+pub mod driver_interface;
+
 mod usb;
 mod xhci;
 
@@ -181,7 +185,7 @@ fn main() {
             table_entry_pointer.msg_data.write(msg_data);
             table_entry_pointer.vec_ctl.writef(MsixTableEntry::VEC_CTL_MASK_BIT, false);
 
-            (Some(interrupt_handle), InterruptMethod::MsiX(info))
+            (Some(interrupt_handle), InterruptMethod::MsiX(Mutex::new(info)))
         }
     } else if pci_config.func.legacy_interrupt_pin.is_some() {
         // legacy INTx# interrupt pins.
@@ -212,8 +216,9 @@ fn main() {
         File::from_raw_fd(socket_fd as RawFd)
     }));
 
-    let hci = Arc::new(Xhci::new(name, address, interrupt_method, irq_file.as_mut(), pcid_handle).expect("xhcid: failed to allocate device"));
-    hci.probe().expect("xhcid: failed to probe");
+    let hci = Arc::new(Xhci::new(name, address, interrupt_method, pcid_handle).expect("xhcid: failed to allocate device"));
+    xhci::start_irq_reactor(&hci, irq_file);
+    futures::executor::block_on(hci.probe()).expect("xhcid: failed to probe");
 
     let mut event_queue =
         EventQueue::<()>::new().expect("xhcid: failed to create event queue");
@@ -223,49 +228,12 @@ fn main() {
     let todo = Arc::new(Mutex::new(Vec::<Packet>::new()));
     let todo_futures = Arc::new(Mutex::new(Vec::<Pin<Box<dyn Future<Output = usize> + Send + Sync + 'static>>>::new()));
 
-    if let Some(irq_file) = irq_file {
-        let hci_irq = hci.clone();
-        let socket_irq = socket.clone();
-        let todo_irq = todo.clone();
-        event_queue
-            .add(irq_file.as_raw_fd(), move |_| -> io::Result<Option<()>> {
-                let mut irq = [0; 8];
-                irq_file.read(&mut irq)?;
-
-                let hci = hci_irq.lock().unwrap();
-                let socket = socket_irq.lock().unwrap();
-                let todo = todo_irq.lock().unwrap();
-
-                if hci.received_irq() {
-                    hci.on_irq();
-
-                    irq_file.write(&mut irq)?;
-
-                    let mut i = 0;
-                    while i < todo.len() {
-                        let a = todo[i].a;
-                        hci.handle(&mut todo[i]);
-                        if todo[i].a == (-EWOULDBLOCK) as usize {
-                            todo[i].a = a;
-                            i += 1;
-                        } else {
-                            socket.write(&todo[i])?;
-                            todo.remove(i);
-                        }
-                    }
-                }
-
-                Ok(None)
-            })
-            .expect("xhcid: failed to catch events on IRQ file");
-    }
-
     let socket_fd = socket.lock().unwrap().as_raw_fd();
     let socket_packet = socket.clone();
     event_queue
         .add(socket_fd, move |_| -> io::Result<Option<()>> {
             let mut socket = socket_packet.lock().unwrap();
-            let mut hci = hci.lock().unwrap();
+            let mut hci = hci;
             let mut todo = todo.lock().unwrap();
 
             loop {

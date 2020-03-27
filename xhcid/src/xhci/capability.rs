@@ -56,13 +56,13 @@ impl CapabilityRegs {
         ((self.hcc_params1.read() & HCC_PARAMS1_XECP_MASK) >> HCC_PARAMS1_XECP_SHIFT) as u16
     }
     pub fn max_scratchpad_bufs_lo(&self) -> u8 {
-        ((self.hcs_params2.read() & HCS_PARAMS2_MAX_SCRATCHPAD_BUFS_LO_MASK) >> HCS_PARAMS2_MAX_SCRATCHPAD_BUFS_LO_SHIFT)
+        ((self.hcs_params2.read() & HCS_PARAMS2_MAX_SCRATCHPAD_BUFS_LO_MASK) >> HCS_PARAMS2_MAX_SCRATCHPAD_BUFS_LO_SHIFT) as u8
     }
     pub fn spr(&self) -> bool {
         self.hcs_params2.readf(HCS_PARAMS2_SPR_BIT)
     }
     pub fn max_scratchpad_bufs_hi(&self) -> u8 {
-        ((self.hcs_params2.read() & HCS_PARAMS2_MAX_SCRATCHPAD_BUFS_HI_MASK) >> HCS_PARAMS2_MAX_SCRATCHPAD_BUFS_HI_SHIFT)
+        ((self.hcs_params2.read() & HCS_PARAMS2_MAX_SCRATCHPAD_BUFS_HI_MASK) >> HCS_PARAMS2_MAX_SCRATCHPAD_BUFS_HI_SHIFT) as u8
     }
     pub fn max_scratchpad_bufs(&self) -> u16 {
         u16::from(self.max_scratchpad_bufs_lo())

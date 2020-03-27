@@ -374,10 +374,10 @@ impl Trb {
         );
     }
 
-    pub fn status(&mut self, input: bool, cycle: bool) {
+    pub fn status(&mut self, interrupter: u16, input: bool, ioc: bool, ch: bool, ent: bool, cycle: bool) {
         self.set(
             0,
-            0,
+            u32::from(interrupter) << 22,
             ((input as u32) << 16)
                 | ((TrbType::StatusStage as u32) << 10)
                 | (1 << 5)

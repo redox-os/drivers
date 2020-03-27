@@ -64,9 +64,10 @@ impl Ring {
     ///
     /// # Panics
     /// Panics if paddr is not a multiple of 16 bytes, i.e. the size of a TRB.
+    // TODO: Use usize instead of u64.
     pub fn phys_addr_to_index(&self, paddr: u64) -> Option<usize> {
         let base = self.trbs.physical();
-        let offset = paddr.checked_sub(base)?;
+        let offset = paddr.checked_sub(base as u64)? as usize;
 
         assert_eq!(offset % mem::size_of::<Trb>(), 0, "unaligned TRB physical address");
 
@@ -79,29 +80,29 @@ impl Ring {
         Some(index)
     }
     pub fn phys_addr_to_entry_ref(&self, paddr: u64) -> Option<&Trb> {
-        &self.trbs[self.phys_addr_to_index(paddr)]
+        Some(&self.trbs[self.phys_addr_to_index(paddr)?])
     }
     pub fn phys_addr_to_entry_mut(&self, paddr: u64) -> Option<&mut Trb> {
-        &mut self.trbs[self.phys_addr_to_index(paddr)]
+        Some(&mut self.trbs[self.phys_addr_to_index(paddr)?])
     }
     pub fn phys_addr_to_entry(&self, paddr: u64) -> Option<Trb> {
-        self.trbs[self.phys_addr_to_index(paddr)].clone()
+        Some(self.trbs[self.phys_addr_to_index(paddr)?].clone())
     }
     pub(crate) fn start_virt_addr(&self) -> *const Trb {
         self.trbs.as_ptr()
     }
     pub(crate) fn end_virt_addr(&self) -> *const Trb {
-        unsafe { self.start_virt_addr().offset(self.trbs.len()) }
+        unsafe { self.start_virt_addr().offset(self.trbs.len() as isize) }
     }
     pub fn trb_phys_ptr(&self, trb: &Trb) -> u64 {
         let trb_virt_pointer = trb as *const Trb;
         let trbs_base_virt_pointer = self.trbs.as_ptr();
 
-        if trb_virt_pointer < trbs_base_virt_pointer || trb_virt_pointer > trbs_base_virt_pointer + self.trbs.len() * mem::size_of::<Trb>() {
+        if (trb_virt_pointer as usize) < (trbs_base_virt_pointer as usize) || (trb_virt_pointer as usize) > (trbs_base_virt_pointer as usize) + self.trbs.len() * mem::size_of::<Trb>() {
             panic!("Gave a TRB outside of the ring, when retrieving its physical address in that ring. TRB: {:?} (at address {:p})", trb, trb);
         }
-        let trbs_base_phys_ptr = self.trbs.physical();
-        let trb_phys_ptr = trb_virt_pointer - trbs_base_phys_ptr;
+        let trbs_base_phys_ptr = self.trbs.physical() as u64;
+        let trb_phys_ptr = trb_virt_pointer as u64 - trbs_base_phys_ptr;
         trb_phys_ptr
     }
     /*
