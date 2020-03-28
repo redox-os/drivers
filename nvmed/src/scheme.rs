@@ -89,7 +89,7 @@ impl DiskWrapper {
 
         let mut block_bytes = [0u8; 4096];
 
-        partitionlib::get_partitions(&mut Device { disk, nvme, offset: 0, block_bytes: &mut block_bytes[..bs as usize] }, bs).ok().flatten()
+        partitionlib::get_partitions(&mut Device { disk, nvme, offset: 0, block_bytes: &mut block_bytes[..bs.into()] }, bs).ok().flatten()
     }
     fn new(mut inner: NvmeNamespace, nvme: &mut Nvme) -> Self {
         Self {
@@ -320,7 +320,7 @@ impl SchemeBlockMut for DiskScheme {
                 if rel_block + *offset as u64 / block_size >= part.size {
                     return Err(Error::new(EOVERFLOW));
                 }
-                
+
                 let abs_block = part.start_lba + rel_block;
 
                 if let Some(count) = unsafe {
@@ -362,7 +362,7 @@ impl SchemeBlockMut for DiskScheme {
                 if rel_block + *offset as u64 / block_size >= part.size {
                     return Err(Error::new(EOVERFLOW));
                 }
-                
+
                 let abs_block = part.start_lba + rel_block;
 
                 if let Some(count) = unsafe {
