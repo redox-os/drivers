@@ -246,15 +246,25 @@ fn main() {
     print!("PCI BS/DV/FN VEND:DEVI CL.SC.IN.RV\n");
 
     let pci = Pci::new();
-    for bus in pci.buses() {
-        for dev in bus.devs() {
+    'bus: for bus in pci.buses() {
+        'dev: for dev in bus.devs() {
             for func in dev.funcs() {
                 let func_num = func.num;
                 match PciHeader::from_reader(func) {
                     Ok(header) => {
                         handle_parsed_header(&config, &pci, bus.num, dev.num, func_num, header);
                     }
-                    Err(PciHeaderError::NoDevice) => {},
+                    Err(PciHeaderError::NoDevice) => {
+                        if func_num == 0 {
+                            if dev.num == 0 {
+                                // println!("PCI {:>02X}: no bus", bus.num);
+                                continue 'bus;
+                            } else {
+                                // println!("PCI {:>02X}/{:>02X}: no dev", bus.num, dev.num);
+                                continue 'dev;
+                            }
+                        }
+                    },
                     Err(PciHeaderError::UnknownHeaderType(id)) => {
                         println!("pcid: unknown header type: {}", id);
                     }
