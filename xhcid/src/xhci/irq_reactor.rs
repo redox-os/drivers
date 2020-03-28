@@ -5,11 +5,15 @@ use std::io::prelude::*;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{self, AtomicUsize};
-use std::{mem, task, thread};
+use std::{io, mem, task, thread};
+
+use std::os::unix::io::AsRawFd;
 
 use crossbeam_channel::{Sender, Receiver};
 use futures::Stream;
 use syscall::Io;
+
+use event::EventQueue;
 
 use super::Xhci;
 use super::ring::Ring;
@@ -126,18 +130,26 @@ impl IrqReactor {
     }
     fn run_with_irq_file(mut self) {
         let hci_clone = Arc::clone(&self.hci);
+        let mut event_queue = EventQueue::<()>::new().expect("xhcid irq_reactor: failed to create IRQ event queue");
+        let irq_fd = self.irq_file.as_ref().unwrap().as_raw_fd();
 
-        'event_loop: loop {
-            self.handle_requests();
+        event_queue.add(irq_fd, move |_| -> io::Result<Option<()>> {
 
             let mut buffer = [0u8; 8];
+
             let bytes_read = self.irq_file.as_mut().unwrap().read(&mut buffer).expect("Failed to read from irq scheme");
+
+            self.handle_requests();
+
             if bytes_read < mem::size_of::<usize>() {
-                panic!("wrong number of bytes read from `irq:`: expected {}, got {}", mem::size_of::<usize>(), bytes_read);
+                // continue the loop when the next IRQ arrives
+                return Ok(None);
             }
 
+
             if !self.hci.received_irq() {
-                continue;
+                // continue only when an IRQ to this device was received
+                return Ok(None);
             }
 
             let _ = self.irq_file.as_mut().unwrap().write(&buffer);
@@ -153,18 +165,20 @@ impl IrqReactor {
 
                 if trb.completion_code() == TrbCompletionCode::Invalid as u8 {
                     if count == 0 { println!("xhci: Received interrupt, but no event was found in the event ring. Ignoring interrupt.") }
-                    continue 'event_loop;
+                    // no more events were found, continue the loop
+                    return Ok(None);
                 } else { count += 1 }
 
                 if self.check_event_ring_full(trb.clone()) {
-                    continue 'trb_loop;
+                    return Ok(None);
                 }
                 self.acknowledge(trb.clone());
                 trb.reserved(false);
 
                 self.update_erdp();
             }
-        }
+        }).expect("xhcid: failed to catch irq events");
+        event_queue.run().expect("xhcid: failed to run IRQ event queue");
     }
     fn update_erdp(&self) {
         let dequeue_pointer_and_dcs = self.hci.primary_event_ring.lock().unwrap().erdp();
