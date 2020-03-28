@@ -470,6 +470,7 @@ impl Xhci {
 
                 let mut input = Dma::<InputContext>::zeroed()?;
                 let mut ring = self.address_device(&mut input, i, slot_ty, slot, speed).await?;
+                println!("Addressed device");
 
                 // TODO: Should the descriptors be cached in PortState, or refetched?
 
@@ -538,7 +539,7 @@ impl Xhci {
             trb.evaluate_context(slot_id, input_context.physical(), false, cycle)
         }).await;
 
-        self::scheme::handle_event_trb("EVALUATE_CONTEXT", &event_trb, &command_trb);
+        self::scheme::handle_event_trb("EVALUATE_CONTEXT", &event_trb, &command_trb)?;
         self.event_handler_finished();
 
         Ok(())
@@ -633,9 +634,11 @@ impl Xhci {
 
         let input_context_physical = input_context.physical();
 
+        println!("pre_address_device");
         let (event_trb, _) = self.execute_command(|trb, cycle| {
             trb.address_device(slot, input_context_physical, false, cycle)
         }).await;
+        println!("post_address_device");
 
         if event_trb.completion_code() != TrbCompletionCode::Success as u8 {
             println!("Failed to address device at slot {} (port {})", slot, i);

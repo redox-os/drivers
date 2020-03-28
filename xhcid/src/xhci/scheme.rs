@@ -213,17 +213,11 @@ impl Xhci {
             hid_descs: hid_descs.into_iter().collect(),
         })
     }
-    pub fn execute_command_noreply<F: FnOnce(&mut Trb, bool)>(&self, f: F) {
-        let mut command_ring = self.cmd.lock().unwrap();
-
-        let (cmd, cycle) = command_ring.next();
-        f(cmd, cycle);
-
-        self.dbs.lock().unwrap()[0].write(0);
-
-        // TODO: It's still possible not to reset the TRB, right?
-    }
-
+    /// Pushes a command TRB to the command ring, rings the doorbell, and then awaits its Command
+    /// Completion Event.
+    ///
+    /// # Locking
+    /// This function will lock `Xhci::cmd` and `Xhci::dbs`.
     pub async fn execute_command<F: FnOnce(&mut Trb, bool)>(
         &self,
         f: F,
@@ -242,7 +236,9 @@ impl Xhci {
             self.next_command_completion_event_trb(&*command_ring, command_trb)
         };
 
+        println!("Ringing doorbell");
         self.dbs.lock().unwrap()[0].write(0);
+        println!("Doorbell rung");
 
         let trbs = next_event.await;
         let event_trb = trbs.event_trb;
@@ -1988,7 +1984,13 @@ impl Xhci {
             _ => return Err(Error::new(EBADF)),
         }
     }
+    /// Notifies the xHC that the current event handler has finished, so that new interrupts can be
+    /// sent. This is required after each invocation of `Self::execute_command`.
+    ///
+    /// # Locking
+    /// This function locks `Xhci::run`.
     pub fn event_handler_finished(&self) {
+        println!("Event handler finished");
         // write 1 to EHB to clear it
         self.run.lock().unwrap().ints[0].erdp.writef(1 << 3, true);
     }

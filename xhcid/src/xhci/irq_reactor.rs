@@ -18,6 +18,7 @@ use event::{Event, EventQueue};
 use super::Xhci;
 use super::ring::Ring;
 use super::trb::{Trb, TrbCompletionCode, TrbType};
+use super::event::EventRing;
 
 /// Short-term states (as in, they are removed when the waker is consumed, but probably pushed back
 /// by the future unless it completed).
@@ -127,7 +128,8 @@ impl IrqReactor {
 
             self.handle_requests();
             self.acknowledge(trb.clone());
-            self.update_erdp();
+
+            self.update_erdp(&*event_ring_guard);
         }
     }
     fn run_with_irq_file(mut self) {
@@ -136,6 +138,8 @@ impl IrqReactor {
         let hci_clone = Arc::clone(&self.hci);
         let mut event_queue = EventQueue::<()>::new().expect("xhcid irq_reactor: failed to create IRQ event queue");
         let irq_fd = self.irq_file.as_ref().unwrap().as_raw_fd();
+
+        let mut event_trb_index = { hci_clone.primary_event_ring.lock().unwrap().ring.next_index() };
 
         event_queue.add(irq_fd, move |_| -> io::Result<Option<()>> {
             println!("IRQ event queue notified");
@@ -160,34 +164,36 @@ impl IrqReactor {
             let mut count = 0;
 
             'trb_loop: loop {
-                let trb = event_ring.next();
+                let event_trb = &mut event_ring.ring.trbs[event_trb_index];
 
-                if trb.completion_code() == TrbCompletionCode::Invalid as u8 {
+                if event_trb.completion_code() == TrbCompletionCode::Invalid as u8 {
                     if count == 0 { println!("xhci: Received interrupt, but no event was found in the event ring. Ignoring interrupt.") }
                     // no more events were found, continue the loop
                     return Ok(None);
                 } else { count += 1 }
 
-                println!("Found event TRB: {:?}", trb);
+                println!("Found event TRB: {:?}", event_trb);
 
-                if self.check_event_ring_full(trb.clone()) {
+                if self.check_event_ring_full(event_trb.clone()) {
                     println!("Had to resize event TRB, retrying...");
                     hci_clone.event_handler_finished();
                     return Ok(None);
                 }
 
                 self.handle_requests();
-                self.acknowledge(trb.clone());
-                trb.reserved(false);
+                self.acknowledge(event_trb.clone());
 
-                self.update_erdp();
+                event_trb.reserved(false);
+
+                self.update_erdp(&*event_ring);
+
+                event_trb_index = event_ring.ring.next_index();
             }
         }).expect("xhcid: failed to catch irq events");
-        //event_queue.trigger_all(Event { fd: 0, flags: 0 }).expect("irq reactor failed to trigger events");
         event_queue.run().expect("xhcid: failed to run IRQ event queue");
     }
-    fn update_erdp(&self) {
-        let dequeue_pointer_and_dcs = self.hci.primary_event_ring.lock().unwrap().erdp();
+    fn update_erdp(&self, event_ring: &EventRing) {
+        let dequeue_pointer_and_dcs = event_ring.erdp();
         let dequeue_pointer = dequeue_pointer_and_dcs & 0xFFFF_FFFF_FFFF_FFFE;
         assert_eq!(dequeue_pointer & 0xFFFF_FFFF_FFFF_FFF0, dequeue_pointer, "unaligned ERDP received from primary event ring");
 
@@ -202,7 +208,7 @@ impl IrqReactor {
         let mut index = 0;
 
         loop {
-            if index >= self.states.len() { return }
+            if index >= self.states.len() { break }
 
             match self.states[index].kind {
                 StateKind::CommandCompletion { phys_ptr } if dbg!(trb.trb_type()) == TrbType::CommandCompletion as u8 => if dbg!(trb.completion_trb_pointer()) == Some(phys_ptr) {
@@ -210,7 +216,7 @@ impl IrqReactor {
                     let state = self.states.remove(index);
 
                     // Before waking, it's crucial that the command TRB that generated this event
-                    // be fetched before removing this event TRB from the queue.
+                    // is fetched before removing this event TRB from the queue.
                     let command_trb = match self.hci.cmd.lock().unwrap().phys_addr_to_entry_mut(phys_ptr) {
                         Some(command_trb) => {
                             let t = command_trb.clone();
@@ -231,6 +237,8 @@ impl IrqReactor {
 
                     println!("Waking up future with waker: {:?}", state.waker);
                     state.waker.wake();
+
+                    return;
                 } else if trb.completion_trb_pointer().is_none() {
                     println!("Command TRB somehow resulted in an error that only can be caused by transfer TRBs. Ignoring event TRB: {:?}.", trb);
                     continue;
@@ -249,6 +257,7 @@ impl IrqReactor {
                             event_trb: trb.clone(),
                         });
                         state.waker.wake();
+                        return;
                     } else if trb.transfer_event_trb_pointer().is_none() {
                         // Ring Overrun, Ring Underrun, or Virtual Function Event Ring Full.
                         //
@@ -272,6 +281,7 @@ impl IrqReactor {
                 StateKind::Other(trb_type) if trb_type as u8 == trb.trb_type() => {
                     let state = self.states.remove(index);
                     state.waker.wake();
+                    return;
                 }
 
                 _ => {
@@ -280,6 +290,7 @@ impl IrqReactor {
                 }
             }
         }
+        println!("Lost event TRB: {:?}", trb);
     }
     fn acknowledge_failed_transfer_trbs(&mut self, trb: Trb) {
         let mut index = 0;
