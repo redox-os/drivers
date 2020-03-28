@@ -125,25 +125,25 @@ impl Xhci {
         Ok(())
     }
 
-    async fn fetch_dev_desc(&mut self, port: usize, slot: u8, ring: &mut Ring) -> Result<usb::DeviceDescriptor> {
+    async fn fetch_dev_desc(&self, port: usize, slot: u8, ring: &mut Ring) -> Result<usb::DeviceDescriptor> {
         let mut desc = Dma::<usb::DeviceDescriptor>::zeroed()?;
         self.get_desc_raw(port, slot, usb::DescriptorKind::Device, 0, ring, &mut desc).await?;
         Ok(*desc)
     }
 
-    async fn fetch_config_desc(&mut self, port: usize, slot: u8, ring: &mut Ring, config: u8) -> Result<(usb::ConfigDescriptor, [u8; 4087])> {
+    async fn fetch_config_desc(&self, port: usize, slot: u8, ring: &mut Ring, config: u8) -> Result<(usb::ConfigDescriptor, [u8; 4087])> {
         let mut desc = Dma::<(usb::ConfigDescriptor, [u8; 4087])>::zeroed()?;
         self.get_desc_raw(port, slot, usb::DescriptorKind::Configuration, config, ring, &mut desc).await?;
         Ok(*desc)
     }
 
-    async fn fetch_bos_desc(&mut self, port: usize, slot: u8, ring: &mut Ring) -> Result<(usb::BosDescriptor, [u8; 4087])> {
+    async fn fetch_bos_desc(&self, port: usize, slot: u8, ring: &mut Ring) -> Result<(usb::BosDescriptor, [u8; 4087])> {
         let mut desc = Dma::<(usb::BosDescriptor, [u8; 4087])>::zeroed()?;
         self.get_desc_raw(port, slot, usb::DescriptorKind::BinaryObjectStorage, 0, ring, &mut desc).await?;
         Ok(*desc)
     }
 
-    async fn fetch_string_desc(&mut self, port: usize, slot: u8, ring: &mut Ring, index: u8) -> Result<String> {
+    async fn fetch_string_desc(&self, port: usize, slot: u8, ring: &mut Ring, index: u8) -> Result<String> {
         let mut sdesc = Dma::<(u8, u8, [u16; 127])>::zeroed()?;
         self.get_desc_raw(port, slot, usb::DescriptorKind::String, index, ring, &mut sdesc).await?;
 
@@ -407,14 +407,14 @@ impl Xhci {
         if buf_count == 0 {
             return Ok(());
         }
-        let scratchpad_buf_arr = ScratchpadBufferArray::new(buf_count)?;
+        let scratchpad_buf_arr = ScratchpadBufferArray::new(self.page_size,buf_count)?;
         self.dev_ctx.dcbaa[0] = scratchpad_buf_arr.register() as u64;
         self.scratchpad_buf_arr = Some(scratchpad_buf_arr);
 
         Ok(())
     }
 
-    pub async fn enable_port_slot(&mut self, slot_ty: u8) -> Result<u8> {
+    pub async fn enable_port_slot(&self, slot_ty: u8) -> Result<u8> {
         assert_eq!(slot_ty & 0x1F, slot_ty);
 
         let (event_trb, command_trb) =
@@ -425,7 +425,7 @@ impl Xhci {
 
         Ok(event_trb.event_slot())
     }
-    pub async fn disable_port_slot(&mut self, slot: u8) -> Result<()> {
+    pub async fn disable_port_slot(&self, slot: u8) -> Result<()> {
         let (event_trb, command_trb) = self.execute_command(|cmd, cycle| cmd.disable_slot(slot, cycle)).await;
 
         self::scheme::handle_event_trb("DISABLE_SLOT", &event_trb, &command_trb);
@@ -485,9 +485,18 @@ impl Xhci {
                     .collect::<BTreeMap<_, _>>(),
                 };
 
-                let dev_desc = self.get_desc(i, slot, &mut ring).await?;
+                let ring = port_state.endpoint_states.get_mut(&0).unwrap().ring().unwrap();
+
+                let dev_desc = self.get_desc(i, slot, ring).await?;
                 port_state.dev_desc = Some(dev_desc);
-                self.update_default_control_pipe(&mut input, slot, &dev_desc).await?;
+
+
+                {
+                    let mut input = port_state.input_context.lock().unwrap();
+                    let dev_desc = port_state.dev_desc.as_ref().unwrap();
+
+                    self.update_default_control_pipe(&mut *input, slot, dev_desc).await?;
+                }
 
                 /*match self.spawn_drivers(i, &mut port_state) {
                     Ok(()) => (),
@@ -502,7 +511,7 @@ impl Xhci {
     }
 
     pub async fn update_default_control_pipe(
-        &mut self,
+        &self,
         input_context: &mut Dma<InputContext>,
         slot_id: u8,
         dev_desc: &DevDesc,
@@ -644,7 +653,7 @@ impl Xhci {
             _ => None,
         }
     }
-    pub fn msix_info_mut(&mut self) -> Option<MutexGuard<'_, MsixInfo>> {
+    pub fn msix_info_mut(&self) -> Option<MutexGuard<'_, MsixInfo>> {
         match self.interrupt_method {
             InterruptMethod::MsiX(ref info) => Some(info.lock().unwrap()),
             _ => None,
@@ -653,15 +662,16 @@ impl Xhci {
 
     /// Checks whether an IRQ has been received from *this* device, in case of an interrupt. Always
     /// true when using MSI/MSI-X.
-    pub fn received_irq(&mut self) -> bool {
-        let runtime_regs = self.run.lock().unwrap();
+    pub fn received_irq(&self) -> bool {
+        let mut runtime_regs = self.run.lock().unwrap();
 
         if self.uses_msi() || self.uses_msix() {
             // Since using MSI and MSI-X implies having no IRQ sharing whatsoever, the IP bit
             // doesn't have to be touched.
             println!("Successfully received MSI/MSI-X interrupt, IP={}, EHB={}", runtime_regs.ints[0].iman.readf(1), runtime_regs.ints[0].erdp.readf(3));
             println!("MSI-X PB={}", self.msix_info_mut().unwrap().pba(0));
-            let entry = self.msix_info_mut().unwrap().table_entry_pointer(0);
+            let mut msix = self.msix_info_mut().unwrap();
+            let entry = msix.table_entry_pointer(0);
             println!("MSI-X entry (addr_lo, addr_hi, msg_data, vec_ctl: {:#0x} {:#0x} {:#0x} {:#0x}", entry.addr_lo.read(), entry.addr_hi.read(), entry.msg_data.read(), entry.vec_ctl.read());
             true
         } else if runtime_regs.ints[0].iman.readf(1) {
@@ -677,7 +687,7 @@ impl Xhci {
         }
 
     }
-    fn spawn_drivers(&mut self, port: usize, ps: &mut PortState) -> Result<()> {
+    fn spawn_drivers(&self, port: usize, ps: &mut PortState) -> Result<()> {
         // TODO: There should probably be a way to select alternate interfaces, and not just the
         // first one.
         // TODO: Now that there are some good error crates, I don't think errno.h error codes are

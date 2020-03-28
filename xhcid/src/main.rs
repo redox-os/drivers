@@ -233,7 +233,6 @@ fn main() {
     event_queue
         .add(socket_fd, move |_| -> io::Result<Option<()>> {
             let mut socket = socket_packet.lock().unwrap();
-            let mut hci = hci;
             let mut todo = todo.lock().unwrap();
 
             loop {

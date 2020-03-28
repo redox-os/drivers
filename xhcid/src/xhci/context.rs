@@ -175,12 +175,11 @@ pub struct ScratchpadBufferArray {
     pub pages: Vec<usize>,
 }
 impl ScratchpadBufferArray {
-    pub fn new(entries: u16) -> Result<Self> {
+    pub fn new(page_size: usize, entries: u16) -> Result<Self> {
         let mut entries = unsafe { Dma::zeroed_unsized(entries as usize)? };
 
         let pages = entries.iter_mut().map(|entry: &mut ScratchpadBufferEntry| -> Result<usize> {
-            // TODO: Get the page size using fstatvfs on the `memory:` scheme.
-            let pointer = syscall::physalloc(4096)?;
+            let pointer = unsafe { syscall::physalloc(page_size)? };
             assert_eq!(pointer & 0xFFFF_FFFF_FFFF_F000, pointer, "physically allocated pointer (physalloc) wasn't 4k page-aligned");
             entry.set_addr(pointer as u64);
             Ok(pointer)

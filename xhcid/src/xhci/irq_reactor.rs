@@ -94,39 +94,44 @@ impl IrqReactor {
             states: Vec::new(),
         }
     }
-    // TODO: Configure the amount of time to be awaited when no more work can be done.
+    // TODO: Configure the amount of time wait when no more work can be done (for IRQ-less polling).
     fn pause(&self) {
         std::thread::yield_now();
     }
     fn run_polling(mut self) {
-        loop {
+        let hci_clone = Arc::clone(&self.hci);
+
+        'event_loop: loop {
             self.handle_requests();
 
-            let index = self.hci.primary_event_ring.lock().unwrap().ring.next_index();
+            let mut event_ring_guard = hci_clone.primary_event_ring.lock().unwrap();
+
+            let index = event_ring_guard.ring.next_index();
 
             let mut trb;
 
             'busy_waiting: loop {
-                trb = self.hci.primary_event_ring.lock().unwrap().ring.trbs[index];
+                trb = &event_ring_guard.ring.trbs[index];
 
                 if trb.completion_code() == TrbCompletionCode::Invalid as u8 {
                     self.pause();
                     continue 'busy_waiting;
                 }
             }
-            if self.check_event_ring_full(&trb) { continue }
-            self.acknowledge(trb);
+            if self.check_event_ring_full(trb.clone()) { continue 'event_loop }
+
+            self.acknowledge(trb.clone());
             self.update_erdp();
         }
     }
     fn run_with_irq_file(mut self) {
-        let irq_file = self.irq_file.as_mut().expect("Calling IrqReactor::run_with_irq_file without the IRQ file being None");
+        let hci_clone = Arc::clone(&self.hci);
 
         'event_loop: loop {
             self.handle_requests();
 
             let mut buffer = [0u8; 8];
-            let bytes_read = irq_file.read(&mut buffer).expect("Failed to read from irq scheme");
+            let bytes_read = self.irq_file.as_mut().unwrap().read(&mut buffer).expect("Failed to read from irq scheme");
             if bytes_read < mem::size_of::<usize>() {
                 panic!("wrong number of bytes read from `irq:`: expected {}, got {}", mem::size_of::<usize>(), bytes_read);
             }
@@ -135,11 +140,11 @@ impl IrqReactor {
                 continue;
             }
 
-            let _ = irq_file.write(&buffer);
+            let _ = self.irq_file.as_mut().unwrap().write(&buffer);
 
             // TODO: More event rings, probably even with different IRQs.
 
-            let event_ring = self.hci.primary_event_ring.lock().unwrap();
+            let mut event_ring = hci_clone.primary_event_ring.lock().unwrap();
 
             let mut count = 0;
 
@@ -151,10 +156,10 @@ impl IrqReactor {
                     continue 'event_loop;
                 } else { count += 1 }
 
-                if self.check_event_ring_full(trb) {
+                if self.check_event_ring_full(trb.clone()) {
                     continue 'trb_loop;
                 }
-                self.acknowledge(*trb);
+                self.acknowledge(trb.clone());
                 trb.reserved(false);
 
                 self.update_erdp();
@@ -196,7 +201,7 @@ impl IrqReactor {
                     // TODO: Validate the command TRB.
                     *state.message.lock().unwrap() = Some(NextEventTrb {
                         src_trb: Some(command_trb.clone()),
-                        event_trb: trb,
+                        event_trb: trb.clone(),
                     });
 
                     state.waker.wake();
@@ -215,7 +220,7 @@ impl IrqReactor {
                         let state = self.states.remove(index);
                         *state.message.lock().unwrap() = Some(NextEventTrb {
                             src_trb: Some(src_trb),
-                            event_trb: trb,
+                            event_trb: trb.clone(),
                         });
                         state.waker.wake();
                     } else if trb.transfer_event_trb_pointer().is_none() {
@@ -266,7 +271,7 @@ impl IrqReactor {
             }
             let state = self.states.remove(index);
             *state.message.lock().unwrap() = Some(NextEventTrb {
-                event_trb: trb,
+                event_trb: trb.clone(),
                 src_trb: None,
             });
             state.waker.wake();
@@ -275,7 +280,7 @@ impl IrqReactor {
     /// Checks if an event TRB is a Host Controller Event, with the completion code Event Ring
     /// Full. If so, it grows the event ring. The return value is whether the event ring was full,
     /// and then grown.
-    fn check_event_ring_full(&mut self, event_trb: &Trb) -> bool {
+    fn check_event_ring_full(&mut self, event_trb: Trb) -> bool {
         let had_event_ring_full_error =  event_trb.trb_type() == TrbType::HostController as u8 && event_trb.completion_code() == TrbCompletionCode::EventRingFull as u8;
 
         if had_event_ring_full_error {
@@ -313,23 +318,27 @@ impl Future for EventTrbFuture {
     type Output = NextEventTrb;
 
     fn poll(self: Pin<&mut Self>, context: &mut task::Context) -> task::Poll<Self::Output> {
-        match self.get_mut() {
-            &mut Self::Pending { ref mut state, ref mut sender } => if let Some(message) = state.message.lock().unwrap().take() {
-                *self.get_mut() = Self::Finished;
+        let this = self.get_mut();
 
-                task::Poll::Ready(message)
-            } else {
-                sender.send(State {
-                    message: Arc::clone(&state.message),
-                    is_isoch_or_vf: state.is_isoch_or_vf,
-                    kind: state.state_kind,
-                    waker: context.waker().clone(),
-                }).expect("IRQ reactor thread unexpectedly stopped");
+        let message = match this {
+            &mut Self::Pending { ref state, ref sender } => match state.message.lock().unwrap().take() {
+                Some(message) => message,
 
-                task::Poll::Pending
+                None => {
+                    sender.send(State {
+                        message: Arc::clone(&state.message),
+                        is_isoch_or_vf: state.is_isoch_or_vf,
+                        kind: state.state_kind,
+                        waker: context.waker().clone(),
+                    }).expect("IRQ reactor thread unexpectedly stopped");
+
+                    return task::Poll::Pending;
+                }
             }
             &mut Self::Finished => panic!("Polling finished EventTrbFuture again."),
-        }
+        };
+        *this = Self::Finished;
+        task::Poll::Ready(message)
     }
 }
 
@@ -353,8 +362,8 @@ impl Xhci {
     pub fn with_ring_mut<T, F: FnOnce(&mut Ring) -> T>(&self, id: RingId, function: F) -> Option<T> {
         use super::RingOrStreams;
 
-        let slot_state = self.port_states.get(&(id.port as usize))?;
-        let endpoint_state = slot_state.endpoint_states.get_mut(&id.endpoint_num)?;
+        let mut slot_state = self.port_states.get_mut(&(id.port as usize))?;
+        let mut endpoint_state = slot_state.endpoint_states.get_mut(&id.endpoint_num)?;
 
         let ring_ref = match endpoint_state.transfer {
             RingOrStreams::Ring(ref mut ring) => ring,

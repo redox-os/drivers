@@ -82,8 +82,9 @@ impl Ring {
     pub fn phys_addr_to_entry_ref(&self, paddr: u64) -> Option<&Trb> {
         Some(&self.trbs[self.phys_addr_to_index(paddr)?])
     }
-    pub fn phys_addr_to_entry_mut(&self, paddr: u64) -> Option<&mut Trb> {
-        Some(&mut self.trbs[self.phys_addr_to_index(paddr)?])
+    pub fn phys_addr_to_entry_mut(&mut self, paddr: u64) -> Option<&mut Trb> {
+        let index = self.phys_addr_to_index(paddr)?;
+        Some(&mut self.trbs[index])
     }
     pub fn phys_addr_to_entry(&self, paddr: u64) -> Option<Trb> {
         Some(self.trbs[self.phys_addr_to_index(paddr)?].clone())
