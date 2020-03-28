@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use smallvec::{smallvec, SmallVec};
 
 use syscall::io::{Dma, Io};
-use syscall::scheme::SchemeMut;
+use syscall::scheme::Scheme;
 use syscall::{
     Error, Result, Stat, EACCES, EBADF, EBADFD, EBADMSG, EEXIST, EINVAL, EIO, EISDIR, ENOENT,
     ENOSYS, ENOTDIR, ENXIO, EOPNOTSUPP, EOVERFLOW, EPERM, EPROTO, ESPIPE, MODE_CHR, MODE_DIR,
@@ -1201,8 +1201,8 @@ impl Xhci {
     }
 }
 
-impl SchemeMut for Xhci {
-    fn open(&mut self, path: &[u8], flags: usize, uid: u32, _gid: u32) -> Result<usize> {
+impl Scheme for Xhci {
+    fn open(&self, path: &[u8], flags: usize, uid: u32, _gid: u32) -> Result<usize> {
         if uid != 0 {
             return Err(Error::new(EACCES));
         }
@@ -1375,7 +1375,7 @@ impl SchemeMut for Xhci {
         Ok(fd)
     }
 
-    fn fstat(&mut self, id: usize, stat: &mut Stat) -> Result<usize> {
+    fn fstat(&self, id: usize, stat: &mut Stat) -> Result<usize> {
         let mut guard = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
         match &*guard {
@@ -1412,7 +1412,7 @@ impl SchemeMut for Xhci {
         Ok(0)
     }
 
-    fn fpath(&mut self, fd: usize, buffer: &mut [u8]) -> Result<usize> {
+    fn fpath(&self, fd: usize, buffer: &mut [u8]) -> Result<usize> {
         let mut cursor = io::Cursor::new(buffer);
 
         let guard = self.handles.get(&fd).ok_or(Error::new(EBADF))?;
@@ -1447,7 +1447,7 @@ impl SchemeMut for Xhci {
         Ok(src_len)
     }
 
-    fn seek(&mut self, fd: usize, pos: usize, whence: usize) -> Result<usize> {
+    fn seek(&self, fd: usize, pos: usize, whence: usize) -> Result<usize> {
         let mut guard = self.handles.get_mut(&fd).ok_or(Error::new(EBADF))?;
         match &mut *guard {
             // Directories, or fixed files
@@ -1480,7 +1480,7 @@ impl SchemeMut for Xhci {
         }
     }
 
-    fn read(&mut self, fd: usize, buf: &mut [u8]) -> Result<usize> {
+    fn read(&self, fd: usize, buf: &mut [u8]) -> Result<usize> {
         let mut guard = self.handles.get_mut(&fd).ok_or(Error::new(EBADF))?;
         match &mut *guard {
             Handle::TopLevel(ref mut offset, ref src_buf)
@@ -1533,7 +1533,7 @@ impl SchemeMut for Xhci {
             }
         }
     }
-    fn write(&mut self, fd: usize, buf: &[u8]) -> Result<usize> {
+    fn write(&self, fd: usize, buf: &[u8]) -> Result<usize> {
         let mut guard = self.handles.get_mut(&fd).ok_or(Error::new(EBADF))?;
 
         match &mut *guard {
@@ -1555,7 +1555,7 @@ impl SchemeMut for Xhci {
             _ => return Err(Error::new(EBADF)),
         }
     }
-    fn close(&mut self, fd: usize) -> Result<usize> {
+    fn close(&self, fd: usize) -> Result<usize> {
         if self.handles.remove(&fd).is_none() {
             return Err(Error::new(EBADF));
         }

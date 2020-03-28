@@ -20,7 +20,7 @@ use std::env;
 use syscall::data::Packet;
 use syscall::error::EWOULDBLOCK;
 use syscall::flag::{CloneFlags, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
-use syscall::scheme::SchemeMut;
+use syscall::scheme::Scheme;
 use syscall::io::Io;
 
 use crate::xhci::{InterruptMethod, Xhci};
