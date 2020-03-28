@@ -102,8 +102,10 @@ impl Ring {
         if (trb_virt_pointer as usize) < (trbs_base_virt_pointer as usize) || (trb_virt_pointer as usize) > (trbs_base_virt_pointer as usize) + self.trbs.len() * mem::size_of::<Trb>() {
             panic!("Gave a TRB outside of the ring, when retrieving its physical address in that ring. TRB: {:?} (at address {:p})", trb, trb);
         }
+        let trb_offset_from_base = trb_virt_pointer as u64 - trbs_base_virt_pointer as u64;
+
         let trbs_base_phys_ptr = self.trbs.physical() as u64;
-        let trb_phys_ptr = trb_virt_pointer as u64 - trbs_base_phys_ptr;
+        let trb_phys_ptr = trbs_base_phys_ptr + trb_offset_from_base;
         trb_phys_ptr
     }
     /*

@@ -230,12 +230,16 @@ impl Xhci {
     ) -> (Trb, Trb) {
         let next_event = {
             let mut command_ring = self.cmd.lock().unwrap();
+            let (cmd_index, cycle) = (command_ring.next_index(), command_ring.cycle);
 
-            let (cmd, cycle) = command_ring.next();
-            f(cmd, cycle);
+            {
+                let command_trb = &mut command_ring.trbs[cmd_index];
+                f(command_trb, cycle);
+            }
 
             // get the future here before awaiting, to destroy the lock before deadlock
-            self.next_command_completion_event_trb(&cmd)
+            let command_trb = &command_ring.trbs[cmd_index];
+            self.next_command_completion_event_trb(&*command_ring, command_trb)
         };
 
         self.dbs.lock().unwrap()[0].write(0);
@@ -244,7 +248,7 @@ impl Xhci {
         let event_trb = trbs.event_trb;
         let command_trb = trbs.src_trb.expect("Command completion event TRBs shall always have a valid pointer to a valid source command TRB");
 
-        assert_eq!(command_trb.trb_type(), TrbType::CommandCompletion as u8, "The IRQ reactor (or the xHC) gave an invalid event TRB");
+        assert_eq!(event_trb.trb_type(), TrbType::CommandCompletion as u8, "The IRQ reactor (or the xHC) gave an invalid event TRB");
 
         (event_trb, command_trb)
     }

@@ -356,7 +356,7 @@ impl Xhci {
             println!("  - Write ERSTZ: {}", erstz);
             int.erstsz.write(erstz);
 
-            let erdp = self.primary_event_ring.get_mut().unwrap().erdp() | (!1);
+            let erdp = self.primary_event_ring.get_mut().unwrap().erdp();
             println!("  - Write ERDP: {:X}", erdp);
             int.erdp.write(erdp as u64 | (1 << 3));
 
@@ -368,7 +368,7 @@ impl Xhci {
             int.imod.write(0);
 
             println!("  - Enable interrupts");
-            int.iman.writef(1 << 1, true);
+            int.iman.writef(1 << 1 | 1, true);
 
         }
         self.op.get_mut().unwrap().usb_cmd.writef(1 << 2, true);
@@ -395,7 +395,7 @@ impl Xhci {
         println!("  - XHCI initialized");
 
         if self.cap.cic() {
-            self.op.lock().unwrap().set_cie(true);
+            self.op.get_mut().unwrap().set_cie(true);
         }
 
         Ok(())
@@ -441,7 +441,9 @@ impl Xhci {
     pub async fn probe(&self) -> Result<()> {
         println!("XHCI capabilities: {:?}", self.capabilities_iter().collect::<Vec<_>>());
 
-        for i in 0..self.ports.lock().unwrap().len() {
+        let port_count = { self.ports.lock().unwrap().len() };
+
+        for i in 0..port_count {
             let (data, state, speed, flags) = {
                 let port = &self.ports.lock().unwrap()[i];
                 (port.read(), port.state(), port.speed(), port.flags())
@@ -460,6 +462,8 @@ impl Xhci {
                     .supported_protocol(i as u8)
                     .expect("Failed to find supported protocol information for port")
                     .proto_slot_ty();
+
+                println!("Got slot type: {}", slot_ty);
                 let slot = self.enable_port_slot(slot_ty).await?;
 
                 println!("    - Slot {}", slot);
@@ -843,7 +847,10 @@ pub fn start_irq_reactor(hci: &Arc<Xhci>, irq_file: Option<File>) {
     let receiver = hci.irq_reactor_receiver.clone();
     let hci_clone = Arc::clone(&hci);
 
+    println!("About to start IRQ reactor");
+
     *hci.irq_reactor.lock().unwrap() = Some(thread::spawn(move || {
+        println!("Started IRQ reactor thread");
         IrqReactor::new(hci_clone, receiver, irq_file).run()
     }));
 }
