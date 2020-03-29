@@ -192,7 +192,6 @@ impl Xhci {
         &self,
         port_id: usize,
         slot: u8,
-        ring: &mut Ring,
         desc: usb::InterfaceDescriptor,
         endps: impl IntoIterator<Item = EndpDesc>,
         hid_descs: impl IntoIterator<Item = HidDesc>,
@@ -201,7 +200,7 @@ impl Xhci {
             alternate_setting: desc.alternate_setting,
             class: desc.class,
             interface_str: if desc.interface_str > 0 {
-                Some(self.fetch_string_desc(port_id, slot, ring, desc.interface_str).await?)
+                Some(self.fetch_string_desc(port_id, slot, desc.interface_str).await?)
             } else {
                 None
             },
@@ -284,7 +283,8 @@ impl Xhci {
                 }
             }
 
-            let (cmd, cycle) = ring.next();
+            let last_index = ring.next_index();
+            let (cmd, cycle) = (&mut ring.trbs[last_index], ring.cycle);
 
             let interrupter = 0;
             let ioc = true;
@@ -292,7 +292,7 @@ impl Xhci {
             let ent = false;
 
             cmd.status(interrupter, tk == TransferKind::In, ioc, ch, ent, cycle);
-            self.next_transfer_event_trb(RingId::default_control_pipe(port_num as u8), cmd)
+            self.next_transfer_event_trb(RingId::default_control_pipe(port_num as u8), ring, &ring.trbs[last_index])
         };
 
         self.dbs.lock().unwrap()[usize::from(slot)].write(Self::def_control_endp_doorbell());
@@ -352,11 +352,12 @@ impl Xhci {
         };
 
         let future = loop {
-            let (trb, cycle) = ring.next();
+            let last_index = ring.next_index();
+            let (trb, cycle) = (&mut ring.trbs[last_index], ring.cycle);
 
             match d(trb, cycle) {
                 ControlFlow::Break => {
-                    break self.next_transfer_event_trb(super::irq_reactor::RingId { port: port_num as u8, endpoint_num: endp_num, stream_id }, &trb);
+                    break self.next_transfer_event_trb(super::irq_reactor::RingId { port: port_num as u8, endpoint_num: endp_num, stream_id }, ring, &ring.trbs[last_index]);
                 }
                 ControlFlow::Continue => continue,
             }
@@ -923,35 +924,43 @@ impl Xhci {
         &self,
         port_id: usize,
         slot: u8,
-        ring: &mut Ring,
     ) -> Result<DevDesc> {
+        println!("Checkpoint 1");
         let ports = self.ports.lock().unwrap();
         let port = ports.get(port_id).ok_or(Error::new(ENOENT))?;
         if !port.flags().contains(port::PortFlags::PORT_CCS) {
             return Err(Error::new(ENOENT));
         }
 
-        let raw_dd = self.fetch_dev_desc(port_id, slot, ring).await?;
+        println!("Checkpoint 2");
+        let raw_dd = self.fetch_dev_desc(port_id, slot).await?;
+        println!("Checkpoint 3");
 
         let (manufacturer_str, product_str, serial_str) = (
             if raw_dd.manufacturer_str > 0 {
-                Some(self.fetch_string_desc(port_id, slot, ring, raw_dd.manufacturer_str).await?)
+                println!("Checkpoint 4a");
+                Some(self.fetch_string_desc(port_id, slot, raw_dd.manufacturer_str).await?)
             } else {
                 None
             },
             if raw_dd.product_str > 0 {
-                Some(self.fetch_string_desc(port_id, slot, ring, raw_dd.product_str).await?)
+                println!("Checkpoint 4b");
+                Some(self.fetch_string_desc(port_id, slot, raw_dd.product_str).await?)
             } else {
                 None
             },
             if raw_dd.serial_str > 0 {
-                Some(self.fetch_string_desc(port_id, slot, ring, raw_dd.serial_str).await?)
+                println!("Checkpoint 4c");
+                Some(self.fetch_string_desc(port_id, slot, raw_dd.serial_str).await?)
             } else {
                 None
             },
         );
 
-        let (bos_desc, bos_data) = self.fetch_bos_desc(port_id, slot, ring).await?;
+        println!("Checkpoint 5");
+        let (bos_desc, bos_data) = self.fetch_bos_desc(port_id, slot).await?;
+        println!("Checkpoint 6");
+
         let supports_superspeed =
             usb::bos_capability_descs(bos_desc, &bos_data).any(|desc| desc.is_superspeed());
         let supports_superspeedplus =
@@ -960,7 +969,9 @@ impl Xhci {
         let mut config_descs = SmallVec::new();
 
         for index in 0..raw_dd.configurations {
-            let (desc, data) = self.fetch_config_desc(port_id, slot, ring, index).await?;
+            println!("Checkpoint 7: {}", index);
+            let (desc, data) = self.fetch_config_desc(port_id, slot, index).await?;
+            println!("Checkpoint 8: {}", index);
 
             let extra_length = desc.total_length as usize - mem::size_of_val(&desc);
             let data = &data[..extra_length];
@@ -1010,7 +1021,7 @@ impl Xhci {
                         endpoints.push(endp);
                     }
 
-                    interface_descs.push(self.new_if_desc(port_id, slot, ring, idesc, endpoints, hid_descs).await?);
+                    interface_descs.push(self.new_if_desc(port_id, slot, idesc, endpoints, hid_descs).await?);
                 } else {
                     // TODO
                     break;
@@ -1020,7 +1031,7 @@ impl Xhci {
             config_descs.push(ConfDesc {
                 kind: desc.kind,
                 configuration: if desc.configuration_str > 0 {
-                    Some(self.fetch_string_desc(port_id, slot, ring, desc.configuration_str).await?)
+                    Some(self.fetch_string_desc(port_id, slot, desc.configuration_str).await?)
                 } else {
                     None
                 },

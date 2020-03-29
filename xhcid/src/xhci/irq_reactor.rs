@@ -406,7 +406,7 @@ impl Xhci {
 
         Some(function(ring_ref))
     }
-    pub fn next_transfer_event_trb(&self, ring_id: RingId, trb: &Trb) -> impl Future<Output = NextEventTrb> + Send + Sync + 'static {
+    pub fn next_transfer_event_trb(&self, ring_id: RingId, ring: &Ring, trb: &Trb) -> impl Future<Output = NextEventTrb> + Send + Sync + 'static {
         if ! trb.is_transfer_trb() {
             panic!("Invalid TRB type given to next_transfer_event_trb(): {} (TRB {:?}. Expected transfer TRB.", trb.trb_type(), trb)
         }
@@ -418,7 +418,7 @@ impl Xhci {
                 is_isoch_or_vf,
                 state_kind: StateKind::Transfer {
                     ring_id,
-                    phys_ptr: self.with_ring(ring_id, |ring| ring.trb_phys_ptr(trb)).unwrap(),
+                    phys_ptr: ring.trb_phys_ptr(trb),
                 },
                 message: Arc::new(Mutex::new(None)),
             },

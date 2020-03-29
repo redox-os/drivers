@@ -12,7 +12,7 @@ use std::{mem, process, slice, sync::atomic, task, thread};
 use chashmap::CHashMap;
 use crossbeam_channel::{Receiver, Sender};
 use serde::Deserialize;
-use syscall::error::{Error, Result, EBADF, EBADMSG, ENOENT};
+use syscall::error::{Error, Result, EBADF, EBADMSG, ENOENT, EIO};
 use syscall::flag::O_RDONLY;
 use syscall::io::{Dma, Io};
 
@@ -93,10 +93,16 @@ impl MsixInfo {
 
 impl Xhci {
     /// Gets descriptors, before the port state is initiated.
-    async fn get_desc_raw<T>(&self, port: usize, slot: u8, kind: usb::DescriptorKind, index: u8, ring: &mut Ring, desc: &mut Dma<T>) -> Result<()> {
+    async fn get_desc_raw<T>(&self, port: usize, slot: u8, kind: usb::DescriptorKind, index: u8, desc: &mut Dma<T>) -> Result<()> {
+        println!("A");
         let len = mem::size_of::<T>();
 
         let future = {
+            println!("B");
+            let mut port_state = self.port_states.get_mut(&port).ok_or(Error::new(ENOENT))?;
+            let ring = port_state.endpoint_states.get_mut(&0).ok_or(Error::new(EIO))?.ring().expect("no ring for the default control pipe");
+            println!("C");
+
             let (cmd, cycle) = ring.next();
             cmd.setup(
                 usb::Setup::get_descriptor(kind, index, 0, len as u16),
@@ -107,45 +113,52 @@ impl Xhci {
             let (cmd, cycle) = ring.next();
             cmd.data(desc.physical(), len as u16, true, cycle);
 
-            let (cmd, cycle) = ring.next();
+            let last_index = ring.next_index();
+            let (cmd, cycle) = (&mut ring.trbs[last_index], ring.cycle);
             cmd.status(0, true, true, false, false, cycle);
 
-            self.next_transfer_event_trb(RingId::default_control_pipe(port as u8), &cmd)
+            println!("D");
+            self.next_transfer_event_trb(RingId::default_control_pipe(port as u8), &ring, &ring.trbs[last_index])
         };
 
+        println!("E");
         self.dbs.lock().unwrap()[usize::from(slot)].write(Self::def_control_endp_doorbell());
+        println!("F");
 
         let trbs = future.await;
         let event_trb = trbs.event_trb;
         let status_trb = trbs.src_trb.unwrap();
 
+        println!("G");
         self::scheme::handle_transfer_event_trb("GET_DESC", &event_trb, &status_trb)?;
+        println!("H");
 
         self.event_handler_finished();
+        println!("I");
         Ok(())
     }
 
-    async fn fetch_dev_desc(&self, port: usize, slot: u8, ring: &mut Ring) -> Result<usb::DeviceDescriptor> {
+    async fn fetch_dev_desc(&self, port: usize, slot: u8) -> Result<usb::DeviceDescriptor> {
         let mut desc = Dma::<usb::DeviceDescriptor>::zeroed()?;
-        self.get_desc_raw(port, slot, usb::DescriptorKind::Device, 0, ring, &mut desc).await?;
+        self.get_desc_raw(port, slot, usb::DescriptorKind::Device, 0, &mut desc).await?;
         Ok(*desc)
     }
 
-    async fn fetch_config_desc(&self, port: usize, slot: u8, ring: &mut Ring, config: u8) -> Result<(usb::ConfigDescriptor, [u8; 4087])> {
+    async fn fetch_config_desc(&self, port: usize, slot: u8, config: u8) -> Result<(usb::ConfigDescriptor, [u8; 4087])> {
         let mut desc = Dma::<(usb::ConfigDescriptor, [u8; 4087])>::zeroed()?;
-        self.get_desc_raw(port, slot, usb::DescriptorKind::Configuration, config, ring, &mut desc).await?;
+        self.get_desc_raw(port, slot, usb::DescriptorKind::Configuration, config, &mut desc).await?;
         Ok(*desc)
     }
 
-    async fn fetch_bos_desc(&self, port: usize, slot: u8, ring: &mut Ring) -> Result<(usb::BosDescriptor, [u8; 4087])> {
+    async fn fetch_bos_desc(&self, port: usize, slot: u8) -> Result<(usb::BosDescriptor, [u8; 4087])> {
         let mut desc = Dma::<(usb::BosDescriptor, [u8; 4087])>::zeroed()?;
-        self.get_desc_raw(port, slot, usb::DescriptorKind::BinaryObjectStorage, 0, ring, &mut desc).await?;
+        self.get_desc_raw(port, slot, usb::DescriptorKind::BinaryObjectStorage, 0, &mut desc).await?;
         Ok(*desc)
     }
 
-    async fn fetch_string_desc(&self, port: usize, slot: u8, ring: &mut Ring, index: u8) -> Result<String> {
+    async fn fetch_string_desc(&self, port: usize, slot: u8, index: u8) -> Result<String> {
         let mut sdesc = Dma::<(u8, u8, [u16; 127])>::zeroed()?;
-        self.get_desc_raw(port, slot, usb::DescriptorKind::String, index, ring, &mut sdesc).await?;
+        self.get_desc_raw(port, slot, usb::DescriptorKind::String, index, &mut sdesc).await?;
 
         let len = sdesc.0 as usize;
         if len > 2 {
@@ -489,14 +502,16 @@ impl Xhci {
                     ))
                     .collect::<BTreeMap<_, _>>(),
                 };
+                self.port_states.insert(i, port_state);
 
-                let ring = port_state.endpoint_states.get_mut(&0).unwrap().ring().unwrap();
-
-                let dev_desc = self.get_desc(i, slot, ring).await?;
-                port_state.dev_desc = Some(dev_desc);
-
+                println!("pre get desc");
+                let dev_desc = self.get_desc(i, slot).await?;
+                println!("post get desc");
+                self.port_states.get_mut(&i).unwrap().dev_desc = Some(dev_desc);
 
                 {
+                    let mut port_state = self.port_states.get_mut(&i).unwrap();
+
                     let mut input = port_state.input_context.lock().unwrap();
                     let dev_desc = port_state.dev_desc.as_ref().unwrap();
 
@@ -508,7 +523,6 @@ impl Xhci {
                     Err(err) => println!("Failed to spawn driver for port {}: `{}`", i, err),
                 }*/
 
-                self.port_states.insert(i, port_state);
             }
         }
 
@@ -643,6 +657,7 @@ impl Xhci {
         if event_trb.completion_code() != TrbCompletionCode::Success as u8 {
             println!("Failed to address device at slot {} (port {})", slot, i);
         }
+        self.event_handler_finished();
 
         Ok(ring)
     }

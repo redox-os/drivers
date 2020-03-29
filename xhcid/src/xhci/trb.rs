@@ -378,9 +378,11 @@ impl Trb {
         self.set(
             0,
             u32::from(interrupter) << 22,
-            ((input as u32) << 16)
+            (u32::from(input) << 16)
                 | ((TrbType::StatusStage as u32) << 10)
-                | (1 << 5)
+                | (u32::from(ioc) << 5)
+                | (u32::from(ch) << 4)
+                | (u32::from(ent) << 1)
                 | (cycle as u32),
         );
     }
