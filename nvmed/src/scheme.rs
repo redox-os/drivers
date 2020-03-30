@@ -316,8 +316,7 @@ impl SchemeBlockMut for DiskScheme {
 
                 let block_size = disk.as_ref().block_size;
                 let rel_block = (*offset as u64) / block_size;
-
-                if rel_block + *offset as u64 / block_size >= part.size {
+                if rel_block >= part.size {
                     return Err(Error::new(EOVERFLOW));
                 }
 
@@ -358,8 +357,7 @@ impl SchemeBlockMut for DiskScheme {
 
                 let block_size = disk.as_ref().block_size;
                 let rel_block = (*offset as u64) / block_size;
-
-                if rel_block + *offset as u64 / block_size >= part.size {
+                if rel_block >= part.size {
                     return Err(Error::new(EOVERFLOW));
                 }
 
