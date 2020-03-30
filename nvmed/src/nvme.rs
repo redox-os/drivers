@@ -311,15 +311,15 @@ impl Nvme {
             self.buffer_prp[i] = (self.buffer.physical() + i * 4096) as u64;
         }
 
-        println!("  - CAPS: {:X}", self.regs.cap.read());
-        println!("  - VS: {:X}", self.regs.vs.read());
-        println!("  - CC: {:X}", self.regs.cc.read());
-        println!("  - CSTS: {:X}", self.regs.csts.read());
+        // println!("  - CAPS: {:X}", self.regs.cap.read());
+        // println!("  - VS: {:X}", self.regs.vs.read());
+        // println!("  - CC: {:X}", self.regs.cc.read());
+        // println!("  - CSTS: {:X}", self.regs.csts.read());
 
-        println!("  - Disable");
+        // println!("  - Disable");
         self.regs.cc.writef(1, false);
 
-        println!("  - Waiting for not ready");
+        // println!("  - Waiting for not ready");
         loop {
             let csts = self.regs.csts.read();
             // println!("CSTS: {:X}", csts);
@@ -330,17 +330,17 @@ impl Nvme {
             }
         }
 
-        println!("  - Mask all interrupts");
+        // println!("  - Mask all interrupts");
         self.regs.intms.write(0xFFFFFFFF);
 
         for (qid, queue) in self.completion_queues.iter().enumerate() {
             let data = &queue.data;
-            println!("    - completion queue {}: {:X}, {}", qid, data.physical(), data.len());
+            // println!("    - completion queue {}: {:X}, {}", qid, data.physical(), data.len());
         }
 
         for (qid, queue) in self.submission_queues.iter().enumerate() {
             let data = &queue.data;
-            println!("    - submission queue {}: {:X}, {}", qid, data.physical(), data.len());
+            // println!("    - submission queue {}: {:X}, {}", qid, data.physical(), data.len());
         }
 
         {
@@ -357,10 +357,10 @@ impl Nvme {
             self.regs.cc.write(cc);
         }
 
-        println!("  - Enable");
+        // println!("  - Enable");
         self.regs.cc.writef(1, true);
 
-        println!("  - Waiting for ready");
+        // println!("  - Waiting for ready");
         loop {
             let csts = self.regs.csts.read();
             // println!("CSTS: {:X}", csts);
@@ -375,7 +375,7 @@ impl Nvme {
             //TODO: Use buffer
             let data: Dma<[u8; 4096]> = Dma::zeroed().unwrap();
 
-            println!("  - Attempting to identify controller");
+            // println!("  - Attempting to identify controller");
             {
                 let qid = 0;
                 let queue = &mut self.submission_queues[qid];
@@ -387,7 +387,7 @@ impl Nvme {
                 self.submission_queue_tail(qid as u16, tail as u16);
             }
 
-            println!("  - Waiting to identify controller");
+            // println!("  - Waiting to identify controller");
             {
                 let qid = 0;
                 let queue = &mut self.completion_queues[qid];
@@ -395,7 +395,7 @@ impl Nvme {
                 self.completion_queue_head(qid as u16, head as u16);
             }
 
-            println!("  - Dumping identify controller");
+            // println!("  - Dumping identify controller");
 
             let mut serial = String::new();
             for &b in &data[4..24] {
@@ -404,7 +404,6 @@ impl Nvme {
                 }
                 serial.push(b as char);
             }
-            println!("    - Serial: {}", serial);
 
             let mut model = String::new();
             for &b in &data[24..64] {
@@ -413,7 +412,6 @@ impl Nvme {
                 }
                 model.push(b as char);
             }
-            println!("    - Model: {}", model);
 
             let mut firmware = String::new();
             for &b in &data[64..72] {
@@ -422,7 +420,13 @@ impl Nvme {
                 }
                 firmware.push(b as char);
             }
-            println!("    - Firmware: {}", firmware);
+
+            println!(
+                "  - Model: {} Serial: {} Firmware: {}",
+                model.trim(),
+                serial.trim(),
+                firmware.trim()
+            );
         }
 
         let mut nsids = Vec::new();
@@ -430,7 +434,7 @@ impl Nvme {
             //TODO: Use buffer
             let data: Dma<[u32; 1024]> = Dma::zeroed().unwrap();
 
-            println!("  - Attempting to retrieve namespace ID list");
+            // println!("  - Attempting to retrieve namespace ID list");
             {
                 let qid = 0;
                 let queue = &mut self.submission_queues[qid];
@@ -442,7 +446,7 @@ impl Nvme {
                 self.submission_queue_tail(qid as u16, tail as u16);
             }
 
-            println!("  - Waiting to retrieve namespace ID list");
+            // println!("  - Waiting to retrieve namespace ID list");
             {
                 let qid = 0;
                 let queue = &mut self.completion_queues[qid];
@@ -450,10 +454,9 @@ impl Nvme {
                 self.completion_queue_head(qid as u16, head as u16);
             }
 
-            println!("  - Dumping namespace ID list");
+            // println!("  - Dumping namespace ID list");
             for &nsid in data.iter() {
                 if nsid != 0 {
-                    println!("    - {}", nsid);
                     nsids.push(nsid);
                 }
             }
@@ -464,7 +467,7 @@ impl Nvme {
             //TODO: Use buffer
             let data: Dma<[u8; 4096]> = Dma::zeroed().unwrap();
 
-            println!("  - Attempting to identify namespace {}", nsid);
+            // println!("  - Attempting to identify namespace {}", nsid);
             {
                 let qid = 0;
                 let queue = &mut self.submission_queues[qid];
@@ -476,7 +479,7 @@ impl Nvme {
                 self.submission_queue_tail(qid as u16, tail as u16);
             }
 
-            println!("  - Waiting to identify namespace {}", nsid);
+            // println!("  - Waiting to identify namespace {}", nsid);
             {
                 let qid = 0;
                 let queue = &mut self.completion_queues[qid];
@@ -484,13 +487,17 @@ impl Nvme {
                 self.completion_queue_head(qid as u16, head as u16);
             }
 
-            println!("  - Dumping identify namespace");
+            // println!("  - Dumping identify namespace");
+
 
             let size = *(data.as_ptr().offset(0) as *const u64);
-            println!("    - Size: {}", size);
-
             let capacity = *(data.as_ptr().offset(8) as *const u64);
-            println!("    - Capacity: {}", capacity);
+            println!(
+                "    - ID: {} Size: {} Capacity: {}",
+                nsid,
+                size,
+                capacity
+            );
 
             //TODO: Read block size
 
@@ -507,7 +514,7 @@ impl Nvme {
                 (queue.data.physical(), queue.data.len())
             };
 
-            println!("  - Attempting to create I/O completion queue {}", io_qid);
+            // println!("  - Attempting to create I/O completion queue {}", io_qid);
             {
                 let qid = 0;
                 let queue = &mut self.submission_queues[qid];
@@ -519,7 +526,7 @@ impl Nvme {
                 self.submission_queue_tail(qid as u16, tail as u16);
             }
 
-            println!("  - Waiting to create I/O completion queue {}", io_qid);
+            // println!("  - Waiting to create I/O completion queue {}", io_qid);
             {
                 let qid = 0;
                 let queue = &mut self.completion_queues[qid];
@@ -534,7 +541,7 @@ impl Nvme {
                 (queue.data.physical(), queue.data.len())
             };
 
-            println!("  - Attempting to create I/O submission queue {}", io_qid);
+            // println!("  - Attempting to create I/O submission queue {}", io_qid);
             {
                 let qid = 0;
                 let queue = &mut self.submission_queues[qid];
@@ -547,7 +554,7 @@ impl Nvme {
                 self.submission_queue_tail(qid as u16, tail as u16);
             }
 
-            println!("  - Waiting to create I/O submission queue {}", io_qid);
+            // println!("  - Waiting to create I/O submission queue {}", io_qid);
             {
                 let qid = 0;
                 let queue = &mut self.completion_queues[qid];
@@ -556,7 +563,7 @@ impl Nvme {
             }
         }
 
-        println!("  - Complete");
+        // println!("  - Complete");
 
         namespaces
     }
