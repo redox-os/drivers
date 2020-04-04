@@ -10,6 +10,7 @@ use std::{io, mem, task, thread};
 use std::os::unix::io::AsRawFd;
 
 use crossbeam_channel::{Sender, Receiver};
+use log::{debug, error, info, warn, trace};
 use futures::Stream;
 use syscall::Io;
 
@@ -106,7 +107,7 @@ impl IrqReactor {
         std::thread::yield_now();
     }
     fn run_polling(mut self) {
-        println!("Running IRQ reactor in polling mode.");
+        debug!("Running IRQ reactor in polling mode.");
         let hci_clone = Arc::clone(&self.hci);
 
         'event_loop: loop {
@@ -133,7 +134,7 @@ impl IrqReactor {
         }
     }
     fn run_with_irq_file(mut self) {
-        println!("Running IRQ reactor with IRQ file and event queue");
+        debug!("Running IRQ reactor with IRQ file and event queue");
 
         let hci_clone = Arc::clone(&self.hci);
         let mut event_queue = EventQueue::<()>::new().expect("xhcid irq_reactor: failed to create IRQ event queue");
@@ -142,18 +143,18 @@ impl IrqReactor {
         let mut event_trb_index = { hci_clone.primary_event_ring.lock().unwrap().ring.next_index() };
 
         event_queue.add(irq_fd, move |_| -> io::Result<Option<()>> {
-            println!("IRQ event queue notified");
+            trace!("IRQ event queue notified");
             let mut buffer = [0u8; 8];
 
             let _ = self.irq_file.as_mut().unwrap().read(&mut buffer).expect("Failed to read from irq scheme");
 
             if !self.hci.received_irq() {
                 // continue only when an IRQ to this device was received
-                println!("no interrupt pending");
+                trace!("no interrupt pending");
                 return Ok(None);
             }
 
-            println!("IRQ reactor received an IRQ");
+            trace!("IRQ reactor received an IRQ");
 
             let _ = self.irq_file.as_mut().unwrap().write(&buffer);
 
@@ -167,15 +168,15 @@ impl IrqReactor {
                 let event_trb = &mut event_ring.ring.trbs[event_trb_index];
 
                 if event_trb.completion_code() == TrbCompletionCode::Invalid as u8 {
-                    if count == 0 { println!("xhci: Received interrupt, but no event was found in the event ring. Ignoring interrupt.") }
+                    if count == 0 { warn!("xhci: Received interrupt, but no event was found in the event ring. Ignoring interrupt.") }
                     // no more events were found, continue the loop
                     return Ok(None);
                 } else { count += 1 }
 
-                println!("Found event TRB: {:?}", event_trb);
+                trace!("Found event TRB: {:?}", event_trb);
 
                 if self.check_event_ring_full(event_trb.clone()) {
-                    println!("Had to resize event TRB, retrying...");
+                    info!("Had to resize event TRB, retrying...");
                     hci_clone.event_handler_finished();
                     return Ok(None);
                 }
@@ -197,12 +198,12 @@ impl IrqReactor {
         let dequeue_pointer = dequeue_pointer_and_dcs & 0xFFFF_FFFF_FFFF_FFFE;
         assert_eq!(dequeue_pointer & 0xFFFF_FFFF_FFFF_FFF0, dequeue_pointer, "unaligned ERDP received from primary event ring");
 
-        println!("Updated ERDP to {:#0x}", dequeue_pointer);
+        debug!("Updated ERDP to {:#0x}", dequeue_pointer);
 
         self.hci.run.lock().unwrap().ints[0].erdp.write(dequeue_pointer);
     }
     fn handle_requests(&mut self) {
-        self.states.extend(self.receiver.try_iter().inspect(|req| println!("Received request: {:?}", req)));
+        self.states.extend(self.receiver.try_iter().inspect(|req| trace!("Received request: {:?}", req)));
     }
     fn acknowledge(&mut self, trb: Trb) {
         let mut index = 0;
@@ -212,7 +213,7 @@ impl IrqReactor {
 
             match self.states[index].kind {
                 StateKind::CommandCompletion { phys_ptr } if dbg!(trb.trb_type()) == TrbType::CommandCompletion as u8 => if dbg!(trb.completion_trb_pointer()) == Some(phys_ptr) {
-                    println!("Found matching command completion future");
+                    trace!("Found matching command completion future");
                     let state = self.states.remove(index);
 
                     // Before waking, it's crucial that the command TRB that generated this event
@@ -224,7 +225,7 @@ impl IrqReactor {
                             t
                         },
                         None => {
-                            println!("The xHC supplied a pointer to a command TRB that was outside the known command ring bounds. Ignoring event TRB {:?}.", trb);
+                            warn!("The xHC supplied a pointer to a command TRB that was outside the known command ring bounds. Ignoring event TRB {:?}.", trb);
                             continue;
                         }
                     };
@@ -235,12 +236,12 @@ impl IrqReactor {
                         event_trb: trb.clone(),
                     });
 
-                    println!("Waking up future with waker: {:?}", state.waker);
+                    trace!("Waking up future with waker: {:?}", state.waker);
                     state.waker.wake();
 
                     return;
                 } else if trb.completion_trb_pointer().is_none() {
-                    println!("Command TRB somehow resulted in an error that only can be caused by transfer TRBs. Ignoring event TRB: {:?}.", trb);
+                    warn!("Command TRB somehow resulted in an error that only can be caused by transfer TRBs. Ignoring event TRB: {:?}.", trb);
                     continue;
                 } else {
                     // The event TRB simply didn't match the current future
@@ -290,7 +291,7 @@ impl IrqReactor {
                 }
             }
         }
-        println!("Lost event TRB: {:?}", trb);
+        warn!("Lost event TRB: {:?}", trb);
     }
     fn acknowledge_failed_transfer_trbs(&mut self, trb: Trb) {
         let mut index = 0;
@@ -325,7 +326,7 @@ impl IrqReactor {
     /// Grows the event ring
     fn grow_event_ring(&mut self) {
         // TODO
-        println!("TODO: grow event ring");
+        error!("TODO: grow event ring");
     }
 
     pub fn run(mut self) {

@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use log::debug;
 use syscall::error::Result;
 use syscall::io::{Dma, Io, Mmio};
 
@@ -59,7 +60,7 @@ pub struct InputContext {
 }
 impl InputContext {
     pub fn dump_control(&self) {
-        println!(
+        debug!(
             "INPUT CONTEXT: {} {} [{} {} {} {} {}] {}",
             self.drop_context.read(),
             self.add_context.read(),

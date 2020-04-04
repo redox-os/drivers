@@ -4,6 +4,7 @@ use std::sync::atomic;
 use std::{cmp, io, mem, path, str};
 
 use futures::executor::block_on;
+use log::{debug, error, info, warn, trace};
 use serde::{Deserialize, Serialize};
 use smallvec::{smallvec, SmallVec};
 
@@ -235,9 +236,7 @@ impl Xhci {
             self.next_command_completion_event_trb(&*command_ring, command_trb)
         };
 
-        println!("Ringing doorbell");
         self.dbs.lock().unwrap()[0].write(0);
-        println!("Doorbell rung");
 
         let trbs = next_event.await;
         let event_trb = trbs.event_trb;
@@ -381,14 +380,14 @@ impl Xhci {
         if event_trb.completion_code() != TrbCompletionCode::ShortPacket as u8
             && event_trb.transfer_length() != 0
         {
-            println!(
+            error!(
                 "Event trb didn't yield a short packet, but some bytes were not transferred"
             );
             return Err(Error::new(EIO));
         }
 
         // TODO: Handle event data
-        println!("EVENT DATA: {:?}", event_trb.event_data());
+        debug!("EVENT DATA: {:?}", event_trb.event_data());
 
         Ok(event_trb)
     }
@@ -925,41 +924,33 @@ impl Xhci {
         port_id: usize,
         slot: u8,
     ) -> Result<DevDesc> {
-        println!("Checkpoint 1");
         let ports = self.ports.lock().unwrap();
         let port = ports.get(port_id).ok_or(Error::new(ENOENT))?;
         if !port.flags().contains(port::PortFlags::PORT_CCS) {
             return Err(Error::new(ENOENT));
         }
 
-        println!("Checkpoint 2");
         let raw_dd = self.fetch_dev_desc(port_id, slot).await?;
-        println!("Checkpoint 3");
 
         let (manufacturer_str, product_str, serial_str) = (
             if raw_dd.manufacturer_str > 0 {
-                println!("Checkpoint 4a");
                 Some(self.fetch_string_desc(port_id, slot, raw_dd.manufacturer_str).await?)
             } else {
                 None
             },
             if raw_dd.product_str > 0 {
-                println!("Checkpoint 4b");
                 Some(self.fetch_string_desc(port_id, slot, raw_dd.product_str).await?)
             } else {
                 None
             },
             if raw_dd.serial_str > 0 {
-                println!("Checkpoint 4c");
                 Some(self.fetch_string_desc(port_id, slot, raw_dd.serial_str).await?)
             } else {
                 None
             },
         );
 
-        println!("Checkpoint 5");
         let (bos_desc, bos_data) = self.fetch_bos_desc(port_id, slot).await?;
-        println!("Checkpoint 6");
 
         let supports_superspeed =
             usb::bos_capability_descs(bos_desc, &bos_data).any(|desc| desc.is_superspeed());
@@ -969,9 +960,7 @@ impl Xhci {
         let mut config_descs = SmallVec::new();
 
         for index in 0..raw_dd.configurations {
-            println!("Checkpoint 7: {}", index);
             let (desc, data) = self.fetch_config_desc(port_id, slot, index).await?;
-            println!("Checkpoint 8: {}", index);
 
             let extra_length = desc.total_length as usize - mem::size_of_val(&desc);
             let data = &data[..extra_length];
@@ -2001,7 +1990,7 @@ impl Xhci {
     /// # Locking
     /// This function locks `Xhci::run`.
     pub fn event_handler_finished(&self) {
-        println!("Event handler finished");
+        trace!("Event handler finished");
         // write 1 to EHB to clear it
         self.run.lock().unwrap().ints[0].erdp.writef(1 << 3, true);
     }
@@ -2010,7 +1999,7 @@ pub fn handle_event_trb(name: &str, event_trb: &Trb, command_trb: &Trb) -> Resul
     if event_trb.completion_code() == TrbCompletionCode::Success as u8 {
         Ok(())
     } else {
-        println!("{} command (TRB {:?}) failed with event trb {:?}", name, command_trb, event_trb);
+        error!("{} command (TRB {:?}) failed with event trb {:?}", name, command_trb, event_trb);
         Err(Error::new(EIO))
     }
 }
@@ -2018,7 +2007,7 @@ pub fn handle_transfer_event_trb(name: &str, event_trb: &Trb, transfer_trb: &Trb
     if event_trb.completion_code() == TrbCompletionCode::Success as u8 || event_trb.completion_code() == TrbCompletionCode::ShortPacket as u8 {
         Ok(())
     } else {
-        println!("{} transfer (TRB {:?}) failed with event trb {:?}", name, transfer_trb, event_trb);
+        error!("{} transfer (TRB {:?}) failed with event trb {:?}", name, transfer_trb, event_trb);
         Err(Error::new(EIO))
     }
 }
