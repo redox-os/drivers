@@ -13,7 +13,7 @@ path = "src/lib.rs"
 
 [dependencies]
 bitflags = "1"
-chashmap = "2.2.2"
+chashmap = { git = "https://gitlab.redox-os.org/redox-os/chashmap.git" }
 crossbeam-channel = "0.4"
 futures = "0.3"
 plain = "0.2"
