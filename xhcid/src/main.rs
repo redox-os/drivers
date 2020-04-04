@@ -1,13 +1,6 @@
 #[macro_use]
 extern crate bitflags;
-extern crate event;
-extern crate plain;
-extern crate syscall;
 
-use pcid_interface::{PcidServerHandle, PciFeature, PciFeatureInfo};
-use pcid_interface::msi::{MsiCapability, MsixCapability, MsixTableEntry};
-
-use event::{Event, EventQueue};
 use std::convert::TryInto;
 use std::fs::{self, File};
 use std::future::Future;
@@ -17,6 +10,12 @@ use std::pin::Pin;
 use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
 use std::env;
+
+use pcid_interface::{PcidServerHandle, PciFeature, PciFeatureInfo};
+use pcid_interface::msi::{MsiCapability, MsixCapability, MsixTableEntry};
+
+use event::{Event, EventQueue};
+use log::info;
 use syscall::data::Packet;
 use syscall::error::EWOULDBLOCK;
 use syscall::flag::{CloneFlags, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
@@ -81,14 +80,30 @@ async fn handle_packet(hci: Arc<Xhci>, packet: Packet) -> Packet {
 }
 
 fn main() {
+    let mut args = env::args().skip(1);
+
+    let mut name = args.next().expect("xhcid: no name provided");
+    name.push_str("_xhci");
+
     // Daemonize
     if unsafe { syscall::clone(CloneFlags::empty()).unwrap() } != 0 {
         return;
     }
 
+    match redox_log::RedoxLogger::new("usb", "host", "xhci.log") {
+        Ok(logger) => match logger.with_stdout_mirror().enable() {
+            Ok(()) => {
+                println!("xhcid: enabled logger");
+                log::set_max_level(log::LevelFilter::Trace);
+            }
+            Err(error) => eprintln!("xhcid: failed to set default logger: {}", error),
+        }
+        Err(error) => eprintln!("xhcid: failed to initialize logger: {}", error),
+    }
+
     let mut pcid_handle = PcidServerHandle::connect_default().expect("xhcid: failed to setup channel to pcid");
     let pci_config = pcid_handle.fetch_config().expect("xhcid: failed to fetch config");
-    println!("XHCI PCI CONFIG: {:?}", pci_config);
+    info!("XHCI PCI CONFIG: {:?}", pci_config);
 
     let bar = pci_config.func.bars[0];
     let irq = pci_config.func.legacy_interrupt_line;
@@ -104,7 +119,7 @@ fn main() {
     };
 
     let all_pci_features = pcid_handle.fetch_all_features().expect("xhcid: failed to fetch pci features");
-    println!("XHCI PCI FEATURES: {:?}", all_pci_features);
+    info!("XHCI PCI FEATURES: {:?}", all_pci_features);
 
     let (has_msi, mut msi_enabled) = all_pci_features.iter().map(|(feature, status)| (feature.is_msi(), status.is_enabled())).find(|&(f, _)| f).unwrap_or((false, false));
     let (has_msix, mut msix_enabled) = all_pci_features.iter().map(|(feature, status)| (feature.is_msix(), status.is_enabled())).find(|&(f, _)| f).unwrap_or((false, false));
@@ -114,12 +129,12 @@ fn main() {
 
     if has_msi && !msi_enabled && !has_msix {
         pcid_handle.enable_feature(PciFeature::Msi).expect("xhcid: failed to enable MSI");
-        println!("Enabled MSI");
+        info!("Enabled MSI");
         msi_enabled = true;
     }
     if has_msix && !msix_enabled {
         pcid_handle.enable_feature(PciFeature::MsiX).expect("xhcid: failed to enable MSI-X");
-        println!("Enabled MSI-X");
+        info!("Enabled MSI-X");
         msix_enabled = true;
     }
 
@@ -196,11 +211,6 @@ fn main() {
     };
 
     std::thread::sleep(std::time::Duration::from_millis(300));
-
-    let mut args = env::args().skip(1);
-
-    let mut name = args.next().expect("xhcid: no name provided");
-    name.push_str("_xhci");
 
     print!(
         "{}",
