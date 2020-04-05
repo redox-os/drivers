@@ -14,7 +14,7 @@ use thiserror::Error;
 
 pub use crate::usb::{EndpointTy, ENDP_ATTR_TY_MASK};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct ConfigureEndpointsReq {
     /// Index into the configuration descriptors of the device descriptor.
     pub config_desc: u8,

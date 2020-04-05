@@ -288,10 +288,10 @@ impl Xhci {
     where
         D: FnMut(&mut Trb, bool) -> ControlFlow,
     {
-        let mut port_state = self.port_state_mut(port_num)?;
-        let slot = port_state.slot;
+        let (future, slot) = {
+            let mut port_state = self.port_state_mut(port_num)?;
+            let slot = port_state.slot;
 
-        let future = {
             let mut endpoint_state = port_state
                 .endpoint_states
                 .get_mut(&0).ok_or(Error::new(EIO))?;
@@ -322,7 +322,7 @@ impl Xhci {
             let ent = false;
 
             cmd.status(interrupter, tk == TransferKind::In, ioc, ch, ent, cycle);
-            self.next_transfer_event_trb(RingId::default_control_pipe(port_num as u8), ring, &ring.trbs[last_index])
+            (self.next_transfer_event_trb(RingId::default_control_pipe(port_num as u8), ring, &ring.trbs[last_index]), slot)
         };
 
         self.dbs.lock().unwrap()[usize::from(slot)].write(Self::def_control_endp_doorbell());
@@ -423,6 +423,8 @@ impl Xhci {
         Ok(event_trb)
     }
     async fn device_req_no_data(&self, port: usize, req: usb::Setup) -> Result<()> {
+        trace!("DEVICE_REQ_NO_DATA port {}, req: {:?}", port, req);
+
         self.execute_control_transfer(
             port,
             req,
@@ -433,6 +435,7 @@ impl Xhci {
         Ok(())
     }
     async fn set_configuration(&self, port: usize, config: u8) -> Result<()> {
+        debug!("Setting configuration value {} to port {}", config, port);
         self.device_req_no_data(port, usb::Setup::set_configuration(config)).await
     }
     async fn set_interface(
@@ -441,6 +444,7 @@ impl Xhci {
         interface_num: u8,
         alternate_setting: u8,
     ) -> Result<()> {
+        debug!("Setting interface value {} (alternate setting {}) to port {}", interface_num, alternate_setting, port);
         self.device_req_no_data(
             port,
             usb::Setup::set_interface(interface_num, alternate_setting),
@@ -556,6 +560,8 @@ impl Xhci {
         let mut req: ConfigureEndpointsReq =
             serde_json::from_slice(json_buf).or(Err(Error::new(EBADMSG)))?;
 
+        debug!("Running configure endpoints command, at port {}, request: {:?}", port, req);
+
         if (!self.cap.cic() || !self.op.lock().unwrap().cie())
             && (req.config_desc != 0 || req.interface_desc != None || req.alternate_setting != None)
         {
@@ -623,7 +629,7 @@ impl Xhci {
         for endp_idx in 0..endp_desc_count as u8 {
             let endp_num = endp_idx + 1;
 
-            let port_state = self.port_states.get(&port).ok_or(Error::new(EBADFD))?;
+            let mut port_state = self.port_states.get_mut(&port).ok_or(Error::new(EBADFD))?;
             let dev_desc = port_state.dev_desc.as_ref().unwrap();
             let endpoints = &dev_desc.config_descs.get(usize::from(req.config_desc)).ok_or(Error::new(EBADFD))?.interface_descs.get(usize::from(req.interface_desc.unwrap_or(0))).ok_or(Error::new(EBADFD))?.endpoints;
             let endp_desc = endpoints.get(endp_idx as usize).ok_or(Error::new(EIO))?;
@@ -683,8 +689,6 @@ impl Xhci {
             assert_eq!(max_error_count & 0x3, max_error_count);
             assert_ne!(ep_ty, 0); // 0 means invalid.
 
-            let mut port_state = self.port_states.get_mut(&port).ok_or(Error::new(EBADFD))?;
-
             let ring_ptr = if usb_log_max_streams.is_some() {
                 let mut array = StreamContextArray::new(1 << (primary_streams + 1))?;
 
@@ -726,7 +730,6 @@ impl Xhci {
             };
             assert_eq!(primary_streams & 0x1F, primary_streams);
 
-            let port_state = self.port_states.get_mut(&port).ok_or(Error::new(EBADFD))?;
             let mut input_context = port_state.input_context.lock().unwrap();
             input_context.add_context.writef(1 << endp_num_xhc, true);
 
@@ -755,16 +758,19 @@ impl Xhci {
                 .write(u32::from(avg_trb_len) | (u32::from(max_esit_payload_lo) << 16));
         }
 
-        let port_state = self.port_states.get(&port).ok_or(Error::new(EBADFD))?;
-        let slot = port_state.slot;
-        let input_context_physical = port_state.input_context.lock().unwrap().physical();
+        {
+            let port_state = self.port_states.get(&port).ok_or(Error::new(EBADFD))?;
+            let slot = port_state.slot;
+            let input_context_physical = port_state.input_context.lock().unwrap().physical();
 
-        let (event_trb, command_trb) = self.execute_command(|trb, cycle| {
-            trb.configure_endpoint(slot, input_context_physical, cycle)
-        }).await;
-        self.event_handler_finished();
+            let (event_trb, command_trb) = self.execute_command(|trb, cycle| {
+                trb.configure_endpoint(slot, input_context_physical, cycle)
+            }).await;
 
-        handle_event_trb("CONFIGURE_ENDPOINT", &event_trb, &command_trb)?;
+            self.event_handler_finished();
+
+            handle_event_trb("CONFIGURE_ENDPOINT", &event_trb, &command_trb)?;
+        }
 
         // Tell the device about this configuration.
         self.set_configuration(port, configuration_value).await?;

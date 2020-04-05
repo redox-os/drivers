@@ -92,7 +92,7 @@ fn main() {
 
     match redox_log::RedoxLogger::new("usb", "host", "xhci.log") {
         Ok(logger) => match logger.with_stdout_mirror().enable() {
-            Ok(()) => {
+            Ok(_) => {
                 println!("xhcid: enabled logger");
                 log::set_max_level(log::LevelFilter::Trace);
             }
