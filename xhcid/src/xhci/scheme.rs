@@ -1,7 +1,8 @@
 use std::convert::TryFrom;
 use std::io::prelude::*;
+use std::ops::Deref;
 use std::sync::atomic;
-use std::{cmp, io, mem, path, str};
+use std::{cmp, fmt, io, mem, path, str};
 
 use futures::executor::block_on;
 use log::{debug, error, info, warn, trace};
@@ -53,6 +54,7 @@ pub enum EndpIfState {
 }
 
 /// Subdirs of an endpoint
+#[derive(Debug)]
 pub enum EndpointHandleTy {
     /// portX/endpoints/Y/data. Allows clients to read and write data associated with ctl requests.
     Data,
@@ -64,7 +66,7 @@ pub enum EndpointHandleTy {
     Root(usize, Vec<u8>), // offset, content
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum PortTransferState {
     /// Ready to read or write to do another transfer
     Ready,
@@ -81,6 +83,7 @@ pub enum PortReqState {
     Tmp,
 }
 
+#[derive(Debug)]
 pub enum Handle {
     TopLevel(usize, Vec<u8>),              // offset, contents (ports)
     Port(usize, usize, Vec<u8>),           // port, offset, contents
@@ -91,6 +94,34 @@ pub enum Handle {
     Endpoint(usize, u8, EndpointHandleTy), // port, endpoint, offset, state
     ConfigureEndpoints(usize),             // port
 }
+
+#[derive(Clone, Copy)]
+struct DmaSliceDbg<'a, T>(&'a Dma<[T]>);
+
+impl<'a, T> fmt::Debug for DmaSliceDbg<'a, T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let DmaSliceDbg(dma) = self;
+
+        f.debug_struct("Dma")
+            .field("phys_ptr", &(dma.physical() as *const u8))
+            .field("virt_ptr", &(dma.deref().as_ptr() as *const u8))
+            .field("length", &(dma.len() * mem::size_of::<T>()))
+            .finish()
+    }
+}
+
+impl fmt::Debug for PortReqState {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::Init => f.debug_struct("PortReqState::Init").finish(),
+            Self::WaitingForDeviceBytes(ref dma, setup) => f.debug_tuple("PortReqState::WaitingForDeviceBytes").field(&DmaSliceDbg(dma)).field(&setup).finish(),
+            Self::WaitingForHostBytes(ref dma, setup) => f.debug_tuple("PortReqState::WaitingForHostBytes").field(&DmaSliceDbg(dma)).field(&setup).finish(),
+            Self::TmpSetup(setup) => f.debug_tuple("PortReqState::TmpSetup").field(&setup).finish(),
+            Self::Tmp => f.debug_struct("PortReqState::Init").finish(),
+        }
+    }
+}
+
 
 // TODO: Even though the driver interface descriptors are originally intended for JSON, they should suffice... for
 // now.
@@ -1370,6 +1401,9 @@ impl Scheme for Xhci {
         };
 
         let fd = self.next_handle.fetch_add(1, atomic::Ordering::Relaxed);
+
+        trace!("OPENED {} to FD={}, handle: {:?}", path_str, fd, handle);
+
         self.handles.insert(fd, handle);
 
         Ok(fd)
