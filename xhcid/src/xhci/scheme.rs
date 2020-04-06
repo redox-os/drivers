@@ -352,13 +352,13 @@ impl Xhci {
     where
         D: FnMut(&mut Trb, bool) -> ControlFlow,
     {
+        let endp_idx = endp_num.checked_sub(1).ok_or(Error::new(EIO))?;
         let mut port_state = self.port_state_mut(port_num)?;
 
         let (cfg_idx, if_idx) = match (port_state.cfg_idx, port_state.if_idx) {
             (Some(c), Some(i)) => (c, i),
             _ => return Err(Error::new(EIO)),
         };
-
 
         let slot = port_state.slot;
 
@@ -393,7 +393,7 @@ impl Xhci {
             }
         };
 
-        let endp_desc = port_state.dev_desc.as_ref().unwrap().config_descs[usize::from(cfg_idx)].interface_descs[usize::from(if_idx)].endpoints.get(usize::from(endp_num)).ok_or(Error::new(EBADFD))?;
+        let endp_desc = port_state.dev_desc.as_ref().unwrap().config_descs.get(usize::from(cfg_idx)).ok_or(Error::new(EIO))?.interface_descs.get(usize::from(if_idx)).ok_or(Error::new(EIO))?.endpoints.get(usize::from(endp_idx)).ok_or(Error::new(EBADFD))?;
 
         self.dbs.lock().unwrap()[usize::from(slot)].write(Self::endp_doorbell(
             endp_num,
@@ -401,6 +401,7 @@ impl Xhci {
             if has_streams { stream_id } else { 0 },
         ));
 
+        drop(port_state);
         let trbs = future.await;
         let event_trb = trbs.event_trb;
         let transfer_trb = trbs.src_trb.unwrap();
@@ -575,7 +576,10 @@ impl Xhci {
         }
 
         let (endp_desc_count, new_context_entries, configuration_value) = {
-            let port_state = self.port_states.get(&port).ok_or(Error::new(EBADFD))?;
+            let mut port_state = self.port_states.get_mut(&port).ok_or(Error::new(EBADFD))?;
+            port_state.cfg_idx = Some(req.config_desc);
+            port_state.if_idx = Some(req.interface_desc.unwrap_or(0));
+
             let config_desc = port_state.dev_desc.as_ref().unwrap().config_descs.get(usize::from(req.config_desc)).ok_or(Error::new(EBADFD))?;
 
             let endpoints = &config_desc.interface_descs.get(usize::from(req.interface_desc.unwrap_or(0))).ok_or(Error::new(EBADFD))?.endpoints;
@@ -811,6 +815,8 @@ impl Xhci {
         let mut dma_buffer = unsafe { Dma::<[u8]>::zeroed_unsized(sbuf.len()) }?;
         dma_buffer.copy_from_slice(sbuf);
 
+        trace!("TRANSFER_WRITE port {} ep {}, buffer at {:p}, size {}, dma buffer {:?}", port_num, endp_idx + 1, sbuf.as_ptr(), sbuf.len(), DmaSliceDbg(&dma_buffer));
+
         let (completion_code, bytes_transferred, _) = self.transfer(
             port_num,
             endp_idx,
@@ -854,19 +860,24 @@ impl Xhci {
         // TODO: Check that only readable enpoints are read, etc.
         let endp_num = endp_idx + 1;
 
-        let port_state = self
+        let mut port_state = self
             .port_states
             .get_mut(&port_num)
             .ok_or(Error::new(EBADFD))?;
+
+        let (cfg_idx, if_idx) = match (port_state.cfg_idx, port_state.if_idx) {
+            (Some(c), Some(i)) => (c, i),
+            _ => return Err(Error::new(EIO)),
+        };
 
         let endp_desc: &EndpDesc = port_state
             .dev_desc
             .as_ref().unwrap()
             .config_descs
-            .get(0)
+            .get(usize::from(cfg_idx))
             .ok_or(Error::new(EIO))?
             .interface_descs
-            .get(0)
+            .get(usize::from(if_idx))
             .ok_or(Error::new(EIO))?
             .endpoints
             .get(endp_idx as usize)
@@ -914,6 +925,8 @@ impl Xhci {
         let stream_id = 1u16;
 
         let mut bytes_left = dma_buf.as_ref().map(|buf| buf.len()).unwrap_or(0);
+
+        drop(port_state);
 
         let event = self.execute_transfer(
             port_num,
@@ -1489,6 +1502,9 @@ impl Scheme for Xhci {
 
     fn seek(&self, fd: usize, pos: usize, whence: usize) -> Result<usize> {
         let mut guard = self.handles.get_mut(&fd).ok_or(Error::new(EBADF))?;
+
+        trace!("SEEK fd={}, handle={:?}, pos {}, whence {}", fd, guard, pos, whence);
+
         match &mut *guard {
             // Directories, or fixed files
             Handle::TopLevel(ref mut offset, ref buf)
@@ -1522,6 +1538,7 @@ impl Scheme for Xhci {
 
     fn read(&self, fd: usize, buf: &mut [u8]) -> Result<usize> {
         let mut guard = self.handles.get_mut(&fd).ok_or(Error::new(EBADF))?;
+        trace!("READ fd={}, handle={:?}, buf=(addr {:p}, length {})", fd, guard, buf.as_ptr(), buf.len());
         match &mut *guard {
             Handle::TopLevel(ref mut offset, ref src_buf)
             | Handle::Port(_, ref mut offset, ref src_buf)
@@ -1569,12 +1586,14 @@ impl Scheme for Xhci {
             }
             &mut Handle::PortReq(port_num, ref mut st) => {
                 let state = std::mem::replace(st, PortReqState::Tmp);
+                drop(guard); // release the lock
                 block_on(self.handle_port_req_read(fd, port_num, state, buf))
             }
         }
     }
     fn write(&self, fd: usize, buf: &[u8]) -> Result<usize> {
         let mut guard = self.handles.get_mut(&fd).ok_or(Error::new(EBADF))?;
+        trace!("WRITE fd={}, handle={:?}, buf=(addr {:p}, length {})", fd, guard, buf.as_ptr(), buf.len());
 
         match &mut *guard {
             &mut Handle::ConfigureEndpoints(port_num) => {
@@ -1588,6 +1607,7 @@ impl Scheme for Xhci {
             },
             &mut Handle::PortReq(port_num, ref mut st) => {
                 let state = std::mem::replace(st, PortReqState::Tmp);
+                drop(guard); // release the lock
                 block_on(self.handle_port_req_write(fd, port_num, state, buf))
             }
             // TODO: Introduce PortReqState::Waiting, which this write call changes to
@@ -1892,6 +1912,7 @@ impl Xhci {
                 if buf.len() > total_bytes_to_transfer as usize - bytes_transferred as usize {
                     return Err(Error::new(EINVAL));
                 }
+                drop(port_state);
                 let (completion_code, some_bytes_transferred) =
                     self.transfer_write(port_num, endp_num - 1, buf).await?;
                 let result = Self::transfer_result(completion_code, some_bytes_transferred);
@@ -1985,6 +2006,7 @@ impl Xhci {
                     return Err(Error::new(EINVAL));
                 }
 
+                drop(port_state);
                 let (completion_code, some_bytes_transferred) =
                     self.transfer_read(port_num, endp_num - 1, buf).await?;
 

@@ -330,7 +330,7 @@ impl Xhci {
             irq_reactor_receiver,
         };
 
-        xhci.init(max_slots);
+        xhci.init(max_slots)?;
 
         Ok(xhci)
     }
@@ -424,7 +424,7 @@ impl Xhci {
         let (event_trb, command_trb) =
             self.execute_command(|cmd, cycle| cmd.enable_slot(slot_ty, cycle)).await;
 
-        self::scheme::handle_event_trb("ENABLE_SLOT", &event_trb, &command_trb);
+        self::scheme::handle_event_trb("ENABLE_SLOT", &event_trb, &command_trb)?;
         self.event_handler_finished();
 
         Ok(event_trb.event_slot())
@@ -432,7 +432,7 @@ impl Xhci {
     pub async fn disable_port_slot(&self, slot: u8) -> Result<()> {
         let (event_trb, command_trb) = self.execute_command(|cmd, cycle| cmd.disable_slot(slot, cycle)).await;
 
-        self::scheme::handle_event_trb("DISABLE_SLOT", &event_trb, &command_trb);
+        self::scheme::handle_event_trb("DISABLE_SLOT", &event_trb, &command_trb)?;
         self.event_handler_finished();
 
         Ok(())
