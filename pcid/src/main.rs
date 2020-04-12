@@ -62,8 +62,6 @@ impl DriverHandler {
             PcidClientRequest::RequestFeatures => {
                 PcidClientResponse::AllFeatures(self.capabilities.iter().filter_map(|(_, capability)| match capability {
                     PciCapability::Msi(msi) => Some((PciFeature::Msi, FeatureStatus::enabled(msi.enabled()))),
-                    // TODO: For MSI-X to actually be enabled, MSI also has to be enabled.
-                    // How should this be reported to the subdrivers?
                     PciCapability::MsiX(msix) => Some((PciFeature::MsiX, FeatureStatus::enabled(msix.msix_enabled()))),
                     _ => None,
                 }).collect())
@@ -344,9 +342,6 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, bus_num: u8,
                 func,
             };
 
-            // TODO: find a better way to pass the header data down to the
-            // device driver, making passing the capabilities list etc
-            // posible.
             let mut args = args.iter();
             if let Some(program) = args.next() {
                 let mut command = Command::new(program);
