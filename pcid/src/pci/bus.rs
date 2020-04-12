@@ -1,7 +1,7 @@
-use super::{Pci, PciDev};
+use super::{Pci, PciDev, CfgAccess};
 
 pub struct PciBus<'pci> {
-    pub pci: &'pci Pci,
+    pub pci: &'pci dyn CfgAccess,
     pub num: u8
 }
 
@@ -10,10 +10,10 @@ impl<'pci> PciBus<'pci> {
         PciBusIter::new(self)
     }
 
-    pub unsafe fn read(&self, dev: u8, func: u8, offset: u8) -> u32 {
+    pub unsafe fn read(&self, dev: u8, func: u8, offset: u16) -> u32 {
         self.pci.read(self.num, dev, func, offset)
     }
-    pub unsafe fn write(&self, dev: u8, func: u8, offset: u8, value: u32) {
+    pub unsafe fn write(&self, dev: u8, func: u8, offset: u16, value: u32) {
         self.pci.write(self.num, dev, func, offset, value)
     }
 }
@@ -26,7 +26,7 @@ pub struct PciBusIter<'pci> {
 impl<'pci> PciBusIter<'pci> {
     pub fn new(bus: &'pci PciBus<'pci>) -> Self {
         PciBusIter {
-            bus: bus,
+            bus,
             num: 0
         }
     }

@@ -25,7 +25,7 @@ where
 
             if self.offset == 0 { return None };
 
-            let first_dword = dbg!(self.reader.read_u32(dbg!(self.offset)));
+            let first_dword = dbg!(self.reader.read_u32(dbg!(u16::from(self.offset))));
             let next = ((first_dword >> 8) & 0xFF) as u8;
 
             let offset = self.offset;
@@ -135,9 +135,9 @@ impl Capability {
     }
     unsafe fn parse_msix<R: ConfigReader>(reader: &R, offset: u8) -> Self {
         Self::MsiX(MsixCapability {
-            a: reader.read_u32(offset),
-            b: reader.read_u32(offset + 4),
-            c: reader.read_u32(offset + 8),
+            a: reader.read_u32(u16::from(offset)),
+            b: reader.read_u32(u16::from(offset + 4)),
+            c: reader.read_u32(u16::from(offset + 8)),
         })
     }
     unsafe fn parse_pcie<R: ConfigReader>(reader: &R, offset: u8) -> Self {
@@ -147,7 +147,7 @@ impl Capability {
     unsafe fn parse<R: ConfigReader>(reader: &R, offset: u8) -> Self {
         assert_eq!(offset & 0xF8, offset, "capability must be dword aligned");
 
-        let dword = reader.read_u32(offset);
+        let dword = reader.read_u32(u16::from(offset));
         let capability_id = (dword & 0xFF) as u8;
 
         if capability_id == CapabilityId::Msi as u8 {

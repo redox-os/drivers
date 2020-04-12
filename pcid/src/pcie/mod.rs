@@ -1,10 +1,18 @@
-use std::{fs, io, mem, slice};
+use std::{fmt, fs, io, mem, ptr, slice};
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
+
+use syscall::flag::PhysmapFlags;
+use syscall::io::Dma;
+
 use smallvec::SmallVec;
+
+use crate::pci::{CfgAccess, Pci, PciIter};
 
 pub const MCFG_NAME: [u8; 4] = *b"MCFG";
 
 #[repr(packed)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct Mcfg {
     // base sdt fields
     name: [u8; 4],
@@ -15,6 +23,7 @@ pub struct Mcfg {
     oem_table_id: [u8; 8],
     oem_revision: u32,
     creator_id: [u8; 4],
+    creator_revision: u32,
     _rsvd: [u8; 8],
 
     base_addrs: [PcieAlloc; 0],
@@ -43,10 +52,27 @@ impl Mcfg {
         unsafe { slice::from_raw_parts(&self.base_addrs as *const PcieAlloc, len / mem::size_of::<PcieAlloc>()) }
     }
 }
+impl fmt::Debug for Mcfg {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("Mcfg")
+            .field("name", &"MCFG")
+            .field("length", &self.length)
+            .field("revision", &self.revision)
+            .field("checksum", &self.checksum)
+            .field("oem_id", &self.oem_id)
+            .field("oem_table_id", &self.oem_table_id)
+            .field("oem_revision", &self.oem_revision)
+            .field("creator_revision", &self.creator_revision)
+            .field("creator_id", &self.creator_id)
+            .field("base_addrs", &self.base_addr_structs())
+            .finish()
+    }
+}
 
 pub struct Mcfgs {
     tables: SmallVec<[Vec<u8>; 2]>,
 }
+
 impl Mcfgs {
     pub fn tables<'a>(&'a self) -> impl Iterator<Item = &'a Mcfg> + 'a {
         self.tables.iter().filter_map(|bytes| {
@@ -56,6 +82,9 @@ impl Mcfgs {
             }
             Some(mcfg)
         })
+    }
+    pub fn allocs<'a>(&'a self) -> impl Iterator<Item = &'a PcieAlloc> + 'a {
+        self.tables().map(|table| table.base_addr_structs().iter()).flatten()
     }
 
     pub fn fetch() -> io::Result<Self> {
@@ -81,11 +110,105 @@ impl Mcfgs {
             tables,
         })
     }
-    pub fn at_bus(&self, bus: u8) -> Option<(&Mcfg, &PcieAlloc)> {
+    pub fn table_and_alloc_at_bus(&self, bus: u8) -> Option<(&Mcfg, &PcieAlloc)> {
         self.tables().find_map(|table| {
             Some((table, table.base_addr_structs().iter().find(|addr_struct| {
                 (addr_struct.start_bus..addr_struct.end_bus).contains(&bus)
             })?))
         })
+    }
+    pub fn at_bus(&self, bus: u8) -> Option<&PcieAlloc> {
+        self.table_and_alloc_at_bus(bus).map(|(_, alloc)| alloc)
+    }
+}
+
+impl fmt::Debug for Mcfgs {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        struct Tables<'a>(&'a Mcfgs);
+        impl<'a> fmt::Debug for Tables<'a> {
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.debug_list().entries(self.0.tables()).finish()
+            }
+        }
+
+        f.debug_tuple("Mcfgs").field(&Tables(self)).finish()
+    }
+}
+
+pub struct Pcie {
+    lock: Mutex<()>,
+    mcfgs: Mcfgs,
+    maps: Mutex<BTreeMap<(u8, u8, u8), *mut u32>>,
+    fallback: Arc<Pci>,
+}
+unsafe impl Send for Pcie {}
+unsafe impl Sync for Pcie {}
+
+impl Pcie {
+    pub fn new(fallback: Arc<Pci>) -> io::Result<Self> {
+        let mcfgs = Mcfgs::fetch()?;
+
+        Ok(Self {
+            lock: Mutex::new(()),
+            mcfgs,
+            maps: Mutex::new(BTreeMap::new()),
+            fallback,
+        })
+    }
+    fn addr_offset_in_bytes(starting_bus: u8, bus: u8, dev: u8, func: u8, offset: u16) -> usize {
+        assert_eq!(offset & 0xFFFC, offset, "pcie offset not dword-aligned");
+        assert_eq!(offset & 0x0FFF, offset, "pcie offset larger than 4095");
+        assert_eq!(dev & 0x1F, dev, "pcie dev number larger than 5 bits");
+        assert_eq!(func & 0x7, func, "pcie func number larger than 3 bits");
+
+        (((bus - starting_bus) as usize) << 20) | ((dev as usize) << 15) | ((func as usize) << 12) | (offset as usize)
+    }
+    fn addr_offset_in_dwords(starting_bus: u8, bus: u8, dev: u8, func: u8, offset: u16) -> usize {
+        Self::addr_offset_in_bytes(starting_bus, bus, dev, func, offset) / mem::size_of::<u32>()
+    }
+    unsafe fn with_pointer<T, F: FnOnce(Option<&mut u32>) -> T>(&self, bus: u8, dev: u8, func: u8, offset: u16, f: F) -> T {
+        let (base_address_phys, starting_bus) = match self.mcfgs.at_bus(bus) {
+            Some(t) => (t.base_addr, t.start_bus),
+            None => return f(None),
+        };
+        let mut maps_lock = self.maps.lock().unwrap();
+        let virt_pointer = maps_lock.entry((bus, dev, func)).or_insert_with(|| {
+            syscall::physmap(base_address_phys as usize + Self::addr_offset_in_bytes(starting_bus, bus, dev, func, 0), 4096, PhysmapFlags::PHYSMAP_NO_CACHE | PhysmapFlags::PHYSMAP_WRITE).unwrap_or_else(|error| panic!("failed to physmap pcie configuration space for {:2x}:{:2x}.{:2x}: {:?}", bus, dev, func, error)) as *mut u32
+        });
+        f(Some(&mut *virt_pointer.offset((offset as usize / mem::size_of::<u32>()) as isize)))
+    }
+    pub fn buses<'pcie>(&'pcie self) -> PciIter<'pcie> {
+        PciIter::new(self)
+    }
+}
+
+impl CfgAccess for Pcie {
+    unsafe fn read_nolock(&self, bus: u8, dev: u8, func: u8, offset: u16) -> u32 {
+        self.with_pointer(bus, dev, func, offset, |pointer| match pointer {
+            Some(address) => ptr::read_volatile::<u32>(address),
+            None => self.fallback.read(bus, dev, func, offset),
+        })
+    }
+    unsafe fn read(&self, bus: u8, dev: u8, func: u8, offset: u16) -> u32 {
+        let _guard = self.lock.lock().unwrap();
+        self.read_nolock(bus, dev, func, offset)
+    }
+    unsafe fn write_nolock(&self, bus: u8, dev: u8, func: u8, offset: u16, value: u32) {
+        self.with_pointer(bus, dev, func, offset, |pointer| match pointer {
+            Some(address) => ptr::write_volatile::<u32>(address, value),
+            None => { self.fallback.read(bus, dev, func, offset); }
+        });
+    }
+    unsafe fn write(&self, bus: u8, dev: u8, func: u8, offset: u16, value: u32) {
+        let _guard = self.lock.lock().unwrap();
+        self.write_nolock(bus, dev, func, offset, value);
+    }
+}
+
+impl Drop for Pcie {
+    fn drop(&mut self) {
+        for address in self.maps.values() {
+            let _ = unsafe { syscall::physfree(address, 4096) };
+        }
     }
 }

@@ -2,11 +2,8 @@ use byteorder::{LittleEndian, ByteOrder};
 
 use super::PciDev;
 
-// TODO: PCI Express Configuration Space, which uses a flat memory buffer, rather than IN/OUT
-// instructions.
-
 pub trait ConfigReader {
-    unsafe fn read_range(&self, offset: u8, len: u8) -> Vec<u8> {
+    unsafe fn read_range(&self, offset: u16, len: u16) -> Vec<u8> {
         assert!(len > 3 && len % 4 == 0);
         let mut ret = Vec::with_capacity(len as usize);
         let results = (offset..offset + len).step_by(4).fold(Vec::new(), |mut acc, offset| {
@@ -19,9 +16,9 @@ pub trait ConfigReader {
         ret
     }
 
-    unsafe fn read_u32(&self, offset: u8) -> u32;
+    unsafe fn read_u32(&self, offset: u16) -> u32;
 
-    unsafe fn read_u8(&self, offset: u8) -> u8 {
+    unsafe fn read_u8(&self, offset: u16) -> u8 {
         let dword_offset = (offset / 4) * 4;
         let dword = self.read_u32(dword_offset);
 
@@ -30,7 +27,7 @@ pub trait ConfigReader {
     }
 }
 pub trait ConfigWriter {
-    unsafe fn write_u32(&self, offset: u8, value: u32);
+    unsafe fn write_u32(&self, offset: u16, value: u32);
 }
 
 pub struct PciFunc<'pci> {
@@ -39,12 +36,12 @@ pub struct PciFunc<'pci> {
 }
 
 impl<'pci> ConfigReader for PciFunc<'pci> {
-    unsafe fn read_u32(&self, offset: u8) -> u32 {
+    unsafe fn read_u32(&self, offset: u16) -> u32 {
         self.dev.read(self.num, offset)
     }
 }
 impl<'pci> ConfigWriter for PciFunc<'pci> {
-    unsafe fn write_u32(&self, offset: u8, value: u32) {
+    unsafe fn write_u32(&self, offset: u16, value: u32) {
         self.dev.write(self.num, offset, value);
     }
 }
