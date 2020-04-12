@@ -21,6 +21,7 @@ use crate::pci::cap::Capability as PciCapability;
 mod config;
 mod driver_interface;
 mod pci;
+mod pcie;
 
 pub struct DriverHandler {
     config: config::DriverConfig,
