@@ -207,8 +207,8 @@ impl CfgAccess for Pcie {
 
 impl Drop for Pcie {
     fn drop(&mut self) {
-        for address in self.maps.values() {
-            let _ = unsafe { syscall::physfree(address, 4096) };
+        for address in self.maps.lock().unwrap().values().copied() {
+            let _ = unsafe { syscall::physfree(address as usize, 4096) };
         }
     }
 }
