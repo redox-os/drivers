@@ -94,7 +94,7 @@ fn main() {
         Ok(logger) => match logger.with_stdout_mirror().enable() {
             Ok(_) => {
                 println!("xhcid: enabled logger");
-                log::set_max_level(log::LevelFilter::Trace);
+                log::set_max_level(log::LevelFilter::Debug);
             }
             Err(error) => eprintln!("xhcid: failed to set default logger: {}", error),
         }
