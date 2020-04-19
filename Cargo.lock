@@ -890,7 +890,6 @@ version = "0.1.0"
 dependencies = [
  "bitflags 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "orbclient 0.3.27 (registry+https://github.com/rust-lang/crates.io-index)",
- "redox_event 0.1.0 (git+https://gitlab.redox-os.org/redox-os/event.git)",
  "redox_syscall 0.1.56 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 

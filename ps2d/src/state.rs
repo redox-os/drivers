@@ -4,6 +4,7 @@ use std::io::Write;
 use std::os::unix::io::AsRawFd;
 use std::str;
 use syscall;
+use syscall::Io;
 
 use crate::controller::Ps2;
 use crate::vm;
@@ -82,13 +83,13 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
         }
     }
 
-    pub fn irq(&mut self) {
-        while let Some((keyboard, data)) = self.ps2.next() {
-            self.handle(keyboard, data);
-        }
+    pub fn irq(&mut self, keyboard: bool) {
+        self.handle(keyboard, self.ps2.data.read());
     }
 
     pub fn handle(&mut self, keyboard: bool, data: u8) {
+        println!("{}{:x}", if keyboard { 'k' } else { 'm' }, data);
+
         if keyboard {
             let (scancode, pressed) = if data >= 0x80 {
                 (data - 0x80, false)
@@ -174,7 +175,7 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
 
             let flags = MousePacketFlags::from_bits_truncate(self.packets[0]);
             if ! flags.contains(ALWAYS_ON) {
-                println!("MOUSE MISALIGN {:X}", self.packets[0]);
+                panic!("ps2d: mouse misalign {:X}", self.packets[0]);
 
                 self.packets = [0; 4];
                 self.packet_i = 0;
@@ -227,7 +228,7 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
                         }.to_event()).expect("ps2d: failed to write button event");
                     }
                 } else {
-                    println!("ps2d: overflow {:X} {:X} {:X} {:X}", self.packets[0], self.packets[1], self.packets[2], self.packets[3]);
+                    panic!("ps2d: overflow {:X} {:X} {:X} {:X}", self.packets[0], self.packets[1], self.packets[2], self.packets[3]);
                 }
 
                 self.packets = [0; 4];
