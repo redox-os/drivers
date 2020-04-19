@@ -48,13 +48,13 @@ impl MsiCapability {
                     message_control: dword,
                     message_address_lo: reader.read_u32(u16::from(offset + 4)),
                     message_address_hi: reader.read_u32(u16::from(offset + 8)),
-                    message_data: reader.read_u32(u16::from(offset + 12)),
+                    message_data: reader.read_u32(u16::from(offset + 12)) as u16,
                 }
             } else {
                 Self::_32BitAddress {
                     message_control: dword,
                     message_address: reader.read_u32(u16::from(offset + 4)),
-                    message_data: reader.read_u32(u16::from(offset + 8)),
+                    message_data: reader.read_u32(u16::from(offset + 8)) as u16,
                 }
             }
         }
@@ -80,7 +80,7 @@ impl MsiCapability {
                 | Self::_64BitAddressWithPvm { ref mut message_control, .. } => *message_control = new_message_control,
         }
     }
-    pub unsafe fn write_message_control<W: ConfigWriter>(&mut self, writer: &W, offset: u8) {
+    pub unsafe fn write_message_control<W: ConfigWriter>(&self, writer: &W, offset: u8) {
         writer.write_u32(u16::from(offset), self.message_control_raw());
     }
     pub fn is_pvt_capable(&self) -> bool {
@@ -100,13 +100,105 @@ impl MsiCapability {
     pub fn multi_message_capable(&self) -> u8 {
         ((self.message_control() & Self::MC_MULTI_MESSAGE_MASK) >> Self::MC_MULTI_MESSAGE_SHIFT) as u8
     }
-    pub fn multi_message_enabled(&self) -> u8 {
+    pub fn multi_message_enable(&self) -> u8 {
         ((self.message_control() & Self::MC_MULTI_MESSAGE_ENABLE_MASK) >> Self::MC_MULTI_MESSAGE_ENABLE_SHIFT) as u8
     }
-    pub fn set_multi_message_enabled(&mut self, log_mme: u8) {
+    pub fn set_multi_message_enable(&mut self, log_mme: u8) {
         let mut new_message_control = self.message_control() & (!Self::MC_MULTI_MESSAGE_ENABLE_MASK);
         new_message_control |= (u16::from(log_mme) << Self::MC_MULTI_MESSAGE_ENABLE_SHIFT);
         self.set_message_control(new_message_control);
+    }
+
+    pub fn message_address(&self) -> u32 {
+        match self {
+            &Self::_32BitAddress { message_address, .. } | &Self::_32BitAddressWithPvm { message_address, .. } => message_address,
+            &Self::_64BitAddress { message_address_lo, .. } | &Self::_64BitAddressWithPvm { message_address_lo, .. } => message_address_lo,
+        }
+    }
+    pub fn message_upper_address(&self) -> Option<u32> {
+        match self {
+            &Self::_64BitAddress { message_address_hi, .. } | &Self::_64BitAddressWithPvm { message_address_hi, .. } => Some(message_address_hi),
+            &Self::_32BitAddress { .. } | &Self::_32BitAddressWithPvm { .. } => None,
+        }
+    }
+    pub fn message_data(&self) -> u16 {
+        match self {
+            &Self::_32BitAddress { message_data, .. } | &Self::_64BitAddress { message_data, .. } => message_data,
+            &Self::_32BitAddressWithPvm { message_data, .. } | &Self::_64BitAddressWithPvm { message_data, .. } => message_data as u16,
+        }
+    }
+    pub fn mask_bits(&self) -> Option<u32> {
+        match self {
+            &Self::_32BitAddressWithPvm { mask_bits, .. } | &Self::_64BitAddressWithPvm { mask_bits, .. } => Some(mask_bits),
+            &Self::_32BitAddress { .. } | &Self::_64BitAddress { .. } => None,
+        }
+    }
+    pub fn pending_bits(&self) -> Option<u32> {
+        match self {
+            &Self::_32BitAddressWithPvm { pending_bits, .. } | &Self::_64BitAddressWithPvm { pending_bits, .. } => Some(pending_bits),
+            &Self::_32BitAddress { .. } | &Self::_64BitAddress { .. } => None,
+        }
+    }
+    pub fn set_message_address(&mut self, message_address: u32) {
+        assert_eq!(message_address & 0xFFFF_FFFC, message_address, "unaligned message address (this should already be validated)");
+        match self {
+            &mut Self::_32BitAddress { message_address: ref mut addr, .. } | &mut Self::_32BitAddressWithPvm { message_address: ref mut addr, .. } => *addr = message_address,
+            &mut Self::_64BitAddress { message_address_lo: ref mut addr, .. } | &mut Self::_64BitAddressWithPvm { message_address_lo: ref mut addr, .. } => *addr = message_address,
+        }
+    }
+    pub fn set_message_upper_address(&mut self, message_upper_address: u32) -> Option<()> {
+        match self {
+            &mut Self::_64BitAddress { ref mut message_address_hi, .. } | &mut Self::_64BitAddressWithPvm { ref mut message_address_hi, .. } => *message_address_hi = message_upper_address,
+            &mut Self::_32BitAddress { .. } | &mut Self::_32BitAddressWithPvm { .. } => return None,
+        }
+        Some(())
+    }
+    pub fn set_message_data(&mut self, value: u16) {
+        match self {
+            &mut Self::_32BitAddress { ref mut message_data, .. } | &mut Self::_64BitAddress { ref mut message_data, .. } => *message_data = value,
+            &mut Self::_32BitAddressWithPvm { ref mut message_data, .. } | &mut Self::_64BitAddressWithPvm { ref mut message_data, .. } => {
+                *message_data &= 0xFFFF_0000;
+                *message_data |= u32::from(value);
+            }
+        }
+    }
+    pub fn set_mask_bits(&mut self, mask_bits: u32) -> Option<()> {
+        match self {
+            &mut Self::_32BitAddressWithPvm { mask_bits: ref mut bits, .. } | &mut Self::_64BitAddressWithPvm { mask_bits: ref mut bits, .. } => *bits = mask_bits,
+            &mut Self::_32BitAddress { .. } | &mut Self::_64BitAddress { .. } => return None,
+        }
+        Some(())
+    }
+    pub unsafe fn write_message_address<W: ConfigWriter>(&self, writer: &W, offset: u8) {
+        writer.write_u32(u16::from(offset) + 4, self.message_address())
+    }
+    pub unsafe fn write_message_upper_address<W: ConfigWriter>(&self, writer: &W, offset: u8) -> Option<()> {
+        let value = self.message_upper_address()?;
+        writer.write_u32(u16::from(offset + 8), value);
+        Some(())
+    }
+    pub unsafe fn write_message_data<W: ConfigWriter>(&self, writer: &W, offset: u8) {
+        match self {
+            &Self::_32BitAddress { message_data, .. } => writer.write_u32(u16::from(offset + 8), message_data.into()),
+            &Self::_32BitAddressWithPvm { message_data, .. } => writer.write_u32(u16::from(offset + 8), message_data),
+            &Self::_64BitAddress { message_data, .. } => writer.write_u32(u16::from(offset + 12), message_data.into()),
+            &Self::_64BitAddressWithPvm { message_data, .. } => writer.write_u32(u16::from(offset + 12), message_data),
+        }
+    }
+    pub unsafe fn write_mask_bits<W: ConfigWriter>(&self, writer: &W, offset: u8) -> Option<()> {
+        match self {
+            &Self::_32BitAddressWithPvm { mask_bits, .. } => writer.write_u32(u16::from(offset + 12), mask_bits),
+            &Self::_64BitAddressWithPvm { mask_bits, .. } => writer.write_u32(u16::from(offset + 16), mask_bits),
+            &Self::_32BitAddress { .. } | &Self::_64BitAddress { .. } => return None,
+        }
+        Some(())
+    }
+    pub unsafe fn write_all<W: ConfigWriter>(&self, writer: &W, offset: u8) {
+        self.write_message_control(writer, offset);
+        self.write_message_address(writer, offset);
+        self.write_message_upper_address(writer, offset);
+        self.write_message_data(writer, offset);
+        self.write_mask_bits(writer, offset);
     }
 }
 

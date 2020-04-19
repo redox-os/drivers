@@ -29,7 +29,7 @@ pub struct DriverHandler {
 
     state: Arc<State>,
 }
-fn with_pci_func_raw<T, F: FnOnce(&PciFunc) -> T>(pci: &Pci, bus_num: u8, dev_num: u8, func_num: u8, function: F) -> T {
+fn with_pci_func_raw<T, F: FnOnce(&PciFunc) -> T>(pci: &dyn CfgAccess, bus_num: u8, dev_num: u8, func_num: u8, function: F) -> T {
     let bus = PciBus {
         pci,
         num: bus_num,
@@ -46,7 +46,7 @@ fn with_pci_func_raw<T, F: FnOnce(&PciFunc) -> T>(pci: &Pci, bus_num: u8, dev_nu
 }
 impl DriverHandler {
     fn with_pci_func_raw<T, F: FnOnce(&PciFunc) -> T>(&self, function: F) -> T {
-        with_pci_func_raw(&self.state.pci, self.bus_num, self.dev_num, self.func_num, function)
+        with_pci_func_raw(self.state.preferred_cfg_access(), self.bus_num, self.dev_num, self.func_num, function)
     }
     fn respond(&mut self, request: driver_interface::PcidClientRequest, args: &driver_interface::SubdriverArguments) -> driver_interface::PcidClientResponse {
         use driver_interface::*;
@@ -70,7 +70,7 @@ impl DriverHandler {
                         None => return PcidClientResponse::Error(PcidServerResponseError::NonexistentFeature(feature)),
                     };
                     unsafe {
-                        with_pci_func_raw(&self.state.pci, self.bus_num, self.dev_num, self.func_num, |func| {
+                        with_pci_func_raw(self.state.preferred_cfg_access(), self.bus_num, self.dev_num, self.func_num, |func| {
                             capability.set_enabled(true);
                             capability.write_message_control(func, offset);
                         });
@@ -83,7 +83,7 @@ impl DriverHandler {
                         None => return PcidClientResponse::Error(PcidServerResponseError::NonexistentFeature(feature)),
                     };
                     unsafe {
-                        with_pci_func_raw(&self.state.pci, self.bus_num, self.dev_num, self.func_num, |func| {
+                        with_pci_func_raw(self.state.preferred_cfg_access(), self.bus_num, self.dev_num, self.func_num, |func| {
                             capability.set_msix_enabled(true);
                             capability.write_a(func, offset);
                         });
@@ -115,6 +115,56 @@ impl DriverHandler {
                     return PcidClientResponse::Error(PcidServerResponseError::NonexistentFeature(feature));
                 }
             }),
+            PcidClientRequest::SetFeatureInfo(info_to_set) => match info_to_set {
+                SetFeatureInfo::Msi(info_to_set) => if let Some((offset, info)) = self.capabilities.iter_mut().find_map(|(offset, capability)| Some((*offset, capability.as_msi_mut()?))) {
+                    if let Some(mme) = info_to_set.multi_message_enable {
+                        if info.multi_message_capable() < mme || mme > 0b101 {
+                            return PcidClientResponse::Error(PcidServerResponseError::InvalidBitPattern);
+                        }
+                        info.set_multi_message_enable(mme);
+
+                    }
+                    if let Some(message_addr) = info_to_set.message_address {
+                        if message_addr & 0b11 != 0 {
+                            return PcidClientResponse::Error(PcidServerResponseError::InvalidBitPattern);
+                        }
+                        info.set_message_address(message_addr);
+                    }
+                    if let Some(message_addr_upper) = info_to_set.message_upper_address {
+                        info.set_message_upper_address(message_addr_upper);
+                    }
+                    if let Some(message_data) = info_to_set.message_data {
+                        if message_data & ((1 << info.multi_message_enable()) - 1) != 0 {
+                            return PcidClientResponse::Error(PcidServerResponseError::InvalidBitPattern);
+                        }
+                        info.set_message_data(message_data);
+                    }
+                    if let Some(mask_bits) = info_to_set.mask_bits {
+                        info.set_mask_bits(mask_bits);
+                    }
+                    unsafe {
+                        with_pci_func_raw(self.state.preferred_cfg_access(), self.bus_num, self.dev_num, self.func_num, |func| {
+                            info.write_all(func, offset);
+                        });
+                    }
+                    PcidClientResponse::SetFeatureInfo(PciFeature::Msi)
+                } else {
+                    return PcidClientResponse::Error(PcidServerResponseError::NonexistentFeature(PciFeature::Msi));
+                }
+                SetFeatureInfo::MsiX { function_mask } => if let Some((offset, info)) = self.capabilities.iter_mut().find_map(|(offset, capability)| Some((*offset, capability.as_msix_mut()?))) {
+                    if let Some(mask) = function_mask {
+                        info.set_function_mask(mask);
+                        unsafe {
+                            with_pci_func_raw(self.state.preferred_cfg_access(), self.bus_num, self.dev_num, self.func_num, |func| {
+                                info.write_a(func, offset);
+                            });
+                        }
+                    }
+                    PcidClientResponse::SetFeatureInfo(PciFeature::MsiX)
+                } else {
+                    return PcidClientResponse::Error(PcidServerResponseError::NonexistentFeature(PciFeature::MsiX));
+                }
+            }
         }
     }
     fn handle_spawn(mut self, pcid_to_client_write: Option<usize>, pcid_from_client_read: Option<usize>, args: driver_interface::SubdriverArguments) {

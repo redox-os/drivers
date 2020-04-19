@@ -40,7 +40,9 @@ pub struct PciFunction {
     /// BAR sizes
     pub bar_sizes: [u32; 6],
 
-    /// Legacy IRQ line
+    /// Legacy IRQ line: It's the responsibility of pcid to make sure that it be mapped in either
+    /// the I/O APIC or the 8259 PIC, so that the subdriver can map the interrupt vector directly.
+    /// The vector to map is always this field, plus 32.
     pub legacy_interrupt_line: u8,
 
     /// Legacy interrupt pin (INTx#), none if INTx# interrupts aren't supported at all.
@@ -114,6 +116,48 @@ pub enum PcidClientHandleError {
 }
 pub type Result<T, E = PcidClientHandleError> = std::result::Result<T, E>;
 
+// TODO: Remove these "features" and just go strait to the actual thing.
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MsiSetFeatureInfo {
+    /// The Multi Message Enable field of the Message Control in the MSI Capability Structure,
+    /// is the log2 of the interrupt vectors, minus one. Can only be 0b000..=0b101.
+    pub multi_message_enable: Option<u8>,
+
+    /// The system-specific message address, must be DWORD aligned.
+    ///
+    /// The message address contains things like the CPU that will be targeted, at least on
+    /// x86_64.
+    pub message_address: Option<u32>,
+
+    /// The upper 32 bits of the 64-bit message address. Not guaranteed to exist, and is
+    /// reserved on x86_64 (currently).
+    pub message_upper_address: Option<u32>,
+
+    /// The message data, containing the actual interrupt vector (lower 8 bits), etc.
+    ///
+    /// The spec mentions that the lower N bits can be modified, where N is the multi message
+    /// enable, which means that the vector set here has to be aligned to that number, and that
+    /// all vectors in that range have to be allocated.
+    pub message_data: Option<u16>,
+
+    /// A bitmap of the vectors that are masked. This field is not guaranteed (and not likely,
+    /// at least according to the feature flags I got from QEMU), to exist.
+    pub mask_bits: Option<u32>,
+}
+
+/// Some flags that might be set simultaneously, but separately.
+#[derive(Debug, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum SetFeatureInfo {
+    Msi(MsiSetFeatureInfo),
+
+    MsiX {
+        /// Masks the entire function, and all of its vectors.
+        function_mask: Option<bool>,
+    },
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum PcidClientRequest {
@@ -122,12 +166,14 @@ pub enum PcidClientRequest {
     EnableFeature(PciFeature),
     FeatureStatus(PciFeature),
     FeatureInfo(PciFeature),
+    SetFeatureInfo(SetFeatureInfo),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum PcidServerResponseError {
     NonexistentFeature(PciFeature),
+    InvalidBitPattern,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -139,6 +185,7 @@ pub enum PcidClientResponse {
     FeatureStatus(PciFeature, FeatureStatus),
     Error(PcidServerResponseError),
     FeatureInfo(PciFeature, PciFeatureInfo),
+    SetFeatureInfo(PciFeature),
 }
 
 // TODO: Ideally, pcid might have its own scheme, like lots of other Redox drivers, where this kind of IPC is done. Otherwise, instead of writing serde messages over

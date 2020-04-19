@@ -144,7 +144,7 @@ fn main() {
             PciFeatureInfo::MsiX(_) => panic!(),
         };
         // use one vector
-        capability.set_multi_message_enabled(0);
+        capability.set_multi_message_enable(0);
 
         todo!("msi (msix is implemented though)")
     } else if msix_enabled {

@@ -48,13 +48,13 @@ pub enum MsiCapability {
     _32BitAddress {
         message_control: u32,
         message_address: u32,
-        message_data: u32,
+        message_data: u16,
     },
     _64BitAddress {
         message_control: u32,
         message_address_lo: u32,
         message_address_hi: u32,
-        message_data: u32,
+        message_data: u16,
     },
     _32BitAddressWithPvm {
         message_control: u32,
