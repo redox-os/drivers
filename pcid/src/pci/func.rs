@@ -2,6 +2,9 @@ use byteorder::{LittleEndian, ByteOrder};
 
 use super::PciDev;
 
+// TODO: PCI Express Configuration Space, which uses a flat memory buffer, rather than IN/OUT
+// instructions.
+
 pub trait ConfigReader {
     unsafe fn read_range(&self, offset: u8, len: u8) -> Vec<u8> {
         assert!(len > 3 && len % 4 == 0);
@@ -17,15 +20,31 @@ pub trait ConfigReader {
     }
 
     unsafe fn read_u32(&self, offset: u8) -> u32;
+
+    unsafe fn read_u8(&self, offset: u8) -> u8 {
+        let dword_offset = (offset / 4) * 4;
+        let dword = self.read_u32(dword_offset);
+
+        let shift = (offset % 4) * 8;
+        ((dword >> shift) & 0xFF) as u8
+    }
+}
+pub trait ConfigWriter {
+    unsafe fn write_u32(&self, offset: u8, value: u32);
 }
 
 pub struct PciFunc<'pci> {
     pub dev: &'pci PciDev<'pci>,
-    pub num: u8
+    pub num: u8,
 }
 
 impl<'pci> ConfigReader for PciFunc<'pci> {
     unsafe fn read_u32(&self, offset: u8) -> u32 {
         self.dev.read(self.num, offset)
+    }
+}
+impl<'pci> ConfigWriter for PciFunc<'pci> {
+    unsafe fn write_u32(&self, offset: u8, value: u32) {
+        self.dev.write(self.num, offset, value);
     }
 }

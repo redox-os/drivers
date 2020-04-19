@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use log::debug;
 use syscall::error::Result;
 use syscall::io::{Dma, Io, Mmio};
 
@@ -59,7 +60,7 @@ pub struct InputContext {
 }
 impl InputContext {
     pub fn dump_control(&self) {
-        println!(
+        debug!(
             "INPUT CONTEXT: {} {} [{} {} {} {} {}] {}",
             self.drop_context.read(),
             self.add_context.read(),
@@ -75,7 +76,7 @@ impl InputContext {
 
 pub struct DeviceContextList {
     pub dcbaa: Dma<[u64; 256]>,
-    pub contexts: Vec<Dma<DeviceContext>>,
+    pub contexts: Box<[Dma<DeviceContext>]>,
 }
 
 impl DeviceContextList {
@@ -91,8 +92,8 @@ impl DeviceContextList {
         }
 
         Ok(DeviceContextList {
-            dcbaa: dcbaa,
-            contexts: contexts,
+            dcbaa,
+            contexts: contexts.into_boxed_slice(),
         })
     }
 
@@ -157,5 +158,40 @@ impl StreamContextArray {
     }
     pub fn register(&self) -> u64 {
         self.contexts.physical() as u64
+    }
+}
+
+#[repr(packed)]
+pub struct ScratchpadBufferEntry {
+    pub value: Mmio<u64>,
+}
+impl ScratchpadBufferEntry {
+    pub fn set_addr(&mut self, addr: u64) {
+        self.value.write(addr);
+    }
+}
+
+pub struct ScratchpadBufferArray {
+    pub entries: Dma<[ScratchpadBufferEntry]>,
+    pub pages: Vec<usize>,
+}
+impl ScratchpadBufferArray {
+    pub fn new(page_size: usize, entries: u16) -> Result<Self> {
+        let mut entries = unsafe { Dma::zeroed_unsized(entries as usize)? };
+
+        let pages = entries.iter_mut().map(|entry: &mut ScratchpadBufferEntry| -> Result<usize> {
+            let pointer = unsafe { syscall::physalloc(page_size)? };
+            assert_eq!(pointer & 0xFFFF_FFFF_FFFF_F000, pointer, "physically allocated pointer (physalloc) wasn't 4k page-aligned");
+            entry.set_addr(pointer as u64);
+            Ok(pointer)
+        }).collect::<Result<Vec<usize>, _>>()?;
+
+        Ok(Self {
+            entries,
+            pages,
+        })
+    }
+    pub fn register(&self) -> usize {
+        self.entries.physical()
     }
 }

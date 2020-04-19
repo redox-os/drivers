@@ -3,10 +3,21 @@ name = "pcid"
 version = "0.1.0"
 edition = "2018"
 
+[[bin]]
+name = "pcid"
+path = "src/main.rs"
+
+[lib]
+name = "pcid_interface"
+path = "src/lib.rs"
+
 [dependencies]
-bitflags = "1.0"
+bincode = "1.2"
+bitflags = "1"
 byteorder = "1.2"
-redox_syscall = "0.1"
-serde = "1.0"
-serde_derive = "1.0"
-toml = "0.4"
+libc = "0.2"
+redox_syscall = { git = "https://gitlab.redox-os.org/redox-os/syscall.git" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+toml = "0.5"

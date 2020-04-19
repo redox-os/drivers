@@ -3,6 +3,7 @@ use byteorder::{LittleEndian, ByteOrder};
 use super::func::ConfigReader;
 use super::class::PciClass;
 use super::bar::PciBar;
+use bitflags::bitflags;
 
 #[derive(Debug, PartialEq)]
 pub enum PciHeaderError {
@@ -26,7 +27,7 @@ bitflags! {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PciHeader {
     General {
         vendor_id: u16,
@@ -123,7 +124,6 @@ impl PciHeader {
                     let subsystem_vendor_id = LittleEndian::read_u16(&bytes[28..30]);
                     let subsystem_id = LittleEndian::read_u16(&bytes[30..32]);
                     let expansion_rom_bar = LittleEndian::read_u32(&bytes[32..36]);
-                    // TODO: Parse out the capabilities list.
                     let cap_pointer = bytes[36];
                     let interrupt_line = bytes[44];
                     let interrupt_pin = bytes[45];
@@ -158,7 +158,6 @@ impl PciHeader {
                     let prefetch_limit_upper = LittleEndian::read_u32(&bytes[28..32]);
                     let io_base_upper = LittleEndian::read_u16(&bytes[32..34]);
                     let io_limit_upper = LittleEndian::read_u16(&bytes[34..36]);
-                    // TODO: Parse out the capabilities list.
                     let cap_pointer = bytes[36];
                     let expansion_rom = LittleEndian::read_u32(&bytes[40..44]);
                     let interrupt_line = bytes[44];
@@ -265,6 +264,11 @@ impl PciHeader {
         }
     }
 
+    pub fn cap_pointer(&self) -> u8 {
+        match self {
+            &PciHeader::General { cap_pointer, .. } | &PciHeader::PciToPci { cap_pointer, .. } => cap_pointer,
+        }
+    }
 }
 
 #[cfg(test)]

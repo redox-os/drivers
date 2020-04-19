@@ -12,6 +12,7 @@ pub struct EventRingSte {
     _rsvd2: Mmio<u32>,
 }
 
+// TODO: Use atomic operations, and perhaps an occasional lock for reallocating.
 pub struct EventRing {
     pub ste: Dma<[EventRingSte]>,
     pub ring: Ring,
@@ -32,5 +33,11 @@ impl EventRing {
 
     pub fn next(&mut self) -> &mut Trb {
         self.ring.next().0
+    }
+    pub fn erdp(&self) -> u64 {
+        self.ring.register() & 0xFFFF_FFFF_FFFF_FFF0
+    }
+    pub fn erstba(&self) -> u64 {
+        self.ste.physical() as u64
     }
 }

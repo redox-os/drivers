@@ -27,6 +27,13 @@ pub const HCS_PARAMS1_MAX_PORTS_SHIFT: u8 = 24;
 pub const HCS_PARAMS1_MAX_SLOTS_MASK: u32 = 0x0000_00FF;
 pub const HCS_PARAMS1_MAX_SLOTS_SHIFT: u8 = 0;
 
+pub const HCS_PARAMS2_MAX_SCRATCHPAD_BUFS_LO_MASK: u32 = 0xF800_0000;
+pub const HCS_PARAMS2_MAX_SCRATCHPAD_BUFS_LO_SHIFT: u8 = 27;
+pub const HCS_PARAMS2_SPR_BIT: u32 = 1 << HCS_PARAMS2_SPR_SHIFT;
+pub const HCS_PARAMS2_SPR_SHIFT: u8 = 26;
+pub const HCS_PARAMS2_MAX_SCRATCHPAD_BUFS_HI_MASK: u32 = 0x03E0_0000;
+pub const HCS_PARAMS2_MAX_SCRATCHPAD_BUFS_HI_SHIFT: u8 = 21;
+
 impl CapabilityRegs {
     pub fn lec(&self) -> bool {
         self.hcc_params2.readf(HCC_PARAMS2_LEC_BIT)
@@ -47,5 +54,18 @@ impl CapabilityRegs {
     }
     pub fn ext_caps_ptr_in_dwords(&self) -> u16 {
         ((self.hcc_params1.read() & HCC_PARAMS1_XECP_MASK) >> HCC_PARAMS1_XECP_SHIFT) as u16
+    }
+    pub fn max_scratchpad_bufs_lo(&self) -> u8 {
+        ((self.hcs_params2.read() & HCS_PARAMS2_MAX_SCRATCHPAD_BUFS_LO_MASK) >> HCS_PARAMS2_MAX_SCRATCHPAD_BUFS_LO_SHIFT) as u8
+    }
+    pub fn spr(&self) -> bool {
+        self.hcs_params2.readf(HCS_PARAMS2_SPR_BIT)
+    }
+    pub fn max_scratchpad_bufs_hi(&self) -> u8 {
+        ((self.hcs_params2.read() & HCS_PARAMS2_MAX_SCRATCHPAD_BUFS_HI_MASK) >> HCS_PARAMS2_MAX_SCRATCHPAD_BUFS_HI_SHIFT) as u8
+    }
+    pub fn max_scratchpad_bufs(&self) -> u16 {
+        u16::from(self.max_scratchpad_bufs_lo())
+            | (u16::from(self.max_scratchpad_bufs_hi()) << 5)
     }
 }

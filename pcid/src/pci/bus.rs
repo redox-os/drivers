@@ -13,6 +13,9 @@ impl<'pci> PciBus<'pci> {
     pub unsafe fn read(&self, dev: u8, func: u8, offset: u8) -> u32 {
         self.pci.read(self.num, dev, func, offset)
     }
+    pub unsafe fn write(&self, dev: u8, func: u8, offset: u8, value: u32) {
+        self.pci.write(self.num, dev, func, offset, value)
+    }
 }
 
 pub struct PciBusIter<'pci> {

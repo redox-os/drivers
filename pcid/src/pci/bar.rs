@@ -1,6 +1,8 @@
 use std::fmt;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+use serde::{Serialize, Deserialize};
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum PciBar {
     None,
     Memory(u32),
