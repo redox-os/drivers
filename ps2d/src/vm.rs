@@ -14,6 +14,7 @@ pub const ABSPOINTER_COMMAND: u32 = 41;
 pub const CMD_ENABLE: u32 = 0x45414552;
 pub const CMD_DISABLE: u32 = 0x000000f5;
 pub const CMD_REQUEST_ABSOLUTE: u32 = 0x53424152;
+pub const CMD_REQUEST_RELATIVE: u32 = 0x4c455252;
 
 const VERSION: u32 = 0x3442554a;
 
@@ -55,27 +56,30 @@ pub unsafe fn cmd(cmd: u32, arg: u32) -> (u32, u32, u32, u32, u32, u32) {
     (a, b, c, d, si, di)
 }
 
-pub fn enable() -> bool {
-    println!("Enable");
+pub fn enable(relative: bool) -> bool {
+    println!("ps2d: Enable vmmouse");
 
     unsafe {
         let _ = cmd(ABSPOINTER_COMMAND, CMD_ENABLE);
 
         let (status, _, _, _, _, _) = cmd(ABSPOINTER_STATUS, 0);
     	if (status & 0x0000ffff) == 0 {
-        	println!("No vmmouse");
+        	println!("ps2d: No vmmouse");
     		return false;
     	}
 
         let (version, _, _, _, _, _) = cmd(ABSPOINTER_DATA, 1);
         if version != VERSION {
-            println!("Invalid vmmouse version: {} instead of {}", version, VERSION);
+            println!("ps2d: Invalid vmmouse version: {} instead of {}", version, VERSION);
             let _ = cmd(ABSPOINTER_COMMAND, CMD_DISABLE);
             return false;
         }
 
-    	cmd(ABSPOINTER_COMMAND, CMD_REQUEST_ABSOLUTE);
-
+        if relative {
+        	cmd(ABSPOINTER_COMMAND, CMD_REQUEST_RELATIVE);
+        } else {
+        	cmd(ABSPOINTER_COMMAND, CMD_REQUEST_ABSOLUTE);
+        }
     }
 
     return true;

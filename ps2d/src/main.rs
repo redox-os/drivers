@@ -2,18 +2,15 @@
 
 #[macro_use]
 extern crate bitflags;
-extern crate event;
 extern crate orbclient;
 extern crate syscall;
 
 use std::{env, process};
-use std::cell::RefCell;
-use std::fs::File;
-use std::io::{Read, Write, Result};
+use std::fs::{File, OpenOptions};
+use std::io::{Read, Write};
+use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::io::AsRawFd;
-use std::sync::Arc;
 
-use event::EventQueue;
 use syscall::iopl;
 
 use crate::state::Ps2d;
@@ -41,46 +38,79 @@ fn daemon(input: File) {
         None => (keymap::us::get_char)
     };
 
-    let mut key_irq = File::open("irq:1").expect("ps2d: failed to open irq:1");
+    let mut event_file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("event:")
+        .expect("ps2d: failed to open event:");
 
-    let mut mouse_irq = File::open("irq:12").expect("ps2d: failed to open irq:12");
+    let mut key_file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags(syscall::O_NONBLOCK as i32)
+        .open("serio:0")
+        .expect("ps2d: failed to open serio:0");
 
-    let ps2d = Arc::new(RefCell::new(Ps2d::new(input, keymap)));
+    event_file.write(&syscall::Event {
+        id: key_file.as_raw_fd() as usize,
+        flags: syscall::EVENT_READ,
+        data: 0
+    }).expect("ps2d: failed to event serio:0");
 
-    let mut event_queue = EventQueue::<()>::new().expect("ps2d: failed to create event queue");
+    let mut mouse_file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags(syscall::O_NONBLOCK as i32)
+        .open("serio:1")
+        .expect("ps2d: failed to open serio:1");
+
+    event_file.write(&syscall::Event {
+        id: mouse_file.as_raw_fd() as usize,
+        flags: syscall::EVENT_READ,
+        data: 1
+    }).expect("ps2d: failed to event irq:12");
+
+    let mut ps2d = Ps2d::new(input, keymap);
 
     syscall::setrens(0, 0).expect("ps2d: failed to enter null namespace");
 
-    let key_ps2d = ps2d.clone();
-    event_queue.add(key_irq.as_raw_fd(), move |_event| -> Result<Option<()>> {
-        let mut irq = [0; 8];
-        if key_irq.read(&mut irq)? >= irq.len() {
-            key_ps2d.borrow_mut().irq();
-            key_irq.write(&irq)?;
+    let mut data = [0; 256];
+    loop {
+        // There are some gotchas with ps/2 controllers that require this weird
+        // way of doing things. You read key and mouse data from the same
+        // place. There is a status register that may show you which the data
+        // came from, but if it is even implemented it can have a race
+        // condition causing keyboard data to be read as mouse data.
+        //
+        // Due to this, we have a kernel driver doing a small amount of work
+        // to grab bytes and sort them based on the source
+
+        let mut event = syscall::Event::default();
+        if event_file.read(&mut event).expect("ps2d: failed to read event file") == 0 {
+            break;
         }
-        Ok(None)
-    }).expect("ps2d: failed to poll irq:1");
 
-    let mouse_ps2d = ps2d;
-    event_queue.add(mouse_irq.as_raw_fd(), move |_event| -> Result<Option<()>> {
-        let mut irq = [0; 8];
-        if mouse_irq.read(&mut irq)? >= irq.len() {
-            mouse_ps2d.borrow_mut().irq();
-            mouse_irq.write(&irq)?;
+        let (file, keyboard) = match event.data {
+            0 => (&mut key_file, true),
+            1 => (&mut mouse_file, false),
+            _ => continue,
+        };
+
+        loop {
+            let count = match file.read(&mut data) {
+                Ok(0) => break,
+                Ok(count) => count,
+                Err(_) => break,
+            };
+            for i in 0..count {
+                ps2d.handle(keyboard, data[i]);
+            }
         }
-        Ok(None)
-    }).expect("ps2d: failed to poll irq:12");
-
-    event_queue.trigger_all(event::Event {
-        fd: 0,
-        flags: 0,
-    }).expect("ps2d: failed to trigger events");
-
-    event_queue.run().expect("ps2d: failed to handle events");
+    }
 }
 
 fn main() {
-    match File::open("display:input") {
+    match OpenOptions::new().write(true).open("display:input") {
         Ok(input) => {
             // Daemonize
             if unsafe { syscall::clone(0).unwrap() } == 0 {

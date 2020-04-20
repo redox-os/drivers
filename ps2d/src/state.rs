@@ -24,6 +24,7 @@ bitflags! {
 pub struct Ps2d<F: Fn(u8,bool) -> char>  {
     ps2: Ps2,
     vmmouse: bool,
+    vmmouse_relative: bool,
     input: File,
     width: u32,
     height: u32,
@@ -46,12 +47,14 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
         let mut ps2 = Ps2::new();
         let extra_packet = ps2.init();
 
-        let vmmouse = false; //vm::enable();
+        let vmmouse_relative = true;
+        let vmmouse = false; //vm::enable(vmmouse_relative);
 
         let mut ps2d = Ps2d {
-            ps2: ps2,
-            vmmouse: vmmouse,
-            input: input,
+            ps2,
+            vmmouse,
+            vmmouse_relative,
+            input,
             width: 0,
             height: 0,
             lshift: false,
@@ -63,7 +66,7 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
             mouse_right: false,
             packets: [0; 4],
             packet_i: 0,
-            extra_packet: extra_packet,
+            extra_packet,
             get_char: keymap
         };
 
@@ -118,17 +121,17 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
                 }
 
         		if queue_length % 4 != 0 {
-        			println!("queue length not a multiple of 4: {}", queue_length);
+        			println!("ps2d: queue length not a multiple of 4: {}", queue_length);
         			break;
         		}
 
         		let (status, dx, dy, dz, _, _) = unsafe { vm::cmd(vm::ABSPOINTER_DATA, 4) };
 
-                if status & vm::RELATIVE_PACKET == vm::RELATIVE_PACKET {
+                if self.vmmouse_relative {
                     if dx != 0 || dy != 0 {
                         self.input.write(&MouseRelativeEvent {
                             dx: dx as i32,
-                            dy: -(dy as i32),
+                            dy: dy as i32,
                         }.to_event()).expect("ps2d: failed to write mouse event");
                     }
         		} else {
@@ -174,7 +177,7 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
 
             let flags = MousePacketFlags::from_bits_truncate(self.packets[0]);
             if ! flags.contains(ALWAYS_ON) {
-                println!("MOUSE MISALIGN {:X}", self.packets[0]);
+                println!("ps2d: mouse misalign {:X}", self.packets[0]);
 
                 self.packets = [0; 4];
                 self.packet_i = 0;
