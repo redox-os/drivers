@@ -41,49 +41,40 @@ fn daemon(input: File) {
     let mut event_file = OpenOptions::new()
         .read(true)
         .write(true)
-        .custom_flags(syscall::O_NONBLOCK as i32)
         .open("event:")
         .expect("ps2d: failed to open event:");
 
-    let mut key_irq = OpenOptions::new()
+    let mut key_file = OpenOptions::new()
         .read(true)
         .write(true)
         .custom_flags(syscall::O_NONBLOCK as i32)
-        .open("irq:1")
-        .expect("ps2d: failed to open irq:1");
-
-    let mut key_irq_data = [0; 8];
-    key_irq.read(&mut key_irq_data).expect("ps2d: failed to read irq:1");
+        .open("serio:0")
+        .expect("ps2d: failed to open serio:0");
 
     event_file.write(&syscall::Event {
-        id: key_irq.as_raw_fd() as usize,
+        id: key_file.as_raw_fd() as usize,
         flags: syscall::EVENT_READ,
-        data: 1
-    }).expect("ps2d: failed to event irq:1");
+        data: 0
+    }).expect("ps2d: failed to event serio:0");
 
-    key_irq.write(&key_irq_data).expect("ps2d: failed to write irq:1");
-
-    let mut mouse_irq = OpenOptions::new()
+    let mut mouse_file = OpenOptions::new()
         .read(true)
         .write(true)
-        .open("irq:12")
-        .expect("ps2d: failed to open irq:12");
-
-    let mut mouse_irq_data = [0; 8];
-    mouse_irq.read(&mut mouse_irq_data).expect("ps2d: failed to read irq:12");
+        .custom_flags(syscall::O_NONBLOCK as i32)
+        .open("serio:1")
+        .expect("ps2d: failed to open serio:1");
 
     event_file.write(&syscall::Event {
-        id: mouse_irq.as_raw_fd() as usize,
+        id: mouse_file.as_raw_fd() as usize,
         flags: syscall::EVENT_READ,
         data: 1
     }).expect("ps2d: failed to event irq:12");
-
-    mouse_irq.write(&mouse_irq_data).expect("ps2d: failed to write irq:12");
 
     let mut ps2d = Ps2d::new(input, keymap);
 
     syscall::setrens(0, 0).expect("ps2d: failed to enter null namespace");
 
+    let mut data = [0; 256];
     loop {
         // There are some gotchas with ps/2 controllers that require this weird
         // way of doing things. You read key and mouse data from the same
@@ -91,34 +82,29 @@ fn daemon(input: File) {
         // came from, but if it is even implemented it can have a race
         // condition causing keyboard data to be read as mouse data.
         //
-        // So, if any IRQ is returned as an event, first we check if a keyboard
-        // IRQ has happened. If so, we know the next byte is keyboard data. If
-        // not, we can read mouse data.
+        // Due to this, we have a kernel driver doing a small amount of work
+        // to grab bytes and sort them based on the source
 
         let mut event = syscall::Event::default();
         if event_file.read(&mut event).expect("ps2d: failed to read event file") == 0 {
             break;
         }
 
-        let last_mouse_irq_data = mouse_irq_data;
-        mouse_irq.read(&mut mouse_irq_data).expect("ps2d: failed to read irq:12");
-        let mouse_irq_change =  mouse_irq_data != last_mouse_irq_data;
+        let (file, keyboard) = match event.data {
+            0 => (&mut key_file, true),
+            1 => (&mut mouse_file, false),
+            _ => continue,
+        };
 
-        let last_key_irq_data = key_irq_data;
-        key_irq.read(&mut key_irq_data).expect("ps2d: failed to read irq:1");
-        let key_irq_change = key_irq_data != last_key_irq_data;
-
-        if key_irq_change {
-            ps2d.irq(true);
-            key_irq.write(&key_irq_data).expect("ps2d: failed to write irq:1");
-        } else if mouse_irq_change {
-            ps2d.irq(false);
-        } else {
-            println!("ps2d: no irq change found");
-        }
-
-        if mouse_irq_change {
-            mouse_irq.write(&mouse_irq_data).expect("ps2d: failed to write irq:12");
+        loop {
+            let count = match file.read(&mut data) {
+                Ok(0) => break,
+                Ok(count) => count,
+                Err(_) => break,
+            };
+            for i in 0..count {
+                ps2d.handle(keyboard, data[i]);
+            }
         }
     }
 }
