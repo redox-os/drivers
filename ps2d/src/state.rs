@@ -48,7 +48,7 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
         let extra_packet = ps2.init();
 
         let vmmouse_relative = true;
-        let vmmouse = vm::enable(vmmouse_relative);
+        let vmmouse = false; //vm::enable(vmmouse_relative);
 
         let mut ps2d = Ps2d {
             ps2,
