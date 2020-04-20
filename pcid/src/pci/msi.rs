@@ -19,7 +19,7 @@ impl MsiCapability {
     pub const MC_MSI_ENABLED_BIT: u16 = 1;
 
     pub unsafe fn parse<R: ConfigReader>(reader: &R, offset: u8) -> Self {
-        let dword = reader.read_u32(offset);
+        let dword = reader.read_u32(u16::from(offset));
 
         let message_control = (dword >> 16) as u16;
 
@@ -27,34 +27,34 @@ impl MsiCapability {
             if message_control & Self::MC_64_BIT_ADDR_BIT != 0 {
                 Self::_64BitAddressWithPvm {
                     message_control: dword,
-                    message_address_lo: reader.read_u32(offset + 4),
-                    message_address_hi: reader.read_u32(offset + 8),
-                    message_data: reader.read_u32(offset + 12),
-                    mask_bits: reader.read_u32(offset + 16),
-                    pending_bits: reader.read_u32(offset + 20),
+                    message_address_lo: reader.read_u32(u16::from(offset + 4)),
+                    message_address_hi: reader.read_u32(u16::from(offset + 8)),
+                    message_data: reader.read_u32(u16::from(offset + 12)),
+                    mask_bits: reader.read_u32(u16::from(offset + 16)),
+                    pending_bits: reader.read_u32(u16::from(offset + 20)),
                 }
             } else {
                 Self::_32BitAddressWithPvm {
                     message_control: dword,
-                    message_address: reader.read_u32(offset + 4),
-                    message_data: reader.read_u32(offset + 8),
-                    mask_bits: reader.read_u32(offset + 12),
-                    pending_bits: reader.read_u32(offset + 16),
+                    message_address: reader.read_u32(u16::from(offset + 4)),
+                    message_data: reader.read_u32(u16::from(offset + 8)),
+                    mask_bits: reader.read_u32(u16::from(offset + 12)),
+                    pending_bits: reader.read_u32(u16::from(offset + 16)),
                 }
             }
         } else {
             if message_control & Self::MC_64_BIT_ADDR_BIT != 0 {
                 Self::_64BitAddress {
                     message_control: dword,
-                    message_address_lo: reader.read_u32(offset + 4),
-                    message_address_hi: reader.read_u32(offset + 8),
-                    message_data: reader.read_u32(offset + 12),
+                    message_address_lo: reader.read_u32(u16::from(offset + 4)),
+                    message_address_hi: reader.read_u32(u16::from(offset + 8)),
+                    message_data: reader.read_u32(u16::from(offset + 12)),
                 }
             } else {
                 Self::_32BitAddress {
                     message_control: dword,
-                    message_address: reader.read_u32(offset + 4),
-                    message_data: reader.read_u32(offset + 8),
+                    message_address: reader.read_u32(u16::from(offset + 4)),
+                    message_data: reader.read_u32(u16::from(offset + 8)),
                 }
             }
         }
@@ -81,7 +81,7 @@ impl MsiCapability {
         }
     }
     pub unsafe fn write_message_control<W: ConfigWriter>(&mut self, writer: &W, offset: u8) {
-        writer.write_u32(offset, self.message_control_raw());
+        writer.write_u32(u16::from(offset), self.message_control_raw());
     }
     pub fn is_pvt_capable(&self) -> bool {
         self.message_control() & Self::MC_PVT_CAPABLE_BIT != 0
@@ -238,17 +238,17 @@ impl MsixCapability {
     /// Write the first DWORD into configuration space (containing the partially modifiable Message
     /// Control field).
     pub unsafe fn write_a<W: ConfigWriter>(&self, writer: &W, offset: u8) {
-        writer.write_u32(offset, self.a)
+        writer.write_u32(u16::from(offset), self.a)
     }
     /// Write the second DWORD into configuration space (containing the modifiable table
     /// offset and the readonly table BIR).
     pub unsafe fn write_b<W: ConfigWriter>(&self, writer: &W, offset: u8) {
-        writer.write_u32(offset + 4, self.a)
+        writer.write_u32(u16::from(offset + 4), self.a)
     }
     /// Write the third DWORD into configuration space (containing the modifiable pending bit array
     /// offset, and the readonly PBA BIR).
     pub unsafe fn write_c<W: ConfigWriter>(&self, writer: &W, offset: u8) {
-        writer.write_u32(offset + 8, self.a)
+        writer.write_u32(u16::from(offset + 8), self.a)
     }
     /// Write this capability structure back to configuration space.
     pub unsafe fn write_all<W: ConfigWriter>(&self, writer: &W, offset: u8) {

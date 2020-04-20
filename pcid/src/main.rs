@@ -1,10 +1,5 @@
 #![feature(asm)]
 
-extern crate bitflags;
-extern crate byteorder;
-extern crate syscall;
-extern crate toml;
-
 use std::fs::{File, metadata, read_dir};
 use std::io::prelude::*;
 use std::os::unix::io::{FromRawFd, RawFd};
@@ -15,12 +10,14 @@ use std::{env, io, i64, thread};
 use syscall::iopl;
 
 use crate::config::Config;
-use crate::pci::{Pci, PciBar, PciBus, PciClass, PciDev, PciFunc, PciHeader, PciHeaderError, PciHeaderType};
+use crate::pci::{CfgAccess, Pci, PciIter, PciBar, PciBus, PciClass, PciDev, PciFunc, PciHeader, PciHeaderError, PciHeaderType};
 use crate::pci::cap::Capability as PciCapability;
+use crate::pcie::Pcie;
 
 mod config;
 mod driver_interface;
 mod pci;
+mod pcie;
 
 pub struct DriverHandler {
     config: config::DriverConfig,
@@ -137,7 +134,13 @@ impl DriverHandler {
 
 pub struct State {
     threads: Mutex<Vec<thread::JoinHandle<()>>>,
-    pci: Pci,
+    pci: Arc<Pci>,
+    pcie: Option<Pcie>,
+}
+impl State {
+    fn preferred_cfg_access(&self) -> &dyn CfgAccess {
+        self.pcie.as_ref().map(|pcie| pcie as &dyn CfgAccess).unwrap_or(&*self.pci as &dyn CfgAccess)
+    }
 }
 
 fn handle_parsed_header(state: Arc<State>, config: &Config, bus_num: u8,
@@ -273,11 +276,11 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, bus_num: u8,
 
                     let offset = 0x10 + (i as u8) * 4;
 
-                    let original = pci.read(bus_num, dev_num, func_num, offset);
-                    pci.write(bus_num, dev_num, func_num, offset, 0xFFFFFFFF);
+                    let original = pci.read(bus_num, dev_num, func_num, offset.into());
+                    pci.write(bus_num, dev_num, func_num, offset.into(), 0xFFFFFFFF);
 
-                    let new = pci.read(bus_num, dev_num, func_num, offset);
-                    pci.write(bus_num, dev_num, func_num, offset, original);
+                    let new = pci.read(bus_num, dev_num, func_num, offset.into());
+                    pci.write(bus_num, dev_num, func_num, offset.into(), original);
 
                     let masked = if new & 1 == 1 {
                         new & 0xFFFFFFFC
@@ -296,7 +299,7 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, bus_num: u8,
 
             let capabilities = {
                 let bus = PciBus {
-                    pci,
+                    pci: state.preferred_cfg_access(),
                     num: bus_num,
                 };
                 let dev = PciDev {
@@ -444,18 +447,25 @@ fn main() {
         }
     }
 
+    let pci = Arc::new(Pci::new());
+
     let state = Arc::new(State {
-        pci: Pci::new(),
+        pci: Arc::clone(&pci),
+        pcie: match Pcie::new(Arc::clone(&pci)) {
+            Ok(pcie) => Some(pcie),
+            Err(error) => {
+                println!("Couldn't retrieve PCIe info, perhaps the kernel is not compiled with acpi? Using the PCI 3.0 configuration space instead. Error: {:?}", error);
+                None
+            }
+        },
         threads: Mutex::new(Vec::new()),
     });
 
-    let pci = &state.pci;
-
-    unsafe { iopl(3).unwrap() };
+    let pci = state.preferred_cfg_access();
 
     print!("PCI BS/DV/FN VEND:DEVI CL.SC.IN.RV\n");
 
-    'bus: for bus in pci.buses() {
+    'bus: for bus in PciIter::new(pci) {
         'dev: for dev in bus.devs() {
             for func in dev.funcs() {
                 let func_num = func.num;
