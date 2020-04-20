@@ -76,9 +76,9 @@ enum MouseCommandData {
 }
 
 pub struct Ps2 {
-    pub data: Pio<u8>,
-    pub status: ReadOnly<Pio<u8>>,
-    pub command: WriteOnly<Pio<u8>>
+    data: Pio<u8>,
+    status: ReadOnly<Pio<u8>>,
+    command: WriteOnly<Pio<u8>>
 }
 
 impl Ps2 {
