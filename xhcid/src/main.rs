@@ -11,7 +11,8 @@ use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
 use std::env;
 
-use pcid_interface::{PcidServerHandle, PciFeature, PciFeatureInfo};
+use pcid_interface::{MsiSetFeatureInfo, PcidServerHandle, PciFeature, PciFeatureInfo, SetFeatureInfo};
+use pcid_interface::irq_helpers::{read_bsp_apic_id, allocate_single_interrupt_vector};
 use pcid_interface::msi::{MsiCapability, MsixCapability, MsixTableEntry};
 
 use event::{Event, EventQueue};
@@ -31,49 +32,6 @@ pub mod driver_interface;
 
 mod usb;
 mod xhci;
-
-/// Read the local APIC id of the bootstrap processor.
-fn read_bsp_apic_id() -> io::Result<u32> {
-    let mut buffer = [0u8; 8];
-
-    let mut file = File::open("irq:bsp")?;
-    let bytes_read = file.read(&mut buffer)?;
-
-    Ok(if bytes_read == 8 {
-        u64::from_le_bytes(buffer) as u32
-    } else if bytes_read == 4 {
-        u32::from_le_bytes([buffer[0], buffer[1], buffer[2], buffer[3]])
-    } else {
-        panic!("`irq:` scheme responded with {} bytes, expected {}", bytes_read, std::mem::size_of::<usize>());
-    })
-}
-/// Allocate an interrupt vector, located at the BSP's IDT.
-fn allocate_interrupt_vector() -> io::Result<Option<(u8, File)>> {
-    let available_irqs = fs::read_dir("irq:")?;
-
-    for entry in available_irqs {
-        let entry = entry?;
-        let path = entry.path();
-
-        let file_name = match path.file_name() {
-            Some(f) => f,
-            None => continue,
-        };
-
-        let path_str = match file_name.to_str() {
-            Some(s) => s,
-            None => continue,
-        };
-
-        if let Ok(irq_number) = path_str.parse::<u8>() {
-            // if found, reserve the irq
-            let irq_handle = File::create(format!("irq:{}", irq_number))?;
-            let interrupt_vector = irq_number + 32;
-            return Ok(Some((interrupt_vector, irq_handle)));
-        }
-    }
-    Ok(None)
-}
 
 async fn handle_packet(hci: Arc<Xhci>, packet: Packet) -> Packet {
     todo!()
@@ -124,29 +82,44 @@ fn main() {
     let (has_msi, mut msi_enabled) = all_pci_features.iter().map(|(feature, status)| (feature.is_msi(), status.is_enabled())).find(|&(f, _)| f).unwrap_or((false, false));
     let (has_msix, mut msix_enabled) = all_pci_features.iter().map(|(feature, status)| (feature.is_msix(), status.is_enabled())).find(|&(f, _)| f).unwrap_or((false, false));
 
-    dbg!(has_msi, msi_enabled);
-    dbg!(has_msix, msix_enabled);
-
     if has_msi && !msi_enabled && !has_msix {
-        pcid_handle.enable_feature(PciFeature::Msi).expect("xhcid: failed to enable MSI");
-        info!("Enabled MSI");
         msi_enabled = true;
     }
     if has_msix && !msix_enabled {
-        pcid_handle.enable_feature(PciFeature::MsiX).expect("xhcid: failed to enable MSI-X");
-        info!("Enabled MSI-X");
         msix_enabled = true;
     }
 
     let (mut irq_file, interrupt_method) = if msi_enabled && !msix_enabled {
+        use pcid_interface::msi::x86_64::{DeliveryMode, self as x86_64_msix};
+
         let mut capability = match pcid_handle.feature_info(PciFeature::MsiX).expect("xhcid: failed to retrieve the MSI capability structure from pcid") {
             PciFeatureInfo::Msi(s) => s,
             PciFeatureInfo::MsiX(_) => panic!(),
         };
-        // use one vector
-        capability.set_multi_message_enable(0);
+        // TODO: Allow allocation of up to 32 vectors.
 
-        todo!("msi (msix is implemented though)")
+        // TODO: Find a way to abstract this away, potantially as a helper module for
+        // pcid_interface, so that this can be shared between nvmed, xhcid, ixgebd, etc..
+
+        let destination_id = read_bsp_apic_id().expect("xhcid: failed to read BSP apic id");
+        let msg_addr = x86_64_msix::message_address(destination_id as u8, false, false, 0b00);
+
+        let (vector, interrupt_handle) = allocate_single_interrupt_vector().expect("xhcid: failed to allocate interrupt vector").expect("xhcid: no interrupt vectors left");
+        let msg_data = x86_64_msix::message_data_edge_triggered(DeliveryMode::Fixed, vector);
+
+        let set_feature_info = MsiSetFeatureInfo {
+            multi_message_enable: Some(0),
+            message_address: Some(msg_addr),
+            message_upper_address: Some(0),
+            message_data: Some(msg_data as u16),
+            mask_bits: None,
+        };
+        pcid_handle.set_feature_info(SetFeatureInfo::Msi(set_feature_info)).expect("xhcid: failed to set feature info");
+
+        pcid_handle.enable_feature(PciFeature::Msi).expect("xhcid: failed to enable MSI");
+        info!("Enabled MSI");
+
+        (Some(interrupt_handle), InterruptMethod::Msi)
     } else if msix_enabled {
         let capability = match pcid_handle.feature_info(PciFeature::MsiX).expect("xhcid: failed to retrieve the MSI-X capability structure from pcid") {
             PciFeatureInfo::Msi(_) => panic!(),
@@ -178,7 +151,7 @@ fn main() {
 
         // Allocate one msi vector.
 
-        {
+        let method = {
             use pcid_interface::msi::x86_64::{DeliveryMode, self as x86_64_msix};
 
             // primary interrupter
@@ -192,7 +165,7 @@ fn main() {
             let dm = false;
             let addr = x86_64_msix::message_address(destination_id.try_into().expect("xhcid: BSP apic id couldn't fit u8"), rh, dm, 0b00);
 
-            let (vector, interrupt_handle) = allocate_interrupt_vector().expect("xhcid: failed to allocate interrupt vector").expect("xhcid: no interrupt vectors left");
+            let (vector, interrupt_handle) = allocate_single_interrupt_vector().expect("xhcid: failed to allocate interrupt vector").expect("xhcid: no interrupt vectors left");
             let msg_data = x86_64_msix::message_data_edge_triggered(DeliveryMode::Fixed, vector);
 
             table_entry_pointer.addr_lo.write(addr);
@@ -201,7 +174,12 @@ fn main() {
             table_entry_pointer.vec_ctl.writef(MsixTableEntry::VEC_CTL_MASK_BIT, false);
 
             (Some(interrupt_handle), InterruptMethod::MsiX(Mutex::new(info)))
-        }
+        };
+
+        pcid_handle.enable_feature(PciFeature::MsiX).expect("xhcid: failed to enable MSI-X");
+        info!("Enabled MSI-X");
+
+        method
     } else if pci_config.func.legacy_interrupt_pin.is_some() {
         // legacy INTx# interrupt pins.
         (Some(File::open(format!("irq:{}", irq)).expect("xhcid: failed to open legacy IRQ file")), InterruptMethod::Intx)

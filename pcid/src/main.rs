@@ -195,7 +195,7 @@ impl State {
 
 fn handle_parsed_header(state: Arc<State>, config: &Config, bus_num: u8,
                         dev_num: u8, func_num: u8, header: PciHeader) {
-    let pci = &state.pci;
+    let pci = state.preferred_cfg_access();
 
     let raw_class: u8 = header.class().into();
     let mut string = format!("PCI {:>02X}/{:>02X}/{:>02X} {:>04X}:{:>04X} {:>02X}.{:>02X}.{:>02X}.{:>02X} {:?}",

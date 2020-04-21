@@ -10,6 +10,8 @@ use thiserror::Error;
 pub use crate::pci::PciBar;
 pub use crate::pci::msi;
 
+pub mod irq_helpers;
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum LegacyInterruptPin {
@@ -118,7 +120,7 @@ pub type Result<T, E = PcidClientHandleError> = std::result::Result<T, E>;
 
 // TODO: Remove these "features" and just go strait to the actual thing.
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct MsiSetFeatureInfo {
     /// The Multi Message Enable field of the Message Control in the MSI Capability Structure,
     /// is the log2 of the interrupt vectors, minus one. Can only be 0b000..=0b101.
@@ -270,6 +272,13 @@ impl PcidServerHandle {
         self.send(&PcidClientRequest::FeatureInfo(feature))?;
         match self.recv()? {
             PcidClientResponse::FeatureInfo(feat, info) if feat == feature => Ok(info),
+            other => Err(PcidClientHandleError::InvalidResponse(other)),
+        }
+    }
+    pub fn set_feature_info(&mut self, info: SetFeatureInfo) -> Result<()> {
+        self.send(&PcidClientRequest::SetFeatureInfo(info))?;
+        match self.recv()? {
+            PcidClientResponse::SetFeatureInfo(_) => Ok(()),
             other => Err(PcidClientHandleError::InvalidResponse(other)),
         }
     }
