@@ -55,6 +55,11 @@ pub struct PciFunction {
     /// Device ID
     pub devid: u16,
 }
+impl PciFunction {
+    pub fn name(&self) -> String {
+        format!("pci-{:>02X}.{:>02X}.{:>02X}", self.bus_num, self.dev_num, self.func_num)
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SubdriverArguments {

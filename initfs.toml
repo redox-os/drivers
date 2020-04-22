@@ -28,6 +28,7 @@ name = "NVME storage"
 class = 1
 subclass = 8
 command = ["nvmed", "$NAME", "$BAR0", "$BARSIZE0", "$IRQ"]
+use_channel = true
 
 # vboxd
 [[drivers]]
@@ -43,5 +44,5 @@ name = "XHCI"
 class = 12
 subclass = 3
 interface = 48
-command = ["xhcid", "$NAME", "$BAR0", "$IRQ"]
-channel_name = "pcid-xhcid"
+command = ["xhcid"]
+use_channel = true

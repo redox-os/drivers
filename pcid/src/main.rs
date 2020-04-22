@@ -408,7 +408,7 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, bus_num: u8,
                         "$BUS" => format!("{:>02X}", bus_num),
                         "$DEV" => format!("{:>02X}", dev_num),
                         "$FUNC" => format!("{:>02X}", func_num),
-                        "$NAME" => format!("pci-{:>02X}.{:>02X}.{:>02X}", bus_num, dev_num, func_num),
+                        "$NAME" => func.name(),
                         "$BAR0" => format!("{}", bars[0]),
                         "$BAR1" => format!("{}", bars[1]),
                         "$BAR2" => format!("{}", bars[2]),
@@ -431,7 +431,7 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, bus_num: u8,
 
                 info!("PCID SPAWN {:?}", command);
 
-                let (pcid_to_client_write, pcid_from_client_read, envs) = if driver.channel_name.is_some() {
+                let (pcid_to_client_write, pcid_from_client_read, envs) = if driver.use_channel {
                     let mut fds1 = [0usize; 2];
                     let mut fds2 = [0usize; 2];
 

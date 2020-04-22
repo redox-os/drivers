@@ -259,7 +259,7 @@ impl NvmeCompQueue {
             if let Some(some) = self.complete() {
                 return some;
             } else {
-                unsafe { asm!("pause"); }
+                unsafe { std::arch::x86_64::_mm_pause() }
             }
         }
     }
@@ -324,7 +324,7 @@ impl Nvme {
             let csts = self.regs.csts.read();
             // println!("CSTS: {:X}", csts);
             if csts & 1 == 1 {
-                asm!("pause");
+                unsafe { std::arch::x86_64::_mm_pause() }
             } else {
                 break;
             }
@@ -365,7 +365,7 @@ impl Nvme {
             let csts = self.regs.csts.read();
             // println!("CSTS: {:X}", csts);
             if csts & 1 == 0 {
-                asm!("pause");
+                unsafe { std::arch::x86_64::_mm_pause() }
             } else {
                 break;
             }

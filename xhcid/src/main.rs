@@ -81,11 +81,6 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
 }
 
 fn main() {
-    let mut args = env::args().skip(1);
-
-    let mut name = args.next().expect("xhcid: no name provided");
-    name.push_str("_xhci");
-
     // Daemonize
     if unsafe { syscall::clone(CloneFlags::empty()).unwrap() } != 0 {
         return;
@@ -99,6 +94,9 @@ fn main() {
 
     let bar = pci_config.func.bars[0];
     let irq = pci_config.func.legacy_interrupt_line;
+
+    let mut name = pci_config.func.name();
+    name.push_str("_xhci");
 
     let bar_ptr = match bar {
         pcid_interface::PciBar::Memory(ptr) => ptr,

@@ -5,7 +5,10 @@ edition = "2018"
 
 [dependencies]
 bitflags = "0.7"
-spin = "0.4"
+log = "0.4"
+redox-log = { git = "https://gitlab.redox-os.org/redox-os/redox-log.git", tag = "v0.1.0" }
 redox_syscall = "0.1"
 partitionlib = { git = "https://gitlab.redox-os.org/redox-os/partitionlib.git" }
 block-io-wrapper = { path = "../block-io-wrapper" }
+
+pcid = { path = "../pcid" }
