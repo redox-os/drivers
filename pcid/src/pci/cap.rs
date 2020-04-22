@@ -41,6 +41,7 @@ pub enum CapabilityId {
     Msi = 0x05,
     MsiX = 0x11,
     Pcie = 0x10,
+    Sata = 0x12, // only on AHCI functions
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
@@ -85,11 +86,12 @@ pub struct MsixCapability {
     pub c: u32,
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum Capability {
     Msi(MsiCapability),
     MsiX(MsixCapability),
     Pcie(PcieCapability),
+    FunctionSpecific(u8, Vec<u8>), // TODO: Arrayvec
     Other(u8),
 }
 
@@ -156,6 +158,8 @@ impl Capability {
             Self::parse_msix(reader, offset)
         } else if capability_id == CapabilityId::Pcie as u8 {
             Self::parse_pcie(reader, offset)
+        } else if capability_id == CapabilityId::Sata as u8 {
+            Self::FunctionSpecific(capability_id, reader.read_range(offset.into(), 8))
         } else {
             Self::Other(capability_id)
             //panic!("unimplemented or malformed capability id: {}", capability_id)
