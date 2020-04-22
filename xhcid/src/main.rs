@@ -1,7 +1,7 @@
 #[macro_use]
 extern crate bitflags;
 
-use std::convert::TryInto;
+use std::convert::{TryFrom, TryInto};
 use std::fs::{self, File};
 use std::future::Future;
 use std::io::{self, Read, Write};
@@ -52,7 +52,7 @@ fn main() {
         Ok(logger) => match logger.with_stdout_mirror().enable() {
             Ok(_) => {
                 println!("xhcid: enabled logger");
-                log::set_max_level(log::LevelFilter::Debug);
+                log::set_max_level(log::LevelFilter::Trace);
             }
             Err(error) => eprintln!("xhcid: failed to set default logger: {}", error),
         }
@@ -102,9 +102,10 @@ fn main() {
         // pcid_interface, so that this can be shared between nvmed, xhcid, ixgebd, etc..
 
         let destination_id = read_bsp_apic_id().expect("xhcid: failed to read BSP apic id");
-        let msg_addr = x86_64_msix::message_address(destination_id as u8, false, false, 0b00);
+        let lapic_id = u8::try_from(destination_id).expect("CPU id didn't fit inside u8");
+        let msg_addr = x86_64_msix::message_address(lapic_id, false, false, 0b00);
 
-        let (vector, interrupt_handle) = allocate_single_interrupt_vector().expect("xhcid: failed to allocate interrupt vector").expect("xhcid: no interrupt vectors left");
+        let (vector, interrupt_handle) = allocate_single_interrupt_vector(destination_id).expect("xhcid: failed to allocate interrupt vector").expect("xhcid: no interrupt vectors left");
         let msg_data = x86_64_msix::message_data_edge_triggered(DeliveryMode::Fixed, vector);
 
         let set_feature_info = MsiSetFeatureInfo {
@@ -161,11 +162,12 @@ fn main() {
             let table_entry_pointer = info.table_entry_pointer(k);
 
             let destination_id = read_bsp_apic_id().expect("xhcid: failed to read BSP apic id");
+            let lapic_id = u8::try_from(destination_id).expect("xhcid: CPU id couldn't fit inside u8");
             let rh = false;
             let dm = false;
-            let addr = x86_64_msix::message_address(destination_id.try_into().expect("xhcid: BSP apic id couldn't fit u8"), rh, dm, 0b00);
+            let addr = x86_64_msix::message_address(lapic_id, rh, dm, 0b00);
 
-            let (vector, interrupt_handle) = allocate_single_interrupt_vector().expect("xhcid: failed to allocate interrupt vector").expect("xhcid: no interrupt vectors left");
+            let (vector, interrupt_handle) = allocate_single_interrupt_vector(destination_id).expect("xhcid: failed to allocate interrupt vector").expect("xhcid: no interrupt vectors left");
             let msg_data = x86_64_msix::message_data_edge_triggered(DeliveryMode::Fixed, vector);
 
             table_entry_pointer.addr_lo.write(addr);
