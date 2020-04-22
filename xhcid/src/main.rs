@@ -44,6 +44,7 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
             OutputBuilder::stderr()
                 .with_filter(log::LevelFilter::Info) // limit global output to important info
                 .with_ansi_escape_codes()
+                .flush_on_newline(true)
                 .build()
         );
 
@@ -51,7 +52,8 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
         Ok(b) => logger = logger.with_output(
             // TODO: Add a configuration file for this
             b.with_filter(log::LevelFilter::Trace)
-            .build()
+                .flush_on_newline(true)
+                .build()
         ),
         Err(error) => eprintln!("Failed to create xhci.log: {}", error),
     }
@@ -59,8 +61,9 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
     match OutputBuilder::in_redox_logging_scheme("usb", "host", "xhci.ansi.log") {
         Ok(b) => logger = logger.with_output(
             b.with_filter(log::LevelFilter::Trace)
-            .with_ansi_escape_codes()
-            .build()
+                .with_ansi_escape_codes()
+                .flush_on_newline(true)
+                .build()
         ),
         Err(error) => eprintln!("Failed to create xhci.ansi.log: {}", error),
     }
@@ -88,7 +91,7 @@ fn main() {
         return;
     }
 
-    setup_logging();
+    let _logger_ref = setup_logging();
 
     let mut pcid_handle = PcidServerHandle::connect_default().expect("xhcid: failed to setup channel to pcid");
     let pci_config = pcid_handle.fetch_config().expect("xhcid: failed to fetch config");

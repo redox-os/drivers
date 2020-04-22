@@ -9,6 +9,9 @@ use std::{env, io, i64, thread};
 
 use syscall::iopl;
 
+use log::{error, info, warn, trace};
+use redox_log::{OutputBuilder, RedoxLogger};
+
 use crate::config::Config;
 use crate::pci::{CfgAccess, Pci, PciIter, PciBar, PciBus, PciClass, PciDev, PciFunc, PciHeader, PciHeaderError, PciHeaderType};
 use crate::pci::cap::Capability as PciCapability;
@@ -245,7 +248,7 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, bus_num: u8,
 
     string.push('\n');
 
-    print!("{}", string);
+    info!("{}", string);
 
     for driver in config.drivers.iter() {
         if let Some(class) = driver.class {
@@ -364,7 +367,7 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, bus_num: u8,
                 };
                 crate::pci::cap::CapabilitiesIter { inner: crate::pci::cap::CapabilityOffsetsIter::new(header.cap_pointer(), &func) }.collect::<Vec<_>>()
             };
-            println!("PCI DEVICE CAPABILITIES for {}: {:?}", args.iter().map(|string| string.as_ref()).nth(0).unwrap_or("[unknown]"), capabilities);
+            info!("PCI DEVICE CAPABILITIES for {}: {:?}", args.iter().map(|string| string.as_ref()).nth(0).unwrap_or("[unknown]"), capabilities);
 
             use driver_interface::LegacyInterruptPin;
 
@@ -376,7 +379,7 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, bus_num: u8,
                 4 => Some(LegacyInterruptPin::IntD),
 
                 other => {
-                    println!("pcid: invalid interrupt pin: {}", other);
+                    warn!("pcid: invalid interrupt pin: {}", other);
                     None
                 }
             };
@@ -426,7 +429,7 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, bus_num: u8,
                     command.arg(&arg);
                 }
 
-                println!("PCID SPAWN {:?}", command);
+                info!("PCID SPAWN {:?}", command);
 
                 let (pcid_to_client_write, pcid_from_client_read, envs) = if driver.channel_name.is_some() {
                     let mut fds1 = [0usize; 2];
@@ -459,12 +462,52 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, bus_num: u8,
                         });
                         match child.wait() {
                             Ok(_status) => (),
-                            Err(err) => println!("pcid: failed to wait for {:?}: {}", command, err),
+                            Err(err) => error!("pcid: failed to wait for {:?}: {}", command, err),
                         }
                     }
-                    Err(err) => println!("pcid: failed to execute {:?}: {}", command, err)
+                    Err(err) => error!("pcid: failed to execute {:?}: {}", command, err)
                 }
             }
+        }
+    }
+}
+
+fn setup_logging() -> Option<&'static RedoxLogger> {
+    let mut logger = RedoxLogger::new()
+        .with_output(
+            OutputBuilder::stderr()
+                .with_ansi_escape_codes()
+                .with_filter(log::LevelFilter::Info)
+                .flush_on_newline(true)
+                .build()
+         );
+
+    match OutputBuilder::in_redox_logging_scheme("bus", "pci", "pcid.log") {
+        Ok(b) => logger = logger.with_output(
+            b.with_filter(log::LevelFilter::Trace)
+                .flush_on_newline(true)
+                .build()
+        ),
+        Err(error) => eprintln!("pcid: failed to open pcid.log"),
+    }
+    match OutputBuilder::in_redox_logging_scheme("bus", "pci", "pcid.ansi.log") {
+        Ok(b) => logger = logger.with_output(
+            b.with_filter(log::LevelFilter::Trace)
+                .with_ansi_escape_codes()
+                .flush_on_newline(true)
+                .build()
+        ),
+        Err(error) => eprintln!("pcid: failed to open pcid.ansi.log"),
+    }
+
+    match logger.enable() {
+        Ok(logger_ref) => {
+            eprintln!("pcid: enabled logger");
+            Some(logger_ref)
+        }
+        Err(error) => {
+            eprintln!("pcid: failed to set default logger: {}", error);
+            None
         }
     }
 }
@@ -499,6 +542,8 @@ fn main() {
         }
     }
 
+    let _logger_ref = setup_logging();
+
     let pci = Arc::new(Pci::new());
 
     let state = Arc::new(State {
@@ -506,7 +551,7 @@ fn main() {
         pcie: match Pcie::new(Arc::clone(&pci)) {
             Ok(pcie) => Some(pcie),
             Err(error) => {
-                println!("Couldn't retrieve PCIe info, perhaps the kernel is not compiled with acpi? Using the PCI 3.0 configuration space instead. Error: {:?}", error);
+                info!("Couldn't retrieve PCIe info, perhaps the kernel is not compiled with acpi? Using the PCI 3.0 configuration space instead. Error: {:?}", error);
                 None
             }
         },
@@ -515,7 +560,7 @@ fn main() {
 
     let pci = state.preferred_cfg_access();
 
-    print!("PCI BS/DV/FN VEND:DEVI CL.SC.IN.RV\n");
+    info!("PCI BS/DV/FN VEND:DEVI CL.SC.IN.RV");
 
     'bus: for bus in PciIter::new(pci) {
         'dev: for dev in bus.devs() {
@@ -528,16 +573,16 @@ fn main() {
                     Err(PciHeaderError::NoDevice) => {
                         if func_num == 0 {
                             if dev.num == 0 {
-                                // println!("PCI {:>02X}: no bus", bus.num);
+                                trace!("PCI {:>02X}: no bus", bus.num);
                                 continue 'bus;
                             } else {
-                                // println!("PCI {:>02X}/{:>02X}: no dev", bus.num, dev.num);
+                                trace!("PCI {:>02X}/{:>02X}: no dev", bus.num, dev.num);
                                 continue 'dev;
                             }
                         }
                     },
                     Err(PciHeaderError::UnknownHeaderType(id)) => {
-                        println!("pcid: unknown header type: {}", id);
+                        warn!("pcid: unknown header type: {}", id);
                     }
                 }
             }
