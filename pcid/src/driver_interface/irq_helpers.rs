@@ -44,7 +44,7 @@ pub fn cpu_ids() -> io::Result<impl Iterator<Item = io::Result<usize>> + 'static
         } }))
 }
 
-/// Allocate multiple interrupt vectors, from the IDT of the bootstrap processor, returning the
+/// Allocate multiple interrupt vectors, from the IDT of the specified processor, returning the
 /// start vector and the IRQ handles.
 ///
 /// The alignment is a requirement for the allocation range. For example, with an alignment of 8,
@@ -52,22 +52,20 @@ pub fn cpu_ids() -> io::Result<impl Iterator<Item = io::Result<usize>> + 'static
 /// always correspond to the subsequent IRQ numbers beginning the first value in the return tuple.
 ///
 /// This function is not actually guaranteed to allocate all of the IRQs specified in `count`,
-/// since another process might already have requested that vector. The caller must check that
-/// the returned vector have the same length as `count`. In the future this function may perhaps
-/// lock the entire directory to prevent this from happening, or maybe find the smallest free range
-/// with the minimum alignment, to allow other drivers to obtain their necessary IRQs.
+/// since another process might already have requested one vector in the range. The caller must
+/// check that the returned vector have the same length as `count`. In the future this function may
+/// perhaps lock the entire directory to prevent this from happening, or maybe find the smallest free
+/// range with the minimum alignment, to allow other drivers to obtain their necessary IRQs.
 ///
 /// Note that this count/alignment restriction is only mandatory for MSI; MSI-X allows for
 /// individually allocated vectors that might be spread out, even on multiple CPUs. Thus, multiple
 /// invocations with alignment 1 and count 1 are totally acceptable, although allocating in bulk
 /// minimizes the initialization overhead, even though it's negligible.
-///
-/// Every interrupt vector will be allocated in the same CPU's IDT, as specified by `cpu_id`.
 pub fn allocate_aligned_interrupt_vectors(cpu_id: usize, alignment: NonZeroU8, count: u8) -> io::Result<Option<(u8, Vec<File>)>> {
     let cpu_id = u8::try_from(cpu_id).expect("usize cpu ids not implemented yet");
     if count == 0 { return Ok(None) }
 
-    let available_irqs = fs::read_dir(format!("irq:{:02x}", cpu_id))?;
+    let available_irqs = fs::read_dir(format!("irq:cpu-{:02x}", cpu_id))?;
     let mut available_irq_numbers = available_irqs.filter_map(|entry| -> Option<io::Result<_>> {
         let entry = match entry {
             Ok(e) => e,
@@ -116,7 +114,7 @@ pub fn allocate_aligned_interrupt_vectors(cpu_id: usize, alignment: NonZeroU8, c
         }
 
         // if found, reserve the irq
-        let irq_handle = match File::create(format!("irq:{}", irq_number)) {
+        let irq_handle = match File::create(format!("irq:cpu-{:02x}/{}", cpu_id, irq_number)) {
             Ok(handle) => handle,
 
             // return early if the entire range couldn't be allocated

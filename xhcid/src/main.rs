@@ -132,7 +132,6 @@ fn main() {
         let pba_min_length = crate::xhci::scheme::div_round_up(table_size, 8);
 
         let pba_base = capability.pba_base_pointer(pci_config.func.bars);
-        dbg!(table_size, table_base, table_min_length, pba_base);
 
         if !(bar_ptr..bar_ptr + 65536).contains(&(table_base as u32 + table_min_length as u32)) {
             todo!()

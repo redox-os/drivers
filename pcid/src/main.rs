@@ -189,7 +189,9 @@ pub struct State {
 }
 impl State {
     fn preferred_cfg_access(&self) -> &dyn CfgAccess {
-        self.pcie.as_ref().map(|pcie| pcie as &dyn CfgAccess).unwrap_or(&*self.pci as &dyn CfgAccess)
+        // TODO
+        //self.pcie.as_ref().map(|pcie| pcie as &dyn CfgAccess).unwrap_or(&*self.pci as &dyn CfgAccess)
+        &*self.pci as &dyn CfgAccess
     }
 }
 
