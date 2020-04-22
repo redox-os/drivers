@@ -17,6 +17,7 @@ use pcid_interface::msi::{MsiCapability, MsixCapability, MsixTableEntry};
 
 use event::{Event, EventQueue};
 use log::info;
+use redox_log::{RedoxLogger, OutputBuilder};
 use syscall::data::Packet;
 use syscall::error::EWOULDBLOCK;
 use syscall::flag::{CloneFlags, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
@@ -37,6 +38,45 @@ async fn handle_packet(hci: Arc<Xhci>, packet: Packet) -> Packet {
     todo!()
 }
 
+fn setup_logging() -> Option<&'static RedoxLogger> {
+    let mut logger = RedoxLogger::new()
+        .with_output(
+            OutputBuilder::stderr()
+                .with_filter(log::LevelFilter::Info) // limit global output to important info
+                .with_ansi_escape_codes()
+                .build()
+        );
+
+    match OutputBuilder::in_redox_logging_scheme("usb", "host", "xhci.log") {
+        Ok(b) => logger = logger.with_output(
+            // TODO: Add a configuration file for this
+            b.with_filter(log::LevelFilter::Trace)
+            .build()
+        ),
+        Err(error) => eprintln!("Failed to create xhci.log: {}", error),
+    }
+
+    match OutputBuilder::in_redox_logging_scheme("usb", "host", "xhci.ansi.log") {
+        Ok(b) => logger = logger.with_output(
+            b.with_filter(log::LevelFilter::Trace)
+            .with_ansi_escape_codes()
+            .build()
+        ),
+        Err(error) => eprintln!("Failed to create xhci.ansi.log: {}", error),
+    }
+
+    match logger.enable() {
+        Ok(logger_ref) => {
+            eprintln!("xhcid: enabled logger");
+            Some(logger_ref)
+        }
+        Err(error) => {
+            eprintln!("xhcid: failed to set default logger: {}", error);
+            None
+        }
+    }
+}
+
 fn main() {
     let mut args = env::args().skip(1);
 
@@ -48,16 +88,7 @@ fn main() {
         return;
     }
 
-    match redox_log::RedoxLogger::new("usb", "host", "xhci.log") {
-        Ok(logger) => match logger.with_stdout_mirror().enable() {
-            Ok(_) => {
-                println!("xhcid: enabled logger");
-                log::set_max_level(log::LevelFilter::Trace);
-            }
-            Err(error) => eprintln!("xhcid: failed to set default logger: {}", error),
-        }
-        Err(error) => eprintln!("xhcid: failed to initialize logger: {}", error),
-    }
+    setup_logging();
 
     let mut pcid_handle = PcidServerHandle::connect_default().expect("xhcid: failed to setup channel to pcid");
     let pci_config = pcid_handle.fetch_config().expect("xhcid: failed to fetch config");
