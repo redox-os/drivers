@@ -431,7 +431,7 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, bus_num: u8,
 
                 info!("PCID SPAWN {:?}", command);
 
-                let (pcid_to_client_write, pcid_from_client_read, envs) = if driver.use_channel {
+                let (pcid_to_client_write, pcid_from_client_read, envs) = if driver.use_channel.unwrap_or(false) {
                     let mut fds1 = [0usize; 2];
                     let mut fds2 = [0usize; 2];
 
