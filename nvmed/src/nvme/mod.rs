@@ -1,7 +1,32 @@
-use std::{ptr, thread};
+use std::ptr;
 use std::collections::BTreeMap;
+use std::sync::{Mutex, RwLock};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use crossbeam_channel::Sender;
+
 use syscall::io::{Dma, Io, Mmio};
 use syscall::error::{Error, Result, EINVAL};
+
+pub mod cq_reactor;
+use self::cq_reactor::{self, NotifReq};
+
+use pcid_interface::msi::{MsiCapability, MsixCapability, MsixTableEntry};
+use pcid_interface::PcidServerHandle;
+
+#[derive(Debug)]
+pub enum InterruptMethod {
+    Intx,
+    Msi(MsiCapability),
+    MsiX(MsixCfg),
+}
+
+#[derive(Debug)]
+pub struct MsixCfg {
+    pub cap: MsixCapability,
+    pub table: &'static mut [MsixTableEntry],
+    pub pba: &'static mut [Mmio<u64>],
+}
 
 #[derive(Clone, Copy)]
 #[repr(packed)]
@@ -39,7 +64,7 @@ impl NvmeCmd {
         Self {
             opcode: 5,
             flags: 0,
-            cid: cid,
+            cid,
             nsid: 0,
             _rsvd: 0,
             mptr: 0,
@@ -272,43 +297,55 @@ pub struct NvmeNamespace {
 }
 
 pub struct Nvme {
-    regs: &'static mut NvmeRegs,
-    submission_queues: [NvmeCmdQueue; 2],
-    pub (crate) completion_queues: [NvmeCompQueue; 2],
-    buffer: Dma<[u8; 512 * 4096]>, // 2MB of buffer
-    buffer_prp: Dma<[u64; 512]>, // 4KB of PRP for the buffer
+    interrupt_method: Mutex<InterruptMethod>,
+    pcid_interface: Mutex<PcidServerHandle>,
+    regs: Mutex<&'static mut NvmeRegs>,
+    submission_queues: RwLock<Vec<Mutex<NvmeCmdQueue>>>,
+    pub (crate) completion_queues: RwLock<Vec<Mutex<NvmeCompQueue>>>,
+    buffer: Mutex<Dma<[u8; 512 * 4096]>>, // 2MB of buffer
+    buffer_prp: Mutex<Dma<[u64; 512]>>, // 4KB of PRP for the buffer
+    reactor_sender: Sender<cq_reactor::NotifReq>,
+    next_cid: AtomicUsize,
 }
 
 impl Nvme {
-    pub fn new(address: usize) -> Result<Self> {
+    pub fn new(address: usize, interrupt_method: InterruptMethod, pcid_interface: PcidServerHandle, reactor_sender: Sender<NotifReq>) -> Result<Self> {
         Ok(Nvme {
-            regs: unsafe { &mut *(address as *mut NvmeRegs) },
-            submission_queues: [NvmeCmdQueue::new()?, NvmeCmdQueue::new()?],
-            completion_queues: [NvmeCompQueue::new()?, NvmeCompQueue::new()?],
-            buffer: Dma::zeroed()?,
-            buffer_prp: Dma::zeroed()?,
+            regs: Mutex::new(unsafe { &mut *(address as *mut NvmeRegs) }),
+            submission_queues: RwLock::new(vec! [Mutex::new(NvmeCmdQueue::new()?), Mutex::new(NvmeCmdQueue::new()?)]),
+            completion_queues: RwLock::new(vec! [Mutex::new(NvmeCompQueue::new()?), Mutex::new(NvmeCompQueue::new()?)]),
+            buffer: Mutex::new(Dma::zeroed()?),
+            buffer_prp: Mutex::new(Dma::zeroed()?),
+            next_cid: AtomicUsize::new(0),
+            interrupt_method: Mutex::new(interrupt_method),
+            pcid_interface: Mutex::new(pcid_interface),
+            reactor_sender,
         })
     }
+    unsafe fn doorbell_write(&self, index: usize, value: u32) {
+        let mut regs_guard = self.regs.lock().unwrap();
 
-    unsafe fn doorbell(&mut self, index: usize) -> &'static mut Mmio<u32> {
-        let dstrd = ((self.regs.cap.read() >> 32) & 0b1111) as usize;
-        let addr = (self.regs as *mut _ as usize)
+        let dstrd = ((regs_guard.cap.read() >> 32) & 0b1111) as usize;
+        let addr = (regs_guard as *mut u8 as usize)
             + 0x1000
             + index * (4 << dstrd);
-        &mut *(addr as *mut Mmio<u32>)
+        (&mut *(addr as *mut Mmio<u32>)).write(value);
     }
 
-    pub unsafe fn submission_queue_tail(&mut self, qid: u16, tail: u16) {
-        self.doorbell(2 * (qid as usize)).write(tail as u32);
+    pub unsafe fn submission_queue_tail(&self, qid: u16, tail: u16) {
+        self.doorbell_write(2 * (qid as usize), u32::from(tail));
     }
 
-    pub unsafe fn completion_queue_head(&mut self, qid: u16, head: u16) {
-        self.doorbell(2 * (qid as usize) + 1).write(head as u32)
+    pub unsafe fn completion_queue_head(&self, qid: u16, head: u16) {
+        self.doorbell_write(2 * (qid as usize) + 1, u32::from(head));
     }
 
-    pub unsafe fn init(&mut self) -> BTreeMap<u32, NvmeNamespace> {
-        for i in 0..self.buffer_prp.len() {
-            self.buffer_prp[i] = (self.buffer.physical() + i * 4096) as u64;
+    pub unsafe fn init(&mut self) {
+        let mut buffer = self.buffer.get_mut().unwrap();
+        let mut buffer_prp = self.buffer_prp.get_mut().unwrap();
+
+        for i in 0..buffer_prp.len() {
+            buffer_prp[i] = (buffer.physical() + i * 4096) as u64;
         }
 
         // println!("  - CAPS: {:X}", self.regs.cap.read());
@@ -317,11 +354,11 @@ impl Nvme {
         // println!("  - CSTS: {:X}", self.regs.csts.read());
 
         // println!("  - Disable");
-        self.regs.cc.writef(1, false);
+        self.regs.get_mut().unwrap().cc.writef(1, false);
 
         // println!("  - Waiting for not ready");
         loop {
-            let csts = self.regs.csts.read();
+            let csts = self.regs.get_mut().unwrap().csts.read();
             // println!("CSTS: {:X}", csts);
             if csts & 1 == 1 {
                 unsafe { std::arch::x86_64::_mm_pause() }
@@ -331,38 +368,42 @@ impl Nvme {
         }
 
         // println!("  - Mask all interrupts");
-        self.regs.intms.write(0xFFFFFFFF);
+        self.regs.get_mut().unwrap().intms.write(0xFFFFFFFF); // TODO: Don't mask
 
-        for (qid, queue) in self.completion_queues.iter().enumerate() {
-            let data = &queue.data;
+        for (qid, queue) in self.completion_queues.get_mut().unwrap().iter().enumerate() {
+            let data = &queue.get_mut().unwrap().data;
             // println!("    - completion queue {}: {:X}, {}", qid, data.physical(), data.len());
         }
 
-        for (qid, queue) in self.submission_queues.iter().enumerate() {
-            let data = &queue.data;
+        for (qid, queue) in self.submission_queues.get_mut().unwrap().iter().enumerate() {
+            let data = &queue.get_mut().unwrap().data;
             // println!("    - submission queue {}: {:X}, {}", qid, data.physical(), data.len());
         }
 
         {
-            let asq = &self.submission_queues[0];
-            let acq = &self.completion_queues[0];
-            self.regs.aqa.write(((acq.data.len() as u32 - 1) << 16) | (asq.data.len() as u32 - 1));
-            self.regs.asq.write(asq.data.physical() as u64);
-            self.regs.acq.write(acq.data.physical() as u64);
+            let regs = self.regs.get_mut().unwrap();
+            let submission_queues = self.submission_queues.get_mut().unwrap();
+            let completion_queues = self.submission_queues.get_mut().unwrap();
+
+            let asq = &submission_queues[0].get_mut().unwrap();
+            let acq = &completion_queues[0].get_mut().unwrap();
+            regs.aqa.write(((acq.data.len() as u32 - 1) << 16) | (asq.data.len() as u32 - 1));
+            regs.asq.write(asq.data.physical() as u64);
+            regs.acq.write(acq.data.physical() as u64);
 
             // Set IOCQES, IOSQES, AMS, MPS, and CSS
-            let mut cc = self.regs.cc.read();
+            let mut cc = regs.cc.read();
             cc &= 0xFF00000F;
             cc |= (4 << 20) | (6 << 16);
-            self.regs.cc.write(cc);
+            regs.cc.write(cc);
         }
 
         // println!("  - Enable");
-        self.regs.cc.writef(1, true);
+        self.regs.get_mut().unwrap().cc.writef(1, true);
 
         // println!("  - Waiting for ready");
         loop {
-            let csts = self.regs.csts.read();
+            let csts = self.regs.get_mut().unwrap().csts.read();
             // println!("CSTS: {:X}", csts);
             if csts & 1 == 0 {
                 unsafe { std::arch::x86_64::_mm_pause() }
@@ -370,7 +411,8 @@ impl Nvme {
                 break;
             }
         }
-
+    }
+    pub fn init_with_queues(&self) -> BTreeMap<u32, NvmeNamespace> {
         {
             //TODO: Use buffer
             let data: Dma<[u8; 4096]> = Dma::zeroed().unwrap();

@@ -4,6 +4,8 @@ use std::convert::{TryFrom, TryInto};
 use std::fmt::Write;
 use std::io::prelude::*;
 use std::io;
+use std::sync::Arc;
+
 use syscall::{
     Error, EACCES, EBADF, EINVAL, EISDIR, ENOENT, EOVERFLOW, Result,
     Io, SchemeBlockMut, Stat, MODE_DIR, MODE_FILE, O_DIRECTORY,
@@ -32,13 +34,13 @@ impl AsRef<NvmeNamespace> for DiskWrapper {
 }
 
 impl DiskWrapper {
-    fn pt(disk: &mut NvmeNamespace, nvme: &mut Nvme) -> Option<PartitionTable> {
+    fn pt(disk: &mut NvmeNamespace, nvme: &Nvme) -> Option<PartitionTable> {
         let bs = match disk.block_size {
             512 => LogicalBlockSize::Lb512,
             4096 => LogicalBlockSize::Lb4096,
             _ => return None,
         };
-        struct Device<'a, 'b> { disk: &'a mut NvmeNamespace, nvme: &'a mut Nvme, offset: u64, block_bytes: &'b mut [u8] }
+        struct Device<'a, 'b> { disk: &'a mut NvmeNamespace, nvme: &'a Nvme, offset: u64, block_bytes: &'b mut [u8] }
 
         impl<'a, 'b> Seek for Device<'a, 'b> {
             fn seek(&mut self, from: io::SeekFrom) -> io::Result<u64> {
@@ -91,7 +93,7 @@ impl DiskWrapper {
 
         partitionlib::get_partitions(&mut Device { disk, nvme, offset: 0, block_bytes: &mut block_bytes[..bs.into()] }, bs).ok().flatten()
     }
-    fn new(mut inner: NvmeNamespace, nvme: &mut Nvme) -> Self {
+    fn new(mut inner: NvmeNamespace, nvme: &Nvme) -> Self {
         Self {
             pt: Self::pt(&mut inner, nvme),
             inner,
@@ -101,17 +103,17 @@ impl DiskWrapper {
 
 pub struct DiskScheme {
     scheme_name: String,
-    nvme: Nvme,
+    nvme: Arc<Nvme>,
     disks: BTreeMap<u32, DiskWrapper>,
     handles: BTreeMap<usize, Handle>,
     next_id: usize
 }
 
 impl DiskScheme {
-    pub fn new(scheme_name: String, mut nvme: Nvme, disks: BTreeMap<u32, NvmeNamespace>) -> DiskScheme {
+    pub fn new(scheme_name: String, nvme: Arc<Nvme>, disks: BTreeMap<u32, NvmeNamespace>) -> DiskScheme {
         DiskScheme {
             scheme_name,
-            disks: disks.into_iter().map(|(k, v)| (k, DiskWrapper::new(v, &mut nvme))).collect(),
+            disks: disks.into_iter().map(|(k, v)| (k, DiskWrapper::new(v, &nvme))).collect(),
             nvme,
             handles: BTreeMap::new(),
             next_id: 0
@@ -124,8 +126,11 @@ impl DiskScheme {
         let mut found_completion = false;
 
         let nvme = &mut self.nvme;
-        for qid in 0..nvme.completion_queues.len() {
-            while let Some((head, entry)) = nvme.completion_queues[qid].complete() {
+        let completion_queues = nvme.completion_queues.read().unwrap();
+
+        for qid in 0..completion_queues.len() {
+            let queue = completion_queues[qid].lock().unwrap();
+            while let Some((head, entry)) = queue.complete() {
                 found_completion = true;
                 println!("nvmed: Unhandled completion {:?}", entry);
                 //TODO: Handle errors
