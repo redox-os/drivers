@@ -1,4 +1,6 @@
-use std::{env, slice, usize};
+use std::{slice, usize};
+use std::collections::BTreeMap;
+use std::convert::TryInto;
 use std::fs::File;
 use std::io::{ErrorKind, Read, Write};
 use std::ptr::NonNull;
@@ -12,13 +14,13 @@ use syscall::io::Mmio;
 use arrayvec::ArrayVec;
 use log::{debug, error, info, warn, trace};
 
-use self::nvme::{InterruptMethod, Nvme};
+use self::nvme::{InterruptMethod, InterruptSources, Nvme};
 use self::scheme::DiskScheme;
 
 mod nvme;
 mod scheme;
 
-#[derive(Default)]
+/// A wrapper for a BAR allocation.
 pub struct Bar {
     ptr: NonNull<u8>,
     physical: usize,
@@ -40,11 +42,15 @@ impl Drop for Bar {
     }
 }
 
+/// The PCI BARs that may be allocated.
 #[derive(Default)]
 pub struct AllocatedBars(pub [Mutex<Option<Bar>>; 6]);
 
-/// Get the most optimal yet functional interrupt 
-fn get_int_method(pcid_handle: &mut PcidServerHandle, function: &PciFunction, nvme: &mut Nvme, allocated_bars: &AllocatedBars) -> Result<InterruptMethod> {
+/// Get the most optimal yet functional interrupt mechanism: either (in the order preference):
+/// MSI-X, MSI, and INTx# pin. Returns both runtime interrupt structures (MSI/MSI-X capability
+/// structures), and the handles to the interrupts.
+fn get_int_method(pcid_handle: &mut PcidServerHandle, function: &PciFunction, allocated_bars: &AllocatedBars) -> Result<(InterruptMethod, InterruptSources)> {
+    use pcid_interface::irq_helpers;
 
     let features = pcid_handle.fetch_all_features().unwrap();
 
@@ -97,25 +103,74 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle, function: &PciFunction, nv
         pcid_handle.enable_feature(PciFeature::MsiX).unwrap();
         capability_struct.set_msix_enabled(true); // only affects our local mirror of the cap
 
-        // We don't allocate any vectors yet; that's later done when we get into
-        // submission/completion queues.
+        let (msix_vector_number, irq_handle) = {
+            use pcid_interface::msi::x86_64 as msi_x86_64;
+            use msi_x86_64::DeliveryMode;
 
-        Ok(InterruptMethod::MsiX(MsixCfg {
+            let entry: &mut MsixTableEntry = &mut table_entries[0];
+
+            let bsp_cpu_id = irq_helpers::read_bsp_apic_id().expect("nvmed: failed to read APIC ID");
+            let bsp_lapic_id = bsp_cpu_id.try_into().expect("nvmed: BSP local apic ID couldn't fit inside u8");
+            let (vector, irq_handle) = irq_helpers::allocate_single_interrupt_vector(bsp_cpu_id).expect("nvmed: failed to allocate single MSI-X interrupt vector").expect("nvmed: no interrupt vectors left on BSP");
+
+            let msg_addr = msi_x86_64::message_address(bsp_lapic_id, false, false);
+            let msg_data = msi_x86_64::message_data_edge_triggered(DeliveryMode::Fixed, vector);
+
+            entry.set_addr_lo(msg_addr);
+            entry.set_msg_data(msg_data);
+            entry.unmask();
+
+            (0, irq_handle)
+        };
+
+        let interrupt_method = InterruptMethod::MsiX(MsixCfg {
             cap: capability_struct,
             table: table_entries,
             pba: pba_entries,
-        }))
+        });
+        let interrupt_sources = InterruptSources::MsiX(std::iter::once((msix_vector_number, irq_handle)).collect());
+
+        Ok((interrupt_method, interrupt_sources))
     } else if has_msi {
         // Message signaled interrupts.
         let capability_struct = match pcid_handle.feature_info(PciFeature::Msi).unwrap() {
             PciFeatureInfo::Msi(msi) => msi,
             _ => unreachable!(),
         };
-        // We don't enable MSI until needed.
-        Ok(InterruptMethod::Msi(capability_struct))
+
+        let (msi_vector_number, irq_handle) = {
+            use pcid_interface::{MsiSetFeatureInfo, SetFeatureInfo};
+            use pcid_interface::msi::x86_64 as msi_x86_64;
+            use msi_x86_64::DeliveryMode;
+
+            let bsp_cpu_id = irq_helpers::read_bsp_apic_id().expect("nvmed: failed to read BSP APIC ID");
+            let bsp_lapic_id = bsp_cpu_id.try_into().expect("nvmed: BSP local apic ID couldn't fit inside u8");
+            let (vector, irq_handle) = irq_helpers::allocate_single_interrupt_vector(bsp_cpu_id).expect("nvmed: failed to allocate single MSI interrupt vector").expect("nvmed: no interrupt vectors left on BSP");
+
+            let msg_addr = msi_x86_64::message_address(bsp_lapic_id, false, false);
+            let msg_data = msi_x86_64::message_data_edge_triggered(DeliveryMode::Fixed, vector) as u16;
+
+            pcid_handle.set_feature_info(SetFeatureInfo::Msi(MsiSetFeatureInfo {
+                message_address: Some(msg_addr),
+                message_upper_address: Some(0),
+                message_data: Some(msg_data),
+                multi_message_enable: Some(0), // enable 2^0=1 vectors
+                mask_bits: None,
+            }));
+
+            (0, irq_handle)
+        };
+
+        let interrupt_method = InterruptMethod::Msi(capability_struct);
+        let interrupt_sources = InterruptSources::Msi(std::iter::once((msi_vector_number, irq_handle)).collect());
+
+        pcid_handle.enable_feature(PciFeature::Msi).unwrap();
+
+        Ok((interrupt_method, interrupt_sources))
     } else if function.legacy_interrupt_pin.is_some() {
         // INTx# pin based interrupts.
-        Ok(InterruptMethod::Intx)
+        let irq_handle = File::open(format!("irq:{}", function.legacy_interrupt_line)).expect("nvmed: failed to open INTx# interrupt line");
+        Ok((InterruptMethod::Intx, InterruptSources::Intx(irq_handle)))
     } else {
         // No interrupts at all
         todo!("handling of no interrupts")
@@ -155,37 +210,30 @@ fn main() {
             .expect("nvmed: failed to open event queue");
         let mut event_file = unsafe { File::from_raw_fd(event_fd as RawFd) };
 
-        let irq_fd = syscall::open(
-            &format!("irq:{}", irq),
-            syscall::O_RDWR | syscall::O_NONBLOCK | syscall::O_CLOEXEC
-        ).expect("nvmed: failed to open irq file");
-        syscall::write(event_fd, &syscall::Event {
-            id: irq_fd,
-            flags: syscall::EVENT_READ,
-            data: 0,
-        }).expect("nvmed: failed to watch irq file events");
-        let mut irq_file = unsafe { File::from_raw_fd(irq_fd as RawFd) };
-
         let scheme_name = format!("disk/{}", name);
         let socket_fd = syscall::open(
             &format!(":{}", scheme_name),
             syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK | syscall::O_CLOEXEC
         ).expect("nvmed: failed to create disk scheme");
+
         syscall::write(event_fd, &syscall::Event {
             id: socket_fd,
             flags: syscall::EVENT_READ,
-            data: 1,
+            data: 0,
         }).expect("nvmed: failed to watch disk scheme events");
+
         let mut socket_file = unsafe { File::from_raw_fd(socket_fd as RawFd) };
 
         syscall::setrens(0, 0).expect("nvmed: failed to enter null namespace");
 
         let (reactor_sender, reactor_receiver) = crossbeam_channel::unbounded();
+        let (interrupt_method, interrupt_sources) = get_int_method(&mut pcid_handle, &pci_config.func, &allocated_bars).expect("nvmed: failed to find a suitable interrupt method");
         let mut nvme = Nvme::new(address, interrupt_method, pcid_handle, reactor_sender).expect("nvmed: failed to allocate driver data");
         let nvme = Arc::new(nvme);
         unsafe { nvme.init() }
-        nvme::cq_reactor::start_cq_reactor_thread(nvme);
+        nvme::cq_reactor::start_cq_reactor_thread(nvme, interrupt_sources, reactor_receiver);
         let namespaces = unsafe { nvme.init_with_queues() };
+
         let mut scheme = DiskScheme::new(scheme_name, nvme, namespaces);
         let mut todo = Vec::new();
         'events: loop {
@@ -195,15 +243,7 @@ fn main() {
             }
 
             match event.data {
-                0 => {
-                    let mut irq = [0; 8];
-                    if irq_file.read(&mut irq).expect("nvmed: failed to read irq file") >= irq.len() {
-                        if scheme.irq() {
-                            irq_file.write(&irq).expect("nvmed: failed to write irq file");
-                        }
-                    }
-                },
-                1 => loop {
+                0 => loop {
                     let mut packet = Packet::default();
                     match socket_file.read(&mut packet) {
                         Ok(0) => break 'events,

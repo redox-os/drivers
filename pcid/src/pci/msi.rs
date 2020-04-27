@@ -385,12 +385,11 @@ pub mod x86_64 {
     }
 
     // TODO: should the reserved field be preserved?
-    pub const fn message_address(destination_id: u8, rh: bool, dm: bool, xx: u8) -> u32 {
+    pub const fn message_address(destination_id: u8, rh: bool, dm: bool) -> u32 {
         0xFEE0_0000u32
             | ((destination_id as u32) << 12)
             | ((rh as u32) << 3)
             | ((dm as u32) << 2)
-            | xx as u32
     }
     pub const fn message_data(trigger_mode: TriggerMode, level_trigger_mode: LevelTriggerMode, delivery_mode: DeliveryMode, vector: u8) -> u32 {
         ((trigger_mode as u32) << 15)
@@ -413,11 +412,20 @@ impl MsixTableEntry {
     pub fn addr_hi(&self) -> u32 {
         self.addr_hi.read()
     }
+    pub fn set_addr_lo(&mut self, value: u32) {
+        self.addr_lo.write(value);
+    }
+    pub fn set_addr_hi(&mut self, value: u32) {
+        self.addr_hi.write(value);
+    }
     pub fn msg_data(&self) -> u32 {
         self.msg_data.read()
     }
     pub fn vec_ctl(&self) -> u32 {
         self.vec_ctl.read()
+    }
+    pub fn set_msg_data(&mut self, value: u32) {
+        self.msg_data.write(value);
     }
     pub fn addr(&self) -> u64 {
         u64::from(self.addr_lo()) | (u64::from(self.addr_hi()) << 32)

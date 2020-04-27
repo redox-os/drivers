@@ -1,7 +1,8 @@
-use std::ptr;
 use std::collections::BTreeMap;
+use std::fs::File;
 use std::sync::{Mutex, RwLock};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::ptr;
 
 use crossbeam_channel::Sender;
 
@@ -9,19 +10,44 @@ use syscall::io::{Dma, Io, Mmio};
 use syscall::error::{Error, Result, EINVAL};
 
 pub mod cq_reactor;
-use self::cq_reactor::{self, NotifReq};
+use self::cq_reactor::NotifReq;
 
 use pcid_interface::msi::{MsiCapability, MsixCapability, MsixTableEntry};
 use pcid_interface::PcidServerHandle;
 
 #[derive(Debug)]
-pub enum InterruptMethod {
-    Intx,
-    Msi(MsiCapability),
-    MsiX(MsixCfg),
+pub enum InterruptSources {
+    MsiX(BTreeMap<u16, File>),
+    Msi(BTreeMap<u8, File>),
+    Intx(File),
 }
 
-#[derive(Debug)]
+pub enum InterruptMethod {
+    /// INTx# interrupt pins
+    Intx,
+    /// Message signaled interrupts
+    Msi(MsiCapability),
+    /// Extended message signaled interrupts
+    MsiX(MsixCfg),
+}
+impl InterruptMethod {
+    fn is_intx(&self) -> bool {
+        if let Self::Intx = self {
+            true
+        } else { false }
+    }
+    fn is_msi(&self) -> bool {
+        if let Self::Msi(_) = self {
+            true
+        } else { false }
+    }
+    fn is_msix(&self) -> bool {
+        if let Self::MsiX(_) = self {
+            true
+        } else { false }
+    }
+}
+
 pub struct MsixCfg {
     pub cap: MsixCapability,
     pub table: &'static mut [MsixTableEntry],
@@ -307,6 +333,8 @@ pub struct Nvme {
     reactor_sender: Sender<cq_reactor::NotifReq>,
     next_cid: AtomicUsize,
 }
+unsafe impl Send for Nvme {}
+unsafe impl Sync for Nvme {}
 
 impl Nvme {
     pub fn new(address: usize, interrupt_method: InterruptMethod, pcid_interface: PcidServerHandle, reactor_sender: Sender<NotifReq>) -> Result<Self> {
@@ -326,7 +354,7 @@ impl Nvme {
         let mut regs_guard = self.regs.lock().unwrap();
 
         let dstrd = ((regs_guard.cap.read() >> 32) & 0b1111) as usize;
-        let addr = (regs_guard as *mut u8 as usize)
+        let addr = ((*regs_guard) as *mut NvmeRegs as usize)
             + 0x1000
             + index * (4 << dstrd);
         (&mut *(addr as *mut Mmio<u32>)).write(value);
@@ -368,7 +396,10 @@ impl Nvme {
         }
 
         // println!("  - Mask all interrupts");
-        self.regs.get_mut().unwrap().intms.write(0xFFFFFFFF); // TODO: Don't mask
+        if !self.interrupt_method.get_mut().unwrap().is_msix() {
+            self.regs.get_mut().unwrap().intms.write(0xFFFFFFFF);
+            self.regs.get_mut().unwrap().intmc.write(0xFFFFFFFE);
+        }
 
         for (qid, queue) in self.completion_queues.get_mut().unwrap().iter().enumerate() {
             let data = &queue.get_mut().unwrap().data;
