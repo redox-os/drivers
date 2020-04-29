@@ -586,55 +586,45 @@ impl Nvme {
         // println!("  - Dumping namespace ID list");
         data.iter().copied().take_while(|&nsid| nsid != 0).collect()
     }
+    pub async fn identify_namespace(&self, nsid: u32) -> NvmeNamespace {
+        //TODO: Use buffer
+        let data: Dma<[u8; 4096]> = Dma::zeroed().unwrap();
+
+        // println!("  - Attempting to identify namespace {}", nsid);
+        let cmd_id = self.submit_admin_command(|cid| NvmeCmd::identify_namespace(
+            cid, data.physical(), nsid
+        ));
+
+        // println!("  - Waiting to identify namespace {}", nsid);
+        let comp = self.admin_queue_completion(cmd_id).await;
+
+        // println!("  - Dumping identify namespace");
+
+        let size = *(data.as_ptr().offset(0) as *const u64);
+        let capacity = *(data.as_ptr().offset(8) as *const u64);
+        println!(
+            "    - ID: {} Size: {} Capacity: {}",
+            nsid,
+            size,
+            capacity
+        );
+
+        //TODO: Read block size
+
+        NvmeNamespace {
+            id: nsid,
+            blocks: size,
+            block_size: 512, // TODO
+        }
+    }
 
     pub async fn init_with_queues(&self) -> BTreeMap<u32, NvmeNamespace> {
-        self.identify_controller().await;
-        let nsids = self.identify_namespace_list(0).await;
+        let ((), nsids) = futures::join!(self.identify_controller(), self.identify_namespace_list(0));
 
         let mut namespaces = BTreeMap::new();
-        for &nsid in nsids.iter() {
-            //TODO: Use buffer
-            let data: Dma<[u8; 4096]> = Dma::zeroed().unwrap();
 
-            // println!("  - Attempting to identify namespace {}", nsid);
-            {
-                let qid = 0;
-                let queue = &mut self.submission_queues[qid];
-                let cid = queue.i as u16;
-                let entry = NvmeCmd::identify_namespace(
-                    cid, data.physical(), nsid
-                );
-                let tail = queue.submit(entry);
-                self.submission_queue_tail(qid as u16, tail as u16);
-            }
-
-            // println!("  - Waiting to identify namespace {}", nsid);
-            {
-                let qid = 0;
-                let queue = &mut self.completion_queues[qid];
-                let (head, entry) = queue.complete_spin();
-                self.completion_queue_head(qid as u16, head as u16);
-            }
-
-            // println!("  - Dumping identify namespace");
-
-
-            let size = *(data.as_ptr().offset(0) as *const u64);
-            let capacity = *(data.as_ptr().offset(8) as *const u64);
-            println!(
-                "    - ID: {} Size: {} Capacity: {}",
-                nsid,
-                size,
-                capacity
-            );
-
-            //TODO: Read block size
-
-            namespaces.insert(nsid, NvmeNamespace {
-                id: nsid,
-                blocks: size,
-                block_size: 512, // TODO
-            });
+        for nsid in nsids.iter().copied() {
+            namespaces.insert(nsid, self.identify_namespace(nsid).await);
         }
 
         for io_qid in 1..self.completion_queues.len() {

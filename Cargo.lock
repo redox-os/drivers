@@ -736,6 +736,7 @@ dependencies = [
  "bitflags 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "block-io-wrapper 0.1.0",
  "crossbeam-channel 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "futures 0.3.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "partitionlib 0.1.0 (git+https://gitlab.redox-os.org/redox-os/partitionlib.git)",
  "pcid 0.1.0",
