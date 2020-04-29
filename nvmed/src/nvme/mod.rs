@@ -186,7 +186,7 @@ impl NvmeCmd {
         Self {
             opcode: 6,
             flags: 0,
-            cid: cid,
+            cid,
             nsid: 0,
             _rsvd: 0,
             mptr: 0,
@@ -204,7 +204,7 @@ impl NvmeCmd {
         Self {
             opcode: 6,
             flags: 0,
-            cid: cid,
+            cid,
             nsid: base,
             _rsvd: 0,
             mptr: 0,
@@ -253,6 +253,23 @@ impl NvmeCmd {
             cdw15: 0,
         }
     }
+}
+
+#[derive(Clone, Copy)]
+#[repr(packed)]
+pub struct IdentifyControllerData {
+    /// PCI vendor ID, always the same as in the PCI function header.
+    pub vid: u16,
+    /// PCI subsystem vendor ID.
+    pub ssvid: u16,
+    /// ASCII
+    pub serial_no: [u8; 20],
+    /// ASCII
+    pub model_no: [u8; 48],
+    /// ASCII
+    pub firmware_rev: [u8; 8],
+    // TODO: Lots of fields
+    pub _4k_pad: [u8; 4096 - 72],
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -412,8 +429,12 @@ impl Nvme {
             next_cqid: AtomicCqId::new(0),
         })
     }
+    /// Write to a doorbell register.
+    ///
+    /// # Locking
+    /// Locks `regs`.
     unsafe fn doorbell_write(&self, index: usize, value: u32) {
-        let mut regs_guard = self.regs.lock().unwrap();
+        let mut regs_guard = self.regs.write().unwrap();
 
         let dstrd = ((regs_guard.cap.read() >> 32) & 0b1111) as usize;
         let addr = ((*regs_guard) as *mut NvmeRegs as usize)
@@ -505,97 +526,70 @@ impl Nvme {
             }
         }
     }
+    pub fn submit_command<F: FnOnce(CmdId) -> NvmeCmd>(&self, sq_id: SqId, f: F) -> CmdId {
+        let sqs_read_guard = self.submission_queues.read().unwrap();
+        let sq_lock = sqs_read_guard.get(&sq_id).expect("nvmed: internal error: given SQ for SQ ID not there").lock().unwrap();
+        let cmd_id = u16::try_from(sq_lock.i).expect("nvmed: internal error: CQ has more than 2^16 entries");
+        let tail = sq_lock.submit(f(cmd_id));
+        self.submission_queue_tail(sq_id, tail);
+        cmd_id
+    }
+    pub fn submit_admin_command<F: FnOnce(CmdId) -> NvmeCmd>(&self, f: F) -> CmdId {
+        self.submit_admin_command(0, f)
+    }
+    pub async fn admin_queue_completion(&self, cmd_id: CmdId) -> NvmeComp {
+        self.completion(0, cmd_id, 0).await
+    }
+
+    /// Returns the serial number, model, and firmware, in that order.
+    pub async fn identify_controller(&self) {
+        // TODO: Use same buffer
+        let data: Dma<IdentifyControllerData> = Dma::zeroed().unwrap();
+
+        // println!("  - Attempting to identify controller");
+        let cid = self.submit_admin_command(|cid| NvmeCmd::identify_controller(
+            cid, data.physical()
+        ));
+
+        // println!("  - Waiting to identify controller");
+        let comp = self.admin_queue_completion(cid).await;
+
+        // println!("  - Dumping identify controller");
+
+        let model_cow = String::from_utf8_lossy(&data.model_no);
+        let serial_cow = String::from_utf8_lossy(&data.serial_no);
+        let fw_cow = String::from_utf8_lossy(&data.firmware_rev);
+
+        let model = model_cow.trim();
+        let serial = serial_cow.trim();
+        let firmware = fw_cow.trim();
+
+        println!(
+            "  - Model: {} Serial: {} Firmware: {}",
+            model,
+            serial,
+            firmware,
+        );
+    }
+    pub async fn identify_namespace_list(&self, base: u32) -> Vec<u32> {
+        // TODO: Use buffer
+        let data: Dma<[u32; 1024]> = Dma::zeroed().unwrap();
+
+        // println!("  - Attempting to retrieve namespace ID list");
+        let cmd_id = self.submit_admin_command(|cid| NvmeCmd::identify_namespace_list(
+            cid, data.physical(), base
+        ));
+
+        // println!("  - Waiting to retrieve namespace ID list");
+        let comp = self.admin_queue_completion(cmd_id).await;
+
+        // println!("  - Dumping namespace ID list");
+        data.iter().copied().take_while(|&nsid| nsid != 0).collect()
+    }
+
     pub async fn init_with_queues(&self) -> BTreeMap<u32, NvmeNamespace> {
-        {
-            //TODO: Use buffer
-            let data: Dma<[u8; 4096]> = Dma::zeroed().unwrap();
-
-            // println!("  - Attempting to identify controller");
-            {
-                let qid = 0;
-                let queue = &mut self.submission_queues[qid];
-                let cid = queue.i as u16;
-                let entry = NvmeCmd::identify_controller(
-                    cid, data.physical()
-                );
-                let tail = queue.submit(entry);
-                self.submission_queue_tail(qid as u16, tail as u16);
-            }
-
-            // println!("  - Waiting to identify controller");
-            {
-                let qid = 0;
-                let queue = &mut self.completion_queues[qid];
-                let (head, entry) = queue.complete_spin();
-                self.completion_queue_head(qid as u16, head as u16);
-            }
-
-            // println!("  - Dumping identify controller");
-
-            let mut serial = String::new();
-            for &b in &data[4..24] {
-                if b == 0 {
-                    break;
-                }
-                serial.push(b as char);
-            }
-
-            let mut model = String::new();
-            for &b in &data[24..64] {
-                if b == 0 {
-                    break;
-                }
-                model.push(b as char);
-            }
-
-            let mut firmware = String::new();
-            for &b in &data[64..72] {
-                if b == 0 {
-                    break;
-                }
-                firmware.push(b as char);
-            }
-
-            println!(
-                "  - Model: {} Serial: {} Firmware: {}",
-                model.trim(),
-                serial.trim(),
-                firmware.trim()
-            );
-        }
-
-        let mut nsids = Vec::new();
-        {
-            //TODO: Use buffer
-            let data: Dma<[u32; 1024]> = Dma::zeroed().unwrap();
-
-            // println!("  - Attempting to retrieve namespace ID list");
-            {
-                let qid = 0;
-                let queue = &mut self.submission_queues[qid];
-                let cid = queue.i as u16;
-                let entry = NvmeCmd::identify_namespace_list(
-                    cid, data.physical(), 0
-                );
-                let tail = queue.submit(entry);
-                self.submission_queue_tail(qid as u16, tail as u16);
-            }
-
-            // println!("  - Waiting to retrieve namespace ID list");
-            {
-                let qid = 0;
-                let queue = &mut self.completion_queues[qid];
-                let (head, entry) = queue.complete_spin();
-                self.completion_queue_head(qid as u16, head as u16);
-            }
-
-            // println!("  - Dumping namespace ID list");
-            for &nsid in data.iter() {
-                if nsid != 0 {
-                    nsids.push(nsid);
-                }
-            }
-        }
+        self.identify_controller().await;
+        let nsids = self.identify_namespace_list(0).await;
 
         let mut namespaces = BTreeMap::new();
         for &nsid in nsids.iter() {

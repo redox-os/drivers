@@ -96,10 +96,12 @@ impl CqReactor {
             let completion_queue_guard = cqs_read_guard.get(cq_id)?.lock().unwrap();
             let completion_queue: &mut NvmeCompQueue = &mut *completion_queue_guard;
 
-            let entry = match completion_queue.complete() {
-                Some((_index, entry)) => entry,
+            let (head, entry) = match completion_queue.complete() {
+                Some(e) => e,
                 None => continue,
             };
+
+            self.nvme.completion_queue_head(cq_id, head);
 
             self.try_notify_futures(cq_id, &entry);
 
@@ -231,7 +233,7 @@ impl Future for CompletionFuture {
 impl Nvme {
     /// Returns a future representing an eventual completion queue event, in `cq_id`, from `sq_id`,
     /// with the individual command identified by `cmd_id`.
-    pub fn completion(&self, sq_id: usize, cmd_id: usize, cq_id: usize) -> impl Future<Output = NvmeComp> + '_ {
+    pub fn completion(&self, sq_id: SqId, cmd_id: CmdId, cq_id: SqId) -> impl Future<Output = NvmeComp> + '_ {
         CompletionFuture::Pending {
             sender: self.reactor_sender.clone(),
             cq_id,
