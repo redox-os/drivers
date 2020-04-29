@@ -135,7 +135,7 @@ fn main() {
 
         let destination_id = read_bsp_apic_id().expect("xhcid: failed to read BSP apic id");
         let lapic_id = u8::try_from(destination_id).expect("CPU id didn't fit inside u8");
-        let msg_addr = x86_64_msix::message_address(lapic_id, false, false, 0b00);
+        let msg_addr = x86_64_msix::message_address(lapic_id, false, false);
 
         let (vector, interrupt_handle) = allocate_single_interrupt_vector(destination_id).expect("xhcid: failed to allocate interrupt vector").expect("xhcid: no interrupt vectors left");
         let msg_data = x86_64_msix::message_data_edge_triggered(DeliveryMode::Fixed, vector);
@@ -196,7 +196,7 @@ fn main() {
             let lapic_id = u8::try_from(destination_id).expect("xhcid: CPU id couldn't fit inside u8");
             let rh = false;
             let dm = false;
-            let addr = x86_64_msix::message_address(lapic_id, rh, dm, 0b00);
+            let addr = x86_64_msix::message_address(lapic_id, rh, dm);
 
             let (vector, interrupt_handle) = allocate_single_interrupt_vector(destination_id).expect("xhcid: failed to allocate interrupt vector").expect("xhcid: no interrupt vectors left");
             let msg_data = x86_64_msix::message_data_edge_triggered(DeliveryMode::Fixed, vector);

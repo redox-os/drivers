@@ -1,10 +1,11 @@
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::sync::{Mutex, RwLock};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, AtomicU16, Ordering};
 use std::ptr;
 
 use crossbeam_channel::Sender;
+use smallvec::{smallvec, SmallVec};
 
 use syscall::io::{Dma, Io, Mmio};
 use syscall::error::{Error, Result, EINVAL};
@@ -21,9 +22,47 @@ pub enum InterruptSources {
     Msi(BTreeMap<u8, File>),
     Intx(File),
 }
+impl InterruptSources {
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (u16, &mut File)> {
+        use std::collections::btree_map::IterMut as BTreeIterMut;
+        use std::iter::Once;
 
+        enum IterMut<'a> {
+            Msi(BTreeIterMut<'a, u16, File>),
+            MsiX(BTreeIterMut<'a, u8, File>),
+            Intx(Once<&'a mut File>),
+        }
+        impl<'a> Iterator for IterMut<'a> {
+            type Item = (u16, &'a mut File);
+
+            fn next(&mut self) -> Option<Self::Item> {
+                match self {
+                    &mut Self::Msi(ref mut iter) => iter.next().map(|&mut (vector, ref mut handle)| (u16::from(vector), handle)),
+                    &mut Self::MsiX(ref mut iter) => iter.next(),
+                    &mut Self::Intx(ref mut iter) => (0, iter.next()),
+                }
+            }
+            fn size_hint(&self) -> (usize, Option<usize>) {
+                match self {
+                    &Self::Msi(mut iter) => iter.size_hint(),
+                    &Self::MsiX(mut iter) => iter.size_hint(),
+                    &Self::Intx(mut iter) => iter.size_hint(),
+                }
+            }
+        }
+
+        match self {
+            &mut Self::MsiX(ref mut map) => IterMut::MsiX(map.iter_mut()),
+            &mut Self::Msi(ref mut map) => IterMut::Msi(map.iter_mut()),
+            &mut Self::Intx(ref mut single) => IterMut::Intx(false, single),
+        }
+    }
+}
+
+/// The way interrupts are sent. Unlike other PCI-based interfaces, like XHCI, it doesn't seem like
+/// NVME supports operating with interrupts completely disabled.
 pub enum InterruptMethod {
-    /// INTx# interrupt pins
+    /// Traditional level-triggered, INTx# interrupt pins.
     Intx,
     /// Message signaled interrupts
     Msi(MsiCapability),
@@ -85,6 +124,9 @@ pub struct NvmeCmd {
     cdw15: u32,
 }
 
+pub struct IoCompletionQueueCreateInfo {
+}
+
 impl NvmeCmd {
     pub fn create_io_completion_queue(cid: u16, qid: u16, ptr: usize, size: u16) -> Self {
         Self {
@@ -108,7 +150,7 @@ impl NvmeCmd {
         Self {
             opcode: 1,
             flags: 0,
-            cid: cid,
+            cid,
             nsid: 0,
             _rsvd: 0,
             mptr: 0,
@@ -126,8 +168,8 @@ impl NvmeCmd {
         Self {
             opcode: 6,
             flags: 0,
-            cid: cid,
-            nsid: nsid,
+            cid,
+            nsid,
             _rsvd: 0,
             mptr: 0,
             dptr: [ptr as u64, 0],
@@ -316,22 +358,37 @@ impl NvmeCompQueue {
     }
 }
 
+#[derive(Debug)]
 pub struct NvmeNamespace {
     pub id: u32,
     pub blocks: u64,
     pub block_size: u64,
 }
 
+pub type CqId = u16;
+pub type SqId = u16;
+pub type CmdId = u16;
+pub type AtomicCqId = AtomicU16;
+pub type AtomicSqId = AtomicU16;
+pub type AtomicCmdId = AtomicU16;
+
 pub struct Nvme {
     interrupt_method: Mutex<InterruptMethod>,
     pcid_interface: Mutex<PcidServerHandle>,
-    regs: Mutex<&'static mut NvmeRegs>,
-    submission_queues: RwLock<Vec<Mutex<NvmeCmdQueue>>>,
-    pub (crate) completion_queues: RwLock<Vec<Mutex<NvmeCompQueue>>>,
+    regs: RwLock<&'static mut NvmeRegs>,
+
+    pub(crate) submission_queues: RwLock<BTreeMap<SqId, Mutex<NvmeCmdQueue>>>,
+    pub(crate) completion_queues: RwLock<BTreeMap<CqId, Mutex<(NvmeCompQueue, SmallVec<[SqId; 16]>)>>>,
+
+    // maps interrupt vectors with the completion queues they have
+    cqs_for_ivs: RwLock<BTreeMap<u16, SmallVec<[CqId; 4]>>>,
+
     buffer: Mutex<Dma<[u8; 512 * 4096]>>, // 2MB of buffer
     buffer_prp: Mutex<Dma<[u64; 512]>>, // 4KB of PRP for the buffer
     reactor_sender: Sender<cq_reactor::NotifReq>,
-    next_cid: AtomicUsize,
+
+    next_sqid: AtomicSqId,
+    next_cqid: AtomicCqId,
 }
 unsafe impl Send for Nvme {}
 unsafe impl Sync for Nvme {}
@@ -342,12 +399,17 @@ impl Nvme {
             regs: Mutex::new(unsafe { &mut *(address as *mut NvmeRegs) }),
             submission_queues: RwLock::new(vec! [Mutex::new(NvmeCmdQueue::new()?), Mutex::new(NvmeCmdQueue::new()?)]),
             completion_queues: RwLock::new(vec! [Mutex::new(NvmeCompQueue::new()?), Mutex::new(NvmeCompQueue::new()?)]),
+            // map the zero interrupt vector (which according to the spec shall always point to the
+            // admin completion queue) to CQID 0 (admin completion queue)
+            cqs_for_ivs: RwLock::new(std::iter::once((0, smallvec!(0))).collect()),
             buffer: Mutex::new(Dma::zeroed()?),
             buffer_prp: Mutex::new(Dma::zeroed()?),
-            next_cid: AtomicUsize::new(0),
             interrupt_method: Mutex::new(interrupt_method),
             pcid_interface: Mutex::new(pcid_interface),
             reactor_sender,
+
+            next_sqid: AtomicSqId::new(0),
+            next_cqid: AtomicCqId::new(0),
         })
     }
     unsafe fn doorbell_write(&self, index: usize, value: u32) {
@@ -443,7 +505,7 @@ impl Nvme {
             }
         }
     }
-    pub fn init_with_queues(&self) -> BTreeMap<u32, NvmeNamespace> {
+    pub async fn init_with_queues(&self) -> BTreeMap<u32, NvmeNamespace> {
         {
             //TODO: Use buffer
             let data: Dma<[u8; 4096]> = Dma::zeroed().unwrap();
