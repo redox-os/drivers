@@ -659,6 +659,25 @@ impl Nvme {
             self.cqs_for_ivs.write().unwrap().entry(vector).or_insert_with(SmallVec::new).push(io_cq_id);
         }
     }
+    pub async fn create_io_submission_queue(&self, io_sq_id: SqId, io_cq_id: CqId) {
+        let (ptr, len) = {
+            let mut submission_queues_guard = self.submission_queues.write().unwrap();
+
+            let queue_guard = submission_queues_guard.entry(io_sq_id).or_insert_with(|| {
+                Mutex::new(NvmeCmdQueue::new().expect("nvmed: failed to allocate I/O completion queue"))
+            }).get_mut().unwrap();
+            (queue_guard.data.physical(), queue_guard.data.len())
+        };
+
+        let len = u16::try_from(len).expect("nvmed: internal error: I/O SQ longer than 2^16 entries");
+        let raw_len = len.checked_sub(1).expect("nvmed: internal error: SQID 0 for I/O SQ");
+
+        let cmd_id = self.submit_admin_command(|cid| NvmeCmd::create_io_submission_queue(
+            cid, io_sq_id, ptr, raw_len, io_cq_id,
+        ));
+        let comp = self.admin_queue_completion(cmd_id).await;
+    }
+
     pub async fn init_with_queues(&self) -> BTreeMap<u32, NvmeNamespace> {
         let ((), nsids) = futures::join!(self.identify_controller(), self.identify_namespace_list(0));
 
@@ -669,41 +688,8 @@ impl Nvme {
         }
 
         // TODO: Multiple queues
-        for io_qid in 1u16..=1 {
-            self.create_io_completion_queue(io_qid, Some(0)).await;
-        }
-        /*
-
-        for io_qid in 1..self.submission_queues.len() {
-            let (ptr, len) = {
-                let queue = &self.submission_queues[io_qid];
-                (queue.data.physical(), queue.data.len())
-            };
-
-            // println!("  - Attempting to create I/O submission queue {}", io_qid);
-            {
-                let qid = 0;
-                let queue = &mut self.submission_queues[qid];
-                let cid = queue.i as u16;
-                //TODO: Get completion queue ID through smarter mechanism
-                let entry = NvmeCmd::create_io_submission_queue(
-                    cid, io_qid as u16, ptr, (len - 1) as u16, io_qid as u16
-                );
-                let tail = queue.submit(entry);
-                self.submission_queue_tail(qid as u16, tail as u16);
-            }
-
-            // println!("  - Waiting to create I/O submission queue {}", io_qid);
-            {
-                let qid = 0;
-                let queue = &mut self.completion_queues[qid];
-                let (head, entry) = queue.complete_spin();
-                self.completion_queue_head(qid as u16, head as u16);
-            }
-        }
-        */
-
-        // println!("  - Complete");
+        self.create_io_completion_queue(1, Some(0)).await;
+        self.create_io_submission_queue(1, 1).await;
 
         namespaces
     }
