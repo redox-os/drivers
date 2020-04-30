@@ -1,3 +1,4 @@
+use std::convert::TryFrom;
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::sync::{Mutex, RwLock};
@@ -93,7 +94,7 @@ pub struct MsixCfg {
     pub pba: &'static mut [Mmio<u64>],
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Default)]
 #[repr(packed)]
 pub struct NvmeCmd {
     /// Opcode
@@ -124,11 +125,12 @@ pub struct NvmeCmd {
     cdw15: u32,
 }
 
-pub struct IoCompletionQueueCreateInfo {
-}
-
 impl NvmeCmd {
-    pub fn create_io_completion_queue(cid: u16, qid: u16, ptr: usize, size: u16) -> Self {
+    pub fn create_io_completion_queue(cid: u16, qid: u16, ptr: usize, size: u16, iv: Option<u16>) -> Self {
+        const DW11_PHYSICALLY_CONTIGUOUS_BIT: u32 = 0x0000_0001;
+        const DW11_ENABLE_INTERRUPTS_BIT: u32 =     0x0000_0002;
+        const DW11_INTERRUPT_VECTOR_SHIFT: u8 =     16;
+
         Self {
             opcode: 5,
             flags: 0,
@@ -138,7 +140,13 @@ impl NvmeCmd {
             mptr: 0,
             dptr: [ptr as u64, 0],
             cdw10: ((size as u32) << 16) | (qid as u32),
-            cdw11: 1 /* Physically Contiguous */, //TODO: IV, IEN
+
+            cdw11: DW11_PHYSICALLY_CONTIGUOUS_BIT | if let Some(iv) = iv {
+                // enable interrupts if a vector is present
+                DW11_ENABLE_INTERRUPTS_BIT
+                    | (u32::from(iv) << DW11_INTERRUPT_VECTOR_SHIFT)
+            } else { 0 },
+
             cdw12: 0,
             cdw13: 0,
             cdw14: 0,
@@ -217,13 +225,21 @@ impl NvmeCmd {
             cdw15: 0,
         }
     }
+    pub fn get_features(cid: u16, ptr: usize, fid: u8) -> Self {
+        Self {
+            opcode: 0xA,
+            dptr: [ptr as u64, 0],
+            cdw10: u32::from(fid), // TODO: SEL
+            .. Default::default()
+        }
+    }
 
     pub fn io_read(cid: u16, nsid: u32, lba: u64, blocks_1: u16, ptr0: u64, ptr1: u64) -> Self {
         Self {
             opcode: 2,
             flags: 1 << 6,
-            cid: cid,
-            nsid: nsid,
+            cid,
+            nsid,
             _rsvd: 0,
             mptr: 0,
             dptr: [ptr0, ptr1],
@@ -240,8 +256,8 @@ impl NvmeCmd {
         Self {
             opcode: 1,
             flags: 1 << 6,
-            cid: cid,
-            nsid: nsid,
+            cid,
+            nsid,
             _rsvd: 0,
             mptr: 0,
             dptr: [ptr0, ptr1],
@@ -617,7 +633,32 @@ impl Nvme {
             block_size: 512, // TODO
         }
     }
+    pub async fn create_io_completion_queue(&self, io_cq_id: CqId, vector: Option<u16>) {
+        let (ptr, len) = {
+            let mut completion_queues_guard = self.completion_queues.write().unwrap();
 
+            let queue_guard = completion_queues_guard.entry(io_cq_id).or_insert_with(|| {
+                let queue = NvmeCompQueue::new().expect("nvmed: failed to allocate I/O completion queue");
+                let sqs = SmallVec::new();
+                Mutex::new((queue, sqs))
+            }).get_mut().unwrap();
+
+            let &(ref queue, _) = &*queue_guard;
+            (queue.data.physical(), queue.data.len())
+        };
+
+        let len = u16::try_from(len).expect("nvmed: internal error: I/O CQ longer than 2^16 entries");
+        let raw_len = len.checked_sub(1).expect("nvmed: internal error: CQID 0 for I/O CQ");
+
+        let cmd_id = self.submit_admin_command(|cid| NvmeCmd::create_io_completion_queue(
+            cid, io_cq_id, ptr, raw_len, vector,
+        ));
+        let comp = self.admin_queue_completion(cmd_id).await;
+
+        if let Some(vector) = vector {
+            self.cqs_for_ivs.write().unwrap().entry(vector).or_insert_with(SmallVec::new).push(io_cq_id);
+        }
+    }
     pub async fn init_with_queues(&self) -> BTreeMap<u32, NvmeNamespace> {
         let ((), nsids) = futures::join!(self.identify_controller(), self.identify_namespace_list(0));
 
@@ -627,32 +668,11 @@ impl Nvme {
             namespaces.insert(nsid, self.identify_namespace(nsid).await);
         }
 
-        for io_qid in 1..self.completion_queues.len() {
-            let (ptr, len) = {
-                let queue = &self.completion_queues[io_qid];
-                (queue.data.physical(), queue.data.len())
-            };
-
-            // println!("  - Attempting to create I/O completion queue {}", io_qid);
-            {
-                let qid = 0;
-                let queue = &mut self.submission_queues[qid];
-                let cid = queue.i as u16;
-                let entry = NvmeCmd::create_io_completion_queue(
-                    cid, io_qid as u16, ptr, (len - 1) as u16
-                );
-                let tail = queue.submit(entry);
-                self.submission_queue_tail(qid as u16, tail as u16);
-            }
-
-            // println!("  - Waiting to create I/O completion queue {}", io_qid);
-            {
-                let qid = 0;
-                let queue = &mut self.completion_queues[qid];
-                let (head, entry) = queue.complete_spin();
-                self.completion_queue_head(qid as u16, head as u16);
-            }
+        // TODO: Multiple queues
+        for io_qid in 1u16..=1 {
+            self.create_io_completion_queue(io_qid, Some(0)).await;
         }
+        /*
 
         for io_qid in 1..self.submission_queues.len() {
             let (ptr, len) = {
@@ -681,6 +701,7 @@ impl Nvme {
                 self.completion_queue_head(qid as u16, head as u16);
             }
         }
+        */
 
         // println!("  - Complete");
 
