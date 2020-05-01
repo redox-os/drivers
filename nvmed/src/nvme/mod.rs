@@ -181,7 +181,7 @@ pub enum FullSqHandling {
     /// Return an error immediately prior to posting the command.
     ErrorDirectly,
 
-    /// Tell the IRQ reactor that we wan't to be notified when a command on the same submission
+    /// Tell the IRQ reactor that we want to be notified when a command on the same submission
     /// queue has been completed.
     Wait,
 }
@@ -250,18 +250,21 @@ impl Nvme {
             buffer_prp[i] = (buffer.physical() + i * 4096) as u64;
         }
 
-        // println!("  - CAPS: {:X}", self.regs.cap.read());
-        // println!("  - VS: {:X}", self.regs.vs.read());
-        // println!("  - CC: {:X}", self.regs.cc.read());
-        // println!("  - CSTS: {:X}", self.regs.csts.read());
+        {
+            let regs = self.regs.read().unwrap();
+            log::debug!("CAPS: {:X}", regs.cap.read());
+            log::debug!("VS: {:X}", regs.vs.read());
+            log::debug!("CC: {:X}", regs.cc.read());
+            log::debug!("CSTS: {:X}", regs.csts.read());
+        }
 
-        // println!("  - Disable");
+        log::debug!("Disabling controller.");
         self.regs.get_mut().unwrap().cc.writef(1, false);
 
-        // println!("  - Waiting for not ready");
+        log::trace!("Waiting for not ready.");
         loop {
             let csts = self.regs.get_mut().unwrap().csts.read();
-            // println!("CSTS: {:X}", csts);
+            log::trace!("CSTS: {:X}", csts);
             if csts & 1 == 1 {
                 std::arch::x86_64::_mm_pause();
             } else {
@@ -282,12 +285,12 @@ impl Nvme {
         for (qid, queue) in self.completion_queues.get_mut().unwrap().iter_mut() {
             let &(ref cq, ref sq_ids) = &*queue.get_mut().unwrap();
             let data = &cq.data;
-            // println!("    - completion queue {}: {:X}, {}", qid, data.physical(), data.len());
+            log::debug!("completion queue {}: {:X}, {}, (submission queue ids: {:?}", qid, data.physical(), data.len(), sq_ids);
         }
 
         for (qid, queue) in self.submission_queues.get_mut().unwrap().iter_mut() {
             let data = &queue.get_mut().unwrap().data;
-            // println!("    - submission queue {}: {:X}, {}", qid, data.physical(), data.len());
+            log::debug!("submission queue {}: {:X}, {}", qid, data.physical(), data.len());
         }
 
         {
@@ -309,13 +312,13 @@ impl Nvme {
             regs.cc.write(cc);
         }
 
-        // println!("  - Enable");
+        log::debug!("Enabling controller.");
         self.regs.get_mut().unwrap().cc.writef(1, true);
 
-        // println!("  - Waiting for ready");
+        log::debug!("Waiting for ready");
         loop {
             let csts = self.regs.get_mut().unwrap().csts.read();
-            // println!("CSTS: {:X}", csts);
+            log::debug!("CSTS: {:X}", csts);
             if csts & 1 == 0 {
                 std::arch::x86_64::_mm_pause();
             } else {
@@ -541,13 +544,13 @@ impl Nvme {
 
     async fn namespace_rw(
         &self,
+        namespace: &NvmeNamespace,
         nsid: u32,
         lba: u64,
         blocks_1: u16,
         write: bool,
     ) -> Result<()> {
-        //TODO: Get real block size
-        let block_size = 512;
+        let block_size = namespace.block_size;
 
         let buffer_prp_guard = self.buffer_prp.lock().unwrap();
 
@@ -576,14 +579,14 @@ impl Nvme {
 
     pub async fn namespace_read(
         &self,
+        namespace: &NvmeNamespace,
         nsid: u32,
         mut lba: u64,
         buf: &mut [u8],
     ) -> Result<Option<usize>> {
-        //TODO: Get real block size
-        let block_size = 512;
+        let block_size = namespace.block_size as usize;
 
-        let mut buffer_guard = self.buffer.lock().unwrap();
+        let buffer_guard = self.buffer.lock().unwrap();
 
         for chunk in buf.chunks_mut(buffer_guard.len()) {
             let blocks = (chunk.len() + block_size - 1) / block_size;
@@ -591,7 +594,7 @@ impl Nvme {
             assert!(blocks > 0);
             assert!(blocks <= 0x1_0000);
 
-            self.namespace_rw(nsid, lba, (blocks - 1) as u16, false).await?;
+            self.namespace_rw(namespace, nsid, lba, (blocks - 1) as u16, false).await?;
 
             chunk.copy_from_slice(&buffer_guard[..chunk.len()]);
 
@@ -603,14 +606,12 @@ impl Nvme {
 
     pub async fn namespace_write(
         &self,
+        namespace: &NvmeNamespace,
         nsid: u32,
         mut lba: u64,
         buf: &[u8],
     ) -> Result<Option<usize>> {
-        //TODO: Use interrupts
-
-        //TODO: Get real block size
-        let block_size = 512;
+        let block_size = namespace.block_size as usize;
 
         let mut buffer_guard = self.buffer.lock().unwrap();
 
@@ -622,7 +623,7 @@ impl Nvme {
 
             buffer_guard[..chunk.len()].copy_from_slice(chunk);
 
-            self.namespace_rw(nsid, lba, (blocks - 1) as u16, true).await?;
+            self.namespace_rw(namespace, nsid, lba, (blocks - 1) as u16, true).await?;
 
             lba += blocks as u64;
         }

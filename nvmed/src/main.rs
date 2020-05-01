@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::convert::TryInto;
 use std::fs::File;
 use std::io::{ErrorKind, Read, Write};
@@ -9,12 +8,10 @@ use std::{slice, usize};
 
 use pcid_interface::{PciBar, PciFeature, PciFeatureInfo, PciFunction, PcidServerHandle};
 use syscall::{
-    CloneFlags, Event, Mmio, Packet, Result, SchemeBlockMut, EVENT_READ, PHYSMAP_NO_CACHE,
+    CloneFlags, Event, Mmio, Packet, Result, SchemeBlockMut, PHYSMAP_NO_CACHE,
     PHYSMAP_WRITE,
 };
-
-use arrayvec::ArrayVec;
-use log::{debug, error, info, trace, warn};
+use redox_log::{OutputBuilder, RedoxLogger};
 
 use self::nvme::{InterruptMethod, InterruptSources, Nvme};
 use self::scheme::DiskScheme;
@@ -190,7 +187,7 @@ fn get_int_method(
                 message_data: Some(msg_data),
                 multi_message_enable: Some(0), // enable 2^0=1 vectors
                 mask_bits: None,
-            }));
+            })).unwrap();
 
             (0, irq_handle)
         };
@@ -213,11 +210,57 @@ fn get_int_method(
     }
 }
 
+fn setup_logging() -> Option<&'static RedoxLogger> {
+    let mut logger = RedoxLogger::new()
+        .with_output(
+            OutputBuilder::stderr()
+                .with_filter(log::LevelFilter::Info) // limit global output to important info
+                .with_ansi_escape_codes()
+                .flush_on_newline(true)
+                .build()
+        );
+
+    #[cfg(target_os = "redox")]
+    match OutputBuilder::in_redox_logging_scheme("disk", "pcie", "nvme.log") {
+        Ok(b) => logger = logger.with_output(
+            // TODO: Add a configuration file for this
+            b.with_filter(log::LevelFilter::Trace)
+                .flush_on_newline(true)
+                .build()
+        ),
+        Err(error) => eprintln!("nvmed: failed to create nvme.log: {}", error),
+    }
+
+    #[cfg(target_os = "redox")]
+    match OutputBuilder::in_redox_logging_scheme("disk", "pcie", "nvme.ansi.log") {
+        Ok(b) => logger = logger.with_output(
+            b.with_filter(log::LevelFilter::Trace)
+                .with_ansi_escape_codes()
+                .flush_on_newline(true)
+                .build()
+        ),
+        Err(error) => eprintln!("nvmed: failed to create nvme.ansi.log: {}", error),
+    }
+
+    match logger.enable() {
+        Ok(logger_ref) => {
+            eprintln!("nvmed: enabled logger");
+            Some(logger_ref)
+        }
+        Err(error) => {
+            eprintln!("nvmed: failed to set default logger: {}", error);
+            None
+        }
+    }
+}
+
 fn main() {
     // Daemonize
     if unsafe { syscall::clone(CloneFlags::empty()).unwrap() } != 0 {
         return;
     }
+
+    let _logger_ref = setup_logging();
 
     let mut pcid_handle =
         PcidServerHandle::connect_default().expect("nvmed: failed to setup channel to pcid");
@@ -235,7 +278,7 @@ fn main() {
     let mut name = pci_config.func.name();
     name.push_str("_nvme");
 
-    info!("NVME PCI CONFIG: {:?}", pci_config);
+    log::info!("NVME PCI CONFIG: {:?}", pci_config);
 
     let allocated_bars = AllocatedBars::default();
 
