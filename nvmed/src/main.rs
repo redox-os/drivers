@@ -1,18 +1,20 @@
-use std::{slice, usize};
 use std::collections::BTreeMap;
 use std::convert::TryInto;
 use std::fs::File;
 use std::io::{ErrorKind, Read, Write};
+use std::os::unix::io::{FromRawFd, RawFd};
 use std::ptr::NonNull;
-use std::os::unix::io::{RawFd, FromRawFd};
 use std::sync::{Arc, Mutex};
+use std::{slice, usize};
 
-use pcid_interface::{PciFeature, PciFeatureInfo, PciFunction, PcidServerHandle, PciBar};
-use syscall::{EVENT_READ, PHYSMAP_NO_CACHE, PHYSMAP_WRITE, Event, Packet, Result, SchemeBlockMut};
-use syscall::io::Mmio;
+use pcid_interface::{PciBar, PciFeature, PciFeatureInfo, PciFunction, PcidServerHandle};
+use syscall::{
+    CloneFlags, Event, Mmio, Packet, Result, SchemeBlockMut, EVENT_READ, PHYSMAP_NO_CACHE,
+    PHYSMAP_WRITE,
+};
 
 use arrayvec::ArrayVec;
-use log::{debug, error, info, warn, trace};
+use log::{debug, error, info, trace, warn};
 
 use self::nvme::{InterruptMethod, InterruptSources, Nvme};
 use self::scheme::DiskScheme;
@@ -29,7 +31,10 @@ pub struct Bar {
 impl Bar {
     pub fn allocate(bar: usize, bar_size: usize) -> Result<Self> {
         Ok(Self {
-            ptr: NonNull::new(syscall::physmap(bar, bar_size, PHYSMAP_NO_CACHE | PHYSMAP_WRITE)? as *mut u8).expect("Mapping a BAR resulted in a nullptr"),
+            ptr: NonNull::new(
+                syscall::physmap(bar, bar_size, PHYSMAP_NO_CACHE | PHYSMAP_WRITE)? as *mut u8,
+            )
+            .expect("Mapping a BAR resulted in a nullptr"),
             physical: bar,
             bar_size,
         })
@@ -49,7 +54,11 @@ pub struct AllocatedBars(pub [Mutex<Option<Bar>>; 6]);
 /// Get the most optimal yet functional interrupt mechanism: either (in the order preference):
 /// MSI-X, MSI, and INTx# pin. Returns both runtime interrupt structures (MSI/MSI-X capability
 /// structures), and the handles to the interrupts.
-fn get_int_method(pcid_handle: &mut PcidServerHandle, function: &PciFunction, allocated_bars: &AllocatedBars) -> Result<(InterruptMethod, InterruptSources)> {
+fn get_int_method(
+    pcid_handle: &mut PcidServerHandle,
+    function: &PciFunction,
+    allocated_bars: &AllocatedBars,
+) -> Result<(InterruptMethod, InterruptSources)> {
     use pcid_interface::irq_helpers;
 
     let features = pcid_handle.fetch_all_features().unwrap();
@@ -60,14 +69,18 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle, function: &PciFunction, al
     // TODO: Allocate more than one vector when possible and useful.
     if has_msix {
         // Extended message signaled interrupts.
-        use pcid_interface::msi::MsixTableEntry;
         use self::nvme::MsixCfg;
+        use pcid_interface::msi::MsixTableEntry;
 
         let mut capability_struct = match pcid_handle.feature_info(PciFeature::MsiX).unwrap() {
             PciFeatureInfo::MsiX(msix) => msix,
             _ => unreachable!(),
         };
-        fn bar_base(allocated_bars: &AllocatedBars, function: &PciFunction, bir: u8) -> Result<NonNull<u8>> {
+        fn bar_base(
+            allocated_bars: &AllocatedBars,
+            function: &PciFunction,
+            bir: u8,
+        ) -> Result<NonNull<u8>> {
             let bir = usize::from(bir);
             let bar_guard = allocated_bars.0[bir].lock().unwrap();
             match &mut *bar_guard {
@@ -85,14 +98,24 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle, function: &PciFunction, al
                 }
             }
         }
-        let table_bar_base: *mut u8 = bar_base(allocated_bars, function, capability_struct.table_bir())?.as_ptr();
-        let pba_bar_base: *mut u8 = bar_base(allocated_bars, function, capability_struct.pba_bir())?.as_ptr();
-        let table_base = unsafe { table_bar_base.offset(capability_struct.table_offset() as isize) };
+        let table_bar_base: *mut u8 =
+            bar_base(allocated_bars, function, capability_struct.table_bir())?.as_ptr();
+        let pba_bar_base: *mut u8 =
+            bar_base(allocated_bars, function, capability_struct.pba_bir())?.as_ptr();
+        let table_base =
+            unsafe { table_bar_base.offset(capability_struct.table_offset() as isize) };
         let pba_base = unsafe { pba_bar_base.offset(capability_struct.pba_offset() as isize) };
 
         let vector_count = capability_struct.table_size();
-        let table_entries: &'static mut [MsixTableEntry] = unsafe { slice::from_raw_parts_mut(table_base as *mut MsixTableEntry, vector_count as usize) };
-        let pba_entries: &'static mut [Mmio<u64>] = unsafe { slice::from_raw_parts_mut(table_base as *mut Mmio<u64>, (vector_count as usize + 63) / 64) };
+        let table_entries: &'static mut [MsixTableEntry] = unsafe {
+            slice::from_raw_parts_mut(table_base as *mut MsixTableEntry, vector_count as usize)
+        };
+        let pba_entries: &'static mut [Mmio<u64>] = unsafe {
+            slice::from_raw_parts_mut(
+                table_base as *mut Mmio<u64>,
+                (vector_count as usize + 63) / 64,
+            )
+        };
 
         // Mask all interrupts in case some earlier driver/os already unmasked them (according to
         // the PCI Local Bus spec 3.0, they are masked after system reset).
@@ -104,21 +127,25 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle, function: &PciFunction, al
         capability_struct.set_msix_enabled(true); // only affects our local mirror of the cap
 
         let (msix_vector_number, irq_handle) = {
-            use pcid_interface::msi::x86_64 as msi_x86_64;
             use msi_x86_64::DeliveryMode;
+            use pcid_interface::msi::x86_64 as msi_x86_64;
 
             let entry: &mut MsixTableEntry = &mut table_entries[0];
 
-            let bsp_cpu_id = irq_helpers::read_bsp_apic_id().expect("nvmed: failed to read APIC ID");
-            let bsp_lapic_id = bsp_cpu_id.try_into().expect("nvmed: BSP local apic ID couldn't fit inside u8");
-            let (vector, irq_handle) = irq_helpers::allocate_single_interrupt_vector(bsp_cpu_id).expect("nvmed: failed to allocate single MSI-X interrupt vector").expect("nvmed: no interrupt vectors left on BSP");
+            let bsp_cpu_id =
+                irq_helpers::read_bsp_apic_id().expect("nvmed: failed to read APIC ID");
+            let bsp_lapic_id = bsp_cpu_id
+                .try_into()
+                .expect("nvmed: BSP local apic ID couldn't fit inside u8");
+            let (vector, irq_handle) = irq_helpers::allocate_single_interrupt_vector(bsp_cpu_id)
+                .expect("nvmed: failed to allocate single MSI-X interrupt vector")
+                .expect("nvmed: no interrupt vectors left on BSP");
 
             let msg_addr = msi_x86_64::message_address(bsp_lapic_id, false, false);
             let msg_data = msi_x86_64::message_data_edge_triggered(DeliveryMode::Fixed, vector);
 
             entry.set_addr_lo(msg_addr);
             entry.set_msg_data(msg_data);
-            entry.unmask();
 
             (0, irq_handle)
         };
@@ -128,7 +155,8 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle, function: &PciFunction, al
             table: table_entries,
             pba: pba_entries,
         });
-        let interrupt_sources = InterruptSources::MsiX(std::iter::once((msix_vector_number, irq_handle)).collect());
+        let interrupt_sources =
+            InterruptSources::MsiX(std::iter::once((msix_vector_number, irq_handle)).collect());
 
         Ok((interrupt_method, interrupt_sources))
     } else if has_msi {
@@ -139,16 +167,22 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle, function: &PciFunction, al
         };
 
         let (msi_vector_number, irq_handle) = {
-            use pcid_interface::{MsiSetFeatureInfo, SetFeatureInfo};
-            use pcid_interface::msi::x86_64 as msi_x86_64;
             use msi_x86_64::DeliveryMode;
+            use pcid_interface::msi::x86_64 as msi_x86_64;
+            use pcid_interface::{MsiSetFeatureInfo, SetFeatureInfo};
 
-            let bsp_cpu_id = irq_helpers::read_bsp_apic_id().expect("nvmed: failed to read BSP APIC ID");
-            let bsp_lapic_id = bsp_cpu_id.try_into().expect("nvmed: BSP local apic ID couldn't fit inside u8");
-            let (vector, irq_handle) = irq_helpers::allocate_single_interrupt_vector(bsp_cpu_id).expect("nvmed: failed to allocate single MSI interrupt vector").expect("nvmed: no interrupt vectors left on BSP");
+            let bsp_cpu_id =
+                irq_helpers::read_bsp_apic_id().expect("nvmed: failed to read BSP APIC ID");
+            let bsp_lapic_id = bsp_cpu_id
+                .try_into()
+                .expect("nvmed: BSP local apic ID couldn't fit inside u8");
+            let (vector, irq_handle) = irq_helpers::allocate_single_interrupt_vector(bsp_cpu_id)
+                .expect("nvmed: failed to allocate single MSI interrupt vector")
+                .expect("nvmed: no interrupt vectors left on BSP");
 
             let msg_addr = msi_x86_64::message_address(bsp_lapic_id, false, false);
-            let msg_data = msi_x86_64::message_data_edge_triggered(DeliveryMode::Fixed, vector) as u16;
+            let msg_data =
+                msi_x86_64::message_data_edge_triggered(DeliveryMode::Fixed, vector) as u16;
 
             pcid_handle.set_feature_info(SetFeatureInfo::Msi(MsiSetFeatureInfo {
                 message_address: Some(msg_addr),
@@ -162,14 +196,16 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle, function: &PciFunction, al
         };
 
         let interrupt_method = InterruptMethod::Msi(capability_struct);
-        let interrupt_sources = InterruptSources::Msi(std::iter::once((msi_vector_number, irq_handle)).collect());
+        let interrupt_sources =
+            InterruptSources::Msi(std::iter::once((msi_vector_number, irq_handle)).collect());
 
         pcid_handle.enable_feature(PciFeature::Msi).unwrap();
 
         Ok((interrupt_method, interrupt_sources))
     } else if function.legacy_interrupt_pin.is_some() {
         // INTx# pin based interrupts.
-        let irq_handle = File::open(format!("irq:{}", function.legacy_interrupt_line)).expect("nvmed: failed to open INTx# interrupt line");
+        let irq_handle = File::open(format!("irq:{}", function.legacy_interrupt_line))
+            .expect("nvmed: failed to open INTx# interrupt line");
         Ok((InterruptMethod::Intx, InterruptSources::Intx(irq_handle)))
     } else {
         // No interrupts at all
@@ -179,12 +215,15 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle, function: &PciFunction, al
 
 fn main() {
     // Daemonize
-    if unsafe { syscall::clone(0).unwrap() } != 0 {
+    if unsafe { syscall::clone(CloneFlags::empty()).unwrap() } != 0 {
         return;
     }
 
-    let mut pcid_handle = PcidServerHandle::connect_default().expect("nvmed: failed to setup channel to pcid");
-    let pci_config = pcid_handle.fetch_config().expect("nvmed: failed to fetch config");
+    let mut pcid_handle =
+        PcidServerHandle::connect_default().expect("nvmed: failed to setup channel to pcid");
+    let pci_config = pcid_handle
+        .fetch_config()
+        .expect("nvmed: failed to fetch config");
 
     let bar = match pci_config.func.bars[0] {
         PciBar::Memory(mem) => mem,
@@ -201,10 +240,18 @@ fn main() {
     let allocated_bars = AllocatedBars::default();
 
     let address = unsafe {
-        syscall::physmap(bar as usize, bar_size as usize, PHYSMAP_WRITE | PHYSMAP_NO_CACHE)
-            .expect("nvmed: failed to map address")
+        syscall::physmap(
+            bar as usize,
+            bar_size as usize,
+            PHYSMAP_WRITE | PHYSMAP_NO_CACHE,
+        )
+        .expect("nvmed: failed to map address")
     };
-    *allocated_bars.0[0].lock().unwrap() = Some(Bar { physical: bar as usize, bar_size: bar_size as usize, ptr: NonNull::new(address as *mut u8).expect("Physmapping BAR gave nullptr") });
+    *allocated_bars.0[0].lock().unwrap() = Some(Bar {
+        physical: bar as usize,
+        bar_size: bar_size as usize,
+        ptr: NonNull::new(address as *mut u8).expect("Physmapping BAR gave nullptr"),
+    });
     {
         let event_fd = syscall::open("event:", syscall::O_RDWR | syscall::O_CLOEXEC)
             .expect("nvmed: failed to open event queue");
@@ -213,32 +260,44 @@ fn main() {
         let scheme_name = format!("disk/{}", name);
         let socket_fd = syscall::open(
             &format!(":{}", scheme_name),
-            syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK | syscall::O_CLOEXEC
-        ).expect("nvmed: failed to create disk scheme");
+            syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK | syscall::O_CLOEXEC,
+        )
+        .expect("nvmed: failed to create disk scheme");
 
-        syscall::write(event_fd, &syscall::Event {
-            id: socket_fd,
-            flags: syscall::EVENT_READ,
-            data: 0,
-        }).expect("nvmed: failed to watch disk scheme events");
+        syscall::write(
+            event_fd,
+            &syscall::Event {
+                id: socket_fd,
+                flags: syscall::EVENT_READ,
+                data: 0,
+            },
+        )
+        .expect("nvmed: failed to watch disk scheme events");
 
         let mut socket_file = unsafe { File::from_raw_fd(socket_fd as RawFd) };
 
         syscall::setrens(0, 0).expect("nvmed: failed to enter null namespace");
 
         let (reactor_sender, reactor_receiver) = crossbeam_channel::unbounded();
-        let (interrupt_method, interrupt_sources) = get_int_method(&mut pcid_handle, &pci_config.func, &allocated_bars).expect("nvmed: failed to find a suitable interrupt method");
-        let mut nvme = Nvme::new(address, interrupt_method, pcid_handle, reactor_sender).expect("nvmed: failed to allocate driver data");
+        let (interrupt_method, interrupt_sources) =
+            get_int_method(&mut pcid_handle, &pci_config.func, &allocated_bars)
+                .expect("nvmed: failed to find a suitable interrupt method");
+        let mut nvme = Nvme::new(address, interrupt_method, pcid_handle, reactor_sender)
+            .expect("nvmed: failed to allocate driver data");
         let nvme = Arc::new(nvme);
         unsafe { nvme.init() }
         nvme::cq_reactor::start_cq_reactor_thread(nvme, interrupt_sources, reactor_receiver);
-        let namespaces = unsafe { nvme.init_with_queues() };
+        let namespaces = unsafe { futures::executor::block_on(nvme.init_with_queues()) };
 
         let mut scheme = DiskScheme::new(scheme_name, nvme, namespaces);
         let mut todo = Vec::new();
         'events: loop {
             let mut event = Event::default();
-            if event_file.read(&mut event).expect("nvmed: failed to read event queue") == 0 {
+            if event_file
+                .read(&mut event)
+                .expect("nvmed: failed to read event queue")
+                == 0
+            {
                 break;
             }
 
@@ -251,13 +310,13 @@ fn main() {
                         Err(err) => match err.kind() {
                             ErrorKind::WouldBlock => break,
                             _ => Err(err).expect("nvmed: failed to read disk scheme"),
-                        }
+                        },
                     }
                     todo.push(packet);
                 },
                 unknown => {
                     panic!("nvmed: unknown event data {}", unknown);
-                },
+                }
             }
 
             let mut i = 0;
@@ -265,7 +324,9 @@ fn main() {
                 if let Some(a) = scheme.handle(&todo[i]) {
                     let mut packet = todo.remove(i);
                     packet.a = a;
-                    socket_file.write(&packet).expect("nvmed: failed to write disk scheme");
+                    socket_file
+                        .write(&packet)
+                        .expect("nvmed: failed to write disk scheme");
                 } else {
                     i += 1;
                 }

@@ -432,11 +432,14 @@ impl MsixTableEntry {
     }
     pub const VEC_CTL_MASK_BIT: u32 = 1;
 
+    pub fn set_masked(&mut self, masked: bool) {
+        self.vec_ctl.writef(Self::VEC_CTL_MASK_BIT, masked)
+    }
     pub fn mask(&mut self) {
-        self.vec_ctl.writef(Self::VEC_CTL_MASK_BIT, true)
+        self.set_masked(true);
     }
     pub fn unmask(&mut self) {
-        self.vec_ctl.writef(Self::VEC_CTL_MASK_BIT, false)
+        self.set_masked(false);
     }
 }
 
