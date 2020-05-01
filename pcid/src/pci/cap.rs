@@ -25,7 +25,7 @@ where
 
             if self.offset == 0 { return None };
 
-            let first_dword = dbg!(self.reader.read_u32(dbg!(u16::from(self.offset))));
+            let first_dword = self.reader.read_u32(u16::from(self.offset));
             let next = ((first_dword >> 8) & 0xFF) as u8;
 
             let offset = self.offset;

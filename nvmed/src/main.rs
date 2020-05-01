@@ -319,8 +319,6 @@ fn main() {
 
         let mut socket_file = unsafe { File::from_raw_fd(socket_fd as RawFd) };
 
-        syscall::setrens(0, 0).expect("nvmed: failed to enter null namespace");
-
         let (reactor_sender, reactor_receiver) = crossbeam_channel::unbounded();
         let (interrupt_method, interrupt_sources) =
             get_int_method(&mut pcid_handle, &pci_config.func, &allocated_bars)
@@ -331,6 +329,8 @@ fn main() {
         let nvme = Arc::new(nvme);
         nvme::cq_reactor::start_cq_reactor_thread(Arc::clone(&nvme), interrupt_sources, reactor_receiver);
         let namespaces = futures::executor::block_on(nvme.init_with_queues());
+
+        syscall::setrens(0, 0).expect("nvmed: failed to enter null namespace");
 
         let mut scheme = DiskScheme::new(scheme_name, nvme, namespaces);
         let mut todo = Vec::new();

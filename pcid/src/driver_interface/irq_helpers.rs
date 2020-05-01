@@ -7,7 +7,6 @@ use std::convert::TryFrom;
 use std::fs::{self, File};
 use std::io::{self, prelude::*};
 use std::num::NonZeroU8;
-use std::ops;
 
 /// Read the local APIC ID of the bootstrap processor.
 pub fn read_bsp_apic_id() -> io::Result<usize> {
@@ -60,7 +59,7 @@ pub fn cpu_ids() -> io::Result<impl Iterator<Item = io::Result<usize>> + 'static
 /// Note that this count/alignment restriction is only mandatory for MSI; MSI-X allows for
 /// individually allocated vectors that might be spread out, even on multiple CPUs. Thus, multiple
 /// invocations with alignment 1 and count 1 are totally acceptable, although allocating in bulk
-/// minimizes the initialization overhead, even though it's negligible.
+/// minimizes the initialization overhead.
 pub fn allocate_aligned_interrupt_vectors(cpu_id: usize, alignment: NonZeroU8, count: u8) -> io::Result<Option<(u8, Vec<File>)>> {
     let cpu_id = u8::try_from(cpu_id).expect("usize cpu ids not implemented yet");
     if count == 0 { return Ok(None) }
