@@ -186,9 +186,9 @@ pub enum FullSqHandling {
     Wait,
 }
 
-pub enum Submission {
-    Nonblocking(Option<CmdId>), // TODO: Add full error
-    MaybeBlocking(),
+pub enum SubmissionBehavior<'a, F: FnOnce(CmdId) -> NvmeCmd> {
+    Nonblocking(Result<CmdId, F>), // TODO: Add full error
+    Future(self::cq_reactor::SubmissionFuture<'a, F>),
 }
 
 impl Nvme {
@@ -396,30 +396,51 @@ impl Nvme {
         self.set_vectors_masked(std::iter::once((vector, masked)))
     }
 
-    /// Try submitting a new entry to the specified submission queue, or return None if the queue
-    /// was full.
-    pub fn try_submit_command<F: FnOnce(CmdId) -> NvmeCmd>(
-        &self,
-        sq_id: SqId,
-        full_sq_handling: FullSqHandling,
-        f: F,
-    ) -> Option<CmdId> {
+    pub fn submit_command_generic<'a, F: FnOnce(CmdId) -> NvmeCmd>(&'a self, sq_id: SqId, full_sq_handling: FullSqHandling, cmd_init: F) -> SubmissionBehavior<'a, F> {
         let sqs_read_guard = self.submission_queues.read().unwrap();
         let sq_lock = sqs_read_guard
             .get(&sq_id)
             .expect("nvmed: internal error: given SQ for SQ ID not there")
             .lock()
             .unwrap();
+        if sq_lock.is_full() {
+            match full_sq_handling {
+                FullSqHandling::ErrorDirectly => return SubmissionBehavior::Nonblocking(Err(cmd_init)),
+                FullSqHandling::Wait => return SubmissionBehavior::Future(self.wait_for_available_submission(sq_id, cmd_init)),
+            }
+        }
         let cmd_id =
-            u16::try_from(sq_lock.i).expect("nvmed: internal error: CQ has more than 2^16 entries");
-        let tail = sq_lock.submit(f(cmd_id))?;
+            u16::try_from(sq_lock.tail).expect("nvmed: internal error: CQ has more than 2^16 entries");
+        let tail = sq_lock.submit_unchecked(cmd_init(cmd_id));
         let tail = u16::try_from(tail).unwrap();
         self.submission_queue_tail(sq_id, tail);
-        Some(cmd_id)
+
+        match full_sq_handling {
+            FullSqHandling::ErrorDirectly => SubmissionBehavior::Nonblocking(Ok(cmd_id)),
+            FullSqHandling::Wait => SubmissionBehavior::Future(self::cq_reactor::SubmissionFuture { state: self::cq_reactor::SubmissionFutureState::Ready(cmd_id) })
+        }
+    }
+
+    /// Try submitting a new entry to the specified submission queue, or return None if the queue
+    /// was full.
+    pub fn try_submit_command<F: FnOnce(CmdId) -> NvmeCmd>(
+        &self,
+        sq_id: SqId,
+        f: F,
+    ) -> Result<CmdId, F> {
+        match self.submit_command_generic(sq_id, FullSqHandling::ErrorDirectly, f) {
+            SubmissionBehavior::Nonblocking(opt) => opt,
+            _ => unreachable!(),
+        }
+    }
+    pub async fn submit_command_async<F: FnOnce(CmdId) -> NvmeCmd>(&self, sq_id: SqId, f: F) -> CmdId {
+        match self.submit_command_generic(sq_id, FullSqHandling::Wait, f) {
+            SubmissionBehavior::Future(future) => future.await,
+            _ => unreachable!(),
+        }
     }
     pub async fn submit_admin_command<F: FnOnce(CmdId) -> NvmeCmd>(&self, f: F) -> CmdId {
-        self.try_submit_command(0, FullSqHandling::Wait, f);
-        todo!()
+        self.submit_command_async(0, f).await
     }
     pub async fn admin_queue_completion(&self, cmd_id: CmdId) -> NvmeComp {
         self.completion(0, cmd_id, 0).await

@@ -19,7 +19,7 @@ use syscall::Result;
 
 use crossbeam_channel::{Receiver, Sender};
 
-use crate::nvme::{CmdId, CqId, InterruptSources, Nvme, NvmeComp, NvmeCompQueue, SqId};
+use super::{CmdId, CqId, InterruptSources, Nvme, NvmeComp, NvmeCmd, SqId};
 
 /// A notification request, sent by the future in order to tell the completion thread that the
 /// current task wants a notification when a matching completion queue entry has been seen.
@@ -35,14 +35,24 @@ pub enum NotifReq {
         // TODO: Maybe the `remem` crate.
         message: Arc<Mutex<Option<CompletionMessage>>>,
     },
+    RequestAvailSubmission {
+        sq_id: SqId,
+        waker: task::Waker,
+    }
 }
 
-struct PendingReq {
-    waker: task::Waker,
-    message: Arc<Mutex<Option<CompletionMessage>>>,
-    cq_id: u16,
-    sq_id: u16,
-    cmd_id: u16,
+enum PendingReq {
+    PendingCompletion {
+        waker: task::Waker,
+        message: Arc<Mutex<Option<CompletionMessage>>>,
+        cq_id: CqId,
+        sq_id: SqId,
+        cmd_id: CmdId,
+    },
+    PendingAvailSubmission {
+        waker: task::Waker,
+        sq_id: SqId,
+    },
 }
 struct CqReactor {
     int_sources: InterruptSources,
@@ -94,13 +104,14 @@ impl CqReactor {
                     cmd_id,
                     waker,
                     message,
-                } => self.pending_reqs.push(PendingReq {
+                } => self.pending_reqs.push(PendingReq::PendingCompletion {
                     sq_id,
                     cq_id,
                     cmd_id,
                     message,
                     waker,
                 }),
+                NotifReq::RequestAvailSubmission { sq_id, waker } => self.pending_reqs.push(PendingReq::PendingAvailSubmission { sq_id, waker, }),
             }
         }
     }
@@ -119,7 +130,9 @@ impl CqReactor {
                 None => continue,
             };
 
-            self.nvme.completion_queue_head(cq_id, head as u16);
+            self.nvme.completion_queue_head(cq_id, head);
+
+            self.nvme.submission_queues.read().unwrap().get(&entry.sq_id).expect("nvmed: internal error: queue returned from controller doesn't exist").lock().unwrap().head = entry.sq_head;
 
             self.try_notify_futures(cq_id, &entry);
 
@@ -129,27 +142,54 @@ impl CqReactor {
 
         Some(())
     }
+    fn finish_pending_completion(&mut self, req_cq_id: CqId, cq_id: CqId, sq_id: SqId, cmd_id: CmdId, entry: &NvmeComp, i: usize) -> bool {
+        if req_cq_id == cq_id
+            && sq_id == entry.sq_id
+            && cmd_id == entry.cid
+        {
+            let (waker, message) = match self.pending_reqs.remove(i) {
+                PendingReq::PendingCompletion { waker, message, .. } => (waker, message),
+                _ => unreachable!(),
+            };
+
+            *message.lock().unwrap() = Some(CompletionMessage { cq_entry: *entry });
+            waker.wake();
+
+            true
+        } else {
+            false
+        }
+    }
+    fn finish_pending_avail_submission(&mut self, sq_id: SqId, entry: &NvmeComp, i: usize) -> bool {
+        if sq_id == entry.sq_id {
+            let waker = match self.pending_reqs.remove(i) {
+                PendingReq::PendingAvailSubmission { waker, .. } => waker,
+                _ => unreachable!(),
+            };
+            waker.wake();
+
+            true
+        } else {
+            false
+        }
+    }
     fn try_notify_futures(&mut self, cq_id: CqId, entry: &NvmeComp) -> Option<()> {
         let mut i = 0usize;
 
         let mut futures_notified = 0;
 
         while i < self.pending_reqs.len() {
-            let pending_req = &self.pending_reqs[i];
-
-            if pending_req.cq_id == cq_id
-                && pending_req.sq_id == entry.sq_id
-                && pending_req.cmd_id == entry.cid
-            {
-                let pending_req_owned = self.pending_reqs.remove(i);
-
-                *pending_req_owned.message.lock().unwrap() =
-                    Some(CompletionMessage { cq_entry: *entry });
-                pending_req_owned.waker.wake();
-
-                futures_notified += 1;
-            } else {
-                i += 1;
+            match &self.pending_reqs[i] {
+                &PendingReq::PendingCompletion { cq_id: req_cq_id, sq_id, cmd_id, .. } => if self.finish_pending_completion(req_cq_id, cq_id, sq_id, cmd_id, entry, i) {
+                    futures_notified += 1;
+                } else {
+                    i += 1;
+                }
+                &PendingReq::PendingAvailSubmission { sq_id, .. } => if self.finish_pending_avail_submission(sq_id, entry, i) {
+                    futures_notified += 1;
+                } else {
+                    i += 1;
+                }
             }
         }
         if futures_notified == 0 {}
@@ -284,48 +324,60 @@ impl Nvme {
     /// Returns a future representing a submission queue becoming non-full. Make sure that the
     /// queue doesn't have any additional free entries first though, so that the reactor doesn't
     /// have to interfere.
-    pub fn wait_for_available_submission(&self, sq_id: SqId) -> AvailableSqEntryFuture {
-        todo!()
+    pub fn wait_for_available_submission<'a, F: FnOnce(CmdId) -> NvmeCmd>(&'a self, sq_id: SqId, f: F) -> SubmissionFuture<'a, F> {
+        SubmissionFuture {
+            state: SubmissionFutureState::Pending {
+                sq_id,
+                cmd_init: f,
+                nvme: &self,
+            },
+        }
     }
 }
 
-struct AvailMessage {
-    cmd_id: CmdId,
-}
-
-enum AvailableSqEntryFutureState {
+pub(crate) enum SubmissionFutureState<'a, F> {
+    // the queue was known to be full when checked, thus the reactor is asked
     Pending {
         sq_id: SqId,
-        message: Option<Arc<Mutex<Option<AvailMessage>>>>,
+        cmd_init: F,
+        nvme: &'a Nvme,
     },
+    // returned when there was an available submission entry from the beginning
+    Ready(CmdId),
     Finished,
 }
 
-pub struct AvailableSqEntryFuture {
-    state: AvailableSqEntryFutureState,
+/// A future representing a submission queue eventually becoming non-full. In most cases this
+/// future will finish directly, since all entries in the queue have to be occupied for it to block.
+pub struct SubmissionFuture<'a, F> {
+    pub(crate) state: SubmissionFutureState<'a, F>,
 }
 
-impl Unpin for AvailableSqEntryFuture {}
+impl<F> Unpin for SubmissionFuture<'_, F> {}
 
-impl Future for AvailableSqEntryFuture {
+impl<F: FnOnce(CmdId) -> NvmeCmd> Future for SubmissionFuture<'_, F> {
     type Output = CmdId;
 
     fn poll(self: Pin<&mut Self>, context: &mut task::Context<'_>) -> task::Poll<Self::Output> {
-        let this = &mut self.get_mut().state;
+        let state = &mut self.get_mut().state;
 
-        match this {
-            &mut AvailableSqEntryFutureState::Pending {
-                sq_id,
-                ref mut message,
-            } => {
-                if let Some(message) = message.lock().unwrap().take() {
-                } else {
+        match state {
+            &mut SubmissionFutureState::Pending { sq_id, cmd_init, nvme } => match nvme.try_submit_command(sq_id, cmd_init) {
+                Ok(cmd_id) => {
+                    *state = SubmissionFutureState::Finished;
+                    task::Poll::Ready(cmd_id)
+                }
+                Err(closure) => {
+                    nvme.reactor_sender.send(NotifReq::RequestAvailSubmission { sq_id, waker: context.waker().clone() });
+                    *state = SubmissionFutureState::Pending { sq_id, cmd_init: closure, nvme };
                     task::Poll::Pending
                 }
             }
-            &mut AvailableSqEntryFutureState::Finished => {
-                panic!("calling poll() on an already finished AvailableSqEntryFuture")
+            &mut SubmissionFutureState::Ready(value) => {
+                *state = SubmissionFutureState::Finished;
+                task::Poll::Ready(value)
             }
+            &mut SubmissionFutureState::Finished => panic!("calling poll() on an already finished SubmissionFuture"),
         }
     }
 }

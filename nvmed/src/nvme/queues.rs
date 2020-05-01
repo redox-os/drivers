@@ -47,37 +47,37 @@ pub struct NvmeComp {
 
 /// Completion queue
 pub struct NvmeCompQueue {
-    pub data: Dma<[NvmeComp; 256]>,
-    pub i: usize,
+    pub data: Dma<[NvmeComp]>,
+    pub head: u16,
     pub phase: bool,
 }
 
 impl NvmeCompQueue {
     pub fn new() -> Result<Self> {
         Ok(Self {
-            data: Dma::zeroed()?,
-            i: 0,
+            data: Dma::zeroed_unsized(256)?,
+            head: 0,
             phase: true,
         })
     }
 
     /// Get a new completion queue entry, or return None if no entry is available yet.
-    pub(crate) fn complete(&mut self) -> Option<(usize, NvmeComp)> {
-        let entry = unsafe { ptr::read_volatile(self.data.as_ptr().add(self.i)) };
+    pub(crate) fn complete(&mut self) -> Option<(u16, NvmeComp)> {
+        let entry = unsafe { ptr::read_volatile(self.data.as_ptr().add(self.head as usize)) };
         // println!("{:?}", entry);
         if ((entry.status & 1) == 1) == self.phase {
-            self.i = (self.i + 1) % self.data.len();
-            if self.i == 0 {
+            self.head = (self.head + 1) % (self.data.len() as u16);
+            if self.head == 0 {
                 self.phase = !self.phase;
             }
-            Some((self.i, entry))
+            Some((self.head, entry))
         } else {
             None
         }
     }
 
     /// Get a new CQ entry, busy waiting until an entry appears.
-    fn complete_spin(&mut self) -> (usize, NvmeComp) {
+    fn complete_spin(&mut self) -> (u16, NvmeComp) {
         loop {
             if let Some(some) = self.complete() {
                 return some;
@@ -90,28 +90,32 @@ impl NvmeCompQueue {
 
 /// Submission queue
 pub struct NvmeCmdQueue {
-    pub data: Dma<[NvmeCmd; 64]>,
-    pub i: usize,
+    pub data: Dma<[NvmeCmd]>,
+    pub tail: u16,
+    pub head: u16,
 }
 
 impl NvmeCmdQueue {
-    pub(crate) fn new() -> Result<Self> {
+    pub fn new() -> Result<Self> {
         Ok(Self {
-            data: Dma::zeroed()?,
-            i: 0,
+            data: Dma::zeroed_unsized(64)?,
+            tail: 0,
+            head: 0,
         })
     }
 
-    /// Add a new submission command entry to the queue. Returns Some(tail) when a vacant entry was
-    /// found, or None if the queue was full.
-    pub(crate) fn submit(&mut self, entry: NvmeCmd) -> Option<usize> {
-        // FIXME: Check for full conditions
-        if true {
-            self.data[self.i] = entry;
-            self.i = (self.i + 1) % self.data.len();
-            Some(self.i)
-        } else {
-            None
-        }
+    pub fn is_empty(&self) -> bool {
+        self.head == self.tail
+    }
+    pub fn is_full(&self) -> bool {
+        self.head + 1 == self.tail
+    }
+
+    /// Add a new submission command entry to the queue. The caller must ensure that the queue have free
+    /// entries; this can be checked using `is_full`.
+    pub fn submit_unchecked(&mut self, entry: NvmeCmd) -> u16 {
+        self.data[self.tail as usize] = entry;
+        self.tail = (self.tail + 1) % (self.data.len() as u16);
+        self.tail
     }
 }
