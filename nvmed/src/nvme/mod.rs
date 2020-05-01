@@ -55,9 +55,9 @@ impl InterruptSources {
             }
             fn size_hint(&self) -> (usize, Option<usize>) {
                 match self {
-                    &Self::Msi(mut iter) => iter.size_hint(),
-                    &Self::MsiX(mut iter) => iter.size_hint(),
-                    &Self::Intx(mut iter) => iter.size_hint(),
+                    &Self::Msi(ref iter) => iter.size_hint(),
+                    &Self::MsiX(ref iter) => iter.size_hint(),
+                    &Self::Intx(ref iter) => iter.size_hint(),
                 }
             }
         }
@@ -224,10 +224,13 @@ impl Nvme {
     /// # Locking
     /// Locks `regs`.
     unsafe fn doorbell_write(&self, index: usize, value: u32) {
-        let mut regs_guard = self.regs.write().unwrap();
+        use std::ops::DerefMut;
 
-        let dstrd = ((regs_guard.cap.read() >> 32) & 0b1111) as usize;
-        let addr = ((*regs_guard) as *mut NvmeRegs as usize) + 0x1000 + index * (4 << dstrd);
+        let mut regs_guard = self.regs.write().unwrap();
+        let mut regs: &mut NvmeRegs = regs_guard.deref_mut();
+
+        let dstrd = ((regs.cap.read() >> 32) & 0b1111) as usize;
+        let addr = (regs as *mut NvmeRegs as usize) + 0x1000 + index * (4 << dstrd);
         (&mut *(addr as *mut Mmio<u32>)).write(value);
     }
 
@@ -260,7 +263,7 @@ impl Nvme {
             let csts = self.regs.get_mut().unwrap().csts.read();
             // println!("CSTS: {:X}", csts);
             if csts & 1 == 1 {
-                unsafe { std::arch::x86_64::_mm_pause() }
+                std::arch::x86_64::_mm_pause();
             } else {
                 break;
             }
@@ -276,13 +279,13 @@ impl Nvme {
             }
         }
 
-        for (qid, queue) in self.completion_queues.get_mut().unwrap().iter() {
+        for (qid, queue) in self.completion_queues.get_mut().unwrap().iter_mut() {
             let &(ref cq, ref sq_ids) = &*queue.get_mut().unwrap();
             let data = &cq.data;
             // println!("    - completion queue {}: {:X}, {}", qid, data.physical(), data.len());
         }
 
-        for (qid, queue) in self.submission_queues.get_mut().unwrap().iter() {
+        for (qid, queue) in self.submission_queues.get_mut().unwrap().iter_mut() {
             let data = &queue.get_mut().unwrap().data;
             // println!("    - submission queue {}: {:X}, {}", qid, data.physical(), data.len());
         }
@@ -290,10 +293,10 @@ impl Nvme {
         {
             let regs = self.regs.get_mut().unwrap();
             let submission_queues = self.submission_queues.get_mut().unwrap();
-            let completion_queues = self.submission_queues.get_mut().unwrap();
+            let completion_queues = self.completion_queues.get_mut().unwrap();
 
-            let asq = submission_queues.get(&0).unwrap().get_mut().unwrap();
-            let acq = completion_queues.get(&0).unwrap().get_mut().unwrap();
+            let asq = submission_queues.get_mut(&0).unwrap().get_mut().unwrap();
+            let (acq, _) = completion_queues.get_mut(&0).unwrap().get_mut().unwrap();
             regs.aqa
                 .write(((acq.data.len() as u32 - 1) << 16) | (asq.data.len() as u32 - 1));
             regs.asq.write(asq.data.physical() as u64);
@@ -314,7 +317,7 @@ impl Nvme {
             let csts = self.regs.get_mut().unwrap().csts.read();
             // println!("CSTS: {:X}", csts);
             if csts & 1 == 0 {
-                unsafe { std::arch::x86_64::_mm_pause() }
+                std::arch::x86_64::_mm_pause();
             } else {
                 break;
             }
@@ -326,7 +329,7 @@ impl Nvme {
     /// # Panics
     /// Will panic if the same vector is called twice with different mask flags.
     pub fn set_vectors_masked(&self, vectors: impl IntoIterator<Item = (u16, bool)>) {
-        let interrupt_method_guard = self.interrupt_method.lock().unwrap();
+        let mut interrupt_method_guard = self.interrupt_method.lock().unwrap();
 
         match &mut *interrupt_method_guard {
             &mut InterruptMethod::Intx => {
@@ -398,7 +401,7 @@ impl Nvme {
 
     pub fn submit_command_generic<'a, F: FnOnce(CmdId) -> NvmeCmd>(&'a self, sq_id: SqId, full_sq_handling: FullSqHandling, cmd_init: F) -> SubmissionBehavior<'a, F> {
         let sqs_read_guard = self.submission_queues.read().unwrap();
-        let sq_lock = sqs_read_guard
+        let mut sq_lock = sqs_read_guard
             .get(&sq_id)
             .expect("nvmed: internal error: given SQ for SQ ID not there")
             .lock()
@@ -413,7 +416,8 @@ impl Nvme {
             u16::try_from(sq_lock.tail).expect("nvmed: internal error: CQ has more than 2^16 entries");
         let tail = sq_lock.submit_unchecked(cmd_init(cmd_id));
         let tail = u16::try_from(tail).unwrap();
-        self.submission_queue_tail(sq_id, tail);
+
+        unsafe { self.submission_queue_tail(sq_id, tail) };
 
         match full_sq_handling {
             FullSqHandling::ErrorDirectly => SubmissionBehavior::Nonblocking(Ok(cmd_id)),
@@ -535,8 +539,8 @@ impl Nvme {
         namespaces
     }
 
-    unsafe fn namespace_rw(
-        &mut self,
+    async fn namespace_rw(
+        &self,
         nsid: u32,
         lba: u64,
         blocks_1: u16,
@@ -545,59 +549,51 @@ impl Nvme {
         //TODO: Get real block size
         let block_size = 512;
 
+        let buffer_prp_guard = self.buffer_prp.lock().unwrap();
+
         let bytes = ((blocks_1 as u64) + 1) * block_size;
         let (ptr0, ptr1) = if bytes <= 4096 {
-            (self.buffer_prp[0], 0)
+            (buffer_prp_guard[0], 0)
         } else if bytes <= 8192 {
-            (self.buffer_prp[0], self.buffer_prp[1])
+            (buffer_prp_guard[0], buffer_prp_guard[1])
         } else {
-            (self.buffer_prp[0], (self.buffer_prp.physical() + 8) as u64)
+            (buffer_prp_guard[0], (buffer_prp_guard.physical() + 8) as u64)
         };
 
-        {
-            let qid = 1;
-            let queue = &mut self.submission_queues[qid];
-            let cid = queue.i as u16;
-            let entry = if write {
+        let cmd_id = self.submit_command_async(1, |cid| {
+            if write {
                 NvmeCmd::io_write(cid, nsid, lba, blocks_1, ptr0, ptr1)
             } else {
                 NvmeCmd::io_read(cid, nsid, lba, blocks_1, ptr0, ptr1)
-            };
-            let tail = queue.submit(entry);
-            self.submission_queue_tail(qid as u16, tail as u16);
-        }
+            }
+        }).await;
 
-        {
-            let qid = 1;
-            let queue = &mut self.completion_queues[qid];
-            let (head, entry) = queue.complete_spin();
-            //TODO: Handle errors
-            self.completion_queue_head(qid as u16, head as u16);
-        }
+        let comp = self.completion(1, cmd_id, 1).await;
+        // TODO: Handle errors
 
         Ok(())
     }
 
-    pub unsafe fn namespace_read(
-        &mut self,
+    pub async fn namespace_read(
+        &self,
         nsid: u32,
         mut lba: u64,
         buf: &mut [u8],
     ) -> Result<Option<usize>> {
-        //TODO: Use interrupts
-
         //TODO: Get real block size
         let block_size = 512;
 
-        for chunk in buf.chunks_mut(self.buffer.len()) {
+        let mut buffer_guard = self.buffer.lock().unwrap();
+
+        for chunk in buf.chunks_mut(buffer_guard.len()) {
             let blocks = (chunk.len() + block_size - 1) / block_size;
 
             assert!(blocks > 0);
             assert!(blocks <= 0x1_0000);
 
-            self.namespace_rw(nsid, lba, (blocks - 1) as u16, false)?;
+            self.namespace_rw(nsid, lba, (blocks - 1) as u16, false).await?;
 
-            chunk.copy_from_slice(&self.buffer[..chunk.len()]);
+            chunk.copy_from_slice(&buffer_guard[..chunk.len()]);
 
             lba += blocks as u64;
         }
@@ -605,8 +601,8 @@ impl Nvme {
         Ok(Some(buf.len()))
     }
 
-    pub unsafe fn namespace_write(
-        &mut self,
+    pub async fn namespace_write(
+        &self,
         nsid: u32,
         mut lba: u64,
         buf: &[u8],
@@ -616,15 +612,17 @@ impl Nvme {
         //TODO: Get real block size
         let block_size = 512;
 
-        for chunk in buf.chunks(self.buffer.len()) {
+        let mut buffer_guard = self.buffer.lock().unwrap();
+
+        for chunk in buf.chunks(buffer_guard.len()) {
             let blocks = (chunk.len() + block_size - 1) / block_size;
 
             assert!(blocks > 0);
             assert!(blocks <= 0x1_0000);
 
-            self.buffer[..chunk.len()].copy_from_slice(chunk);
+            buffer_guard[..chunk.len()].copy_from_slice(chunk);
 
-            self.namespace_rw(nsid, lba, (blocks - 1) as u16, true)?;
+            self.namespace_rw(nsid, lba, (blocks - 1) as u16, true).await?;
 
             lba += blocks as u64;
         }

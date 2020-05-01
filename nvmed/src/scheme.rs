@@ -82,10 +82,8 @@ impl DiskWrapper {
                         return Err(io::Error::from_raw_os_error(syscall::EOVERFLOW));
                     }
                     loop {
-                        match unsafe {
-                            nvme.namespace_read(disk.id, block, block_bytes)
-                                .map_err(|err| io::Error::from_raw_os_error(err.errno))?
-                        } {
+                        match futures::executor::block_on(nvme.namespace_read(disk.id, block, block_bytes))
+                            .map_err(|err| io::Error::from_raw_os_error(err.errno))? {
                             Some(bytes) => {
                                 assert_eq!(bytes, block_bytes.len());
                                 assert_eq!(bytes, blksize as usize);
@@ -158,29 +156,6 @@ impl DiskScheme {
             handles: BTreeMap::new(),
             next_id: 0,
         }
-    }
-}
-
-impl DiskScheme {
-    pub fn irq(&mut self) -> bool {
-        let mut found_completion = false;
-
-        let nvme = &mut self.nvme;
-        let completion_queues = nvme.completion_queues.read().unwrap();
-
-        for qid in 0..completion_queues.len() {
-            let queue = completion_queues[qid].lock().unwrap();
-            while let Some((head, entry)) = queue.complete() {
-                found_completion = true;
-                println!("nvmed: Unhandled completion {:?}", entry);
-                //TODO: Handle errors
-                unsafe {
-                    nvme.completion_queue_head(qid as u16, head as u16);
-                }
-            }
-        }
-
-        found_completion
     }
 }
 
@@ -372,10 +347,7 @@ impl SchemeBlockMut for DiskScheme {
             Handle::Disk(number, ref mut size) => {
                 let disk = self.disks.get_mut(&number).ok_or(Error::new(EBADF))?;
                 let block_size = disk.as_ref().block_size;
-                if let Some(count) = unsafe {
-                    self.nvme
-                        .namespace_read(disk.as_ref().id, (*size as u64) / block_size, buf)?
-                } {
+                if let Some(count) = futures::executor::block_on(self.nvme.namespace_read(disk.as_ref().id, (*size as u64) / block_size, buf))? {
                     *size += count;
                     Ok(Some(count))
                 } else {
@@ -400,9 +372,7 @@ impl SchemeBlockMut for DiskScheme {
 
                 let abs_block = part.start_lba + rel_block;
 
-                if let Some(count) =
-                    unsafe { self.nvme.namespace_read(disk.as_ref().id, abs_block, buf)? }
-                {
+                if let Some(count) = futures::executor::block_on(self.nvme.namespace_read(disk.as_ref().id, abs_block, buf))? {
                     *offset += count;
                     Ok(Some(count))
                 } else {
@@ -419,8 +389,8 @@ impl SchemeBlockMut for DiskScheme {
                 let disk = self.disks.get_mut(&number).ok_or(Error::new(EBADF))?;
                 let block_size = disk.as_ref().block_size;
                 if let Some(count) = unsafe {
-                    self.nvme
-                        .namespace_write(disk.as_ref().id, (*size as u64) / block_size, buf)?
+                    futures::executor::block_on(self.nvme
+                        .namespace_write(disk.as_ref().id, (*size as u64) / block_size, buf))?
                 } {
                     *size += count;
                     Ok(Some(count))
@@ -446,10 +416,7 @@ impl SchemeBlockMut for DiskScheme {
 
                 let abs_block = part.start_lba + rel_block;
 
-                if let Some(count) = unsafe {
-                    self.nvme
-                        .namespace_write(disk.as_ref().id, abs_block, buf)?
-                } {
+                if let Some(count) = futures::executor::block_on(self.nvme.namespace_write(disk.as_ref().id, abs_block, buf))? {
                     *offset += count;
                     Ok(Some(count))
                 } else {

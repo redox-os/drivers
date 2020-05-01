@@ -62,7 +62,7 @@ struct CqReactor {
     event_queue: File,
 }
 impl CqReactor {
-    fn create_event_queue(int_sources: &InterruptSources) -> Result<File> {
+    fn create_event_queue(int_sources: &mut InterruptSources) -> Result<File> {
         use syscall::flag::*;
         let fd = syscall::open("event:", O_CLOEXEC | O_RDWR)?;
         let mut file = unsafe { File::from_raw_fd(fd as RawFd) };
@@ -84,11 +84,11 @@ impl CqReactor {
     }
     fn new(
         nvme: Arc<Nvme>,
-        int_sources: InterruptSources,
+        mut int_sources: InterruptSources,
         receiver: Receiver<NotifReq>,
     ) -> Result<Self> {
         Ok(Self {
-            event_queue: Self::create_event_queue(&int_sources)?,
+            event_queue: Self::create_event_queue(&mut int_sources)?,
             int_sources,
             nvme,
             pending_reqs: Vec::new(),
@@ -121,8 +121,10 @@ impl CqReactor {
 
         let mut entry_count = 0;
 
-        for cq_id in ivs_read_guard.get(&iv)?.iter().copied() {
-            let completion_queue_guard = cqs_read_guard.get(&cq_id)?.lock().unwrap();
+        let cq_ids = ivs_read_guard.get(&iv)?;
+
+        for cq_id in cq_ids.iter().copied() {
+            let mut completion_queue_guard = cqs_read_guard.get(&cq_id)?.lock().unwrap();
             let &mut (ref mut completion_queue, _) = &mut *completion_queue_guard;
 
             let (head, entry) = match completion_queue.complete() {
@@ -130,11 +132,11 @@ impl CqReactor {
                 None => continue,
             };
 
-            self.nvme.completion_queue_head(cq_id, head);
+            unsafe { self.nvme.completion_queue_head(cq_id, head) };
 
-            self.nvme.submission_queues.read().unwrap().get(&entry.sq_id).expect("nvmed: internal error: queue returned from controller doesn't exist").lock().unwrap().head = entry.sq_head;
+            self.nvme.submission_queues.read().unwrap().get(&{entry.sq_id}).expect("nvmed: internal error: queue returned from controller doesn't exist").lock().unwrap().head = entry.sq_head;
 
-            self.try_notify_futures(cq_id, &entry);
+            Self::try_notify_futures(&mut self.pending_reqs, cq_id, &entry);
 
             entry_count += 1;
         }
@@ -142,12 +144,12 @@ impl CqReactor {
 
         Some(())
     }
-    fn finish_pending_completion(&mut self, req_cq_id: CqId, cq_id: CqId, sq_id: SqId, cmd_id: CmdId, entry: &NvmeComp, i: usize) -> bool {
+    fn finish_pending_completion(pending_reqs: &mut Vec<PendingReq>, req_cq_id: CqId, cq_id: CqId, sq_id: SqId, cmd_id: CmdId, entry: &NvmeComp, i: usize) -> bool {
         if req_cq_id == cq_id
             && sq_id == entry.sq_id
             && cmd_id == entry.cid
         {
-            let (waker, message) = match self.pending_reqs.remove(i) {
+            let (waker, message) = match pending_reqs.remove(i) {
                 PendingReq::PendingCompletion { waker, message, .. } => (waker, message),
                 _ => unreachable!(),
             };
@@ -160,9 +162,9 @@ impl CqReactor {
             false
         }
     }
-    fn finish_pending_avail_submission(&mut self, sq_id: SqId, entry: &NvmeComp, i: usize) -> bool {
+    fn finish_pending_avail_submission(pending_reqs: &mut Vec<PendingReq>, sq_id: SqId, entry: &NvmeComp, i: usize) -> bool {
         if sq_id == entry.sq_id {
-            let waker = match self.pending_reqs.remove(i) {
+            let waker = match pending_reqs.remove(i) {
                 PendingReq::PendingAvailSubmission { waker, .. } => waker,
                 _ => unreachable!(),
             };
@@ -173,19 +175,19 @@ impl CqReactor {
             false
         }
     }
-    fn try_notify_futures(&mut self, cq_id: CqId, entry: &NvmeComp) -> Option<()> {
+    fn try_notify_futures(pending_reqs: &mut Vec<PendingReq>, cq_id: CqId, entry: &NvmeComp) -> Option<()> {
         let mut i = 0usize;
 
         let mut futures_notified = 0;
 
-        while i < self.pending_reqs.len() {
-            match &self.pending_reqs[i] {
-                &PendingReq::PendingCompletion { cq_id: req_cq_id, sq_id, cmd_id, .. } => if self.finish_pending_completion(req_cq_id, cq_id, sq_id, cmd_id, entry, i) {
+        while i < pending_reqs.len() {
+            match &pending_reqs[i] {
+                &PendingReq::PendingCompletion { cq_id: req_cq_id, sq_id, cmd_id, .. } => if Self::finish_pending_completion(pending_reqs, req_cq_id, cq_id, sq_id, cmd_id, entry, i) {
                     futures_notified += 1;
                 } else {
                     i += 1;
                 }
-                &PendingReq::PendingAvailSubmission { sq_id, .. } => if self.finish_pending_avail_submission(sq_id, entry, i) {
+                &PendingReq::PendingAvailSubmission { sq_id, .. } => if Self::finish_pending_avail_submission(pending_reqs, sq_id, entry, i) {
                     futures_notified += 1;
                 } else {
                     i += 1;
@@ -250,7 +252,7 @@ pub fn start_cq_reactor_thread(
     })
 }
 
-struct CompletionMessage {
+pub struct CompletionMessage {
     cq_entry: NvmeComp,
 }
 
@@ -264,6 +266,7 @@ enum CompletionFutureState {
         message: Arc<Mutex<Option<CompletionMessage>>>,
     },
     Finished,
+    Placeholder,
 }
 pub struct CompletionFuture {
     state: CompletionFutureState,
@@ -278,8 +281,8 @@ impl Future for CompletionFuture {
     fn poll(self: Pin<&mut Self>, context: &mut task::Context) -> task::Poll<Self::Output> {
         let this = &mut self.get_mut().state;
 
-        match this {
-            &mut CompletionFutureState::Pending {
+        match mem::replace(this, CompletionFutureState::Placeholder) {
+            CompletionFutureState::Pending {
                 message,
                 cq_id,
                 cmd_id,
@@ -288,21 +291,22 @@ impl Future for CompletionFuture {
             } => {
                 if let Some(value) = message.lock().unwrap().take() {
                     *this = CompletionFutureState::Finished;
-                    task::Poll::Ready(value.cq_entry)
-                } else {
-                    sender.send(NotifReq::RequestCompletion {
-                        cq_id,
-                        sq_id,
-                        cmd_id,
-                        waker: context.waker().clone(),
-                        message: Arc::clone(&message),
-                    });
-                    task::Poll::Pending
+                    return task::Poll::Ready(value.cq_entry);
                 }
+                sender.send(NotifReq::RequestCompletion {
+                    cq_id,
+                    sq_id,
+                    cmd_id,
+                    waker: context.waker().clone(),
+                    message: Arc::clone(&message),
+                }).expect("reactor dead");
+                *this = CompletionFutureState::Pending { message, cq_id, cmd_id, sq_id, sender };
+                task::Poll::Pending
             }
-            &mut CompletionFutureState::Finished => {
+            CompletionFutureState::Finished => {
                 panic!("calling poll() on an already finished CompletionFuture")
             }
+            CompletionFutureState::Placeholder => unreachable!(),
         }
     }
 }
@@ -345,6 +349,7 @@ pub(crate) enum SubmissionFutureState<'a, F> {
     // returned when there was an available submission entry from the beginning
     Ready(CmdId),
     Finished,
+    Placeholder,
 }
 
 /// A future representing a submission queue eventually becoming non-full. In most cases this
@@ -361,8 +366,8 @@ impl<F: FnOnce(CmdId) -> NvmeCmd> Future for SubmissionFuture<'_, F> {
     fn poll(self: Pin<&mut Self>, context: &mut task::Context<'_>) -> task::Poll<Self::Output> {
         let state = &mut self.get_mut().state;
 
-        match state {
-            &mut SubmissionFutureState::Pending { sq_id, cmd_init, nvme } => match nvme.try_submit_command(sq_id, cmd_init) {
+        match mem::replace(state, SubmissionFutureState::Placeholder) {
+            SubmissionFutureState::Pending { sq_id, cmd_init, nvme } => match nvme.try_submit_command(sq_id, cmd_init) {
                 Ok(cmd_id) => {
                     *state = SubmissionFutureState::Finished;
                     task::Poll::Ready(cmd_id)
@@ -373,11 +378,12 @@ impl<F: FnOnce(CmdId) -> NvmeCmd> Future for SubmissionFuture<'_, F> {
                     task::Poll::Pending
                 }
             }
-            &mut SubmissionFutureState::Ready(value) => {
+            SubmissionFutureState::Ready(value) => {
                 *state = SubmissionFutureState::Finished;
                 task::Poll::Ready(value)
             }
-            &mut SubmissionFutureState::Finished => panic!("calling poll() on an already finished SubmissionFuture"),
+            SubmissionFutureState::Finished => panic!("calling poll() on an already finished SubmissionFuture"),
+            SubmissionFutureState::Placeholder => unreachable!(),
         }
     }
 }

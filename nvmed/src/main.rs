@@ -32,7 +32,7 @@ impl Bar {
     pub fn allocate(bar: usize, bar_size: usize) -> Result<Self> {
         Ok(Self {
             ptr: NonNull::new(
-                syscall::physmap(bar, bar_size, PHYSMAP_NO_CACHE | PHYSMAP_WRITE)? as *mut u8,
+                unsafe { syscall::physmap(bar, bar_size, PHYSMAP_NO_CACHE | PHYSMAP_WRITE)? as *mut u8 },
             )
             .expect("Mapping a BAR resulted in a nullptr"),
             physical: bar,
@@ -43,7 +43,7 @@ impl Bar {
 
 impl Drop for Bar {
     fn drop(&mut self) {
-        let _ = syscall::physunmap(self.physical);
+        let _ = unsafe { syscall::physunmap(self.physical) };
     }
 }
 
@@ -82,7 +82,7 @@ fn get_int_method(
             bir: u8,
         ) -> Result<NonNull<u8>> {
             let bir = usize::from(bir);
-            let bar_guard = allocated_bars.0[bir].lock().unwrap();
+            let mut bar_guard = allocated_bars.0[bir].lock().unwrap();
             match &mut *bar_guard {
                 &mut Some(ref bar) => Ok(bar.ptr),
                 bar_to_set @ &mut None => {
@@ -119,7 +119,7 @@ fn get_int_method(
 
         // Mask all interrupts in case some earlier driver/os already unmasked them (according to
         // the PCI Local Bus spec 3.0, they are masked after system reset).
-        for table_entry in table_entries {
+        for table_entry in table_entries.iter_mut() {
             table_entry.mask();
         }
 
@@ -284,10 +284,10 @@ fn main() {
                 .expect("nvmed: failed to find a suitable interrupt method");
         let mut nvme = Nvme::new(address, interrupt_method, pcid_handle, reactor_sender)
             .expect("nvmed: failed to allocate driver data");
-        let nvme = Arc::new(nvme);
         unsafe { nvme.init() }
-        nvme::cq_reactor::start_cq_reactor_thread(nvme, interrupt_sources, reactor_receiver);
-        let namespaces = unsafe { futures::executor::block_on(nvme.init_with_queues()) };
+        let nvme = Arc::new(nvme);
+        nvme::cq_reactor::start_cq_reactor_thread(Arc::clone(&nvme), interrupt_sources, reactor_receiver);
+        let namespaces = futures::executor::block_on(nvme.init_with_queues());
 
         let mut scheme = DiskScheme::new(scheme_name, nvme, namespaces);
         let mut todo = Vec::new();

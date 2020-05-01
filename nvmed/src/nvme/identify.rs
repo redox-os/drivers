@@ -78,8 +78,9 @@ impl Nvme {
 
         // println!("  - Dumping identify namespace");
 
-        let size = *(data.as_ptr().offset(0) as *const u64);
-        let capacity = *(data.as_ptr().offset(8) as *const u64);
+        // TODO: Use struct
+        let size = unsafe { *(data.as_ptr().offset(0) as *const u64) };
+        let capacity = unsafe { *(data.as_ptr().offset(8) as *const u64) };
         println!("    - ID: {} Size: {} Capacity: {}", nsid, size, capacity);
 
         //TODO: Read block size

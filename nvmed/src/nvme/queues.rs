@@ -55,7 +55,7 @@ pub struct NvmeCompQueue {
 impl NvmeCompQueue {
     pub fn new() -> Result<Self> {
         Ok(Self {
-            data: Dma::zeroed_unsized(256)?,
+            data: unsafe { Dma::zeroed_unsized(256)? },
             head: 0,
             phase: true,
         })
@@ -98,7 +98,7 @@ pub struct NvmeCmdQueue {
 impl NvmeCmdQueue {
     pub fn new() -> Result<Self> {
         Ok(Self {
-            data: Dma::zeroed_unsized(64)?,
+            data: unsafe { Dma::zeroed_unsized(64)? },
             tail: 0,
             head: 0,
         })
