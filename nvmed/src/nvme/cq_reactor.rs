@@ -355,7 +355,6 @@ where
                 sq_id,
                 nvme,
             } => {
-                println!("{:p}", &mut nvme.completion_queues.read().unwrap().get(&cq_id).unwrap().lock().unwrap().0);
                 if let Some(value) = message.lock().unwrap().take() {
                     *this = CompletionFutureState::Finished;
                     return task::Poll::Ready(value.cq_entry);

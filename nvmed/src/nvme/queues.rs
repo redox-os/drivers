@@ -63,11 +63,9 @@ impl NvmeCompQueue {
 
     /// Get a new completion queue entry, or return None if no entry is available yet.
     pub(crate) fn complete(&mut self) -> Option<(u16, NvmeComp)> {
-        println!("PTR: {:p}", &*self as *const _);
         let entry = unsafe { ptr::read_volatile(self.data.as_ptr().add(self.head as usize)) };
-        // println!("{:?}", entry);
-        if ((dbg!(entry.status) & 1) == 1) == dbg!(self.phase) {
-            self.head = dbg!(self.head + 1) % dbg!(self.data.len() as u16);
+        if ((entry.status & 1) == 1) == self.phase {
+            self.head = (self.head + 1) % (self.data.len() as u16);
             if self.head == 0 {
                 self.phase = !self.phase;
             }
