@@ -37,32 +37,36 @@ pub struct IdentifyNamespaceData {
     pub dps: u8,
     pub nmic: u8,
     pub rescap: u8,
-
+    // 32
     pub fpi: u8,
     pub dlfeat: u8,
     pub nawun: u16,
 
     pub nawupf: u16,
     pub nacwu: u16,
+    // 40
     pub nabsn: u16,
     pub nabo: u16,
 
     pub nabspf: u16,
     pub noiob: u16,
-
-    pub nvmcap: u64,
+    // 48
+    pub nvmcap: u128,
+    // 64
     pub npwg: u16,
     pub npwa: u16,
     pub npdg: u16,
     pub npda: u16,
-
+    // 72
     pub nows: u16,
     pub _rsvd1: [u8; 18],
+    // 92
 
     pub anagrpid: u32,
     pub _rsvd2: [u8; 3],
     pub nsattr: u8,
 
+    // 100
     pub nvmsetid: u16,
     pub endgid: u16,
     pub nguid: [u8; 16],
