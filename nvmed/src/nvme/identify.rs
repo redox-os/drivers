@@ -149,12 +149,10 @@ impl Nvme {
         let data: Dma<IdentifyControllerData> = Dma::zeroed().unwrap();
 
         // println!("  - Attempting to identify controller");
-        let cid = self
-            .submit_admin_command(|cid| NvmeCmd::identify_controller(cid, data.physical()))
+        let comp = self
+            .submit_and_complete_admin_command(|cid| NvmeCmd::identify_controller(cid, data.physical()))
             .await;
-
-        // println!("  - Waiting to identify controller");
-        let comp = self.admin_queue_completion(cid).await;
+        log::trace!("Completion: {:?}", comp);
 
         // println!("  - Dumping identify controller");
 
@@ -176,14 +174,13 @@ impl Nvme {
         let data: Dma<[u32; 1024]> = Dma::zeroed().unwrap();
 
         // println!("  - Attempting to retrieve namespace ID list");
-        let cmd_id = self
-            .submit_admin_command(|cid| {
+        let comp = self
+            .submit_and_complete_admin_command(|cid| {
                 NvmeCmd::identify_namespace_list(cid, data.physical(), base)
             })
             .await;
 
-        // println!("  - Waiting to retrieve namespace ID list");
-        let comp = self.admin_queue_completion(cmd_id).await;
+        log::trace!("Completion2: {:?}", comp);
 
         // println!("  - Dumping namespace ID list");
         data.iter().copied().take_while(|&nsid| nsid != 0).collect()
@@ -193,12 +190,9 @@ impl Nvme {
         let data: Dma<IdentifyNamespaceData> = Dma::zeroed().unwrap();
 
         // println!("  - Attempting to identify namespace {}", nsid);
-        let cmd_id = self
-            .submit_admin_command(|cid| NvmeCmd::identify_namespace(cid, data.physical(), nsid))
+        let comp = self
+            .submit_and_complete_admin_command(|cid| NvmeCmd::identify_namespace(cid, data.physical(), nsid))
             .await;
-
-        // println!("  - Waiting to identify namespace {}", nsid);
-        let comp = self.admin_queue_completion(cmd_id).await;
 
         // println!("  - Dumping identify namespace");
 

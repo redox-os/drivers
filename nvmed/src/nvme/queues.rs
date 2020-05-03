@@ -63,10 +63,11 @@ impl NvmeCompQueue {
 
     /// Get a new completion queue entry, or return None if no entry is available yet.
     pub(crate) fn complete(&mut self) -> Option<(u16, NvmeComp)> {
+        println!("PTR: {:p}", &*self as *const _);
         let entry = unsafe { ptr::read_volatile(self.data.as_ptr().add(self.head as usize)) };
         // println!("{:?}", entry);
-        if ((entry.status & 1) == 1) == self.phase {
-            self.head = (self.head + 1) % (self.data.len() as u16);
+        if ((dbg!(entry.status) & 1) == 1) == dbg!(self.phase) {
+            self.head = dbg!(self.head + 1) % dbg!(self.data.len() as u16);
             if self.head == 0 {
                 self.phase = !self.phase;
             }
@@ -108,13 +109,13 @@ impl NvmeCmdQueue {
         self.head == self.tail
     }
     pub fn is_full(&self) -> bool {
-        self.head + 1 == self.tail
+        self.head == self.tail + 1
     }
 
     /// Add a new submission command entry to the queue. The caller must ensure that the queue have free
     /// entries; this can be checked using `is_full`.
     pub fn submit_unchecked(&mut self, entry: NvmeCmd) -> u16 {
-        self.data[self.tail as usize] = entry;
+        unsafe { ptr::write_volatile(&mut self.data[self.tail as usize] as *mut _, entry) }
         self.tail = (self.tail + 1) % (self.data.len() as u16);
         self.tail
     }

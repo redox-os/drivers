@@ -40,14 +40,15 @@ async fn handle_packet(hci: Arc<Xhci>, packet: Packet) -> Packet {
 
 fn setup_logging() -> Option<&'static RedoxLogger> {
     let mut logger = RedoxLogger::new()
-        .with_output(
+        /*.with_output(
             OutputBuilder::stderr()
                 .with_filter(log::LevelFilter::Info) // limit global output to important info
                 .with_ansi_escape_codes()
                 .flush_on_newline(true)
                 .build()
-        );
+        )*/;
 
+    #[cfg(target_os = "redox")]
     match OutputBuilder::in_redox_logging_scheme("usb", "host", "xhci.log") {
         Ok(b) => logger = logger.with_output(
             // TODO: Add a configuration file for this
@@ -58,6 +59,7 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
         Err(error) => eprintln!("Failed to create xhci.log: {}", error),
     }
 
+    #[cfg(target_os = "redox")]
     match OutputBuilder::in_redox_logging_scheme("usb", "host", "xhci.ansi.log") {
         Ok(b) => logger = logger.with_output(
             b.with_filter(log::LevelFilter::Trace)
@@ -221,7 +223,7 @@ fn main() {
         (None, InterruptMethod::Polling)
     };
 
-    std::thread::sleep(std::time::Duration::from_millis(300));
+    //std::thread::sleep(std::time::Duration::from_millis(300));
 
     print!(
         "{}",

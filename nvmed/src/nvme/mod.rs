@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::convert::TryFrom;
 use std::fs::File;
 use std::ptr;
-use std::sync::atomic::{AtomicU16, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU16, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, RwLock};
 
 use crossbeam_channel::Sender;
@@ -159,7 +159,7 @@ pub struct Nvme {
     pcid_interface: Mutex<PcidServerHandle>,
     regs: RwLock<&'static mut NvmeRegs>,
 
-    pub(crate) submission_queues: RwLock<BTreeMap<SqId, Mutex<NvmeCmdQueue>>>,
+    pub(crate) submission_queues: RwLock<BTreeMap<SqId, (Mutex<NvmeCmdQueue>, CqId)>>,
     pub(crate) completion_queues:
         RwLock<BTreeMap<CqId, Mutex<(NvmeCompQueue, SmallVec<[SqId; 16]>)>>>,
 
@@ -172,6 +172,8 @@ pub struct Nvme {
 
     next_sqid: AtomicSqId,
     next_cqid: AtomicCqId,
+
+    next_avail_submission_epoch: AtomicU64,
 }
 unsafe impl Send for Nvme {}
 unsafe impl Sync for Nvme {}
@@ -186,11 +188,6 @@ pub enum FullSqHandling {
     Wait,
 }
 
-pub enum SubmissionBehavior<'a, F: FnOnce(CmdId) -> NvmeCmd> {
-    Nonblocking(Result<CmdId, F>), // TODO: Add full error
-    Future(self::cq_reactor::SubmissionFuture<'a, F>),
-}
-
 impl Nvme {
     pub fn new(
         address: usize,
@@ -201,10 +198,10 @@ impl Nvme {
         Ok(Nvme {
             regs: RwLock::new(unsafe { &mut *(address as *mut NvmeRegs) }),
             submission_queues: RwLock::new(
-                std::iter::once((0u16, Mutex::new(NvmeCmdQueue::new()?))).collect(),
+                std::iter::once((0u16, (Mutex::new(NvmeCmdQueue::new()?), 0u16))).collect(),
             ),
             completion_queues: RwLock::new(
-                std::iter::once((0u16, Mutex::new((NvmeCompQueue::new()?, smallvec!())))).collect(),
+                std::iter::once((0u16, Mutex::new((NvmeCompQueue::new()?, smallvec!(0))))).collect(),
             ),
             // map the zero interrupt vector (which according to the spec shall always point to the
             // admin completion queue) to CQID 0 (admin completion queue)
@@ -217,6 +214,7 @@ impl Nvme {
 
             next_sqid: AtomicSqId::new(0),
             next_cqid: AtomicCqId::new(0),
+            next_avail_submission_epoch: AtomicU64::new(0),
         })
     }
     /// Write to a doorbell register.
@@ -288,9 +286,9 @@ impl Nvme {
             log::debug!("completion queue {}: {:X}, {}, (submission queue ids: {:?}", qid, data.physical(), data.len(), sq_ids);
         }
 
-        for (qid, queue) in self.submission_queues.get_mut().unwrap().iter_mut() {
+        for (qid, (queue, cq_id)) in self.submission_queues.get_mut().unwrap().iter_mut() {
             let data = &queue.get_mut().unwrap().data;
-            log::debug!("submission queue {}: {:X}, {}", qid, data.physical(), data.len());
+            log::debug!("submission queue {}: {:X}, {}, attached to CQID: {}", qid, data.physical(), data.len(), cq_id);
         }
 
         {
@@ -298,7 +296,7 @@ impl Nvme {
             let submission_queues = self.submission_queues.get_mut().unwrap();
             let completion_queues = self.completion_queues.get_mut().unwrap();
 
-            let asq = submission_queues.get_mut(&0).unwrap().get_mut().unwrap();
+            let asq = submission_queues.get_mut(&0).unwrap().0.get_mut().unwrap();
             let (acq, _) = completion_queues.get_mut(&0).unwrap().get_mut().unwrap();
             regs.aqa
                 .write(((acq.data.len() as u32 - 1) << 16) | (asq.data.len() as u32 - 1));
@@ -402,55 +400,8 @@ impl Nvme {
         self.set_vectors_masked(std::iter::once((vector, masked)))
     }
 
-    pub fn submit_command_generic<'a, F: FnOnce(CmdId) -> NvmeCmd>(&'a self, sq_id: SqId, full_sq_handling: FullSqHandling, cmd_init: F) -> SubmissionBehavior<'a, F> {
-        let sqs_read_guard = self.submission_queues.read().unwrap();
-        let mut sq_lock = sqs_read_guard
-            .get(&sq_id)
-            .expect("nvmed: internal error: given SQ for SQ ID not there")
-            .lock()
-            .unwrap();
-        if sq_lock.is_full() {
-            match full_sq_handling {
-                FullSqHandling::ErrorDirectly => return SubmissionBehavior::Nonblocking(Err(cmd_init)),
-                FullSqHandling::Wait => return SubmissionBehavior::Future(self.wait_for_available_submission(sq_id, cmd_init)),
-            }
-        }
-        let cmd_id =
-            u16::try_from(sq_lock.tail).expect("nvmed: internal error: CQ has more than 2^16 entries");
-        let tail = sq_lock.submit_unchecked(cmd_init(cmd_id));
-        let tail = u16::try_from(tail).unwrap();
-
-        unsafe { self.submission_queue_tail(sq_id, tail) };
-
-        match full_sq_handling {
-            FullSqHandling::ErrorDirectly => SubmissionBehavior::Nonblocking(Ok(cmd_id)),
-            FullSqHandling::Wait => SubmissionBehavior::Future(self::cq_reactor::SubmissionFuture { state: self::cq_reactor::SubmissionFutureState::Ready(cmd_id) })
-        }
-    }
-
-    /// Try submitting a new entry to the specified submission queue, or return None if the queue
-    /// was full.
-    pub fn try_submit_command<F: FnOnce(CmdId) -> NvmeCmd>(
-        &self,
-        sq_id: SqId,
-        f: F,
-    ) -> Result<CmdId, F> {
-        match self.submit_command_generic(sq_id, FullSqHandling::ErrorDirectly, f) {
-            SubmissionBehavior::Nonblocking(opt) => opt,
-            _ => unreachable!(),
-        }
-    }
-    pub async fn submit_command_async<F: FnOnce(CmdId) -> NvmeCmd>(&self, sq_id: SqId, f: F) -> CmdId {
-        match self.submit_command_generic(sq_id, FullSqHandling::Wait, f) {
-            SubmissionBehavior::Future(future) => future.await,
-            _ => unreachable!(),
-        }
-    }
-    pub async fn submit_admin_command<F: FnOnce(CmdId) -> NvmeCmd>(&self, f: F) -> CmdId {
-        self.submit_command_async(0, f).await
-    }
-    pub async fn admin_queue_completion(&self, cmd_id: CmdId) -> NvmeComp {
-        self.completion(0, cmd_id, 0).await
+    pub async fn submit_and_complete_admin_command<F: FnOnce(CmdId) -> NvmeCmd>(&self, cmd_init: F) -> NvmeComp {
+        self.submit_and_complete_command(0, cmd_init).await
     }
 
     pub async fn create_io_completion_queue(&self, io_cq_id: CqId, vector: Option<u16>) {
@@ -478,12 +429,11 @@ impl Nvme {
             .checked_sub(1)
             .expect("nvmed: internal error: CQID 0 for I/O CQ");
 
-        let cmd_id = self
-            .submit_admin_command(|cid| {
+        let comp = self
+            .submit_and_complete_admin_command(|cid| {
                 NvmeCmd::create_io_completion_queue(cid, io_cq_id, ptr, raw_len, vector)
             })
             .await;
-        let comp = self.admin_queue_completion(cmd_id).await;
 
         if let Some(vector) = vector {
             self.cqs_for_ivs
@@ -498,17 +448,17 @@ impl Nvme {
         let (ptr, len) = {
             let mut submission_queues_guard = self.submission_queues.write().unwrap();
 
-            let queue_guard = submission_queues_guard
+            let (queue_lock, _) = submission_queues_guard
                 .entry(io_sq_id)
                 .or_insert_with(|| {
-                    Mutex::new(
+                    (Mutex::new(
                         NvmeCmdQueue::new()
                             .expect("nvmed: failed to allocate I/O completion queue"),
-                    )
-                })
-                .get_mut()
-                .unwrap();
-            (queue_guard.data.physical(), queue_guard.data.len())
+                    ), io_cq_id)
+                });
+            let queue = queue_lock.get_mut().unwrap();
+
+            (queue.data.physical(), queue.data.len())
         };
 
         let len =
@@ -517,17 +467,18 @@ impl Nvme {
             .checked_sub(1)
             .expect("nvmed: internal error: SQID 0 for I/O SQ");
 
-        let cmd_id = self
-            .submit_admin_command(|cid| {
+        let comp = self
+            .submit_and_complete_admin_command(|cid| {
                 NvmeCmd::create_io_submission_queue(cid, io_sq_id, ptr, raw_len, io_cq_id)
             })
             .await;
-        let comp = self.admin_queue_completion(cmd_id).await;
     }
 
     pub async fn init_with_queues(&self) -> BTreeMap<u32, NvmeNamespace> {
+        log::trace!("preinit");
         let ((), nsids) =
             futures::join!(self.identify_controller(), self.identify_namespace_list(0));
+        log::debug!("first commands");
 
         let mut namespaces = BTreeMap::new();
 
@@ -563,15 +514,13 @@ impl Nvme {
             (buffer_prp_guard[0], (buffer_prp_guard.physical() + 8) as u64)
         };
 
-        let cmd_id = self.submit_command_async(1, |cid| {
+        let comp = self.submit_and_complete_command(1, |cid| {
             if write {
                 NvmeCmd::io_write(cid, nsid, lba, blocks_1, ptr0, ptr1)
             } else {
                 NvmeCmd::io_read(cid, nsid, lba, blocks_1, ptr0, ptr1)
             }
         }).await;
-
-        let comp = self.completion(1, cmd_id, 1).await;
         // TODO: Handle errors
 
         Ok(())

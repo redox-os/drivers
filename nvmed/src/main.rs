@@ -48,7 +48,7 @@ impl Drop for Bar {
 #[derive(Default)]
 pub struct AllocatedBars(pub [Mutex<Option<Bar>>; 6]);
 
-/// Get the most optimal yet functional interrupt mechanism: either (in the order preference):
+/// Get the most optimal yet functional interrupt mechanism: either (in the order of preference):
 /// MSI-X, MSI, and INTx# pin. Returns both runtime interrupt structures (MSI/MSI-X capability
 /// structures), and the handles to the interrupts.
 fn get_int_method(
@@ -56,6 +56,7 @@ fn get_int_method(
     function: &PciFunction,
     allocated_bars: &AllocatedBars,
 ) -> Result<(InterruptMethod, InterruptSources)> {
+    log::trace!("Begin get_int_method");
     use pcid_interface::irq_helpers;
 
     let features = pcid_handle.fetch_all_features().unwrap();
@@ -214,7 +215,14 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
     let mut logger = RedoxLogger::new()
         .with_output(
             OutputBuilder::stderr()
-                .with_filter(log::LevelFilter::Info) // limit global output to important info
+                .with_filter(log::LevelFilter::Trace) // limit global output to important info
+                .with_ansi_escape_codes()
+                .flush_on_newline(true)
+                .build()
+        )
+        .with_output(
+            OutputBuilder::with_endpoint(File::open("debug:").unwrap())
+                .with_filter(log::LevelFilter::Trace)
                 .with_ansi_escape_codes()
                 .flush_on_newline(true)
                 .build()
@@ -295,87 +303,89 @@ fn main() {
         bar_size: bar_size as usize,
         ptr: NonNull::new(address as *mut u8).expect("Physmapping BAR gave nullptr"),
     });
-    {
-        let event_fd = syscall::open("event:", syscall::O_RDWR | syscall::O_CLOEXEC)
-            .expect("nvmed: failed to open event queue");
-        let mut event_file = unsafe { File::from_raw_fd(event_fd as RawFd) };
+    let event_fd = syscall::open("event:", syscall::O_RDWR | syscall::O_CLOEXEC)
+        .expect("nvmed: failed to open event queue");
+    let mut event_file = unsafe { File::from_raw_fd(event_fd as RawFd) };
 
-        let scheme_name = format!("disk/{}", name);
-        let socket_fd = syscall::open(
-            &format!(":{}", scheme_name),
-            syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK | syscall::O_CLOEXEC,
-        )
-        .expect("nvmed: failed to create disk scheme");
+    let scheme_name = format!("disk/{}", name);
+    let socket_fd = syscall::open(
+        &format!(":{}", scheme_name),
+        syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK | syscall::O_CLOEXEC,
+    )
+    .expect("nvmed: failed to create disk scheme");
 
-        syscall::write(
-            event_fd,
-            &syscall::Event {
-                id: socket_fd,
-                flags: syscall::EVENT_READ,
-                data: 0,
+    syscall::write(
+        event_fd,
+        &syscall::Event {
+            id: socket_fd,
+            flags: syscall::EVENT_READ,
+            data: 0,
+        },
+    )
+    .expect("nvmed: failed to watch disk scheme events");
+
+    std::thread::sleep(std::time::Duration::from_millis(1000));
+
+    let mut socket_file = unsafe { File::from_raw_fd(socket_fd as RawFd) };
+
+    let (reactor_sender, reactor_receiver) = crossbeam_channel::unbounded();
+    let (interrupt_method, interrupt_sources) =
+        get_int_method(&mut pcid_handle, &pci_config.func, &allocated_bars)
+            .expect("nvmed: failed to find a suitable interrupt method");
+    let mut nvme = Nvme::new(address, interrupt_method, pcid_handle, reactor_sender)
+        .expect("nvmed: failed to allocate driver data");
+    unsafe { nvme.init() }
+    log::debug!("Finished base initialization");
+    let nvme = Arc::new(nvme);
+    let reactor_thread = nvme::cq_reactor::start_cq_reactor_thread(Arc::clone(&nvme), interrupt_sources, reactor_receiver);
+    let namespaces = futures::executor::block_on(nvme.init_with_queues());
+
+    syscall::setrens(0, 0).expect("nvmed: failed to enter null namespace");
+
+    let mut scheme = DiskScheme::new(scheme_name, nvme, namespaces);
+    let mut todo = Vec::new();
+    'events: loop {
+        let mut event = Event::default();
+        if event_file
+            .read(&mut event)
+            .expect("nvmed: failed to read event queue")
+            == 0
+        {
+            break;
+        }
+
+        match event.data {
+            0 => loop {
+                let mut packet = Packet::default();
+                match socket_file.read(&mut packet) {
+                    Ok(0) => break 'events,
+                    Ok(_) => (),
+                    Err(err) => match err.kind() {
+                        ErrorKind::WouldBlock => break,
+                        _ => Err(err).expect("nvmed: failed to read disk scheme"),
+                    },
+                }
+                todo.push(packet);
             },
-        )
-        .expect("nvmed: failed to watch disk scheme events");
-
-        let mut socket_file = unsafe { File::from_raw_fd(socket_fd as RawFd) };
-
-        let (reactor_sender, reactor_receiver) = crossbeam_channel::unbounded();
-        let (interrupt_method, interrupt_sources) =
-            get_int_method(&mut pcid_handle, &pci_config.func, &allocated_bars)
-                .expect("nvmed: failed to find a suitable interrupt method");
-        let mut nvme = Nvme::new(address, interrupt_method, pcid_handle, reactor_sender)
-            .expect("nvmed: failed to allocate driver data");
-        unsafe { nvme.init() }
-        let nvme = Arc::new(nvme);
-        nvme::cq_reactor::start_cq_reactor_thread(Arc::clone(&nvme), interrupt_sources, reactor_receiver);
-        let namespaces = futures::executor::block_on(nvme.init_with_queues());
-
-        syscall::setrens(0, 0).expect("nvmed: failed to enter null namespace");
-
-        let mut scheme = DiskScheme::new(scheme_name, nvme, namespaces);
-        let mut todo = Vec::new();
-        'events: loop {
-            let mut event = Event::default();
-            if event_file
-                .read(&mut event)
-                .expect("nvmed: failed to read event queue")
-                == 0
-            {
-                break;
-            }
-
-            match event.data {
-                0 => loop {
-                    let mut packet = Packet::default();
-                    match socket_file.read(&mut packet) {
-                        Ok(0) => break 'events,
-                        Ok(_) => (),
-                        Err(err) => match err.kind() {
-                            ErrorKind::WouldBlock => break,
-                            _ => Err(err).expect("nvmed: failed to read disk scheme"),
-                        },
-                    }
-                    todo.push(packet);
-                },
-                unknown => {
-                    panic!("nvmed: unknown event data {}", unknown);
-                }
-            }
-
-            let mut i = 0;
-            while i < todo.len() {
-                if let Some(a) = scheme.handle(&todo[i]) {
-                    let mut packet = todo.remove(i);
-                    packet.a = a;
-                    socket_file
-                        .write(&packet)
-                        .expect("nvmed: failed to write disk scheme");
-                } else {
-                    i += 1;
-                }
+            unknown => {
+                panic!("nvmed: unknown event data {}", unknown);
             }
         }
 
-        //TODO: destroy NVMe stuff
+        let mut i = 0;
+        while i < todo.len() {
+            if let Some(a) = scheme.handle(&todo[i]) {
+                let mut packet = todo.remove(i);
+                packet.a = a;
+                socket_file
+                    .write(&packet)
+                    .expect("nvmed: failed to write disk scheme");
+            } else {
+                i += 1;
+            }
+        }
     }
+
+    //TODO: destroy NVMe stuff
+    reactor_thread.join().expect("nvmed: failed to join reactor thread");
 }
