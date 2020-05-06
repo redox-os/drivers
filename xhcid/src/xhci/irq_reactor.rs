@@ -212,7 +212,7 @@ impl IrqReactor {
             if index >= self.states.len() { break }
 
             match self.states[index].kind {
-                StateKind::CommandCompletion { phys_ptr } if dbg!(trb.trb_type()) == TrbType::CommandCompletion as u8 => if dbg!(trb.completion_trb_pointer()) == Some(phys_ptr) {
+                StateKind::CommandCompletion { phys_ptr } if trb.trb_type() == TrbType::CommandCompletion as u8 => if trb.completion_trb_pointer() == Some(phys_ptr) {
                     trace!("Found matching command completion future");
                     let state = self.states.remove(index);
 
@@ -430,7 +430,6 @@ impl Xhci {
         if ! trb.is_command_trb() {
             panic!("Invalid TRB type given to next_command_completion_event_trb(): {} (TRB {:?}. Expected command TRB.", trb.trb_type(), trb)
         }
-        dbg!(command_ring.trbs.physical());
         EventTrbFuture::Pending {
             state: FutureState {
                 // This is only possible for transfers if they are isochronous, or for Force Event TRBs (virtualization).

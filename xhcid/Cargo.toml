@@ -20,11 +20,12 @@ plain = "0.2"
 lazy_static = "1.4"
 log = "0.4"
 redox_event = { git = "https://gitlab.redox-os.org/redox-os/event.git" }
-redox-log = { git = "https://gitlab.redox-os.org/redox-os/redox-log.git" }
+redox-log = { git = "https://gitlab.redox-os.org/redox-os/redox-log.git", tag = "v0.1.0" }
 redox_syscall = { git = "https://gitlab.redox-os.org/redox-os/syscall.git" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 smallvec = { version = "1", features = ["serde"] }
 thiserror = "1"
 toml = "0.5"
+
 pcid = { path = "../pcid" }

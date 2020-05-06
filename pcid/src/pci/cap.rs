@@ -25,7 +25,7 @@ where
 
             if self.offset == 0 { return None };
 
-            let first_dword = dbg!(self.reader.read_u32(dbg!(u16::from(self.offset))));
+            let first_dword = self.reader.read_u32(u16::from(self.offset));
             let next = ((first_dword >> 8) & 0xFF) as u8;
 
             let offset = self.offset;
@@ -41,6 +41,7 @@ pub enum CapabilityId {
     Msi = 0x05,
     MsiX = 0x11,
     Pcie = 0x10,
+    Sata = 0x12, // only on AHCI functions
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
@@ -48,13 +49,13 @@ pub enum MsiCapability {
     _32BitAddress {
         message_control: u32,
         message_address: u32,
-        message_data: u32,
+        message_data: u16,
     },
     _64BitAddress {
         message_control: u32,
         message_address_lo: u32,
         message_address_hi: u32,
-        message_data: u32,
+        message_data: u16,
     },
     _32BitAddressWithPvm {
         message_control: u32,
@@ -85,11 +86,12 @@ pub struct MsixCapability {
     pub c: u32,
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum Capability {
     Msi(MsiCapability),
     MsiX(MsixCapability),
     Pcie(PcieCapability),
+    FunctionSpecific(u8, Vec<u8>), // TODO: Arrayvec
     Other(u8),
 }
 
@@ -156,6 +158,8 @@ impl Capability {
             Self::parse_msix(reader, offset)
         } else if capability_id == CapabilityId::Pcie as u8 {
             Self::parse_pcie(reader, offset)
+        } else if capability_id == CapabilityId::Sata as u8 {
+            Self::FunctionSpecific(capability_id, reader.read_range(offset.into(), 8))
         } else {
             Self::Other(capability_id)
             //panic!("unimplemented or malformed capability id: {}", capability_id)
