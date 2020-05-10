@@ -1,13 +1,14 @@
 use std::convert::TryFrom;
+use std::future::Future;
 use std::io::prelude::*;
 use std::ops::Deref;
+use std::pin::Pin;
 use std::sync::atomic;
-use std::{cmp, fmt, io, mem, path, slice, str};
+use std::{cmp, fmt, io, mem, path, slice, str, task};
 
-use futures::executor::block_on;
+use futures::FutureExt;
 use log::{debug, error, info, warn, trace};
-use serde::{Deserialize, Serialize};
-use smallvec::{smallvec, SmallVec};
+use smallvec::SmallVec;
 
 use syscall::io::{Dma, Io};
 use syscall::scheme::Scheme;
@@ -16,8 +17,7 @@ use syscall::{
     ENOSYS, ENOTDIR, ENXIO, EOPNOTSUPP, EOVERFLOW, EPERM, EPROTO, ESPIPE, MODE_CHR, MODE_DIR,
     MODE_FILE, O_CREAT, O_DIRECTORY, O_RDONLY, O_RDWR, O_STAT, O_WRONLY, SEEK_CUR, SEEK_END,
     SEEK_SET, Packet, EFAULT, StatVfs,
-
-    SYS_OPEN, SYS_READ, SYS_WRITE, SYS_LSEEK, SYS_FPATH, SYS_FSTAT, SYS_CLOSE,
+    SYS_OPEN, SYS_READ, SYS_WRITE, SYS_LSEEK, SYS_FPATH, SYS_FSTAT, SYS_CLOSE, EventFlags, O_NONBLOCK, F_SETFL, F_GETFL, SYS_FCNTL, SYS_FEVENT,
 };
 
 use super::{port, usb};
@@ -88,7 +88,14 @@ unsafe impl Send for PortReqState {}
 unsafe impl Sync for PortReqState {}
 
 #[derive(Debug)]
-pub enum Handle {
+pub struct Handle {
+    pub kind: HandleKind,
+    pub blocking: bool,
+    pub event_flags: EventFlags,
+}
+
+#[derive(Debug)]
+pub enum HandleKind {
     TopLevel(usize, Vec<u8>),              // offset, contents (ports)
     Port(usize, usize, Vec<u8>),           // port, offset, contents
     PortDesc(usize, usize, Vec<u8>),       // port, offset, contents
@@ -1215,8 +1222,8 @@ impl Xhci {
             PortReqState::Tmp | PortReqState::TmpSetup(_) => unreachable!(),
         };
         let mut guard = self.handles.get_mut(&fd).ok_or(Error::new(EBADF))?;
-        match &mut *guard {
-            Handle::PortReq(_, ref mut state) => *state = st,
+        match &mut guard.kind {
+            HandleKind::PortReq(_, ref mut state) => *state = st,
             _ => unreachable!(),
         }
         Ok(bytes_written)
@@ -1247,42 +1254,118 @@ impl Xhci {
         };
 
         let mut guard = self.handles.get_mut(&fd).ok_or(Error::new(EBADF))?;
-        match &mut *guard {
-            Handle::PortReq(_, ref mut state) => *state = st,
+        match &mut guard.kind {
+            HandleKind::PortReq(_, ref mut state) => *state = st,
             _ => unreachable!(),
         }
         Ok(bytes_read)
     }
 }
 
+pub enum SchemeHandleOutput<O, F> {
+    Direct(Option<O>),
+    Future(F),
+}
+impl<O, F> SchemeHandleOutput<O, F> {
+    fn direct(output: O) -> Self {
+        Self::Direct(Some(output))
+    }
+    fn future(future: F) -> Self {
+        Self::Future(future)
+    }
+    fn map_direct<P, Func>(self, f: Func) -> SchemeHandleOutput<P, F>
+    where
+        Func: FnOnce(O) -> P
+    {
+        match self {
+            Self::Direct(o) => SchemeHandleOutput::Direct(Some(f(o.expect("polling finished future again")))),
+            Self::Future(f) => SchemeHandleOutput::Future(f),
+        }
+    }
+    fn map_future<G, Func>(self, f: Func) -> SchemeHandleOutput<O, G>
+    where
+        Func: FnOnce(F) -> G
+    {
+        match self {
+            Self::Direct(o) => SchemeHandleOutput::Direct(o),
+            Self::Future(fut) => SchemeHandleOutput::Future(f(fut)),
+        }
+    }
+}
+impl<O, F> SchemeHandleOutput<O, F>
+where
+    F: Future<Output = O>,
+{
+    fn map<P, Func>(self, f: Func) -> SchemeHandleOutput<P, impl Future<Output = P>>
+    where
+        Func: FnOnce(O) -> P,
+    {
+        match self {
+            Self::Direct(o) => SchemeHandleOutput::Direct(Some(f(o.expect("polling finished future again")))),
+            Self::Future(fut) => SchemeHandleOutput::Future(fut.map(f)),
+        }
+    }
+}
+impl<O, F> Future for SchemeHandleOutput<O, F>
+where
+    F: Future<Output = O>,
+{
+    type Output = O;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut task::Context) -> task::Poll<O> {
+        match unsafe { self.get_unchecked_mut() } {
+            Self::Direct(o) => task::Poll::Ready(o.take().expect("polling finished future again")),
+            Self::Future(f) => unsafe { Pin::new_unchecked(f) }.poll(cx),
+        }
+    }
+}
+enum EitherFuture<A, B> {
+    A(A),
+    B(B),
+}
+impl<A, B, O> Future for EitherFuture<A, B>
+where
+    A: Future<Output = O>,
+    B: Future<Output = O>,
+{
+    type Output = O;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut task::Context) -> task::Poll<O> {
+        match unsafe { self.get_unchecked_mut() } {
+            Self::A(a) => unsafe { Pin::new_unchecked(a) }.poll(cx),
+            Self::B(b) => unsafe { Pin::new_unchecked(b) }.poll(cx),
+        }
+    }
+}
+
 impl Xhci {
-    pub async fn scheme_handle(&self, packet: &mut Packet) {
-        let res = match packet.a {
-            SYS_OPEN => self.scheme_open(unsafe { slice::from_raw_parts(packet.b as *const u8, packet.c) }, packet.d, packet.uid, packet.gid),
+    fn scheme_handle_inner<'a>(&'a self, packet: &Packet) -> SchemeHandleOutput<Result<usize>, impl Future<Output = Result<usize>> + 'a> {
+        match packet.a {
+            SYS_OPEN => SchemeHandleOutput::direct(self.scheme_open(unsafe { slice::from_raw_parts(packet.b as *const u8, packet.c) }, packet.d, packet.uid, packet.gid)),
             //SYS_CHMOD => self.chmod(unsafe { slice::from_raw_parts(packet.b as *const u8, packet.c) }, packet.d as u16, packet.uid, packet.gid),
             //SYS_RMDIR => self.rmdir(unsafe { slice::from_raw_parts(packet.b as *const u8, packet.c) }, packet.uid, packet.gid),
             //SYS_UNLINK => self.unlink(unsafe { slice::from_raw_parts(packet.b as *const u8, packet.c) }, packet.uid, packet.gid),
 
             //SYS_DUP => self.dup(packet.b, unsafe { slice::from_raw_parts(packet.c as *const u8, packet.d) }),
-            SYS_READ => self.scheme_read(packet.b, unsafe { slice::from_raw_parts_mut(packet.c as *mut u8, packet.d) }).await,
-            SYS_WRITE => self.scheme_write(packet.b, unsafe { slice::from_raw_parts(packet.c as *const u8, packet.d) }).await,
-            SYS_LSEEK => self.scheme_seek(packet.b, packet.c, packet.d),
+            SYS_READ => SchemeHandleOutput::future(self.scheme_read(packet.b, unsafe { slice::from_raw_parts_mut(packet.c as *mut u8, packet.d) })).map_future(EitherFuture::A),
+            SYS_WRITE => SchemeHandleOutput::future(self.scheme_write(packet.b, unsafe { slice::from_raw_parts(packet.c as *const u8, packet.d) })).map_future(EitherFuture::B),
+            SYS_LSEEK => SchemeHandleOutput::direct(self.scheme_seek(packet.b, packet.c, packet.d)),
             //SYS_FCHMOD => self.fchmod(packet.b, packet.c as u16),
             //SYS_FCHOWN => self.fchown(packet.b, packet.c as u32, packet.d as u32),
-            //SYS_FCNTL => self.fcntl(packet.b, packet.c, packet.d),
-            //SYS_FEVENT => self.fevent(packet.b, packet.c),
+            SYS_FCNTL => SchemeHandleOutput::direct(self.scheme_fcntl(packet.b, packet.c, packet.d)),
+            SYS_FEVENT => SchemeHandleOutput::direct(self.scheme_fevent(packet.b, packet.c)),
             /*SYS_FMAP => if packet.d >= mem::size_of::<Map>() {
                 self.fmap(packet.b, unsafe { &*(packet.c as *const Map) })
             } else {
                 Err(Error::new(EFAULT))
             },*/
             //SYS_FUNMAP => self.funmap(packet.b),
-            SYS_FPATH => self.scheme_fpath(packet.b, unsafe { slice::from_raw_parts_mut(packet.c as *mut u8, packet.d) }),
+            SYS_FPATH => SchemeHandleOutput::direct(self.scheme_fpath(packet.b, unsafe { slice::from_raw_parts_mut(packet.c as *mut u8, packet.d) })),
             //SYS_FRENAME => self.frename(packet.b, unsafe { slice::from_raw_parts(packet.c as *const u8, packet.d) }, packet.uid, packet.gid),
             SYS_FSTAT => if packet.d >= mem::size_of::<Stat>() {
-                self.scheme_fstat(packet.b, unsafe { &mut *(packet.c as *mut Stat) })
+                SchemeHandleOutput::direct(self.scheme_fstat(packet.b, unsafe { &mut *(packet.c as *mut Stat) }))
             } else {
-                Err(Error::new(EFAULT))
+                SchemeHandleOutput::direct(Err(Error::new(EFAULT)))
             },
             /*SYS_FSTATVFS => if packet.d >= mem::size_of::<StatVfs>() {
                 self.scheme_fstatvfs(packet.b, unsafe { &mut *(packet.c as *mut StatVfs) })
@@ -1296,11 +1379,14 @@ impl Xhci {
             } else {
                 Err(Error::new(EFAULT))
             },*/
-            SYS_CLOSE => self.scheme_close(packet.b),
-            _ => Err(Error::new(ENOSYS))
-        };
-
-        packet.a = Error::mux(res);
+            SYS_CLOSE => SchemeHandleOutput::direct(self.scheme_close(packet.b)),
+            _ => SchemeHandleOutput::direct(Err(Error::new(ENOSYS))),
+        }
+    }
+    pub fn scheme_handle<'a>(&'a self, packet: &'a mut Packet) -> SchemeHandleOutput<(), impl Future<Output = ()> + 'a> {
+        self.scheme_handle_inner(&*packet).map(move |res| {
+            packet.a = Error::mux(res);
+        })
     }
     fn scheme_open(&self, path: &[u8], flags: usize, uid: u32, _gid: u32) -> Result<usize> {
         if uid != 0 {
@@ -1322,7 +1408,7 @@ impl Xhci {
             .collect::<Option<SmallVec<[&str; 4]>>>()
             .ok_or(Error::new(ENOENT))?;
 
-        let handle = match &components[..] {
+        let handle_kind = match &components[..] {
             &[] => {
                 if flags & O_DIRECTORY != 0 || flags & O_STAT != 0 {
                     let mut contents = Vec::new();
@@ -1337,7 +1423,7 @@ impl Xhci {
                         write!(contents, "port{}\n", index).unwrap();
                     }
 
-                    Handle::TopLevel(0, contents)
+                    HandleKind::TopLevel(0, contents)
                 } else {
                     return Err(Error::new(EISDIR));
                 }
@@ -1355,7 +1441,7 @@ impl Xhci {
                         }
 
                         let contents = self.port_desc_json(port_num)?;
-                        Handle::PortDesc(port_num, 0, contents)
+                        HandleKind::PortDesc(port_num, 0, contents)
                     }
                     "configure" => {
                         if flags & O_DIRECTORY != 0 && flags & O_STAT == 0 {
@@ -1365,20 +1451,20 @@ impl Xhci {
                             return Err(Error::new(EACCES));
                         }
 
-                        Handle::ConfigureEndpoints(port_num)
+                        HandleKind::ConfigureEndpoints(port_num)
                     }
                     "state" => {
                         if flags & O_DIRECTORY != 0 && flags & O_STAT == 0 {
                             return Err(Error::new(ENOTDIR));
                         }
 
-                        Handle::PortState(port_num, 0)
+                        HandleKind::PortState(port_num, 0)
                     }
                     "request" => {
                         if flags & O_DIRECTORY != 0 && flags & O_STAT == 0 {
                             return Err(Error::new(ENOTDIR));
                         }
-                        Handle::PortReq(port_num, PortReqState::Init)
+                        HandleKind::PortReq(port_num, PortReqState::Init)
                     }
                     "endpoints" => {
                         if flags & O_DIRECTORY == 0 && flags & O_STAT == 0 {
@@ -1395,7 +1481,7 @@ impl Xhci {
                             write!(contents, "{}\n", ep_num).unwrap();
                         }
 
-                        Handle::Endpoints(port_num, 0, contents)
+                        HandleKind::Endpoints(port_num, 0, contents)
                     }
                     _ => return Err(Error::new(ENOENT)),
                 }
@@ -1421,7 +1507,7 @@ impl Xhci {
                 }
                 let contents = "ctl\ndata\n".as_bytes().to_owned();
 
-                Handle::Endpoint(port_num, endpoint_num, EndpointHandleTy::Root(0, contents))
+                HandleKind::Endpoint(port_num, endpoint_num, EndpointHandleTy::Root(0, contents))
             }
             &[port, "endpoints", endpoint_num_str, sub] if port.starts_with("port") => {
                 let port_num = port[4..].parse::<usize>().or(Err(Error::new(ENOENT)))?;
@@ -1442,7 +1528,7 @@ impl Xhci {
                     "data" => EndpointHandleTy::Data,
                     _ => return Err(Error::new(ENOENT)),
                 };
-                Handle::Endpoint(port_num, endpoint_num, st)
+                HandleKind::Endpoint(port_num, endpoint_num, st)
             }
             &[port] if port.starts_with("port") => {
                 if flags & O_DIRECTORY != 0 || flags & O_STAT != 0 {
@@ -1461,12 +1547,17 @@ impl Xhci {
                         write!(contents, "configure\n").unwrap();
                     }
 
-                    Handle::Port(port_num, 0, contents)
+                    HandleKind::Port(port_num, 0, contents)
                 } else {
                     return Err(Error::new(EISDIR));
                 }
             }
             _ => return Err(Error::new(ENOENT)),
+        };
+        let handle = Handle {
+            kind: handle_kind,
+            blocking: flags & O_NONBLOCK == 0,
+            event_flags: EventFlags::empty(),
         };
 
         let fd = self.next_handle.fetch_add(1, atomic::Ordering::Relaxed);
@@ -1479,36 +1570,36 @@ impl Xhci {
     }
 
     fn scheme_fstat(&self, id: usize, stat: &mut Stat) -> Result<usize> {
-        let mut guard = self.handles.get(&id).ok_or(Error::new(EBADF))?;
+        let guard = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
-        match &*guard {
-            &Handle::TopLevel(_, ref buf)
-            | &Handle::Port(_, _, ref buf)
-            | &Handle::Endpoints(_, _, ref buf) => {
+        match &guard.kind {
+            &HandleKind::TopLevel(_, ref buf)
+            | &HandleKind::Port(_, _, ref buf)
+            | &HandleKind::Endpoints(_, _, ref buf) => {
                 stat.st_mode = MODE_DIR;
                 stat.st_size = buf.len() as u64;
             }
-            &Handle::PortDesc(_, _, ref buf) => {
+            &HandleKind::PortDesc(_, _, ref buf) => {
                 stat.st_mode = MODE_FILE;
                 stat.st_size = buf.len() as u64;
             }
-            &Handle::PortReq(_, PortReqState::WaitingForDeviceBytes(ref buf, _))
-            | &Handle::PortReq(_, PortReqState::WaitingForHostBytes(ref buf, _)) => {
+            &HandleKind::PortReq(_, PortReqState::WaitingForDeviceBytes(ref buf, _))
+            | &HandleKind::PortReq(_, PortReqState::WaitingForHostBytes(ref buf, _)) => {
                 stat.st_mode = MODE_CHR;
                 stat.st_size = buf.len() as u64;
             }
-            &Handle::PortReq(_, PortReqState::Tmp)
-            | &Handle::PortReq(_, PortReqState::TmpSetup(_)) => unreachable!(),
+            &HandleKind::PortReq(_, PortReqState::Tmp)
+            | &HandleKind::PortReq(_, PortReqState::TmpSetup(_)) => unreachable!(),
 
-            &Handle::PortState(_, _) | &Handle::PortReq(_, _) => stat.st_mode = MODE_CHR,
-            &Handle::Endpoint(_, _, ref st) => match st {
+            &HandleKind::PortState(_, _) | &HandleKind::PortReq(_, _) => stat.st_mode = MODE_CHR,
+            &HandleKind::Endpoint(_, _, ref st) => match st {
                 &EndpointHandleTy::Ctl | &EndpointHandleTy::Data => stat.st_mode = MODE_CHR,
                 &EndpointHandleTy::Root(_, ref buf) => {
                     stat.st_mode = MODE_DIR;
                     stat.st_size = buf.len() as u64;
                 }
             },
-            &Handle::ConfigureEndpoints(_) => {
+            &HandleKind::ConfigureEndpoints(_) => {
                 stat.st_mode = MODE_CHR | 0o200; // write only
             }
         }
@@ -1519,18 +1610,18 @@ impl Xhci {
         let mut cursor = io::Cursor::new(buffer);
 
         let guard = self.handles.get(&fd).ok_or(Error::new(EBADF))?;
-        match &*guard {
-            &Handle::TopLevel(_, _) => write!(cursor, "/").unwrap(),
-            &Handle::Port(port_num, _, _) => write!(cursor, "/port{}/", port_num).unwrap(),
-            &Handle::PortDesc(port_num, _, _) => {
+        match &guard.kind {
+            &HandleKind::TopLevel(_, _) => write!(cursor, "/").unwrap(),
+            &HandleKind::Port(port_num, _, _) => write!(cursor, "/port{}/", port_num).unwrap(),
+            &HandleKind::PortDesc(port_num, _, _) => {
                 write!(cursor, "/port{}/descriptors", port_num).unwrap()
             }
-            &Handle::PortState(port_num, _) => write!(cursor, "/port{}/state", port_num).unwrap(),
-            &Handle::PortReq(port_num, _) => write!(cursor, "/port{}/request", port_num).unwrap(),
-            &Handle::Endpoints(port_num, _, _) => {
+            &HandleKind::PortState(port_num, _) => write!(cursor, "/port{}/state", port_num).unwrap(),
+            &HandleKind::PortReq(port_num, _) => write!(cursor, "/port{}/request", port_num).unwrap(),
+            &HandleKind::Endpoints(port_num, _, _) => {
                 write!(cursor, "/port{}/endpoints/", port_num).unwrap()
             }
-            &Handle::Endpoint(port_num, endp_num, ref st) => write!(
+            &HandleKind::Endpoint(port_num, endp_num, ref st) => write!(
                 cursor,
                 "/port{}/endpoints/{}/{}",
                 port_num,
@@ -1542,7 +1633,7 @@ impl Xhci {
                 }
             )
             .unwrap(),
-            &Handle::ConfigureEndpoints(port_num) => {
+            &HandleKind::ConfigureEndpoints(port_num) => {
                 write!(cursor, "/port{}/configure", port_num).unwrap()
             }
         }
@@ -1555,13 +1646,13 @@ impl Xhci {
 
         trace!("SEEK fd={}, handle={:?}, pos {}, whence {}", fd, guard, pos, whence);
 
-        match &mut *guard {
+        match &mut guard.kind {
             // Directories, or fixed files
-            Handle::TopLevel(ref mut offset, ref buf)
-            | Handle::Port(_, ref mut offset, ref buf)
-            | Handle::PortDesc(_, ref mut offset, ref buf)
-            | Handle::Endpoints(_, ref mut offset, ref buf)
-            | Handle::Endpoint(_, _, EndpointHandleTy::Root(ref mut offset, ref buf)) => {
+            HandleKind::TopLevel(ref mut offset, ref buf)
+            | HandleKind::Port(_, ref mut offset, ref buf)
+            | HandleKind::PortDesc(_, ref mut offset, ref buf)
+            | HandleKind::Endpoints(_, ref mut offset, ref buf)
+            | HandleKind::Endpoint(_, _, EndpointHandleTy::Root(ref mut offset, ref buf)) => {
                 *offset = match whence {
                     SEEK_SET => cmp::max(0, cmp::min(pos, buf.len())),
                     SEEK_CUR => cmp::max(0, cmp::min(*offset + pos, buf.len())),
@@ -1570,7 +1661,7 @@ impl Xhci {
                 };
                 Ok(*offset)
             }
-            Handle::PortState(_, ref mut offset) => {
+            HandleKind::PortState(_, ref mut offset) => {
                 match whence {
                     SEEK_SET => *offset = pos,
                     SEEK_CUR => *offset = pos,
@@ -1580,7 +1671,7 @@ impl Xhci {
                 Ok(*offset)
             }
             // Write-once configure or transfer
-            Handle::Endpoint(_, _, _) | Handle::ConfigureEndpoints(_) | Handle::PortReq(_, _) => {
+            HandleKind::Endpoint(_, _, _) | HandleKind::ConfigureEndpoints(_) | HandleKind::PortReq(_, _) => {
                 return Err(Error::new(ESPIPE))
             }
         }
@@ -1589,12 +1680,12 @@ impl Xhci {
     async fn scheme_read(&self, fd: usize, buf: &mut [u8]) -> Result<usize> {
         let mut guard = self.handles.get_mut(&fd).ok_or(Error::new(EBADF))?;
         trace!("READ fd={}, handle={:?}, buf=(addr {:p}, length {})", fd, guard, buf.as_ptr(), buf.len());
-        match &mut *guard {
-            Handle::TopLevel(ref mut offset, ref src_buf)
-            | Handle::Port(_, ref mut offset, ref src_buf)
-            | Handle::PortDesc(_, ref mut offset, ref src_buf)
-            | Handle::Endpoints(_, ref mut offset, ref src_buf)
-            | Handle::Endpoint(_, _, EndpointHandleTy::Root(ref mut offset, ref src_buf)) => {
+        match &mut guard.kind {
+            HandleKind::TopLevel(ref mut offset, ref src_buf)
+            | HandleKind::Port(_, ref mut offset, ref src_buf)
+            | HandleKind::PortDesc(_, ref mut offset, ref src_buf)
+            | HandleKind::Endpoints(_, ref mut offset, ref src_buf)
+            | HandleKind::Endpoint(_, _, EndpointHandleTy::Root(ref mut offset, ref src_buf)) => {
                 let max_bytes_to_read = cmp::min(src_buf.len(), buf.len());
                 let bytes_to_read = cmp::max(max_bytes_to_read, *offset) - *offset;
 
@@ -1603,14 +1694,14 @@ impl Xhci {
 
                 Ok(bytes_to_read)
             }
-            Handle::ConfigureEndpoints(_) => return Err(Error::new(EBADF)),
+            HandleKind::ConfigureEndpoints(_) => return Err(Error::new(EBADF)),
 
-            &mut Handle::Endpoint(port_num, endp_num, ref mut st) => match st {
+            &mut HandleKind::Endpoint(port_num, endp_num, ref mut st) => match st {
                 EndpointHandleTy::Ctl => self.on_read_endp_ctl(port_num, endp_num, buf),
                 EndpointHandleTy::Data => self.on_read_endp_data(port_num, endp_num, buf).await,
                 EndpointHandleTy::Root(_, _) => return Err(Error::new(EBADF)),
             },
-            &mut Handle::PortState(port_num, ref mut offset) => {
+            &mut HandleKind::PortState(port_num, ref mut offset) => {
                 let ps = self.port_states.get(&port_num).ok_or(Error::new(EBADF))?;
                 let state = self
                     .dev_ctx
@@ -1634,28 +1725,31 @@ impl Xhci {
 
                 Ok(Self::write_dyn_string(string, buf, offset))
             }
-            &mut Handle::PortReq(port_num, ref mut st) => {
+            &mut HandleKind::PortReq(port_num, ref mut st) => {
                 let state = std::mem::replace(st, PortReqState::Tmp);
                 drop(guard); // release the lock
                 self.handle_port_req_read(fd, port_num, state, buf).await
             }
         }
     }
+    // TODO: We might consider descending SchemeHandleOutput further down, in case the latency of
+    // spawning a new task solely for getting the status of an endpoint is too much. Same goes with
+    // scheme_read (and probably more important there).
     async fn scheme_write(&self, fd: usize, buf: &[u8]) -> Result<usize> {
         let mut guard = self.handles.get_mut(&fd).ok_or(Error::new(EBADF))?;
         trace!("WRITE fd={}, handle={:?}, buf=(addr {:p}, length {})", fd, guard, buf.as_ptr(), buf.len());
 
-        match &mut *guard {
-            &mut Handle::ConfigureEndpoints(port_num) => {
+        match &mut guard.kind {
+            &mut HandleKind::ConfigureEndpoints(port_num) => {
                 self.configure_endpoints(port_num, buf).await?;
                 Ok(buf.len())
             }
-            &mut Handle::Endpoint(port_num, endp_num, ref ep_file_ty) => match ep_file_ty {
+            &mut HandleKind::Endpoint(port_num, endp_num, ref ep_file_ty) => match ep_file_ty {
                 EndpointHandleTy::Ctl => self.on_write_endp_ctl(port_num, endp_num, buf).await,
                 EndpointHandleTy::Data => self.on_write_endp_data(port_num, endp_num, buf).await,
                 EndpointHandleTy::Root(_, _) => return Err(Error::new(EBADF)),
             },
-            &mut Handle::PortReq(port_num, ref mut st) => {
+            &mut HandleKind::PortReq(port_num, ref mut st) => {
                 let state = std::mem::replace(st, PortReqState::Tmp);
                 drop(guard); // release the lock
                 self.handle_port_req_write(fd, port_num, state, buf).await
@@ -1670,6 +1764,35 @@ impl Xhci {
             return Err(Error::new(EBADF));
         }
         Ok(0)
+    }
+    fn scheme_fevent(&self, fd: usize, flags: usize) -> Result<usize> {
+        let flags = EventFlags::from_bits(flags).ok_or(Error::new(EINVAL))?;
+        let mut guard = self.handles.get_mut(&fd).ok_or(Error::new(EBADF))?;
+        guard.event_flags = flags;
+        Ok(0)
+    }
+    fn scheme_fcntl(&self, fd: usize, cmd: usize, arg: usize) -> Result<usize> {
+        let mut guard = self.handles.get_mut(&fd).ok_or(Error::new(EBADF))?;
+
+        // Right now we only support setting or clearing O_NONBLOCK.
+        match cmd {
+            F_SETFL => {
+                if arg & !O_NONBLOCK != 0 {
+                    return Err(Error::new(EINVAL));
+                }
+                if arg & O_NONBLOCK != 0 {
+                    guard.blocking = true;
+                } else {
+                    guard.blocking = false;
+                }
+                Ok(0)
+            }
+            F_GETFL => {
+                if arg != 0 { return Err(Error::new(EINVAL)) }
+                Ok(if guard.blocking { O_NONBLOCK } else { 0 })
+            }
+            _ => return Err(Error::new(EINVAL)),
+        }
     }
 }
 impl Xhci {
