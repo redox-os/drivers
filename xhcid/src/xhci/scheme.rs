@@ -3,7 +3,7 @@ use std::future::Future;
 use std::io::prelude::*;
 use std::ops::Deref;
 use std::pin::Pin;
-use std::sync::atomic;
+use std::sync::{Arc, atomic};
 use std::{cmp, fmt, io, mem, path, slice, str, task};
 
 use futures::FutureExt;
@@ -17,11 +17,11 @@ use syscall::{
     ENOSYS, ENOTDIR, ENXIO, EOPNOTSUPP, EOVERFLOW, EPERM, EPROTO, ESPIPE, MODE_CHR, MODE_DIR,
     MODE_FILE, O_CREAT, O_DIRECTORY, O_RDONLY, O_RDWR, O_STAT, O_WRONLY, SEEK_CUR, SEEK_END,
     SEEK_SET, Packet, EFAULT, StatVfs,
-    SYS_OPEN, SYS_READ, SYS_WRITE, SYS_LSEEK, SYS_FPATH, SYS_FSTAT, SYS_CLOSE, EventFlags, O_NONBLOCK, F_SETFL, F_GETFL, SYS_FCNTL, SYS_FEVENT,
+    SYS_OPEN, SYS_READ, SYS_WRITE, SYS_LSEEK, SYS_FPATH, SYS_FSTAT, SYS_CLOSE, EventFlags, O_NONBLOCK, F_SETFL, F_GETFL, SYS_FCNTL, SYS_FEVENT, EWOULDBLOCK,
 };
 
 use super::{port, usb};
-use super::{EndpointState, Xhci};
+use super::{EndpointState, ForceSendFuture, SchemeIfCtx, Xhci};
 
 use super::context::{
     InputContext, SlotState, StreamContext, StreamContextArray, StreamContextType,
@@ -37,6 +37,29 @@ use super::trb::{TransferKind, Trb, TrbCompletionCode, TrbType};
 use super::usb::endpoint::{EndpointTy, ENDP_ATTR_TY_MASK};
 
 use crate::driver_interface::*;
+
+pub enum BufferMut<'a> {
+    Borrowed(&'a mut [u8]),
+    Owned(Box<[u8]>),
+}
+impl<'a> std::ops::Deref for BufferMut<'a> {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            &Self::Borrowed(ref buf) => buf,
+            &Self::Owned(ref buf) => &buf[..],
+        }
+    }
+}
+impl<'a> std::ops::DerefMut for BufferMut<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        match self {
+            &mut Self::Borrowed(ref mut buf) => buf,
+            &mut Self::Owned(ref mut buf) => &mut buf[..],
+        }
+    }
+}
 
 pub enum ControlFlow {
     Continue,
@@ -87,11 +110,27 @@ pub enum PortReqState {
 unsafe impl Send for PortReqState {}
 unsafe impl Sync for PortReqState {}
 
-#[derive(Debug)]
 pub struct Handle {
     pub kind: HandleKind,
     pub blocking: bool,
     pub event_flags: EventFlags,
+    pub read_notified: bool,
+    pub write_notified: bool,
+    pub pending_read_transaction: Option<Pin<Box<dyn Future<Output = Result<usize>> + Send>>>,
+    pub pending_write_transaction: Option<Pin<Box<dyn Future<Output = Result<usize>> + Send>>>,
+}
+impl fmt::Debug for Handle {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("Handle")
+            .field("kind", &self.kind)
+            .field("blocking", &self.blocking)
+            .field("event_flags", &self.event_flags)
+            .field("read_notified", &self.read_notified)
+            .field("write_notified", &self.write_notified)
+            .field("has_pending_read_transaction", &self.pending_read_transaction.is_some())
+            .field("has_pending_write_transaction", &self.pending_write_transaction.is_some())
+            .finish()
+    }
 }
 
 #[derive(Debug)]
@@ -303,7 +342,7 @@ impl Xhci {
             let mut port_state = self.port_state_mut(port_num)?;
             let slot = port_state.slot;
 
-            let mut endpoint_state = port_state
+            let endpoint_state = port_state
                 .endpoint_states
                 .get_mut(&0).ok_or(Error::new(EIO))?;
 
@@ -1339,7 +1378,7 @@ where
 }
 
 impl Xhci {
-    fn scheme_handle_inner<'a>(&'a self, packet: &Packet) -> SchemeHandleOutput<Result<usize>, impl Future<Output = Result<usize>> + 'a> {
+    fn scheme_handle_inner<'a>(&'a self, packet: &Packet, context: &'a SchemeIfCtx) -> SchemeHandleOutput<Result<usize>, impl Future<Output = Result<usize>> + 'a> {
         match packet.a {
             SYS_OPEN => SchemeHandleOutput::direct(self.scheme_open(unsafe { slice::from_raw_parts(packet.b as *const u8, packet.c) }, packet.d, packet.uid, packet.gid)),
             //SYS_CHMOD => self.chmod(unsafe { slice::from_raw_parts(packet.b as *const u8, packet.c) }, packet.d as u16, packet.uid, packet.gid),
@@ -1347,7 +1386,7 @@ impl Xhci {
             //SYS_UNLINK => self.unlink(unsafe { slice::from_raw_parts(packet.b as *const u8, packet.c) }, packet.uid, packet.gid),
 
             //SYS_DUP => self.dup(packet.b, unsafe { slice::from_raw_parts(packet.c as *const u8, packet.d) }),
-            SYS_READ => SchemeHandleOutput::future(self.scheme_read(packet.b, unsafe { slice::from_raw_parts_mut(packet.c as *mut u8, packet.d) })).map_future(EitherFuture::A),
+            SYS_READ => SchemeHandleOutput::future(self.scheme_read(context, packet.b, unsafe { slice::from_raw_parts_mut(packet.c as *mut u8, packet.d) })).map_future(EitherFuture::A),
             SYS_WRITE => SchemeHandleOutput::future(self.scheme_write(packet.b, unsafe { slice::from_raw_parts(packet.c as *const u8, packet.d) })).map_future(EitherFuture::B),
             SYS_LSEEK => SchemeHandleOutput::direct(self.scheme_seek(packet.b, packet.c, packet.d)),
             //SYS_FCHMOD => self.fchmod(packet.b, packet.c as u16),
@@ -1383,8 +1422,8 @@ impl Xhci {
             _ => SchemeHandleOutput::direct(Err(Error::new(ENOSYS))),
         }
     }
-    pub fn scheme_handle<'a>(&'a self, packet: &'a mut Packet) -> SchemeHandleOutput<(), impl Future<Output = ()> + 'a> {
-        self.scheme_handle_inner(&*packet).map(move |res| {
+    pub fn scheme_handle<'a>(&'a self, packet: &'a mut Packet, context: &'a SchemeIfCtx) -> SchemeHandleOutput<(), impl Future<Output = ()> + 'a> {
+        self.scheme_handle_inner(&*packet, context).map(move |res| {
             packet.a = Error::mux(res);
         })
     }
@@ -1558,6 +1597,10 @@ impl Xhci {
             kind: handle_kind,
             blocking: flags & O_NONBLOCK == 0,
             event_flags: EventFlags::empty(),
+            read_notified: false,
+            write_notified: false,
+            pending_read_transaction: None,
+            pending_write_transaction: None,
         };
 
         let fd = self.next_handle.fetch_add(1, atomic::Ordering::Relaxed);
@@ -1677,7 +1720,7 @@ impl Xhci {
         }
     }
 
-    async fn scheme_read(&self, fd: usize, buf: &mut [u8]) -> Result<usize> {
+    async fn scheme_read(&self, scheme_if_context: &SchemeIfCtx, fd: usize, buf: &mut [u8]) -> Result<usize> {
         let mut guard = self.handles.get_mut(&fd).ok_or(Error::new(EBADF))?;
         trace!("READ fd={}, handle={:?}, buf=(addr {:p}, length {})", fd, guard, buf.as_ptr(), buf.len());
         match &mut guard.kind {
@@ -1698,7 +1741,37 @@ impl Xhci {
 
             &mut HandleKind::Endpoint(port_num, endp_num, ref mut st) => match st {
                 EndpointHandleTy::Ctl => self.on_read_endp_ctl(port_num, endp_num, buf),
-                EndpointHandleTy::Data => self.on_read_endp_data(port_num, endp_num, buf).await,
+                EndpointHandleTy::Data => if let Some(mut transaction) = guard.pending_read_transaction.take() {
+                    if guard.blocking {
+                        return transaction.await;
+                    }
+
+                    let mut context = task::Context::from_waker(futures::task::noop_waker_ref());
+                    match transaction.poll_unpin(&mut context) {
+                        task::Poll::Ready(value) => return value,
+                        task::Poll::Pending => {
+                            guard.pending_read_transaction = Some(transaction);
+                            Err(Error::new(EWOULDBLOCK))
+                        }
+                    }
+                } else {
+                    if guard.blocking {
+                        self.on_read_endp_data(port_num, endp_num, BufferMut::Borrowed(buf)).await
+                    } else {
+                        // TODO: Use buffer pool
+                        let buffer = vec! [0u8; buf.len()].into_boxed_slice();
+                        let context = scheme_if_context.clone();
+                        let event_flags = guard.event_flags;
+                        guard.pending_read_transaction = Some(Box::pin(unsafe { ForceSendFuture::new(async move {
+                            let bytes_read = context.hci.on_read_endp_data(port_num, endp_num, BufferMut::<'static>::Owned(buffer)).await?;
+                            if event_flags.contains(EventFlags::EVENT_READ) {
+                                post_fevent(&*context.socket_fd, fd, syscall::EVENT_READ, bytes_read);
+                            }
+                            Ok(bytes_read)
+                        }) }));
+                        Err(Error::new(EWOULDBLOCK))
+                    }
+                }
                 EndpointHandleTy::Root(_, _) => return Err(Error::new(EBADF)),
             },
             &mut HandleKind::PortState(port_num, ref mut offset) => {
@@ -1735,6 +1808,12 @@ impl Xhci {
     // TODO: We might consider descending SchemeHandleOutput further down, in case the latency of
     // spawning a new task solely for getting the status of an endpoint is too much. Same goes with
     // scheme_read (and probably more important there).
+    // TODO: We REALLY need a completion-based async I/O API. While readiness does work on reads,
+    // there appears to be no optimal way of doing readiness-based writes to a USB device. Having a
+    // way to tell clients when they can write, and then blindly accepting all the bytes before
+    // they even touch the hardware, isn't really the best way. For starters, the client will have
+    // to check for short packets by reading another file, or simply block until the bytes have
+    // been written.
     async fn scheme_write(&self, fd: usize, buf: &[u8]) -> Result<usize> {
         let mut guard = self.handles.get_mut(&fd).ok_or(Error::new(EBADF))?;
         trace!("WRITE fd={}, handle={:?}, buf=(addr {:p}, length {})", fd, guard, buf.as_ptr(), buf.len());
@@ -1769,6 +1848,8 @@ impl Xhci {
         let flags = EventFlags::from_bits(flags).ok_or(Error::new(EINVAL))?;
         let mut guard = self.handles.get_mut(&fd).ok_or(Error::new(EBADF))?;
         guard.event_flags = flags;
+        guard.read_notified = false;
+        guard.write_notified = false;
         Ok(0)
     }
     fn scheme_fcntl(&self, fd: usize, cmd: usize, arg: usize) -> Result<usize> {
@@ -2156,14 +2237,14 @@ impl Xhci {
         &self,
         port_num: usize,
         endp_num: u8,
-        buf: &mut [u8],
+        mut buf: BufferMut<'_>,
     ) -> Result<usize> {
         let mut port_state = self
             .port_states
             .get_mut(&port_num)
             .ok_or(Error::new(EBADF))?;
 
-        let mut ep_if_state = &mut port_state
+        let ep_if_state = &mut port_state
             .endpoint_states
             .get_mut(&endp_num)
             .ok_or(Error::new(EBADF))?
@@ -2181,7 +2262,7 @@ impl Xhci {
 
                 drop(port_state);
                 let (completion_code, some_bytes_transferred) =
-                    self.transfer_read(port_num, endp_num - 1, buf).await?;
+                    self.transfer_read(port_num, endp_num - 1, &mut *buf).await?;
 
                 // Just as with on_write_endp_data, a client issuing multiple reads must always
                 // stop reading if one read returns fewer bytes than expected.
@@ -2193,7 +2274,7 @@ impl Xhci {
                     .get_mut(&port_num)
                     .ok_or(Error::new(EBADF))?;
 
-                let mut ep_state = port_state
+                let ep_state = port_state
                     .endpoint_states
                     .get_mut(&endp_num)
                     .ok_or(Error::new(EBADF))?;
@@ -2255,5 +2336,26 @@ where
         a / b + T::from(1u8)
     } else {
         a / b
+    }
+}
+// from netstack/smolnetd/src/scheme/mod.rs, partially modified
+fn post_fevent(mut scheme_file: &std::fs::File, fd: usize, event: EventFlags, data_len: usize) -> Result<()> {
+    match &mut scheme_file
+        .write(&syscall::Packet {
+            id: 0,
+            pid: 0,
+            uid: 0,
+            gid: 0,
+            a: syscall::number::SYS_FEVENT,
+            b: fd,
+            c: event.bits(),
+            d: data_len,
+        }) {
+        Ok(0) => Err(Error::new(EIO)),
+        Ok(_) => Ok(()),
+        Err(err) => {
+            log::warn!("Failed to post fevent: {}", err);
+            Err(Error::new(EIO))
+        }
     }
 }

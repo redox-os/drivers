@@ -400,6 +400,7 @@ impl Future for EventTrbFuture {
         task::Poll::Ready(message)
     }
 }
+unsafe impl Send for EventTrbFuture {}
 
 impl Xhci {
     pub fn get_transfer_trb(&self, paddr: u64, id: RingId) -> Option<Trb> {

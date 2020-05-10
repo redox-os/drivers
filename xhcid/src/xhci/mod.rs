@@ -895,3 +895,49 @@ lazy_static! {
         toml::from_slice::<DriversConfig>(TOML).expect("Failed to parse internally embedded config file")
     };
 }
+
+/// A wrapper for futures that forces them to be `Send`. Useful when the futures store things like
+/// pointers which typically make futures `!Send`. This type is safe because initializing it is
+/// unsafe, thus the same thing as manually implementing `Send` for that future (which is a bit
+/// hard when the future type is unknown in async fn).
+#[repr(transparent)]
+pub struct ForceSendFuture<F>(F);
+
+impl<F> ForceSendFuture<F> {
+    pub unsafe fn new(future: F) -> Self {
+        Self(future)
+    }
+    pub fn into_inner(self) -> F {
+        self.0
+    }
+}
+impl<F> std::ops::Deref for ForceSendFuture<F> {
+    type Target = F;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl<F> std::ops::DerefMut for ForceSendFuture<F> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+impl<O, F> Future for ForceSendFuture<F>
+where
+    F: Future<Output = O>,
+{
+    type Output = O;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut task::Context) -> task::Poll<Self::Output> {
+        unsafe { Pin::new_unchecked(&mut self.get_unchecked_mut().0) }.poll(cx)
+    }
+}
+unsafe impl<F> Send for ForceSendFuture<F> {}
+
+#[derive(Clone)]
+pub struct SchemeIfCtx {
+    pub hci: Arc<Xhci>,
+    pub socket_fd: Arc<File>,
+    pub spawner: futures::executor::ThreadPool,
+}

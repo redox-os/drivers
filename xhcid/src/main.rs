@@ -1,30 +1,25 @@
-use std::convert::{TryFrom, TryInto};
-use std::fs::{self, File};
-use std::future::Future;
+use std::convert::TryFrom;
+use std::fs::File;
 use std::io::{self, prelude::*};
-use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
-use std::pin::Pin;
-use std::ptr::NonNull;
+use std::os::unix::io::{FromRawFd, RawFd};
 use std::sync::{Arc, Mutex};
 use std::{mem, slice, thread};
 
 use syscall::data::Packet;
-use syscall::error::EWOULDBLOCK;
-use syscall::flag::{CloneFlags, PHYSMAP_NO_CACHE, PHYSMAP_WRITE, O_RDWR, O_CLOEXEC, EVENT_READ};
-use syscall::scheme::Scheme;
+use syscall::flag::{CloneFlags, O_RDWR, O_CLOEXEC, EVENT_READ};
 use syscall::io::Io;
 
 use pcid_interface::{MsiSetFeatureInfo, PcidServerHandle, PciFeature, PciFeatureInfo, PciFunction, SetFeatureInfo};
 use pcid_interface::helpers::{self as pci_helpers, irq as irq_helpers};
-use pcid_interface::msi::{MsiCapability, MsixCapability, MsixTableEntry};
+use pcid_interface::msi::MsixTableEntry;
 use pci_helpers::{AllocatedBars, Bar};
 
 use futures::{SinkExt, StreamExt};
-use futures::task::LocalSpawnExt;
+use futures::task::SpawnExt;
 use log::info;
 use redox_log::{RedoxLogger, OutputBuilder};
 
-use crate::xhci::{InterruptMethod, InterruptSources, Xhci};
+use crate::xhci::{InterruptMethod, InterruptSources, ForceSendFuture, Xhci};
 
 // Declare as pub so that no warnings appear due to parts of the interface code not being used by
 // the driver. Since there's also a dedicated crate for the driver interface, those warnings don't
@@ -279,7 +274,6 @@ fn main() {
             }
         }
     }).expect("xhcid: failed to spawn packet handler thread");
-    syscall::setrens(0, 0).expect("xhcid: failed to enter null namespace");
 
     // TODO: Use a thread pool once the actual driver has been tested for correctness a bit more,
     // regarding driver concurrency.
@@ -287,17 +281,26 @@ fn main() {
     // submission and completion futures. Otherwise some futures may be wrapped in a struct and
     // force-implemented to be Send (if this even works).
 
-    let mut executor = futures::executor::LocalPool::new();
-    let spawner = executor.spawner();
+    let mut executor = futures::executor::ThreadPoolBuilder::new()
+        .name_prefix("runtime_thread_pool")
+        .pool_size(1) // TODO
+        .create().expect("xhcid: failed to create thread pool");
 
-    executor.run_until(async move {
+    syscall::setrens(0, 0).expect("xhcid: failed to enter null namespace");
+
+    let context = xhci::SchemeIfCtx {
+        hci: Arc::clone(&hci),
+        socket_fd: Arc::clone(&socket_clone),
+        spawner: executor.clone(),
+    };
+
+    executor.spawn(async move {
         while let Some(mut packet) = packet_receiver.next().await {
-            let socket_clone = Arc::clone(&socket_clone);
-            let hci = Arc::clone(&hci);
-            spawner.spawn_local(async move {
-                hci.scheme_handle(&mut packet).await;
-                let _ = (&*socket_clone).write(&packet).expect("xhcid: failed to write processed packet");
-            }).expect("xhcid: failed to spawn packet handler");
+            let context_clone = context.clone();
+            context.spawner.spawn(unsafe { ForceSendFuture::new(async move {
+                context_clone.hci.scheme_handle(&mut packet, &context_clone).await;
+                let _ = (&*context_clone.socket_fd).write(&packet).expect("xhcid: failed to write processed packet");
+            }) }).expect("xhcid: failed to spawn packet handler");
         }
     });
     packet_handler_thread.join().expect("xhcid: failed to join packet handler thread");
