@@ -22,53 +22,7 @@ pub use self::queues::{NvmeCmd, NvmeCmdQueue, NvmeComp, NvmeCompQueue};
 use pcid_interface::msi::{MsiCapability, MsixCapability, MsixTableEntry};
 use pcid_interface::PcidServerHandle;
 
-/// Used in conjunction with `InterruptMethod`, primarily by the CQ reactor.
-#[derive(Debug)]
-pub enum InterruptSources {
-    MsiX(BTreeMap<u16, File>),
-    Msi(BTreeMap<u8, File>),
-    Intx(File),
-}
-impl InterruptSources {
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = (u16, &mut File)> {
-        use std::collections::btree_map::IterMut as BTreeIterMut;
-        use std::iter::Once;
-
-        enum IterMut<'a> {
-            Msi(BTreeIterMut<'a, u8, File>),
-            MsiX(BTreeIterMut<'a, u16, File>),
-            Intx(Once<&'a mut File>),
-        }
-        impl<'a> Iterator for IterMut<'a> {
-            type Item = (u16, &'a mut File);
-
-            fn next(&mut self) -> Option<Self::Item> {
-                match self {
-                    &mut Self::Msi(ref mut iter) => iter
-                        .next()
-                        .map(|(&vector, handle)| (u16::from(vector), handle)),
-                    &mut Self::MsiX(ref mut iter) => {
-                        iter.next().map(|(&vector, handle)| (vector, handle))
-                    }
-                    &mut Self::Intx(ref mut iter) => iter.next().map(|handle| (0u16, handle)),
-                }
-            }
-            fn size_hint(&self) -> (usize, Option<usize>) {
-                match self {
-                    &Self::Msi(ref iter) => iter.size_hint(),
-                    &Self::MsiX(ref iter) => iter.size_hint(),
-                    &Self::Intx(ref iter) => iter.size_hint(),
-                }
-            }
-        }
-
-        match self {
-            &mut Self::MsiX(ref mut map) => IterMut::MsiX(map.iter_mut()),
-            &mut Self::Msi(ref mut map) => IterMut::Msi(map.iter_mut()),
-            &mut Self::Intx(ref mut single) => IterMut::Intx(std::iter::once(single)),
-        }
-    }
-}
+use pcid_interface::helpers::irq::InterruptSources;
 
 /// The way interrupts are sent. Unlike other PCI-based interfaces, like XHCI, it doesn't seem like
 /// NVME supports operating with interrupts completely disabled.

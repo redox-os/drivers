@@ -1,6 +1,6 @@
 use syscall::io::{Io, Mmio};
 
-bitflags! {
+bitflags::bitflags! {
     pub struct PortFlags: u32 {
         const PORT_CCS = 1 << 0;
         const PORT_PED = 1 << 1;

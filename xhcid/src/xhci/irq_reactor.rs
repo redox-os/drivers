@@ -1,22 +1,21 @@
+use std::convert::TryFrom;
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::future::Future;
 use std::io::prelude::*;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{self, AtomicUsize};
-use std::{io, mem, task, thread};
+use std::{io, mem, slice, task};
 
-use std::os::unix::io::AsRawFd;
+use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 
 use crossbeam_channel::{Sender, Receiver};
 use log::{debug, error, info, warn, trace};
-use futures::Stream;
-use syscall::Io;
+use syscall::{Io, O_CLOEXEC, O_RDWR};
 
-use event::{Event, EventQueue};
+use syscall::Event;
 
-use super::Xhci;
+use super::{InterruptSources, Xhci};
 use super::ring::Ring;
 use super::trb::{Trb, TrbCompletionCode, TrbType};
 use super::event::EventRing;
@@ -82,7 +81,7 @@ impl StateKind {
 
 pub struct IrqReactor {
     hci: Arc<Xhci>,
-    irq_file: Option<File>,
+    interrupt_sources: Option<InterruptSources>,
     receiver: Receiver<NewPendingTrb>,
 
     states: Vec<State>,
@@ -94,10 +93,10 @@ pub struct IrqReactor {
 pub type NewPendingTrb = State;
 
 impl IrqReactor {
-    pub fn new(hci: Arc<Xhci>, receiver: Receiver<NewPendingTrb>, irq_file: Option<File>) -> Self {
+    pub fn new(hci: Arc<Xhci>, receiver: Receiver<NewPendingTrb>, interrupt_sources: Option<InterruptSources>) -> Self {
         Self {
             hci,
-            irq_file,
+            interrupt_sources,
             receiver,
             states: Vec::new(),
         }
@@ -117,14 +116,16 @@ impl IrqReactor {
 
             let mut trb;
 
-            'busy_waiting: loop {
+            let trb = 'busy_waiting: loop {
                 trb = &event_ring_guard.ring.trbs[index];
 
                 if trb.completion_code() == TrbCompletionCode::Invalid as u8 {
                     self.pause();
                     continue 'busy_waiting;
+                } else {
+                    break trb;
                 }
-            }
+            };
             if self.check_event_ring_full(trb.clone()) { continue 'event_loop }
 
             self.handle_requests();
@@ -137,61 +138,84 @@ impl IrqReactor {
         debug!("Running IRQ reactor with IRQ file and event queue");
 
         let hci_clone = Arc::clone(&self.hci);
-        let mut event_queue = EventQueue::<()>::new().expect("xhcid irq_reactor: failed to create IRQ event queue");
-        let irq_fd = self.irq_file.as_ref().unwrap().as_raw_fd();
+        let event_queue_fd = unsafe { syscall::open("event:", O_CLOEXEC | O_RDWR).expect("xhcid: failed to open event queue") };
+        let mut event_queue = unsafe { File::from_raw_fd(event_queue_fd as RawFd) };
 
         let mut event_trb_index = { hci_clone.primary_event_ring.lock().unwrap().ring.next_index() };
 
-        event_queue.add(irq_fd, move |_| -> io::Result<Option<()>> {
-            trace!("IRQ event queue notified");
-            let mut buffer = [0u8; 8];
-
-            let _ = self.irq_file.as_mut().unwrap().read(&mut buffer).expect("Failed to read from irq scheme");
-
-            if !self.hci.received_irq() {
-                // continue only when an IRQ to this device was received
-                trace!("no interrupt pending");
-                return Ok(None);
+        for (vector, handle) in self.interrupt_sources.as_mut().unwrap().iter_mut() {
+            if event_queue.write(&Event {
+                id: handle.as_raw_fd() as usize,
+                data: vector as usize,
+                flags: syscall::EVENT_READ,
+            }).expect("xhcid: failed to register IRQ event") == 0 {
+                panic!("xhcid: failed to register IRQ event (wrote zero bytes)");
             }
+        }
 
-            trace!("IRQ reactor received an IRQ");
+        let mut events = [Event::default(); 16];
 
-            let _ = self.irq_file.as_mut().unwrap().write(&buffer);
+        loop {
+            let events_buf = unsafe { slice::from_raw_parts_mut(events.as_ptr() as *mut u8, events.len() * mem::size_of::<Event>()) };
+            let size = event_queue.read(events_buf).expect("xhcid: failed to read events");
+            let count = size / mem::size_of::<Event>();
+            let events = &events[..count];
 
-            // TODO: More event rings, probably even with different IRQs.
+            'events: for event in events {
+                trace!("IRQ event queue notified");
+                let mut buffer = [0u8; 8];
 
-            let mut event_ring = hci_clone.primary_event_ring.lock().unwrap();
-
-            let mut count = 0;
-
-            'trb_loop: loop {
-                let event_trb = &mut event_ring.ring.trbs[event_trb_index];
-
-                if event_trb.completion_code() == TrbCompletionCode::Invalid as u8 {
-                    if count == 0 { warn!("xhci: Received interrupt, but no event was found in the event ring. Ignoring interrupt.") }
-                    // no more events were found, continue the loop
-                    return Ok(None);
-                } else { count += 1 }
-
-                trace!("Found event TRB: {:?}", event_trb);
-
-                if self.check_event_ring_full(event_trb.clone()) {
-                    info!("Had to resize event TRB, retrying...");
-                    hci_clone.event_handler_finished();
-                    return Ok(None);
+                let handle = self.interrupt_sources.as_mut().unwrap().get_mut(u16::try_from(event.data).expect("xhcid: got event with out of range data")).expect("xhcid: got event with no corresponding interrupt vector");
+                if handle.read(&mut buffer).expect("xhcid: failed to read from IRQ") == 0 {
+                    panic!("xhcid: read 0 bytes from IRQ");
                 }
 
-                self.handle_requests();
-                self.acknowledge(event_trb.clone());
+                if !self.hci.received_irq() {
+                    // continue only when an IRQ to this device was received
+                    trace!("no interrupt pending");
+                    continue 'events;
+                }
 
-                event_trb.reserved(false);
+                trace!("IRQ reactor received an IRQ");
 
-                self.update_erdp(&*event_ring);
+                if handle.write(&buffer).expect("xhcid: failed to write to IRQ") == 0 {
+                    panic!("xhcid: wrote 0 bytes from IRQ");
+                }
 
-                event_trb_index = event_ring.ring.next_index();
+                // TODO: More event rings, probably even with different IRQs.
+
+                let mut event_ring = hci_clone.primary_event_ring.lock().unwrap();
+
+                let mut count = 0;
+
+                'trb_loop: loop {
+                    let event_trb = &mut event_ring.ring.trbs[event_trb_index];
+
+                    if event_trb.completion_code() == TrbCompletionCode::Invalid as u8 {
+                        if count == 0 { warn!("xhci: Received interrupt, but no event was found in the event ring. Ignoring interrupt.") }
+                        // no more events were found, continue the loop
+                        continue 'events;
+                    } else { count += 1 }
+
+                    trace!("Found event TRB: {:?}", event_trb);
+
+                    if self.check_event_ring_full(event_trb.clone()) {
+                        info!("Had to resize event TRB, retrying...");
+                        hci_clone.event_handler_finished();
+                        continue 'events;
+                    }
+
+                    self.handle_requests();
+                    self.acknowledge(event_trb.clone());
+
+                    event_trb.reserved(false);
+
+                    self.update_erdp(&*event_ring);
+
+                    event_trb_index = event_ring.ring.next_index();
+                }
             }
-        }).expect("xhcid: failed to catch irq events");
-        event_queue.run().expect("xhcid: failed to run IRQ event queue");
+        }
     }
     fn update_erdp(&self, event_ring: &EventRing) {
         let dequeue_pointer_and_dcs = event_ring.erdp();
@@ -330,7 +354,7 @@ impl IrqReactor {
     }
 
     pub fn run(mut self) {
-        if self.irq_file.is_some() {
+        if self.interrupt_sources.is_some() {
             self.run_with_irq_file();
         } else {
             self.run_polling();

@@ -55,11 +55,6 @@ impl Ring {
         let i = self.next_index();
         (&mut self.trbs[i], self.cycle)
     }
-    /// Endless iterator that iterates through the ring items, over and over again. The iterator
-    /// doesn't enqueue or dequeue anything.
-    pub fn iter(&self) -> impl Iterator<Item = &Trb> + '_ {
-        Iter { ring: self, i: self.i }
-    }
     /// Takes a physical address and returns the index into this ring, that the index represents.
     /// Returns `None` if the address is outside the bounds of this ring.
     ///
@@ -108,37 +103,4 @@ impl Ring {
         let trb_phys_ptr = trbs_base_phys_ptr + trb_offset_from_base;
         trb_phys_ptr
     }
-    /*
-    /// Endless mutable iterator that iterates through the ring items, over and over again. The
-    /// iterator doesn't enqueue or dequeue anything, but the trbs are mutably borrowed.
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Trb> + '_ {
-        IterMut { ring: self, i: self.i }
-    }*/
 }
-struct Iter<'ring> {
-    ring: &'ring Ring,
-    i: usize,
-
-}
-impl<'ring> Iterator for Iter<'ring> {
-    type Item = &'ring Trb;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let i = self.i;
-        self.i = (self.i + 1) % self.ring.trbs.len();
-        Some(&self.ring.trbs[i])
-    }
-}
-/*struct IterMut<'ring> {
-    ring: &'ring mut Ring,
-    i: usize,
-}
-impl<'ring> Iterator for IterMut<'ring> {
-    type Item = &'ring mut Trb;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let i = self.i;
-        self.i = (self.i + 1) % self.ring.trbs.len();
-        Some(&mut self.ring.trbs[i])
-    }
-}*/

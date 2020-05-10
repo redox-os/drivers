@@ -1249,7 +1249,6 @@ dependencies = [
  "pcid 0.1.0",
  "plain 0.2.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "redox-log 0.1.0 (git+https://gitlab.redox-os.org/redox-os/redox-log.git?tag=v0.1.0)",
- "redox_event 0.1.0 (git+https://gitlab.redox-os.org/redox-os/event.git)",
  "redox_syscall 0.1.56 (git+https://gitlab.redox-os.org/redox-os/syscall.git)",
  "serde 1.0.112 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde_json 1.0.55 (registry+https://github.com/rust-lang/crates.io-index)",

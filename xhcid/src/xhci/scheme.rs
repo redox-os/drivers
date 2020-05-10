@@ -2,7 +2,7 @@ use std::convert::TryFrom;
 use std::io::prelude::*;
 use std::ops::Deref;
 use std::sync::atomic;
-use std::{cmp, fmt, io, mem, path, str};
+use std::{cmp, fmt, io, mem, path, slice, str};
 
 use futures::executor::block_on;
 use log::{debug, error, info, warn, trace};
@@ -15,7 +15,9 @@ use syscall::{
     Error, Result, Stat, EACCES, EBADF, EBADFD, EBADMSG, EEXIST, EINVAL, EIO, EISDIR, ENOENT,
     ENOSYS, ENOTDIR, ENXIO, EOPNOTSUPP, EOVERFLOW, EPERM, EPROTO, ESPIPE, MODE_CHR, MODE_DIR,
     MODE_FILE, O_CREAT, O_DIRECTORY, O_RDONLY, O_RDWR, O_STAT, O_WRONLY, SEEK_CUR, SEEK_END,
-    SEEK_SET,
+    SEEK_SET, Packet, EFAULT, StatVfs,
+
+    SYS_OPEN, SYS_READ, SYS_WRITE, SYS_LSEEK, SYS_FPATH, SYS_FSTAT, SYS_CLOSE,
 };
 
 use super::{port, usb};
@@ -82,6 +84,8 @@ pub enum PortReqState {
     TmpSetup(usb::Setup),
     Tmp,
 }
+unsafe impl Send for PortReqState {}
+unsafe impl Sync for PortReqState {}
 
 #[derive(Debug)]
 pub enum Handle {
@@ -1251,8 +1255,54 @@ impl Xhci {
     }
 }
 
-impl Scheme for Xhci {
-    fn open(&self, path: &[u8], flags: usize, uid: u32, _gid: u32) -> Result<usize> {
+impl Xhci {
+    pub async fn scheme_handle(&self, packet: &mut Packet) {
+        let res = match packet.a {
+            SYS_OPEN => self.scheme_open(unsafe { slice::from_raw_parts(packet.b as *const u8, packet.c) }, packet.d, packet.uid, packet.gid),
+            //SYS_CHMOD => self.chmod(unsafe { slice::from_raw_parts(packet.b as *const u8, packet.c) }, packet.d as u16, packet.uid, packet.gid),
+            //SYS_RMDIR => self.rmdir(unsafe { slice::from_raw_parts(packet.b as *const u8, packet.c) }, packet.uid, packet.gid),
+            //SYS_UNLINK => self.unlink(unsafe { slice::from_raw_parts(packet.b as *const u8, packet.c) }, packet.uid, packet.gid),
+
+            //SYS_DUP => self.dup(packet.b, unsafe { slice::from_raw_parts(packet.c as *const u8, packet.d) }),
+            SYS_READ => self.scheme_read(packet.b, unsafe { slice::from_raw_parts_mut(packet.c as *mut u8, packet.d) }).await,
+            SYS_WRITE => self.scheme_write(packet.b, unsafe { slice::from_raw_parts(packet.c as *const u8, packet.d) }).await,
+            SYS_LSEEK => self.scheme_seek(packet.b, packet.c, packet.d),
+            //SYS_FCHMOD => self.fchmod(packet.b, packet.c as u16),
+            //SYS_FCHOWN => self.fchown(packet.b, packet.c as u32, packet.d as u32),
+            //SYS_FCNTL => self.fcntl(packet.b, packet.c, packet.d),
+            //SYS_FEVENT => self.fevent(packet.b, packet.c),
+            /*SYS_FMAP => if packet.d >= mem::size_of::<Map>() {
+                self.fmap(packet.b, unsafe { &*(packet.c as *const Map) })
+            } else {
+                Err(Error::new(EFAULT))
+            },*/
+            //SYS_FUNMAP => self.funmap(packet.b),
+            SYS_FPATH => self.scheme_fpath(packet.b, unsafe { slice::from_raw_parts_mut(packet.c as *mut u8, packet.d) }),
+            //SYS_FRENAME => self.frename(packet.b, unsafe { slice::from_raw_parts(packet.c as *const u8, packet.d) }, packet.uid, packet.gid),
+            SYS_FSTAT => if packet.d >= mem::size_of::<Stat>() {
+                self.scheme_fstat(packet.b, unsafe { &mut *(packet.c as *mut Stat) })
+            } else {
+                Err(Error::new(EFAULT))
+            },
+            /*SYS_FSTATVFS => if packet.d >= mem::size_of::<StatVfs>() {
+                self.scheme_fstatvfs(packet.b, unsafe { &mut *(packet.c as *mut StatVfs) })
+            } else {
+                Err(Error::new(EFAULT))
+            },*/
+            //SYS_FSYNC => self.fsync(packet.b),
+            //SYS_FTRUNCATE => self.ftruncate(packet.b, packet.c),
+            /*SYS_FUTIMENS => if packet.d >= mem::size_of::<TimeSpec>() {
+                self.futimens(packet.b, unsafe { slice::from_raw_parts(packet.c as *const TimeSpec, packet.d / mem::size_of::<TimeSpec>()) })
+            } else {
+                Err(Error::new(EFAULT))
+            },*/
+            SYS_CLOSE => self.scheme_close(packet.b),
+            _ => Err(Error::new(ENOSYS))
+        };
+
+        packet.a = Error::mux(res);
+    }
+    fn scheme_open(&self, path: &[u8], flags: usize, uid: u32, _gid: u32) -> Result<usize> {
         if uid != 0 {
             return Err(Error::new(EACCES));
         }
@@ -1428,7 +1478,7 @@ impl Scheme for Xhci {
         Ok(fd)
     }
 
-    fn fstat(&self, id: usize, stat: &mut Stat) -> Result<usize> {
+    fn scheme_fstat(&self, id: usize, stat: &mut Stat) -> Result<usize> {
         let mut guard = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
         match &*guard {
@@ -1465,7 +1515,7 @@ impl Scheme for Xhci {
         Ok(0)
     }
 
-    fn fpath(&self, fd: usize, buffer: &mut [u8]) -> Result<usize> {
+    fn scheme_fpath(&self, fd: usize, buffer: &mut [u8]) -> Result<usize> {
         let mut cursor = io::Cursor::new(buffer);
 
         let guard = self.handles.get(&fd).ok_or(Error::new(EBADF))?;
@@ -1500,7 +1550,7 @@ impl Scheme for Xhci {
         Ok(src_len)
     }
 
-    fn seek(&self, fd: usize, pos: usize, whence: usize) -> Result<usize> {
+    fn scheme_seek(&self, fd: usize, pos: usize, whence: usize) -> Result<usize> {
         let mut guard = self.handles.get_mut(&fd).ok_or(Error::new(EBADF))?;
 
         trace!("SEEK fd={}, handle={:?}, pos {}, whence {}", fd, guard, pos, whence);
@@ -1536,7 +1586,7 @@ impl Scheme for Xhci {
         }
     }
 
-    fn read(&self, fd: usize, buf: &mut [u8]) -> Result<usize> {
+    async fn scheme_read(&self, fd: usize, buf: &mut [u8]) -> Result<usize> {
         let mut guard = self.handles.get_mut(&fd).ok_or(Error::new(EBADF))?;
         trace!("READ fd={}, handle={:?}, buf=(addr {:p}, length {})", fd, guard, buf.as_ptr(), buf.len());
         match &mut *guard {
@@ -1557,7 +1607,7 @@ impl Scheme for Xhci {
 
             &mut Handle::Endpoint(port_num, endp_num, ref mut st) => match st {
                 EndpointHandleTy::Ctl => self.on_read_endp_ctl(port_num, endp_num, buf),
-                EndpointHandleTy::Data => block_on(self.on_read_endp_data(port_num, endp_num, buf)),
+                EndpointHandleTy::Data => self.on_read_endp_data(port_num, endp_num, buf).await,
                 EndpointHandleTy::Root(_, _) => return Err(Error::new(EBADF)),
             },
             &mut Handle::PortState(port_num, ref mut offset) => {
@@ -1587,35 +1637,35 @@ impl Scheme for Xhci {
             &mut Handle::PortReq(port_num, ref mut st) => {
                 let state = std::mem::replace(st, PortReqState::Tmp);
                 drop(guard); // release the lock
-                block_on(self.handle_port_req_read(fd, port_num, state, buf))
+                self.handle_port_req_read(fd, port_num, state, buf).await
             }
         }
     }
-    fn write(&self, fd: usize, buf: &[u8]) -> Result<usize> {
+    async fn scheme_write(&self, fd: usize, buf: &[u8]) -> Result<usize> {
         let mut guard = self.handles.get_mut(&fd).ok_or(Error::new(EBADF))?;
         trace!("WRITE fd={}, handle={:?}, buf=(addr {:p}, length {})", fd, guard, buf.as_ptr(), buf.len());
 
         match &mut *guard {
             &mut Handle::ConfigureEndpoints(port_num) => {
-                block_on(self.configure_endpoints(port_num, buf))?;
+                self.configure_endpoints(port_num, buf).await?;
                 Ok(buf.len())
             }
             &mut Handle::Endpoint(port_num, endp_num, ref ep_file_ty) => match ep_file_ty {
-                EndpointHandleTy::Ctl => block_on(self.on_write_endp_ctl(port_num, endp_num, buf)),
-                EndpointHandleTy::Data => block_on(self.on_write_endp_data(port_num, endp_num, buf)),
+                EndpointHandleTy::Ctl => self.on_write_endp_ctl(port_num, endp_num, buf).await,
+                EndpointHandleTy::Data => self.on_write_endp_data(port_num, endp_num, buf).await,
                 EndpointHandleTy::Root(_, _) => return Err(Error::new(EBADF)),
             },
             &mut Handle::PortReq(port_num, ref mut st) => {
                 let state = std::mem::replace(st, PortReqState::Tmp);
                 drop(guard); // release the lock
-                block_on(self.handle_port_req_write(fd, port_num, state, buf))
+                self.handle_port_req_write(fd, port_num, state, buf).await
             }
             // TODO: Introduce PortReqState::Waiting, which this write call changes to
             // PortReqState::ReadyToWrite when all bytes are written.
             _ => return Err(Error::new(EBADF)),
         }
     }
-    fn close(&self, fd: usize) -> Result<usize> {
+    fn scheme_close(&self, fd: usize) -> Result<usize> {
         if self.handles.remove(&fd).is_none() {
             return Err(Error::new(EBADF));
         }

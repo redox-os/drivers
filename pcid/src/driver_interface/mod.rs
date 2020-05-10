@@ -10,7 +10,7 @@ use thiserror::Error;
 pub use crate::pci::PciBar;
 pub use crate::pci::msi;
 
-pub mod irq_helpers;
+pub mod helpers;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[repr(u8)]

@@ -7,46 +7,21 @@ use std::sync::{Arc, Mutex};
 use std::{slice, usize};
 
 use pcid_interface::{PciBar, PciFeature, PciFeatureInfo, PciFunction, PcidServerHandle};
+use pcid_interface::helpers::{irq as irq_helpers, Bar, AllocatedBars};
+
+pub use irq_helpers::InterruptSources;
+
 use syscall::{
     CloneFlags, Event, Mmio, Packet, Result, SchemeBlockMut, PHYSMAP_NO_CACHE,
     PHYSMAP_WRITE,
 };
 use redox_log::{OutputBuilder, RedoxLogger};
 
-use self::nvme::{InterruptMethod, InterruptSources, Nvme};
+use self::nvme::{InterruptMethod, Nvme};
 use self::scheme::DiskScheme;
 
 mod nvme;
 mod scheme;
-
-/// A wrapper for a BAR allocation.
-pub struct Bar {
-    ptr: NonNull<u8>,
-    physical: usize,
-    bar_size: usize,
-}
-impl Bar {
-    pub fn allocate(bar: usize, bar_size: usize) -> Result<Self> {
-        Ok(Self {
-            ptr: NonNull::new(
-                unsafe { syscall::physmap(bar, bar_size, PHYSMAP_NO_CACHE | PHYSMAP_WRITE)? as *mut u8 },
-            )
-            .expect("Mapping a BAR resulted in a nullptr"),
-            physical: bar,
-            bar_size,
-        })
-    }
-}
-
-impl Drop for Bar {
-    fn drop(&mut self) {
-        let _ = unsafe { syscall::physunmap(self.physical) };
-    }
-}
-
-/// The PCI BARs that may be allocated.
-#[derive(Default)]
-pub struct AllocatedBars(pub [Mutex<Option<Bar>>; 6]);
 
 /// Get the most optimal yet functional interrupt mechanism: either (in the order of preference):
 /// MSI-X, MSI, and INTx# pin. Returns both runtime interrupt structures (MSI/MSI-X capability
@@ -57,7 +32,6 @@ fn get_int_method(
     allocated_bars: &AllocatedBars,
 ) -> Result<(InterruptMethod, InterruptSources)> {
     log::trace!("Begin get_int_method");
-    use pcid_interface::irq_helpers;
 
     let features = pcid_handle.fetch_all_features().unwrap();
 
@@ -74,46 +48,8 @@ fn get_int_method(
             PciFeatureInfo::MsiX(msix) => msix,
             _ => unreachable!(),
         };
-        fn bar_base(
-            allocated_bars: &AllocatedBars,
-            function: &PciFunction,
-            bir: u8,
-        ) -> Result<NonNull<u8>> {
-            let bir = usize::from(bir);
-            let mut bar_guard = allocated_bars.0[bir].lock().unwrap();
-            match &mut *bar_guard {
-                &mut Some(ref bar) => Ok(bar.ptr),
-                bar_to_set @ &mut None => {
-                    let bar = match function.bars[bir] {
-                        PciBar::Memory(addr) => addr,
-                        other => panic!("Expected memory BAR, found {:?}", other),
-                    };
-                    let bar_size = function.bar_sizes[bir];
 
-                    let bar = Bar::allocate(bar as usize, bar_size as usize)?;
-                    *bar_to_set = Some(bar);
-                    Ok(bar_to_set.as_ref().unwrap().ptr)
-                }
-            }
-        }
-        let table_bar_base: *mut u8 =
-            bar_base(allocated_bars, function, capability_struct.table_bir())?.as_ptr();
-        let pba_bar_base: *mut u8 =
-            bar_base(allocated_bars, function, capability_struct.pba_bir())?.as_ptr();
-        let table_base =
-            unsafe { table_bar_base.offset(capability_struct.table_offset() as isize) };
-        let pba_base = unsafe { pba_bar_base.offset(capability_struct.pba_offset() as isize) };
-
-        let vector_count = capability_struct.table_size();
-        let table_entries: &'static mut [MsixTableEntry] = unsafe {
-            slice::from_raw_parts_mut(table_base as *mut MsixTableEntry, vector_count as usize)
-        };
-        let pba_entries: &'static mut [Mmio<u64>] = unsafe {
-            slice::from_raw_parts_mut(
-                table_base as *mut Mmio<u64>,
-                (vector_count as usize + 63) / 64,
-            )
-        };
+        let (table_entries, pba_entries) = unsafe { irq_helpers::msix_cfg(function, &capability_struct, allocated_bars).unwrap() };
 
         // Mask all interrupts in case some earlier driver/os already unmasked them (according to
         // the PCI Local Bus spec 3.0, they are masked after system reset).
@@ -164,7 +100,7 @@ fn get_int_method(
             _ => unreachable!(),
         };
 
-        let (msi_vector_number, irq_handle) = {
+        let irq_handle = {
             use msi_x86_64::DeliveryMode;
             use pcid_interface::msi::x86_64 as msi_x86_64;
             use pcid_interface::{MsiSetFeatureInfo, SetFeatureInfo};
@@ -190,12 +126,12 @@ fn get_int_method(
                 mask_bits: None,
             })).unwrap();
 
-            (0, irq_handle)
+            irq_handle
         };
 
         let interrupt_method = InterruptMethod::Msi(capability_struct);
         let interrupt_sources =
-            InterruptSources::Msi(std::iter::once((msi_vector_number, irq_handle)).collect());
+            InterruptSources::Msi(std::iter::once(irq_handle).collect());
 
         pcid_handle.enable_feature(PciFeature::Msi).unwrap();
 
@@ -274,7 +210,6 @@ fn main() {
         other => panic!("received a non-memory BAR ({:?})", other),
     };
     let bar_size = pci_config.func.bar_sizes[0];
-    let irq = pci_config.func.legacy_interrupt_line;
 
     let mut name = pci_config.func.name();
     name.push_str("_nvme");
@@ -282,20 +217,9 @@ fn main() {
     log::info!("NVME PCI CONFIG: {:?}", pci_config);
 
     let allocated_bars = AllocatedBars::default();
-
-    let address = unsafe {
-        syscall::physmap(
-            bar as usize,
-            bar_size as usize,
-            PHYSMAP_WRITE | PHYSMAP_NO_CACHE,
-        )
-        .expect("nvmed: failed to map address")
-    };
-    *allocated_bars.0[0].lock().unwrap() = Some(Bar {
-        physical: bar as usize,
-        bar_size: bar_size as usize,
-        ptr: NonNull::new(address as *mut u8).expect("Physmapping BAR gave nullptr"),
-    });
+    let bar_wrapper = unsafe { Bar::map(bar as usize, bar_size as usize).unwrap() };
+    let address = bar_wrapper.pointer().as_ptr() as usize;
+    *allocated_bars.0[0].lock().unwrap() = Some(bar_wrapper);
     let event_fd = syscall::open("event:", syscall::O_RDWR | syscall::O_CLOEXEC)
         .expect("nvmed: failed to open event queue");
     let mut event_file = unsafe { File::from_raw_fd(event_fd as RawFd) };

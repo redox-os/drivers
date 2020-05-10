@@ -15,11 +15,11 @@ use log::{debug, error, info, trace, warn};
 use serde::Deserialize;
 use syscall::error::{Error, Result, EBADF, EBADMSG, ENOENT, EIO};
 use syscall::flag::{O_RDONLY, PhysallocFlags};
-use syscall::io::{Dma, Io, PhysBox};
+use syscall::io::{Dma, Io, Mmio, PhysBox};
 
 use crate::usb;
 
-use pcid_interface::msi::{MsixTableEntry, MsixCapability};
+use pcid_interface::msi::{MsiCapability, MsixTableEntry, MsixCapability};
 use pcid_interface::{PcidServerHandle, PciFeature};
 
 mod capability;
@@ -59,36 +59,23 @@ pub enum InterruptMethod {
     Intx,
 
     /// Message signaled interrupts.
-    Msi,
+    Msi(Mutex<MsiCapability>),
 
     /// Extended message signaled interrupts.
-    MsiX(Mutex<MsixInfo>),
+    MsiX(Mutex<MsixCfg>),
 }
+pub use pcid_interface::helpers::irq::InterruptSources;
 
-pub struct MsixInfo {
-    pub virt_table_base: NonNull<MsixTableEntry>,
-    pub virt_pba_base: NonNull<u64>,
+pub struct MsixCfg {
     pub capability: MsixCapability,
+    pub table: &'static mut [MsixTableEntry],
+    pub pba: &'static mut [Mmio<u64>],
 }
-impl MsixInfo {
-    pub unsafe fn table_entry_pointer_unchecked(&mut self, k: usize) -> &mut MsixTableEntry {
-        &mut *self.virt_table_base.as_ptr().offset(k as isize)
-    }
-    pub fn table_entry_pointer(&mut self, k: usize) -> &mut MsixTableEntry {
-        assert!(k < self.capability.table_size() as usize);
-        unsafe { self.table_entry_pointer_unchecked(k) }
-    }
-    pub unsafe fn pba_pointer_unchecked(&mut self, k: usize) -> &mut u64 {
-        &mut *self.virt_pba_base.as_ptr().offset(k as isize)
-    }
-    pub fn pba_pointer(&mut self, k: usize) -> &mut u64 {
-        assert!(k < self.capability.table_size() as usize);
-        unsafe { self.pba_pointer_unchecked(k) }
-    }
-    pub fn pba(&mut self, k: usize) -> bool {
-        let byte = k / 64;
+impl MsixCfg {
+    pub fn is_pending(&self, k: usize) -> bool {
+        let qword = k / 64;
         let bit = k % 64;
-        *self.pba_pointer(byte) & (1 << bit) != 0
+        self.pba[qword].read() & (1 << bit) != 0
     }
 }
 
@@ -212,6 +199,8 @@ struct PortState {
     dev_desc: Option<DevDesc>,
     endpoint_states: BTreeMap<u8, EndpointState>,
 }
+unsafe impl Send for PortState {}
+unsafe impl Sync for PortState {}
 
 pub(crate) enum RingOrStreams {
     Ring(Ring),
@@ -222,6 +211,9 @@ pub(crate) struct EndpointState {
     pub transfer: RingOrStreams,
     pub driver_if_state: EndpIfState,
 }
+unsafe impl Send for EndpointState {}
+unsafe impl Sync for EndpointState {}
+
 impl EndpointState {
     fn ring(&mut self) -> Option<&mut Ring> {
         match self.transfer {
@@ -669,19 +661,19 @@ impl Xhci {
     }
 
     pub fn uses_msi(&self) -> bool {
-        if let InterruptMethod::Msi = self.interrupt_method { true } else { false }
+        if let InterruptMethod::Msi(_) = self.interrupt_method { true } else { false }
     }
     pub fn uses_msix(&self) -> bool {
         if let InterruptMethod::MsiX(_) = self.interrupt_method { true } else { false }
     }
     // TODO: Perhaps use an rwlock?
-    pub fn msix_info(&self) -> Option<MutexGuard<'_, MsixInfo>> {
+    pub fn msix_info(&self) -> Option<MutexGuard<'_, MsixCfg>> {
         match self.interrupt_method {
             InterruptMethod::MsiX(ref info) => Some(info.lock().unwrap()),
             _ => None,
         }
     }
-    pub fn msix_info_mut(&self) -> Option<MutexGuard<'_, MsixInfo>> {
+    pub fn msix_info_mut(&self) -> Option<MutexGuard<'_, MsixCfg>> {
         match self.interrupt_method {
             InterruptMethod::MsiX(ref info) => Some(info.lock().unwrap()),
             _ => None,
@@ -864,7 +856,7 @@ impl Xhci {
             .find(|speed| speed.psiv() == psiv)
     }
 }
-pub fn start_irq_reactor(hci: &Arc<Xhci>, irq_file: Option<File>) {
+pub fn start_irq_reactor(hci: &Arc<Xhci>, irq_file: Option<InterruptSources>) {
     let receiver = hci.irq_reactor_receiver.clone();
     let hci_clone = Arc::clone(&hci);
 
