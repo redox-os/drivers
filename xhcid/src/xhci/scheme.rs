@@ -38,6 +38,20 @@ use super::usb::endpoint::{EndpointTy, ENDP_ATTR_TY_MASK};
 
 use crate::driver_interface::*;
 
+pub enum Buffer<'a> {
+    Borrowed(&'a [u8]),
+    Owned(Box<[u8]>),
+}
+impl<'a> std::ops::Deref for Buffer<'a> {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            &Self::Borrowed(ref buf) => buf,
+            &Self::Owned(ref buf) => &buf[..],
+        }
+    }
+}
 pub enum BufferMut<'a> {
     Borrowed(&'a mut [u8]),
     Owned(Box<[u8]>),
@@ -68,11 +82,14 @@ pub enum ControlFlow {
 
 #[derive(Clone, Copy, Debug)]
 pub enum EndpIfState {
+    /// The initial state, where nothing is currently pending.
     Init,
+
     WaitingForDataPipe {
         direction: XhciEndpCtlDirection,
         bytes_transferred: u32,
         bytes_to_transfer: u32,
+        pending_transfer_future: Option<Pin<Box<dyn Future<Output = Result<usize>> + Send>>>,
     },
     WaitingForStatus,
     WaitingForTransferResult(PortTransferStatus),
@@ -114,8 +131,6 @@ pub struct Handle {
     pub kind: HandleKind,
     pub blocking: bool,
     pub event_flags: EventFlags,
-    pub read_notified: bool,
-    pub write_notified: bool,
     pub pending_read_transaction: Option<Pin<Box<dyn Future<Output = Result<usize>> + Send>>>,
     pub pending_write_transaction: Option<Pin<Box<dyn Future<Output = Result<usize>> + Send>>>,
 }
@@ -125,8 +140,6 @@ impl fmt::Debug for Handle {
             .field("kind", &self.kind)
             .field("blocking", &self.blocking)
             .field("event_flags", &self.event_flags)
-            .field("read_notified", &self.read_notified)
-            .field("write_notified", &self.write_notified)
             .field("has_pending_read_transaction", &self.pending_read_transaction.is_some())
             .field("has_pending_write_transaction", &self.pending_write_transaction.is_some())
             .finish()
@@ -858,12 +871,12 @@ impl Xhci {
         buf.copy_from_slice(&*dma_buffer.as_ref().unwrap());
         Ok((completion_code, bytes_transferred))
     }
-    async fn transfer_write(&self, port_num: usize, endp_idx: u8, sbuf: &[u8]) -> Result<(u8, u32)> {
+    async fn transfer_write(&self, port_num: usize, endp_idx: u8, sbuf: Buffer<'_>) -> Result<(u8, u32)> {
         if sbuf.is_empty() {
             return Err(Error::new(EINVAL));
         }
         let mut dma_buffer = unsafe { self.alloc_dma_zeroed_unsized(sbuf.len()) }?;
-        dma_buffer.copy_from_slice(sbuf);
+        dma_buffer.copy_from_slice(&*sbuf);
 
         trace!("TRANSFER_WRITE port {} ep {}, buffer at {:p}, size {}, dma buffer {:?}", port_num, endp_idx + 1, sbuf.as_ptr(), sbuf.len(), DmaSliceDbg(&dma_buffer));
 
@@ -1387,7 +1400,7 @@ impl Xhci {
 
             //SYS_DUP => self.dup(packet.b, unsafe { slice::from_raw_parts(packet.c as *const u8, packet.d) }),
             SYS_READ => SchemeHandleOutput::future(self.scheme_read(context, packet.b, unsafe { slice::from_raw_parts_mut(packet.c as *mut u8, packet.d) })).map_future(EitherFuture::A),
-            SYS_WRITE => SchemeHandleOutput::future(self.scheme_write(packet.b, unsafe { slice::from_raw_parts(packet.c as *const u8, packet.d) })).map_future(EitherFuture::B),
+            SYS_WRITE => SchemeHandleOutput::future(self.scheme_write(context, packet.b, unsafe { slice::from_raw_parts(packet.c as *const u8, packet.d) })).map_future(EitherFuture::B),
             SYS_LSEEK => SchemeHandleOutput::direct(self.scheme_seek(packet.b, packet.c, packet.d)),
             //SYS_FCHMOD => self.fchmod(packet.b, packet.c as u16),
             //SYS_FCHOWN => self.fchown(packet.b, packet.c as u32, packet.d as u32),
@@ -1597,8 +1610,6 @@ impl Xhci {
             kind: handle_kind,
             blocking: flags & O_NONBLOCK == 0,
             event_flags: EventFlags::empty(),
-            read_notified: false,
-            write_notified: false,
             pending_read_transaction: None,
             pending_write_transaction: None,
         };
@@ -1740,7 +1751,7 @@ impl Xhci {
             HandleKind::ConfigureEndpoints(_) => return Err(Error::new(EBADF)),
 
             &mut HandleKind::Endpoint(port_num, endp_num, ref mut st) => match st {
-                EndpointHandleTy::Ctl => self.on_read_endp_ctl(port_num, endp_num, buf),
+                EndpointHandleTy::Ctl => self.on_read_endp_ctl(guard.blocking, port_num, endp_num, buf),
                 EndpointHandleTy::Data => if let Some(mut transaction) = guard.pending_read_transaction.take() {
                     if guard.blocking {
                         return transaction.await;
@@ -1756,14 +1767,14 @@ impl Xhci {
                     }
                 } else {
                     if guard.blocking {
-                        self.on_read_endp_data(port_num, endp_num, BufferMut::Borrowed(buf)).await
+                        self.on_read_endp_data(scheme_if_context, port_num, endp_num, BufferMut::Borrowed(buf)).await
                     } else {
                         // TODO: Use buffer pool
                         let buffer = vec! [0u8; buf.len()].into_boxed_slice();
                         let context = scheme_if_context.clone();
                         let event_flags = guard.event_flags;
                         guard.pending_read_transaction = Some(Box::pin(unsafe { ForceSendFuture::new(async move {
-                            let bytes_read = context.hci.on_read_endp_data(port_num, endp_num, BufferMut::<'static>::Owned(buffer)).await?;
+                            let bytes_read = context.hci.on_read_endp_data(&context, port_num, endp_num, BufferMut::<'static>::Owned(buffer)).await?;
                             if event_flags.contains(EventFlags::EVENT_READ) {
                                 post_fevent(&*context.socket_fd, fd, syscall::EVENT_READ, bytes_read);
                             }
@@ -1813,8 +1824,11 @@ impl Xhci {
     // way to tell clients when they can write, and then blindly accepting all the bytes before
     // they even touch the hardware, isn't really the best way. For starters, the client will have
     // to check for short packets by reading another file, or simply block until the bytes have
-    // been written.
-    async fn scheme_write(&self, fd: usize, buf: &[u8]) -> Result<usize> {
+    // been written. Although this is the current way to do USB I/O (write ctl, read/write data,
+    // read ctl (which the clients do to this driver, unrelated to the actual USB hardware
+    // transfers)) and thus works with readiness, completion based works much better since the I/O
+    // doesn't start itself.
+    async fn scheme_write(&self, scheme_ctx: &SchemeIfCtx, fd: usize, buf: &[u8]) -> Result<usize> {
         let mut guard = self.handles.get_mut(&fd).ok_or(Error::new(EBADF))?;
         trace!("WRITE fd={}, handle={:?}, buf=(addr {:p}, length {})", fd, guard, buf.as_ptr(), buf.len());
 
@@ -1825,7 +1839,7 @@ impl Xhci {
             }
             &mut HandleKind::Endpoint(port_num, endp_num, ref ep_file_ty) => match ep_file_ty {
                 EndpointHandleTy::Ctl => self.on_write_endp_ctl(port_num, endp_num, buf).await,
-                EndpointHandleTy::Data => self.on_write_endp_data(port_num, endp_num, buf).await,
+                EndpointHandleTy::Data => self.on_write_endp_data(scheme_ctx, guard.blocking, guard.event_flags, port_num, endp_num, buf).await,
                 EndpointHandleTy::Root(_, _) => return Err(Error::new(EBADF)),
             },
             &mut HandleKind::PortReq(port_num, ref mut st) => {
@@ -1848,9 +1862,36 @@ impl Xhci {
         let flags = EventFlags::from_bits(flags).ok_or(Error::new(EINVAL))?;
         let mut guard = self.handles.get_mut(&fd).ok_or(Error::new(EBADF))?;
         guard.event_flags = flags;
-        guard.read_notified = false;
-        guard.write_notified = false;
-        Ok(0)
+
+        let (port, ep, is_data) = if let &HandleKind::Endpoint(port_num, endp_num, ref ty) = &guard.kind {
+            match ty {
+                &EndpointHandleTy::Ctl => (port_num, endp_num, false),
+                &EndpointHandleTy::Data => (port_num, endp_num, true),
+                // no events on directory
+                &EndpointHandleTy::Root(_, _) => return Ok(0),
+            }
+        } else {
+            // no events currently available
+            return Ok(0);
+        };
+        let mut port_state = self.port_states.get_mut(&port).ok_or(Error::new(EBADFD))?;
+        let endpoint_state = port_state.endpoint_states.get_mut(&ep).ok_or(Error::new(EBADFD))?;
+
+        let both_read_and_write_event_bits = (EventFlags::EVENT_READ | EventFlags::EVENT_WRITE).bits();
+
+        match &mut endpoint_state.driver_if_state {
+            // we can always both read and write in Init state
+            &mut EndpIfState::Init => Ok(both_read_and_write_event_bits),
+
+            // TODO: Check futures
+            &mut EndpIfState::WaitingForDataPipe { direction, bytes_transferred, bytes_to_transfer, pending_transfer_future } => todo!(),
+
+            // WaitingForStatus is only used when the status of an endpoint is queried, and thus a
+            // read is always allowed.
+            &mut EndpIfState::WaitingForStatus => Ok(EventFlags::EVENT_READ.bits()),
+
+            &mut EndpIfState::WaitingForTransferResult(ref status) => Ok(EventFlags::EVENT_READ.bits()),
+        }
     }
     fn scheme_fcntl(&self, fd: usize, cmd: usize, arg: usize) -> Result<usize> {
         let mut guard = self.handles.get_mut(&fd).ok_or(Error::new(EBADF))?;
@@ -2081,13 +2122,13 @@ impl Xhci {
         match req {
             XhciEndpCtlReq::Status => match ep_if_state {
                 state @ EndpIfState::Init => *state = EndpIfState::WaitingForStatus,
-                other => {
+                _ => {
                     return Err(Error::new(EBADF));
                 }
             },
             XhciEndpCtlReq::Reset { no_clear_feature } => match ep_if_state {
                 EndpIfState::Init => self.on_req_reset_device(port_num, endp_num, !no_clear_feature).await?,
-                other => {
+                _ => {
                     return Err(Error::new(EBADF));
                 }
             },
@@ -2118,16 +2159,14 @@ impl Xhci {
                             direction,
                             bytes_to_transfer: count,
                             bytes_transferred: 0,
+                            pending_transfer_future: None,
                         };
                     }
                 }
-                other => {
+                _ => {
                     return Err(Error::new(EBADF));
                 }
             },
-            other => {
-                return Err(Error::new(EBADF));
-            }
         }
         Ok(buf.len())
     }
@@ -2148,12 +2187,15 @@ impl Xhci {
     }
     pub async fn on_write_endp_data(
         &self,
+        scheme_ctx: &SchemeIfCtx,
+        blocking: bool,
+        event_flags: EventFlags,
         port_num: usize,
         endp_num: u8,
         buf: &[u8],
     ) -> Result<usize> {
-        let mut port_state = self.port_states.get_mut(&port_num).ok_or(Error::new(EBADFD))?;
-        let mut endpoint_state = port_state.endpoint_states.get_mut(&endp_num).ok_or(Error::new(EBADFD))?;
+        let mut port_state_guard = self.port_states.get_mut(&port_num).ok_or(Error::new(EBADFD))?;
+        let endpoint_state = port_state_guard.endpoint_states.get_mut(&endp_num).ok_or(Error::new(EBADFD))?;
 
         let ep_if_state = &mut endpoint_state.driver_if_state;
 
@@ -2162,54 +2204,87 @@ impl Xhci {
                 direction: XhciEndpCtlDirection::Out,
                 bytes_to_transfer: total_bytes_to_transfer,
                 bytes_transferred,
+                ref mut pending_transfer_future,
             } => {
                 if buf.len() > total_bytes_to_transfer as usize - bytes_transferred as usize {
                     return Err(Error::new(EINVAL));
                 }
-                drop(port_state);
-                let (completion_code, some_bytes_transferred) =
-                    self.transfer_write(port_num, endp_num - 1, buf).await?;
-                let result = Self::transfer_result(completion_code, some_bytes_transferred);
+                drop(port_state_guard);
 
-                // To avoid having to read from the Ctl interface file, the client should stop
-                // invoking further data transfer calls if any single transfer returns fewer bytes
-                // than requested.
-
-                let mut port_state = self.port_states.get_mut(&port_num).ok_or(Error::new(EBADFD))?;
-                let mut endpoint_state = port_state.endpoint_states.get_mut(&endp_num).ok_or(Error::new(EBADFD))?;
-                let ep_if_state = &mut endpoint_state.driver_if_state;
-
-                if let &mut EndpIfState::WaitingForDataPipe {
-                    direction: XhciEndpCtlDirection::Out,
-                    bytes_to_transfer,
-                    ref mut bytes_transferred,
-                } = ep_if_state
-                {
-                    if *bytes_transferred + some_bytes_transferred == bytes_to_transfer || completion_code != TrbCompletionCode::Success as u8 {
-                        *ep_if_state = EndpIfState::WaitingForTransferResult(result);
-                    } else {
-                        *bytes_transferred += some_bytes_transferred;
-                    }
-                } else {
-                    unreachable!()
+                if pending_transfer_future.is_some() {
+                    return Err(Error::new(EBADF));
                 }
-                Ok(some_bytes_transferred as usize)
+
+                // same reference as self
+                let hci = Arc::clone(&scheme_ctx.hci);
+
+                let buf = Buffer::Owned(buf.to_vec().into_boxed_slice());
+
+                let future = async move {
+                    let (completion_code, some_bytes_transferred) =
+                        hci.transfer_write(port_num, endp_num - 1, buf).await?;
+                    let result = Self::transfer_result(completion_code, some_bytes_transferred);
+
+                    let mut port_state = hci.port_states.get_mut(&port_num).ok_or(Error::new(EBADFD))?;
+                    let endpoint_state = port_state.endpoint_states.get_mut(&endp_num).ok_or(Error::new(EBADFD))?;
+                    let ep_if_state = &mut endpoint_state.driver_if_state;
+
+                    if let &mut EndpIfState::WaitingForDataPipe {
+                        direction: XhciEndpCtlDirection::Out,
+                        bytes_to_transfer,
+                        ref mut bytes_transferred,
+                        ..
+                    } = ep_if_state
+                    {
+                        if *bytes_transferred + some_bytes_transferred == bytes_to_transfer || completion_code != TrbCompletionCode::Success as u8 {
+                            *ep_if_state = EndpIfState::WaitingForTransferResult(result);
+                        } else {
+                            *bytes_transferred += some_bytes_transferred;
+                        }
+                    } else {
+                        unreachable!()
+                    }
+
+                    // XXX: CHashMap doesn't appear to support iterators that don't consume every
+                    // handle, I'm considering jonhoo's `flurry` port of Java's ConcurrentHashMap.
+                    // FIXME: Notify handles which want to read the status when the actual work
+                    // succeeds.
+
+                    Ok(some_bytes_transferred as usize)
+                };
+
+                if blocking {
+                    future.await
+                } else {
+                    let future = Box::pin(unsafe { ForceSendFuture::new(future) });
+
+                    let mut cx = task::Context::from_waker(futures::task::noop_waker_ref());
+
+                    match future.poll_unpin(&mut cx) {
+                        task::Poll::Pending => {
+                            *pending_transfer_future = Some(future);
+                            Err(Error::new(EWOULDBLOCK))
+                        }
+                        task::Poll::Ready(result) => result,
+                    }
+                }
             }
             _ => return Err(Error::new(EBADF)),
         }
     }
     pub fn on_read_endp_ctl(
         &self,
+        blocking: bool,
         port_num: usize,
         endp_num: u8,
         buf: &mut [u8],
     ) -> Result<usize> {
-        let port_state = &mut self
+        let port_state_guard = &mut self
             .port_states
             .get_mut(&port_num)
             .ok_or(Error::new(EBADF))?;
 
-        let ep_if_state = &mut port_state
+        let ep_if_state = &mut port_state_guard
             .endpoint_states
             .get_mut(&endp_num)
             .ok_or(Error::new(EBADF))?
@@ -2222,7 +2297,17 @@ impl Xhci {
                 *state = EndpIfState::Init;
                 XhciEndpCtlRes::Status(self.get_endp_status(port_num, endp_num)?)
             }
-            &mut EndpIfState::WaitingForDataPipe { .. } => XhciEndpCtlRes::Pending,
+            &mut EndpIfState::WaitingForDataPipe { ref mut pending_transfer_future, .. } => {
+                if blocking {
+                    drop(port_state_guard);
+                    let bytes_transferred = futures::executor::block_on(pending_transfer_future.take().ok_or(Error::new(EBADF))?);
+                } else {
+                    match pending_transfer_future.as_mut().ok_or(Error::new(EBADF))?.poll_unpin(task::Context::from_waker(futures::task::noop_waker_ref())) {
+                        task::Poll::Ready(result) => Ok(result),
+                        task::Poll::Pending => Err(Error::new(EWOULDBLOCK)),
+                    }
+                }
+            }
             &mut EndpIfState::WaitingForTransferResult(status) => {
                 *ep_if_state = EndpIfState::Init;
                 XhciEndpCtlRes::TransferResult(status)
@@ -2235,6 +2320,7 @@ impl Xhci {
     }
     pub async fn on_read_endp_data(
         &self,
+        scheme_ctx: &SchemeIfCtx,
         port_num: usize,
         endp_num: u8,
         mut buf: BufferMut<'_>,
@@ -2255,47 +2341,56 @@ impl Xhci {
                 direction: XhciEndpCtlDirection::In,
                 bytes_transferred,
                 bytes_to_transfer: total_bytes_to_transfer,
+                ref mut pending_transfer_future,
             } => {
                 if buf.len() > total_bytes_to_transfer as usize - bytes_transferred as usize {
                     return Err(Error::new(EINVAL));
                 }
 
                 drop(port_state);
-                let (completion_code, some_bytes_transferred) =
-                    self.transfer_read(port_num, endp_num - 1, &mut *buf).await?;
 
-                // Just as with on_write_endp_data, a client issuing multiple reads must always
-                // stop reading if one read returns fewer bytes than expected.
+                let hci = Arc::clone(&scheme_ctx.hci);
 
-                let result = Self::transfer_result(completion_code, some_bytes_transferred);
+                let future = async move {
+                    let (completion_code, some_bytes_transferred) =
+                        hci.transfer_read(port_num, endp_num - 1, &mut *buf).await?;
 
-                let mut port_state = self
-                    .port_states
-                    .get_mut(&port_num)
-                    .ok_or(Error::new(EBADF))?;
+                    // Just as with on_write_endp_data, a client issuing multiple reads must always
+                    // stop reading if one read returns fewer bytes than expected.
 
-                let ep_state = port_state
-                    .endpoint_states
-                    .get_mut(&endp_num)
-                    .ok_or(Error::new(EBADF))?;
+                    let result = Self::transfer_result(completion_code, some_bytes_transferred);
 
-                let ep_if_state = &mut ep_state.driver_if_state;
+                    let mut port_state = hci
+                        .port_states
+                        .get_mut(&port_num)
+                        .ok_or(Error::new(EBADF))?;
 
-                if let &mut EndpIfState::WaitingForDataPipe {
-                    direction: XhciEndpCtlDirection::In,
-                    bytes_to_transfer,
-                    ref mut bytes_transferred,
-                } = ep_if_state
-                {
-                    if *bytes_transferred + some_bytes_transferred == bytes_to_transfer || completion_code != TrbCompletionCode::Success as u8 {
-                        *ep_if_state = EndpIfState::WaitingForTransferResult(result);
+                    let ep_state = port_state
+                        .endpoint_states
+                        .get_mut(&endp_num)
+                        .ok_or(Error::new(EBADF))?;
+
+                    let ep_if_state = &mut ep_state.driver_if_state;
+
+                    if let &mut EndpIfState::WaitingForDataPipe {
+                        direction: XhciEndpCtlDirection::In,
+                        bytes_to_transfer,
+                        ref mut bytes_transferred,
+                        ..
+                    } = ep_if_state
+                    {
+                        if *bytes_transferred + some_bytes_transferred == bytes_to_transfer || completion_code != TrbCompletionCode::Success as u8 {
+                            *ep_if_state = EndpIfState::WaitingForTransferResult(result);
+                        } else {
+                            *bytes_transferred += some_bytes_transferred;
+                        }
                     } else {
-                        *bytes_transferred += some_bytes_transferred;
+                        unreachable!()
                     }
-                } else {
-                    unreachable!()
-                }
-                Ok(some_bytes_transferred as usize)
+
+                    Ok(some_bytes_transferred as usize)
+                };
+                future.await
             }
             _ => return Err(Error::new(EBADF)),
         }

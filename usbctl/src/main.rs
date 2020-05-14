@@ -1,12 +1,36 @@
+use std::fs;
 use clap::{App, Arg};
 use xhcid_interface::XhciClientHandle;
+
+fn find_default_scheme() -> String {
+    let iter = fs::read_dir(":").expect("failed to read dir `:` when figuring out which scheme to use");
+
+    for entry_result in iter {
+        let entry = match entry_result {
+            Ok(e) => e,
+            Err(err) => {
+                eprintln!("Missed a scheme name: {}", err);
+                continue;
+            }
+        };
+        let path = entry.path();
+
+        let name = match path.as_os_str().to_str() {
+            Some(s) => s,
+            None => continue,
+        };
+        if name.starts_with("usb") {
+            return name.to_owned();
+        }
+    }
+    panic!("No USB scheme found");
+}
 
 fn main() {
     let matches = App::new("usbctl")
         .arg(
             Arg::with_name("SCHEME")
                 .takes_value(true)
-                .required(true)
                 .long("scheme")
                 .short("s"),
         )
@@ -26,7 +50,7 @@ fn main() {
         )
         .get_matches();
 
-    let scheme = matches.value_of("SCHEME").expect("no scheme");
+    let scheme = matches.value_of("SCHEME").map(ToOwned::to_owned).unwrap_or_else(find_default_scheme);
 
     if let Some(port_scmd_matches) = matches.subcommand_matches("port") {
         let port = port_scmd_matches
@@ -52,5 +76,7 @@ fn main() {
             let state = endp_handle.status().expect("Failed to get endpoint state");
             println!("{}", state.as_str());
         }
+    } else {
+        eprintln!("{}", matches.usage());
     }
 }

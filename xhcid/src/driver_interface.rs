@@ -600,9 +600,6 @@ pub enum XhciEndpCtlRes {
     /// Xhci sent the result of a transfer.
     TransferResult(PortTransferStatus),
 
-    /// Xhcid is waiting for data to be sent or received on the Data interface file.
-    Pending,
-
     /// No Ctl request is currently being processed by xhcid.
     Idle,
 }
