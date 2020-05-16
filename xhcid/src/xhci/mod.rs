@@ -4,12 +4,11 @@ use std::fs::File;
 use std::future::Future;
 use std::pin::Pin;
 use std::ptr::NonNull;
-use std::sync::{Arc, Mutex, MutexGuard, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock, Weak};
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 
 use std::{mem, process, slice, sync::atomic, task, thread};
 
-use chashmap::CHashMap;
 use crossbeam_channel::{Receiver, Sender};
 use log::{debug, error, info, trace, warn};
 use serde::Deserialize;
@@ -85,7 +84,8 @@ impl Xhci {
         let len = mem::size_of::<T>();
 
         let future = {
-            let mut port_state = self.port_states.get_mut(&port).ok_or(Error::new(ENOENT))?;
+            let port_states = self.port_states.read().unwrap();
+            let mut port_state = port_states.get(&port).ok_or(Error::new(ENOENT))?.lock().unwrap();
             let ring = port_state.endpoint_states.get_mut(&0).ok_or(Error::new(EIO))?.ring().expect("no ring for the default control pipe");
 
             let (cmd, cycle) = ring.next();
@@ -148,6 +148,10 @@ impl Xhci {
     }
 }
 
+// TODO
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct DriverId(usize);
+
 pub struct Xhci {
     // immutable
     cap: &'static CapabilityRegs,
@@ -169,11 +173,11 @@ pub struct Xhci {
     // used for the extended capabilities, and so far none of them are mutated, and thus no lock.
     base: *const u8,
 
-    handles: CHashMap<usize, scheme::Handle>,
+    handles: RwLock<BTreeMap<usize, Mutex<scheme::Handle>>>,
     next_handle: AtomicUsize,
-    port_states: CHashMap<usize, PortState>,
+    port_states: RwLock<BTreeMap<usize, Mutex<PortState>>>,
 
-    drivers: CHashMap<usize, process::Child>,
+    drivers: Mutex<BTreeMap<DriverId, process::Child>>,
     scheme_name: String,
 
     interrupt_method: InterruptMethod,
@@ -307,11 +311,11 @@ impl Xhci {
 
             cmd: Mutex::new(cmd),
             primary_event_ring: Mutex::new(EventRing::new(cap.ac64())?),
-            handles: CHashMap::new(),
+            handles: RwLock::new(BTreeMap::new()),
             next_handle: AtomicUsize::new(0),
-            port_states: CHashMap::new(),
+            port_states: RwLock::new(BTreeMap::new()),
 
-            drivers: CHashMap::new(),
+            drivers: Mutex::new(BTreeMap::new()),
             scheme_name,
 
             interrupt_method,
@@ -502,13 +506,14 @@ impl Xhci {
                     ))
                     .collect::<BTreeMap<_, _>>(),
                 };
-                self.port_states.insert(i, port_state);
+                self.port_states.write().unwrap().insert(i, Mutex::new(port_state));
 
                 let dev_desc = self.get_desc(i, slot).await?;
-                self.port_states.get_mut(&i).unwrap().dev_desc = Some(dev_desc);
+                self.port_states.read().unwrap().get(&i).unwrap().lock().unwrap().dev_desc = Some(dev_desc);
 
                 {
-                    let mut port_state = self.port_states.get_mut(&i).unwrap();
+                    let port_states = self.port_states.read().unwrap();
+                    let mut port_state = port_states.get(&i).unwrap().lock().unwrap();
 
                     let mut input = port_state.input_context.lock().unwrap();
                     let dev_desc = port_state.dev_desc.as_ref().unwrap();
@@ -747,7 +752,7 @@ impl Xhci {
                 .stdin(process::Stdio::null())
                 .spawn()
                 .or(Err(Error::new(ENOENT)))?;
-            self.drivers.insert(port, process);
+            self.drivers.lock().unwrap().insert(DriverId(port), process);
         } else {
             return Err(Error::new(ENOENT));
         }

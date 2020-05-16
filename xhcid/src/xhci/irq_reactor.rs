@@ -409,7 +409,8 @@ impl Xhci {
     pub fn with_ring<T, F: FnOnce(&Ring) -> T>(&self, id: RingId, function: F) -> Option<T> {
         use super::RingOrStreams;
 
-        let slot_state = self.port_states.get(&(id.port as usize))?;
+        let port_states = self.port_states.read().unwrap();
+        let slot_state = port_states.get(&(id.port as usize))?.lock().unwrap();
         let endpoint_state = slot_state.endpoint_states.get(&id.endpoint_num)?;
 
         let ring_ref = match endpoint_state.transfer {
@@ -422,7 +423,8 @@ impl Xhci {
     pub fn with_ring_mut<T, F: FnOnce(&mut Ring) -> T>(&self, id: RingId, function: F) -> Option<T> {
         use super::RingOrStreams;
 
-        let mut slot_state = self.port_states.get_mut(&(id.port as usize))?;
+        let port_states = self.port_states.read().unwrap();
+        let mut slot_state = port_states.get(&(id.port as usize))?.lock().unwrap();
         let mut endpoint_state = slot_state.endpoint_states.get_mut(&id.endpoint_num)?;
 
         let ring_ref = match endpoint_state.transfer {
