@@ -74,7 +74,7 @@ pub fn setup<'a>(
 ) -> Option<Box<dyn Protocol + 'a>> {
     match protocol {
         0x50 => Some(Box::new(
-            BulkOnlyTransport::init(handle, conf_desc, if_desc).unwrap(),
+            BulkOnlyTransport::init(handle, conf_desc, if_desc).expect("usbscsid: failed to initialize Bulk-Only Transport"),
         )),
         _ => None,
     }

@@ -40,14 +40,14 @@ pub struct NextEventTrb {
 // indexed using this struct instead.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct RingId {
-    pub port: u8,
+    pub slot: u8,
     pub endpoint_num: u8,
     pub stream_id: u16,
 }
 impl RingId {
-    pub const fn default_control_pipe(port: u8) -> Self {
+    pub const fn default_control_pipe(slot: u8) -> Self {
         Self {
-            port,
+            slot,
             endpoint_num: 0,
             stream_id: 0,
         }
@@ -138,7 +138,7 @@ impl IrqReactor {
         debug!("Running IRQ reactor with IRQ file and event queue");
 
         let hci_clone = Arc::clone(&self.hci);
-        let event_queue_fd = unsafe { syscall::open("event:", O_CLOEXEC | O_RDWR).expect("xhcid: failed to open event queue") };
+        let event_queue_fd = syscall::open("event:", O_CLOEXEC | O_RDWR).expect("xhcid: failed to open event queue");
         let mut event_queue = unsafe { File::from_raw_fd(event_queue_fd as RawFd) };
 
         let mut event_trb_index = { hci_clone.primary_event_ring.lock().unwrap().ring.next_index() };
@@ -404,27 +404,13 @@ unsafe impl Send for EventTrbFuture {}
 
 impl Xhci {
     pub fn get_transfer_trb(&self, paddr: u64, id: RingId) -> Option<Trb> {
-        self.with_ring(id, |ring| ring.phys_addr_to_entry(self.cap.ac64(), paddr)).flatten()
-    }
-    pub fn with_ring<T, F: FnOnce(&Ring) -> T>(&self, id: RingId, function: F) -> Option<T> {
-        use super::RingOrStreams;
-
-        let port_states = self.port_states.read().unwrap();
-        let slot_state = port_states.get(&(id.port as usize))?.lock().unwrap();
-        let endpoint_state = slot_state.endpoint_states.get(&id.endpoint_num)?;
-
-        let ring_ref = match endpoint_state.transfer {
-            RingOrStreams::Ring(ref ring) => ring,
-            RingOrStreams::Streams(ref ctx_arr) => ctx_arr.rings.get(&id.stream_id)?,
-        };
-
-        Some(function(ring_ref))
+        self.with_ring_mut(id, |ring| ring.phys_addr_to_entry(self.cap.ac64(), paddr)).flatten()
     }
     pub fn with_ring_mut<T, F: FnOnce(&mut Ring) -> T>(&self, id: RingId, function: F) -> Option<T> {
         use super::RingOrStreams;
 
-        let port_states = self.port_states.read().unwrap();
-        let mut slot_state = port_states.get(&(id.port as usize))?.lock().unwrap();
+        let slot_states = self.slot_states.read().unwrap();
+        let mut slot_state = slot_states.get(&id.slot)?.lock().unwrap();
         let mut endpoint_state = slot_state.endpoint_states.get_mut(&id.endpoint_num)?;
 
         let ring_ref = match endpoint_state.transfer {

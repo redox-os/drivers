@@ -83,8 +83,6 @@ fn main() {
     let mut protocol = protocol::setup(&handle, protocol, &desc, &conf_desc, &if_desc)
         .expect("Failed to setup protocol");
 
-    // TODO: Let all of the USB drivers syscall clone(2), and xhcid won't have to keep track of all
-    // the drivers.
     let socket_fd = syscall::open(disk_scheme_name, syscall::O_RDWR | syscall::O_CREAT)
         .expect("usbscsid: failed to create disk scheme");
     let mut socket_file = unsafe { File::from_raw_fd(socket_fd as RawFd) };
@@ -93,7 +91,7 @@ fn main() {
     let mut scsi = Scsi::new(&mut *protocol).expect("usbscsid: failed to setup SCSI");
     println!("SCSI initialized");
     let mut buffer = [0u8; 512];
-    scsi.read(&mut *protocol, 0, &mut buffer).unwrap();
+    scsi.read(&mut *protocol, 0, &mut buffer).expect("usbscsid: failed to read block");
     println!("DISK CONTENT: {}", base64::encode(&buffer[..]));
 
     let mut scsi_scheme = ScsiScheme::new(&mut scsi, &mut *protocol);

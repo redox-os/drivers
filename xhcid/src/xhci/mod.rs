@@ -79,14 +79,14 @@ impl MsixCfg {
 }
 
 impl Xhci {
-    /// Gets descriptors, before the port state is initiated.
-    async fn get_desc_raw<T>(&self, port: usize, slot: u8, kind: usb::DescriptorKind, index: u8, desc: &mut Dma<T>) -> Result<()> {
+    /// Gets descriptors, before the slot state is initiated.
+    async fn get_desc_raw<T>(&self, slot: u8, kind: usb::DescriptorKind, index: u8, desc: &mut Dma<T>) -> Result<()> {
         let len = mem::size_of::<T>();
 
         let future = {
-            let port_states = self.port_states.read().unwrap();
-            let mut port_state = port_states.get(&port).ok_or(Error::new(ENOENT))?.lock().unwrap();
-            let ring = port_state.endpoint_states.get_mut(&0).ok_or(Error::new(EIO))?.ring().expect("no ring for the default control pipe");
+            let slot_states = self.slot_states.read().unwrap();
+            let mut slot_state = slot_states.get(&slot).ok_or(Error::new(ENOENT))?.lock().unwrap();
+            let ring = slot_state.endpoint_states.get_mut(&0).ok_or(Error::new(EIO))?.ring().expect("no ring for the default control pipe");
 
             let (cmd, cycle) = ring.next();
             cmd.setup(
@@ -102,7 +102,7 @@ impl Xhci {
             let (cmd, cycle) = (&mut ring.trbs[last_index], ring.cycle);
             cmd.status(0, true, true, false, false, cycle);
 
-            self.next_transfer_event_trb(RingId::default_control_pipe(port as u8), &ring, &ring.trbs[last_index])
+            self.next_transfer_event_trb(RingId::default_control_pipe(slot), &ring, &ring.trbs[last_index])
         };
 
         self.dbs.lock().unwrap()[usize::from(slot)].write(Self::def_control_endp_doorbell());
@@ -117,6 +117,7 @@ impl Xhci {
         Ok(())
     }
 
+<<<<<<< HEAD
     async fn fetch_dev_desc(&self, port: usize, slot: u8) -> Result<usb::DeviceDescriptor> {
         let mut desc = unsafe { self.alloc_dma_zeroed::<usb::DeviceDescriptor>()? };
         self.get_desc_raw(port, slot, usb::DescriptorKind::Device, 0, &mut desc).await?;
@@ -138,6 +139,29 @@ impl Xhci {
     async fn fetch_string_desc(&self, port: usize, slot: u8, index: u8) -> Result<String> {
         let mut sdesc = unsafe { self.alloc_dma_zeroed::<(u8, u8, [u16; 127])>()? };
         self.get_desc_raw(port, slot, usb::DescriptorKind::String, index, &mut sdesc).await?;
+=======
+    async fn fetch_dev_desc(&self, slot: u8) -> Result<usb::DeviceDescriptor> {
+        let mut desc = Dma::<usb::DeviceDescriptor>::zeroed()?;
+        self.get_desc_raw(slot, usb::DescriptorKind::Device, 0, &mut desc).await?;
+        Ok(*desc)
+    }
+
+    async fn fetch_config_desc(&self, slot: u8, config: u8) -> Result<(usb::ConfigDescriptor, [u8; 4087])> {
+        let mut desc = Dma::<(usb::ConfigDescriptor, [u8; 4087])>::zeroed()?;
+        self.get_desc_raw(slot, usb::DescriptorKind::Configuration, config, &mut desc).await?;
+        Ok(*desc)
+    }
+
+    async fn fetch_bos_desc(&self, slot: u8) -> Result<(usb::BosDescriptor, [u8; 4087])> {
+        let mut desc = Dma::<(usb::BosDescriptor, [u8; 4087])>::zeroed()?;
+        self.get_desc_raw(slot, usb::DescriptorKind::BinaryObjectStorage, 0, &mut desc).await?;
+        Ok(*desc)
+    }
+
+    async fn fetch_string_desc(&self, slot: u8, index: u8) -> Result<String> {
+        let mut sdesc = Dma::<(u8, u8, [u16; 127])>::zeroed()?;
+        self.get_desc_raw(slot, usb::DescriptorKind::String, index, &mut sdesc).await?;
+>>>>>>> 9524c04... Store USB device states by slot instead of port.
 
         let len = sdesc.0 as usize;
         if len > 2 {
@@ -151,6 +175,22 @@ impl Xhci {
 // TODO
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct DriverId(usize);
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct RouteString(u32);
+
+impl RouteString {
+    pub fn new(value: u32) -> Self {
+        assert_eq!(value & 0x000F_FFFF, value, "route string larger than 20 bits");
+        Self(value)
+    }
+    pub fn get(self) -> u32 {
+        self.0
+    }
+    pub fn set(&mut self, new: u32) {
+        mem::replace(self, RouteString::new(new));
+    }
+}
 
 pub struct Xhci {
     // immutable
@@ -175,7 +215,12 @@ pub struct Xhci {
 
     handles: RwLock<BTreeMap<usize, Mutex<scheme::Handle>>>,
     next_handle: AtomicUsize,
-    port_states: RwLock<BTreeMap<usize, Mutex<PortState>>>,
+
+    slot_states: RwLock<BTreeMap<u8, Mutex<SlotState>>>,
+
+    /// Associates a root port_num (starting at 1) and downstream packed, route string with the
+    /// xHC-assigned slot num.
+    port_to_slot: RwLock<BTreeMap<(u8, RouteString), u8>>,
 
     drivers: Mutex<BTreeMap<DriverId, process::Child>>,
     scheme_name: String,
@@ -195,16 +240,39 @@ pub struct Xhci {
 unsafe impl Send for Xhci {}
 unsafe impl Sync for Xhci {}
 
-struct PortState {
-    slot: u8,
+pub struct SlotState {
     cfg_idx: Option<u8>,
     if_idx: Option<u8>,
-    input_context: Mutex<Dma<InputContext>>,
+    input_context: Dma<InputContext>,
     dev_desc: Option<DevDesc>,
     endpoint_states: BTreeMap<u8, EndpointState>,
 }
-unsafe impl Send for PortState {}
-unsafe impl Sync for PortState {}
+impl SlotState {
+    pub fn dev_desc(&self) -> Option<&DevDesc> {
+        self.dev_desc.as_ref()
+    }
+    pub fn cfg_desc(&self, cfg_idx: u8) -> Option<&ConfDesc> {
+        self.dev_desc()?.config_descs.get(usize::from(cfg_idx))
+    }
+    pub fn if_desc(&self, cfg_idx: u8, if_idx: u8) -> Option<&IfDesc> {
+        self.cfg_desc(cfg_idx)?.interface_descs.get(usize::from(if_idx))
+    }
+    pub fn endp_desc(&self, cfg_idx: u8, if_idx: u8, endp_idx: u8) -> Option<&EndpDesc> {
+        self.if_desc(cfg_idx, if_idx)?.endpoints.get(usize::from(endp_idx))
+    }
+    pub fn current_cfg_desc(&self) -> Option<&ConfDesc> {
+        self.cfg_desc(self.cfg_idx?)
+    }
+    pub fn current_if_desc(&self) -> Option<&IfDesc> {
+        self.if_desc(self.cfg_idx?, self.if_idx?)
+    }
+    pub fn current_endp_desc(&self, endp_idx: u8) -> Option<&EndpDesc> {
+        self.endp_desc(self.cfg_idx?, self.if_idx?, endp_idx)
+    }
+}
+
+unsafe impl Send for SlotState {}
+unsafe impl Sync for SlotState {}
 
 pub(crate) enum RingOrStreams {
     Ring(Ring),
@@ -313,7 +381,9 @@ impl Xhci {
             primary_event_ring: Mutex::new(EventRing::new(cap.ac64())?),
             handles: RwLock::new(BTreeMap::new()),
             next_handle: AtomicUsize::new(0),
-            port_states: RwLock::new(BTreeMap::new()),
+
+            slot_states: RwLock::new(BTreeMap::new()),
+            port_to_slot: RwLock::new(BTreeMap::new()),
 
             drivers: Mutex::new(BTreeMap::new()),
             scheme_name,
@@ -414,7 +484,7 @@ impl Xhci {
         Ok(())
     }
 
-    pub async fn enable_port_slot(&self, slot_ty: u8) -> Result<u8> {
+    pub async fn enable_slot(&self, slot_ty: u8) -> Result<u8> {
         assert_eq!(slot_ty & 0x1F, slot_ty);
 
         let (event_trb, command_trb) =
@@ -425,7 +495,7 @@ impl Xhci {
 
         Ok(event_trb.event_slot())
     }
-    pub async fn disable_port_slot(&self, slot: u8) -> Result<()> {
+    pub async fn disable_slot(&self, slot: u8) -> Result<()> {
         let (event_trb, command_trb) = self.execute_command(|cmd, cycle| cmd.disable_slot(slot, cycle)).await;
 
         self::scheme::handle_event_trb("DISABLE_SLOT", &event_trb, &command_trb)?;
@@ -434,8 +504,8 @@ impl Xhci {
         Ok(())
     }
 
-    pub fn slot_state(&self, slot: usize) -> u8 {
-        self.dev_ctx.contexts[slot].slot.state()
+    pub fn slot_state(&self, slot: u8) -> u8 {
+        self.dev_ctx.contexts[usize::from(slot)].slot.state()
     }
     pub unsafe fn alloc_phys(ac64: bool, byte_count: usize) -> Result<PhysBox> {
         let flags = if ac64 {
@@ -461,39 +531,50 @@ impl Xhci {
     pub async fn probe(&self) -> Result<()> {
         info!("XHCI capabilities: {:?}", self.capabilities_iter().collect::<Vec<_>>());
 
-        let port_count = { self.ports.lock().unwrap().len() };
+        let port_count = { self.ports.lock().unwrap().len() } as u8;
 
-        for i in 0..port_count {
+        for port_idx in 0..port_count {
+            let port_num = port_idx + 1;
+
             let (data, state, speed, flags) = {
-                let port = &self.ports.lock().unwrap()[i];
+                let port = &self.ports.lock().unwrap()[usize::from(port_idx)];
                 (port.read(), port.state(), port.speed(), port.flags())
             };
             info!(
                 "XHCI Port {}: {:X}, State {}, Speed {}, Flags {:?}",
-                i, data, state, speed, flags
+                port_num, data, state, speed, flags
             );
 
             if flags.contains(port::PortFlags::PORT_CCS) {
                 let slot_ty = self
-                    .supported_protocol(i as u8)
+                    .supported_protocol(port_num)
                     .expect("Failed to find supported protocol information for port")
                     .proto_slot_ty();
 
                 debug!("Slot type: {}", slot_ty);
                 debug!("Enabling slot.");
-                let slot = self.enable_port_slot(slot_ty).await?;
+                let slot = self.enable_slot(slot_ty).await?;
 
-                info!("Enabled port {}, which the xHC mapped to {}", i, slot);
+                info!("Enabled port {}, which the xHC mapped to {}", port_num, slot);
 
+<<<<<<< HEAD
                 let mut input = unsafe { self.alloc_dma_zeroed::<InputContext>()? };
                 let mut ring = self.address_device(&mut input, i, slot_ty, slot, speed).await?;
+=======
+                let mut input = Dma::<InputContext>::zeroed()?;
+
+                // we are only dealing with root ports here, so the route string shall be zero as
+                // no downstream ports are used.
+                let route_string = RouteString::new(0);
+
+                let ring = self.address_device(&mut input, port_num, route_string, slot_ty, slot, speed).await?;
+>>>>>>> 9524c04... Store USB device states by slot instead of port.
                 info!("Addressed device");
 
-                // TODO: Should the descriptors be cached in PortState, or refetched?
+                // TODO: Should the descriptors be cached in SlotState, or refetched?
 
-                let mut port_state = PortState {
-                    slot,
-                    input_context: Mutex::new(input),
+                let slot_state = SlotState {
+                    input_context: input,
                     dev_desc: None,
                     cfg_idx: None,
                     if_idx: None,
@@ -506,19 +587,17 @@ impl Xhci {
                     ))
                     .collect::<BTreeMap<_, _>>(),
                 };
-                self.port_states.write().unwrap().insert(i, Mutex::new(port_state));
+                self.slot_states.write().unwrap().insert(slot, Mutex::new(slot_state));
+                self.port_to_slot.write().unwrap().insert((port_num, route_string), slot);
 
-                let dev_desc = self.get_desc(i, slot).await?;
-                self.port_states.read().unwrap().get(&i).unwrap().lock().unwrap().dev_desc = Some(dev_desc);
+                let dev_desc = self.get_desc(slot).await?;
+                self.slot_states.read().unwrap().get(&slot).unwrap().lock().unwrap().dev_desc = Some(dev_desc);
 
                 {
-                    let port_states = self.port_states.read().unwrap();
-                    let mut port_state = port_states.get(&i).unwrap().lock().unwrap();
+                    let slot_states = self.slot_states.read().unwrap();
+                    let mut slot_state = slot_states.get(&slot).unwrap().lock().unwrap();
 
-                    let mut input = port_state.input_context.lock().unwrap();
-                    let dev_desc = port_state.dev_desc.as_ref().unwrap();
-
-                    self.update_default_control_pipe(&mut *input, slot, dev_desc).await?;
+                    self.update_default_control_pipe(slot, &mut *slot_state).await?;
                 }
 
                 /*match self.spawn_drivers(i, &mut port_state) {
@@ -534,10 +613,12 @@ impl Xhci {
 
     pub async fn update_default_control_pipe(
         &self,
-        input_context: &mut Dma<InputContext>,
         slot_id: u8,
-        dev_desc: &DevDesc,
+        slot_state: &mut SlotState,
     ) -> Result<()> {
+        let input_context = &mut slot_state.input_context;
+        let dev_desc = slot_state.dev_desc.as_ref().unwrap();
+
         input_context.add_context.write(1 << 1);
         input_context.drop_context.write(0);
 
@@ -565,7 +646,8 @@ impl Xhci {
     pub async fn address_device(
         &self,
         input_context: &mut Dma<InputContext>,
-        i: usize,
+        root_hub_port_num: u8,
+        route_string: RouteString,
         slot_ty: u8,
         slot: u8,
         speed: u8,
@@ -577,7 +659,7 @@ impl Xhci {
 
             let slot_ctx = &mut input_context.device.slot;
 
-            let route_string = 0u32; // TODO
+            let route_string = route_string.get();
             let context_entries = 1u8;
             let mtt = false;
             let hub = false;
@@ -591,7 +673,6 @@ impl Xhci {
             );
 
             let max_exit_latency = 0u16;
-            let root_hub_port_num = (i + 1) as u8;
             let number_of_ports = 0u8;
             slot_ctx.b.write(
                 u32::from(max_exit_latency)
@@ -656,7 +737,7 @@ impl Xhci {
         }).await;
 
         if event_trb.completion_code() != TrbCompletionCode::Success as u8 {
-            error!("Failed to address device at slot {} (port {})", slot, i);
+            error!("Failed to address device at slot {}", slot);
             self.event_handler_finished();
             return Err(Error::new(EIO));
         }
@@ -709,20 +790,14 @@ impl Xhci {
         }
 
     }
-    fn spawn_drivers(&self, port: usize, ps: &mut PortState) -> Result<()> {
+    fn spawn_drivers(&self, port: usize, slot_state: &mut SlotState) -> Result<()> {
         // TODO: There should probably be a way to select alternate interfaces, and not just the
         // first one.
         // TODO: Now that there are some good error crates, I don't think errno.h error codes are
         // suitable here.
 
-        let ifdesc = &ps
-            .dev_desc
-            .as_ref().unwrap()
-            .config_descs
-            .first()
-            .ok_or(Error::new(EBADF))?
-            .interface_descs
-            .first()
+        let ifdesc = &slot_state
+            .current_if_desc()
             .ok_or(Error::new(EBADF))?;
 
         let drivers_usercfg: &DriversConfig = &DRIVERS_CONFIG;
@@ -782,7 +857,7 @@ impl Xhci {
     }
     pub fn supported_protocol_speeds(
         &self,
-        port: u8,
+        port_num: u8,
     ) -> Option<impl Iterator<Item = &'static ProtocolSpeed>> {
         use extended::*;
         const DEFAULT_SUPP_PROTO_SPEEDS: [ProtocolSpeed; 7] = [
@@ -848,7 +923,7 @@ impl Xhci {
             ),
         ];
 
-        let supp_proto = self.supported_protocol(port)?;
+        let supp_proto = self.supported_protocol(port_num)?;
 
         Some(if supp_proto.psic() != 0 {
             unsafe { supp_proto.protocol_speeds().iter() }
@@ -856,8 +931,8 @@ impl Xhci {
             DEFAULT_SUPP_PROTO_SPEEDS.iter()
         })
     }
-    pub fn lookup_psiv(&self, port: u8, psiv: u8) -> Option<&'static ProtocolSpeed> {
-        self.supported_protocol_speeds(port)?
+    pub fn lookup_psiv(&self, port_num: u8, psiv: u8) -> Option<&'static ProtocolSpeed> {
+        self.supported_protocol_speeds(port_num)?
             .find(|speed| speed.psiv() == psiv)
     }
 }
@@ -902,7 +977,7 @@ lazy_static! {
 }
 
 /// A wrapper for futures that forces them to be `Send`. Useful when the futures store things like
-/// pointers which typically make futures `!Send`. This type is safe because initializing it is
+/// pointers which typically make futures `!Send`. This type is sound because initializing it is
 /// unsafe, thus the same thing as manually implementing `Send` for that future (which is a bit
 /// hard when the future type is unknown in async fn).
 #[repr(transparent)]
