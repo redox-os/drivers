@@ -343,7 +343,6 @@ impl Xhci {
         slot: u8,
         setup: usb::Setup,
         tk: TransferKind,
-        name: &str,
         mut d: D,
     ) -> Result<Trb>
     where
@@ -494,7 +493,6 @@ impl Xhci {
             slot,
             req,
             TransferKind::NoData,
-            "DEVICE_REQ_NO_DATA",
             |_, _| ControlFlow::Break,
         ).await?;
         Ok(())
@@ -1175,7 +1173,6 @@ impl Xhci {
             slot,
             setup,
             transfer_kind,
-            "CUSTOM_DEVICE_REQ",
             |trb, cycle| {
                 trb.data(
                     data_buffer.as_ref().map(|dma| dma.physical()).unwrap_or(0),
@@ -1750,7 +1747,7 @@ impl Xhci {
             HandleKind::ConfigureEndpoints(_) => return Err(Error::new(EBADF)),
 
             &mut HandleKind::Endpoint(port_num, endp_num, ref mut st) => match st {
-                EndpointHandleTy::Ctl => self.on_read_endp_ctl(guard.blocking, port_num, endp_num, buf),
+                EndpointHandleTy::Ctl => self.on_read_endp_ctl(guard.blocking, self.root_hub_slot(port_num).ok_or(Error::new(EBADFD))?, endp_num, buf),
                 EndpointHandleTy::Data => if let Some(mut transaction) = guard.pending_read_transaction.take() {
                     if guard.blocking {
                         return transaction.await;
@@ -1766,16 +1763,17 @@ impl Xhci {
                     }
                 } else {
                     if guard.blocking {
-                        self.on_read_endp_data(scheme_if_context, port_num, endp_num, BufferMut::Borrowed(buf)).await
+                        self.on_read_endp_data(scheme_if_context, self.root_hub_slot(port_num).ok_or(Error::new(EBADFD))?, endp_num, BufferMut::Borrowed(buf)).await
                     } else {
                         // TODO: Use buffer pool
                         let buffer = vec! [0u8; buf.len()].into_boxed_slice();
                         let context = scheme_if_context.clone();
                         let event_flags = guard.event_flags;
+
                         guard.pending_read_transaction = Some(Box::pin(unsafe { ForceSendFuture::new(async move {
-                            let bytes_read = context.hci.on_read_endp_data(&context, port_num, endp_num, BufferMut::<'static>::Owned(buffer)).await?;
+                            let bytes_read = context.hci.on_read_endp_data(&context, context.hci.root_hub_slot(port_num).ok_or(Error::new(EBADFD))?, endp_num, BufferMut::<'static>::Owned(buffer)).await?;
                             if event_flags.contains(EventFlags::EVENT_READ) {
-                                post_fevent(&*context.socket_fd, fd, syscall::EVENT_READ, bytes_read);
+                                post_fevent(&*context.socket_fd, fd, syscall::EVENT_READ, bytes_read)?;
                             }
                             Ok(bytes_read)
                         }) }));
@@ -1842,20 +1840,42 @@ impl Xhci {
         let mut guard = handles_guard.get(&fd).ok_or(Error::new(EBADF))?.lock().unwrap();
         trace!("WRITE fd={}, handle={:?}, buf=(addr {:p}, length {})", fd, guard, buf.as_ptr(), buf.len());
 
+        let blocking = guard.blocking;
+        let event_flags = guard.event_flags;
+
         match &mut guard.kind {
             &mut HandleKind::ConfigureEndpoints(port_num) => {
-                let slot = *self.port_to_slot.read().unwrap().get(&(port_num, RouteString::new(0))).ok_or(Error::new(EBADFD))?;
+                let slot = self.root_hub_slot(port_num).ok_or(Error::new(EBADFD))?;
+
+                drop(guard);
+                drop(handles_guard);
+
                 self.configure_endpoints(slot, port_num, buf).await?;
                 Ok(buf.len())
             }
-            &mut HandleKind::Endpoint(port_num, endp_num, ref ep_file_ty) => match ep_file_ty {
-                EndpointHandleTy::Ctl => self.on_write_endp_ctl(self.root_hub_slot(port_num).ok_or(Error::new(EBADFD))?, endp_num, buf).await,
-                EndpointHandleTy::Data => self.on_write_endp_data(scheme_ctx, guard.blocking, guard.event_flags, self.root_hub_slot(port_num).ok_or(Error::new(EBADFD))?, endp_num, buf).await,
-                EndpointHandleTy::Root(_, _) => return Err(Error::new(EBADF)),
-            },
+            &mut HandleKind::Endpoint(port_num, endp_num, ref ep_file_ty) => {
+                let slot = self.root_hub_slot(port_num).ok_or(Error::new(EBADFD))?;
+
+                match ep_file_ty {
+                    EndpointHandleTy::Ctl => {
+                        drop(guard);
+                        drop(handles_guard);
+                        self.on_write_endp_ctl(slot, endp_num, buf).await
+                    }
+                    EndpointHandleTy::Data => {
+                        drop(guard);
+                        drop(handles_guard);
+                        self.on_write_endp_data(scheme_ctx, blocking, event_flags, slot, endp_num, buf).await
+                    }
+                    EndpointHandleTy::Root(_, _) => return Err(Error::new(EBADF)),
+                }
+            }
             &mut HandleKind::PortReq(port_num, ref mut st) => {
                 let state = std::mem::replace(st, PortReqState::Tmp);
+
                 drop(guard); // release the lock
+                drop(handles_guard);
+
                 self.handle_port_req_write(fd, port_num, state, buf).await
             }
             // TODO: Introduce PortReqState::Waiting, which this write call changes to
@@ -2289,6 +2309,8 @@ impl Xhci {
         endp_num: u8,
         buf: &mut [u8],
     ) -> Result<usize> {
+        log::trace!("ON_READ_ENDP_CTL {} SLOT {} EP {}", if blocking { "BLOCKING" } else { "NONBLOCKING" }, slot, endp_num);
+
         let slot_states = self.slot_states.read().unwrap();
         let mut slot_state_guard = slot_states
             .get(&slot)
@@ -2310,16 +2332,16 @@ impl Xhci {
             }
             &mut EndpIfState::WaitingForDataPipe { ref mut pending_transfer_future, .. } => {
                 XhciEndpCtlRes::TransferResult(if blocking {
+                    log::trace!("WAITING_FOR_DATA_PIPE BLOCKING has future: {}", pending_transfer_future.is_some());
+
+                    let future = pending_transfer_future.take().ok_or(Error::new(EBADF))?;
+
                     drop(slot_state_guard);
                     drop(slot_states);
 
-                    let future = if let &mut EndpIfState::WaitingForDataPipe { ref mut pending_transfer_future, .. } = &mut self.slot_states.read().unwrap().get(&slot).ok_or(Error::new(EBADF))?.lock().unwrap().endpoint_states.get_mut(&endp_num).ok_or(Error::new(EBADF))?.driver_if_state {
-                        pending_transfer_future.take().ok_or(Error::new(EBADF))?
-                    } else {
-                        unreachable!();
-                    };
                     futures::executor::block_on(future)?
                 } else {
+                    log::trace!("WAITING_FOR_DATA_PIPE NONBLOCKING has future: {}", pending_transfer_future.is_some());
                     match pending_transfer_future.as_mut().ok_or(Error::new(EBADF))?.poll_unpin(&mut task::Context::from_waker(futures::task::noop_waker_ref())) {
                         task::Poll::Ready(result) => result?,
                         task::Poll::Pending => return Err(Error::new(EWOULDBLOCK)),
@@ -2368,6 +2390,10 @@ impl Xhci {
                     return Err(Error::new(EINVAL));
                 }
 
+                if pending_transfer_future.is_some() {
+                    return Err(Error::new(EBADF));
+                }
+
                 drop(slot_state);
                 drop(slot_states_guard);
 
@@ -2399,7 +2425,7 @@ impl Xhci {
                         .ok_or(Error::new(EBADF))?;
 
                     let ep_if_state = &mut ep_state.driver_if_state;
-
+                    
                     if let &mut EndpIfState::WaitingForDataPipe {
                         direction: XhciEndpCtlDirection::In,
                         bytes_to_transfer,
