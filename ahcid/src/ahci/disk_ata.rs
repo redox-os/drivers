@@ -68,7 +68,7 @@ impl DiskATA {
         };
 
         //TODO: Go back to interrupt magic
-        let use_interrupts = true;
+        let use_interrupts = false;
         loop {
             let mut request = match self.request_opt.take() {
                 Some(request) => if address == request.address && total_sectors == request.total_sectors {

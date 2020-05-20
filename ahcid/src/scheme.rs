@@ -136,7 +136,6 @@ impl DiskScheme {
                 if pi_is & 1 << i > 0 {
                     let port = &mut self.hba_mem.ports[i];
                     let is = port.is.read();
-                    //TODO: Handle requests for only this port here
                     port.is.write(is);
                 }
             }
