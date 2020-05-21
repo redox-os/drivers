@@ -21,7 +21,8 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         unsafe {
-            assert_eq!(self.offset & 0xF8, self.offset, "capability must be dword aligned");
+            // mask RsvdP bits
+            self.offset = self.offset & 0xFC;
 
             if self.offset == 0 { return None };
 
@@ -38,10 +39,14 @@ where
 
 #[repr(u8)]
 pub enum CapabilityId {
-    Msi = 0x05,
-    MsiX = 0x11,
-    Pcie = 0x10,
-    Sata = 0x12, // only on AHCI functions
+    PwrMgmt = 0x01,
+    Msi     = 0x05,
+    MsiX    = 0x11,
+    Pcie    = 0x10,
+
+    // function specific
+
+    Sata    = 0x12, // only on AHCI functions
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
@@ -77,6 +82,27 @@ pub enum MsiCapability {
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct PcieCapability {
+    pub pcie_caps: u32,
+    pub dev_caps: u32,
+    pub dev_sts_ctl: u32,
+    pub link_caps: u32,
+    pub link_sts_ctl: u32,
+    pub slot_caps: u32,
+    pub slot_sts_ctl: u32,
+    pub root_cap_ctl: u32,
+    pub root_sts: u32,
+    pub dev_caps2: u32,
+    pub dev_sts_ctl2: u32,
+    pub link_caps2: u32,
+    pub link_sts_ctl2: u32,
+    pub slot_caps2: u32,
+    pub slot_sts_ctl2: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+pub struct PwrMgmtCapability {
+    pub a: u32,
+    pub b: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
@@ -91,6 +117,7 @@ pub enum Capability {
     Msi(MsiCapability),
     MsiX(MsixCapability),
     Pcie(PcieCapability),
+    PwrMgmt(PwrMgmtCapability),
     FunctionSpecific(u8, Vec<u8>), // TODO: Arrayvec
     Other(u8),
 }
@@ -142,9 +169,32 @@ impl Capability {
             c: reader.read_u32(u16::from(offset + 8)),
         })
     }
+    unsafe fn parse_pwr<R: ConfigReader>(reader: &R, offset: u8) -> Self {
+        Self::PwrMgmt(PwrMgmtCapability {
+            a: reader.read_u32(u16::from(offset)),
+            b: reader.read_u32(u16::from(offset + 4)),
+        })
+    }
     unsafe fn parse_pcie<R: ConfigReader>(reader: &R, offset: u8) -> Self {
-        // TODO
-        Self::Pcie(PcieCapability {})
+        let offset = u16::from(offset);
+
+        Self::Pcie(PcieCapability {
+            pcie_caps:      reader.read_u32(offset),
+            dev_caps:       reader.read_u32(offset + 0x04),
+            dev_sts_ctl:    reader.read_u32(offset + 0x08),
+            link_caps:      reader.read_u32(offset + 0x0C),
+            link_sts_ctl:   reader.read_u32(offset + 0x10),
+            slot_caps:      reader.read_u32(offset + 0x14),
+            slot_sts_ctl:   reader.read_u32(offset + 0x18),
+            root_cap_ctl:   reader.read_u32(offset + 0x1C),
+            root_sts:       reader.read_u32(offset + 0x20),
+            dev_caps2:      reader.read_u32(offset + 0x24),
+            dev_sts_ctl2:   reader.read_u32(offset + 0x28),
+            link_caps2:     reader.read_u32(offset + 0x2C),
+            link_sts_ctl2:  reader.read_u32(offset + 0x30),
+            slot_caps2:     reader.read_u32(offset + 0x34),
+            slot_sts_ctl2:  reader.read_u32(offset + 0x38),
+        })
     }
     unsafe fn parse<R: ConfigReader>(reader: &R, offset: u8) -> Self {
         assert_eq!(offset & 0xF8, offset, "capability must be dword aligned");
@@ -158,11 +208,13 @@ impl Capability {
             Self::parse_msix(reader, offset)
         } else if capability_id == CapabilityId::Pcie as u8 {
             Self::parse_pcie(reader, offset)
+        } else if capability_id == CapabilityId::PwrMgmt as u8{
+            Self::parse_pwr(reader, offset)
         } else if capability_id == CapabilityId::Sata as u8 {
             Self::FunctionSpecific(capability_id, reader.read_range(offset.into(), 8))
         } else {
+            log::warn!("unimplemented or malformed capability id: {}", capability_id);
             Self::Other(capability_id)
-            //panic!("unimplemented or malformed capability id: {}", capability_id)
         }
     }
 }

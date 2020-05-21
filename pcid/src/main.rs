@@ -304,17 +304,18 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, bus_num: u8,
 
             // Set IRQ line to 9 if not set
             let mut irq;
+            let mut interrupt_pin;
+
             unsafe {
                 let mut data = pci.read(bus_num, dev_num, func_num, 0x3C);
                 irq = (data & 0xFF) as u8;
+                interrupt_pin = ((data & 0x0000_FF00) >> 8) as u8;
                 if irq == 0xFF {
                     irq = 9;
                 }
                 data = (data & 0xFFFFFF00) | irq as u32;
                 pci.write(bus_num, dev_num, func_num, 0x3C, data);
-            }
-
-            let interrupt_pin = unsafe { pci.read(bus_num, dev_num, func_num, 0x3B) };
+            };
 
             // Find BAR sizes
             let mut bars = [PciBar::None; 6];
@@ -352,7 +353,7 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, bus_num: u8,
                 }
             }
 
-            let capabilities = {
+            let capabilities = if header.status() & (1 << 4) != 0 {
                 let bus = PciBus {
                     pci: state.preferred_cfg_access(),
                     num: bus_num,
@@ -366,6 +367,8 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, bus_num: u8,
                     num: func_num,
                 };
                 crate::pci::cap::CapabilitiesIter { inner: crate::pci::cap::CapabilityOffsetsIter::new(header.cap_pointer(), &func) }.collect::<Vec<_>>()
+            } else {
+                Vec::new()
             };
             info!("PCI DEVICE CAPABILITIES for {}: {:?}", args.iter().map(|string| string.as_ref()).nth(0).unwrap_or("[unknown]"), capabilities);
 
