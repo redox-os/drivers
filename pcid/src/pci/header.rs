@@ -264,6 +264,12 @@ impl PciHeader {
         }
     }
 
+    pub fn status(&self) -> u16 {
+        match self {
+            &PciHeader::General { status, .. } | &PciHeader::PciToPci { status, .. } => status,
+        }
+    }
+
     pub fn cap_pointer(&self) -> u8 {
         match self {
             &PciHeader::General { cap_pointer, .. } | &PciHeader::PciToPci { cap_pointer, .. } => cap_pointer,
@@ -273,7 +279,7 @@ impl PciHeader {
 
 #[cfg(test)]
 impl<'a> ConfigReader for &'a [u8] {
-    unsafe fn read_u32(&self, offset: u8) -> u32 {
+    unsafe fn read_u32(&self, offset: u16) -> u32 {
         let offset = offset as usize;
         assert!(offset < self.len());
         LittleEndian::read_u32(&self[offset..offset + 4])
