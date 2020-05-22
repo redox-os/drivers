@@ -80,7 +80,7 @@ pub enum MsiCapability {
 }
 
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct PcieCapability {
     pub pcie_caps: u32,
     pub dev_caps: u32,
@@ -112,7 +112,7 @@ pub struct MsixCapability {
     pub c: u32,
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub enum Capability {
     Msi(MsiCapability),
     MsiX(MsixCapability),
@@ -123,6 +123,15 @@ pub enum Capability {
 }
 
 impl Capability {
+    pub fn is_pcie(&self) -> bool {
+        self.as_pcie().is_some()
+    }
+    pub fn as_pcie(&self) -> Option<&PcieCapability> {
+        match self {
+            &Self::Pcie(ref pcie) => Some(pcie),
+            _ => None,
+        }
+    }
     pub fn as_msi(&self) -> Option<&MsiCapability> {
         match self {
             &Self::Msi(ref msi) => Some(msi),
@@ -219,9 +228,7 @@ impl Capability {
     }
 }
 
-pub struct CapabilitiesIter<'a, R> {
-    pub inner: CapabilityOffsetsIter<'a, R>,
-}
+pub struct CapabilitiesIter<'a, R>(pub CapabilityOffsetsIter<'a, R>);
 
 impl<'a, R> Iterator for CapabilitiesIter<'a, R>
 where
@@ -230,7 +237,7 @@ where
     type Item = (u8, Capability);
 
     fn next(&mut self) -> Option<Self::Item> {
-        let offset = self.inner.next()?;
-        Some((offset, unsafe { Capability::parse(self.inner.reader, offset) }))
+        let offset = self.0.next()?;
+        Some((offset, unsafe { Capability::parse(self.0.reader, offset) }))
     }
 }

@@ -3,11 +3,13 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use syscall::flag::PhysmapFlags;
-use syscall::io::Dma;
+use syscall::io::{Dma, Io, Mmio};
 
 use smallvec::SmallVec;
 
 use crate::pci::{CfgAccess, Pci, PciIter};
+
+pub mod cap;
 
 pub const MCFG_NAME: [u8; 4] = *b"MCFG";
 
@@ -166,16 +168,30 @@ impl Pcie {
     fn addr_offset_in_dwords(starting_bus: u8, bus: u8, dev: u8, func: u8, offset: u16) -> usize {
         Self::addr_offset_in_bytes(starting_bus, bus, dev, func, offset) / mem::size_of::<u32>()
     }
-    unsafe fn with_pointer<T, F: FnOnce(Option<&mut u32>) -> T>(&self, bus: u8, dev: u8, func: u8, offset: u16, f: F) -> T {
+    unsafe fn with_pointer<T, F: FnOnce(Option<&mut Mmio<u32>>) -> T>(&self, bus: u8, dev: u8, func: u8, offset: u16, f: F) -> T {
+        assert!(offset < 4096);
+
+        self.with_slice(bus, dev, func, move |slice: Option<&'static mut [Mmio<u32>]>| {
+            f(slice.map(|slice| &mut slice[offset as usize / mem::size_of::<Mmio<u32>>()]))
+        })
+    }
+    unsafe fn with_func_mem<T, F: FnOnce(Option<*mut u32>) -> T>(&self, bus: u8, dev: u8, func: u8, f: F) -> T {
         let (base_address_phys, starting_bus) = match self.mcfgs.at_bus(bus) {
             Some(t) => (t.base_addr, t.start_bus),
             None => return f(None),
         };
         let mut maps_lock = self.maps.lock().unwrap();
-        let virt_pointer = maps_lock.entry((bus, dev, func)).or_insert_with(|| {
+        let virt_pointer: *mut u32 = *maps_lock.entry((bus, dev, func)).or_insert_with(|| {
             syscall::physmap(base_address_phys as usize + Self::addr_offset_in_bytes(starting_bus, bus, dev, func, 0), 4096, PhysmapFlags::PHYSMAP_NO_CACHE | PhysmapFlags::PHYSMAP_WRITE).unwrap_or_else(|error| panic!("failed to physmap pcie configuration space for {:2x}:{:2x}.{:2x}: {:?}", bus, dev, func, error)) as *mut u32
         });
-        f(Some(&mut *virt_pointer.offset((offset as usize / mem::size_of::<u32>()) as isize)))
+        f(Some(virt_pointer))
+    }
+    unsafe fn with_slice<T, F: FnOnce(Option<&'static mut [Mmio<u32>]>) -> T>(&self, bus: u8, dev: u8, func: u8, f: F) -> T {
+        self.with_func_mem(bus, dev, func, move |func_base_ptr| {
+            f(func_base_ptr.map(|ptr| {
+                unsafe { slice::from_raw_parts_mut(ptr as *mut Mmio<u32>, 4096 / mem::size_of::<Mmio<u32>>()) }
+            }))
+        })
     }
     pub fn buses<'pcie>(&'pcie self) -> PciIter<'pcie> {
         PciIter::new(self)
@@ -183,9 +199,13 @@ impl Pcie {
 }
 
 impl CfgAccess for Pcie {
+    fn supports_ext(&self, bus: u8) -> bool {
+        self.mcfgs.at_bus(bus).is_some()
+    }
+
     unsafe fn read_nolock(&self, bus: u8, dev: u8, func: u8, offset: u16) -> u32 {
         self.with_pointer(bus, dev, func, offset, |pointer| match pointer {
-            Some(address) => ptr::read_volatile::<u32>(address),
+            Some(address) => address.read(),
             None => self.fallback.read(bus, dev, func, offset),
         })
     }
@@ -195,13 +215,16 @@ impl CfgAccess for Pcie {
     }
     unsafe fn write_nolock(&self, bus: u8, dev: u8, func: u8, offset: u16, value: u32) {
         self.with_pointer(bus, dev, func, offset, |pointer| match pointer {
-            Some(address) => ptr::write_volatile::<u32>(address, value),
+            Some(address) => address.write(value),
             None => { self.fallback.read(bus, dev, func, offset); }
         });
     }
     unsafe fn write(&self, bus: u8, dev: u8, func: u8, offset: u16, value: u32) {
         let _guard = self.lock.lock().unwrap();
         self.write_nolock(bus, dev, func, offset, value);
+    }
+    unsafe fn with_mapped_mem(&self, bus: u8, dev: u8, func: u8, f: &mut dyn FnMut(Option<&'static mut [Mmio<u32>]>)) {
+        self.with_slice(bus, dev, func, f);
     }
 }
 

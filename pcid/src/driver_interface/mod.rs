@@ -1,4 +1,4 @@
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::prelude::*;
 use std::{env, io};
 
@@ -7,11 +7,12 @@ use std::os::unix::io::{FromRawFd, RawFd};
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use thiserror::Error;
 
-pub use crate::pci::PciBar;
-pub use crate::pci::msi;
+pub use crate::pci::{cap::Capability as PciCapability, msi, PciBar};
+pub use crate::pcie::cap::Capability as PcieCapability;
 
 pub mod helpers;
 
+/// A legacy INTx# pin, mapped to an interrupt through the 8259 PIC or the I/O APIC.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum LegacyInterruptPin {
@@ -67,30 +68,17 @@ pub struct SubdriverArguments {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
-pub enum FeatureStatus {
-    Enabled,
-    Disabled,
-}
-
-impl FeatureStatus {
-    pub fn enabled(enabled: bool) -> Self {
-        if enabled {
-            Self::Enabled
-        } else {
-            Self::Disabled
-        }
-    }
-    pub fn is_enabled(&self) -> bool {
-        if let &Self::Enabled = self { true } else { false }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
-pub enum PciFeature {
+pub enum CapabilityType {
     Msi,
     MsiX,
+    Pcie,
+    PciPwrMgmt,
+    Aer,
+
+    // function specific
+    Sata,
 }
-impl PciFeature {
+impl CapabilityType {
     pub fn is_msi(&self) -> bool {
         if let &Self::Msi = self { true } else { false }
     }
@@ -98,10 +86,48 @@ impl PciFeature {
         if let &Self::MsiX = self { true } else { false }
     }
 }
-#[derive(Debug, Serialize, Deserialize)]
-pub enum PciFeatureInfo {
-    Msi(msi::MsiCapability),
-    MsiX(msi::MsixCapability),
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum Capability {
+    Pci(PciCapability),
+    Pcie(PcieCapability),
+}
+impl Capability {
+    pub fn as_pci_mut(&mut self) -> Option<&mut PciCapability> {
+        match self {
+            &mut Self::Pci(ref mut inner) => Some(inner),
+            _ => None,
+        }
+    }
+    pub fn as_pcie_mut(&mut self) -> Option<&mut PcieCapability> {
+        match self {
+            &mut Self::Pcie(ref mut inner) => Some(inner),
+            _ => None,
+        }
+    }
+    pub fn as_pci(&self) -> Option<&PciCapability> {
+        match self {
+            &Self::Pci(ref inner) => Some(inner),
+            _ => None,
+        }
+    }
+    pub fn as_pcie(&self) -> Option<&PcieCapability> {
+        match self {
+            &Self::Pcie(ref inner) => Some(inner),
+            _ => None,
+        }
+    }
+    pub fn into_pci(self) -> Option<PciCapability> {
+        match self {
+            Self::Pci(inner) => Some(inner),
+            _ => None,
+        }
+    }
+    pub fn into_pcie(self) -> Option<PcieCapability> {
+        match self {
+            Self::Pcie(inner) => Some(inner),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Error)]
@@ -123,10 +149,10 @@ pub enum PcidClientHandleError {
 }
 pub type Result<T, E = PcidClientHandleError> = std::result::Result<T, E>;
 
-// TODO: Remove these "features" and just go strait to the actual thing.
-
 #[derive(Debug, Default, Serialize, Deserialize)]
-pub struct MsiSetFeatureInfo {
+pub struct MsiSetCapabilityInfo {
+    pub enabled: Option<bool>,
+
     /// The Multi Message Enable field of the Message Control in the MSI Capability Structure,
     /// is the log2 of the interrupt vectors, minus one. Can only be 0b000..=0b101.
     pub multi_message_enable: Option<u8>,
@@ -156,10 +182,12 @@ pub struct MsiSetFeatureInfo {
 /// Some flags that might be set simultaneously, but separately.
 #[derive(Debug, Serialize, Deserialize)]
 #[non_exhaustive]
-pub enum SetFeatureInfo {
-    Msi(MsiSetFeatureInfo),
+pub enum SetCapabilityInfo {
+    Msi(MsiSetCapabilityInfo),
 
     MsiX {
+        enabled: Option<bool>,
+
         /// Masks the entire function, and all of its vectors.
         function_mask: Option<bool>,
     },
@@ -169,17 +197,15 @@ pub enum SetFeatureInfo {
 #[non_exhaustive]
 pub enum PcidClientRequest {
     RequestConfig,
-    RequestFeatures,
-    EnableFeature(PciFeature),
-    FeatureStatus(PciFeature),
-    FeatureInfo(PciFeature),
-    SetFeatureInfo(SetFeatureInfo),
+    GetCapabilities,
+    GetCapability(CapabilityType),
+    SetCapability(SetCapabilityInfo),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum PcidServerResponseError {
-    NonexistentFeature(PciFeature),
+    NonexistentCapability(CapabilityType),
     InvalidBitPattern,
 }
 
@@ -187,12 +213,10 @@ pub enum PcidServerResponseError {
 #[non_exhaustive]
 pub enum PcidClientResponse {
     Config(SubdriverArguments),
-    AllFeatures(Vec<(PciFeature, FeatureStatus)>),
-    FeatureEnabled(PciFeature),
-    FeatureStatus(PciFeature, FeatureStatus),
+    AllCapabilities(Vec<Capability>),
+    Capability(Option<Capability>),
+    SetCapability,
     Error(PcidServerResponseError),
-    FeatureInfo(PciFeature, PciFeatureInfo),
-    SetFeatureInfo(PciFeature),
 }
 
 // TODO: Ideally, pcid might have its own scheme, like lots of other Redox drivers, where this kind of IPC is done. Otherwise, instead of writing serde messages over
@@ -252,38 +276,24 @@ impl PcidServerHandle {
             other => Err(PcidClientHandleError::InvalidResponse(other)),
         }
     }
-    pub fn fetch_all_features(&mut self) -> Result<Vec<(PciFeature, FeatureStatus)>> {
-        self.send(&PcidClientRequest::RequestFeatures)?;
+    pub fn fetch_all_capabilities(&mut self) -> Result<Vec<Capability>> {
+        self.send(&PcidClientRequest::GetCapabilities)?;
         match self.recv()? {
-            PcidClientResponse::AllFeatures(a) => Ok(a),
+            PcidClientResponse::AllCapabilities(a) => Ok(a),
             other => Err(PcidClientHandleError::InvalidResponse(other)),
         }
     }
-    pub fn feature_status(&mut self, feature: PciFeature) -> Result<FeatureStatus> {
-        self.send(&PcidClientRequest::FeatureStatus(feature))?;
+    pub fn feature_capability(&mut self, ty: CapabilityType) -> Result<Option<Capability>> {
+        self.send(&PcidClientRequest::GetCapability(ty))?;
         match self.recv()? {
-            PcidClientResponse::FeatureStatus(feat, status) if feat == feature => Ok(status),
+            PcidClientResponse::Capability(c) => Ok(c),
             other => Err(PcidClientHandleError::InvalidResponse(other)),
         }
     }
-    pub fn enable_feature(&mut self, feature: PciFeature) -> Result<()> {
-        self.send(&PcidClientRequest::EnableFeature(feature))?;
+    pub fn set_capability(&mut self, info: SetCapabilityInfo) -> Result<()> {
+        self.send(&PcidClientRequest::SetCapability(info))?;
         match self.recv()? {
-            PcidClientResponse::FeatureEnabled(feat) if feat == feature => Ok(()),
-            other => Err(PcidClientHandleError::InvalidResponse(other)),
-        }
-    }
-    pub fn feature_info(&mut self, feature: PciFeature) -> Result<PciFeatureInfo> {
-        self.send(&PcidClientRequest::FeatureInfo(feature))?;
-        match self.recv()? {
-            PcidClientResponse::FeatureInfo(feat, info) if feat == feature => Ok(info),
-            other => Err(PcidClientHandleError::InvalidResponse(other)),
-        }
-    }
-    pub fn set_feature_info(&mut self, info: SetFeatureInfo) -> Result<()> {
-        self.send(&PcidClientRequest::SetFeatureInfo(info))?;
-        match self.recv()? {
-            PcidClientResponse::SetFeatureInfo(_) => Ok(()),
+            PcidClientResponse::SetCapability => Ok(()),
             other => Err(PcidClientHandleError::InvalidResponse(other)),
         }
     }

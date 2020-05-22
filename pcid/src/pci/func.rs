@@ -1,3 +1,4 @@
+use syscall::Mmio;
 use byteorder::{LittleEndian, ByteOrder};
 
 use super::PciDev;
@@ -25,6 +26,7 @@ pub trait ConfigReader {
         let shift = (offset % 4) * 8;
         ((dword >> shift) & 0xFF) as u8
     }
+    unsafe fn with_mapped_mem(&self, f: &mut dyn FnMut(Option<&'static mut [Mmio<u32>]>));
 }
 pub trait ConfigWriter {
     unsafe fn write_u32(&self, offset: u16, value: u32);
@@ -38,6 +40,9 @@ pub struct PciFunc<'pci> {
 impl<'pci> ConfigReader for PciFunc<'pci> {
     unsafe fn read_u32(&self, offset: u16) -> u32 {
         self.dev.read(self.num, offset)
+    }
+    unsafe fn with_mapped_mem(&self, f: &mut dyn FnMut(Option<&'static mut [Mmio<u32>]>)) {
+        self.dev.bus.pci.with_mapped_mem(self.dev.bus.num, self.dev.num, self.num, f);
     }
 }
 impl<'pci> ConfigWriter for PciFunc<'pci> {

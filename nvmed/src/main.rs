@@ -6,11 +6,15 @@ use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
 use std::{slice, usize};
 
+<<<<<<< HEAD
 use pcid_interface::{PciBar, PciFeature, PciFeatureInfo, PciFunction, PcidServerHandle};
 use pcid_interface::helpers::{irq as irq_helpers, Bar, AllocatedBars};
 
 pub use irq_helpers::InterruptSources;
 
+=======
+use pcid_interface::{PciBar, PciFunction, PcidServerHandle};
+>>>>>>> b1e93d5... Simplify the interface between pcid and subdrivers.
 use syscall::{
     CloneFlags, Event, Mmio, Packet, Result, SchemeBlockMut, PHYSMAP_NO_CACHE,
     PHYSMAP_WRITE,
@@ -33,21 +37,17 @@ fn get_int_method(
 ) -> Result<(InterruptMethod, InterruptSources)> {
     log::trace!("Begin get_int_method");
 
-    let features = pcid_handle.fetch_all_features().unwrap();
+    let capabilities = pcid_handle.fetch_all_capabilities().expect("nvmed: failed to fetch all PCI(e) capabilities from pcid");
 
-    let has_msi = features.iter().any(|(feature, _)| feature.is_msi());
-    let has_msix = features.iter().any(|(feature, _)| feature.is_msix());
+    // Cloning here is cheap because NVME doesn't use any function specific caps.
+    let msi_cap = capabilities.iter().find_map(|cap| cap.as_pci()?.as_msi()).cloned();
+    let msix_cap = capabilities.iter().find_map(|cap| cap.as_pci()?.as_msix()).cloned();
 
     // TODO: Allocate more than one vector when possible and useful.
-    if has_msix {
+    if let Some(mut capability_struct) = msix_cap {
         // Extended message signaled interrupts.
         use self::nvme::MsixCfg;
         use pcid_interface::msi::MsixTableEntry;
-
-        let mut capability_struct = match pcid_handle.feature_info(PciFeature::MsiX).unwrap() {
-            PciFeatureInfo::MsiX(msix) => msix,
-            _ => unreachable!(),
-        };
 
         let (table_entries, pba_entries) = unsafe { irq_helpers::msix_cfg(function, &capability_struct, allocated_bars).unwrap() };
 
@@ -57,7 +57,10 @@ fn get_int_method(
             table_entry.mask();
         }
 
-        pcid_handle.enable_feature(PciFeature::MsiX).unwrap();
+        pcid_handle.set_capability(pcid_interface::SetCapabilityInfo::MsiX {
+            enabled: Some(true),
+            function_mask: Some(false),
+        });
         capability_struct.set_msix_enabled(true); // only affects our local mirror of the cap
 
         let (msix_vector_number, irq_handle) = {
@@ -93,17 +96,12 @@ fn get_int_method(
             InterruptSources::MsiX(std::iter::once((msix_vector_number, irq_handle)).collect());
 
         Ok((interrupt_method, interrupt_sources))
-    } else if has_msi {
+    } else if let Some(capability_struct) = msi_cap {
         // Message signaled interrupts.
-        let capability_struct = match pcid_handle.feature_info(PciFeature::Msi).unwrap() {
-            PciFeatureInfo::Msi(msi) => msi,
-            _ => unreachable!(),
-        };
-
         let irq_handle = {
             use msi_x86_64::DeliveryMode;
             use pcid_interface::msi::x86_64 as msi_x86_64;
-            use pcid_interface::{MsiSetFeatureInfo, SetFeatureInfo};
+            use pcid_interface::{MsiSetCapabilityInfo, SetCapabilityInfo};
 
             let bsp_cpu_id =
                 irq_helpers::read_bsp_apic_id().expect("nvmed: failed to read BSP APIC ID");
@@ -118,13 +116,14 @@ fn get_int_method(
             let msg_data =
                 msi_x86_64::message_data_edge_triggered(DeliveryMode::Fixed, vector) as u16;
 
-            pcid_handle.set_feature_info(SetFeatureInfo::Msi(MsiSetFeatureInfo {
+            pcid_handle.set_capability(SetCapabilityInfo::Msi(MsiSetCapabilityInfo {
+                enabled: Some(true),
                 message_address: Some(msg_addr),
                 message_upper_address: Some(0),
                 message_data: Some(msg_data),
                 multi_message_enable: Some(0), // enable 2^0=1 vectors
                 mask_bits: None,
-            })).unwrap();
+            })).expect("nvmed: failed to set MSI registers");
 
             irq_handle
         };
@@ -132,8 +131,6 @@ fn get_int_method(
         let interrupt_method = InterruptMethod::Msi(capability_struct);
         let interrupt_sources =
             InterruptSources::Msi(std::iter::once(irq_handle).collect());
-
-        pcid_handle.enable_feature(PciFeature::Msi).unwrap();
 
         Ok((interrupt_method, interrupt_sources))
     } else if function.legacy_interrupt_pin.is_some() {

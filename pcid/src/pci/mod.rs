@@ -1,6 +1,8 @@
 use std::convert::TryFrom;
 use std::sync::{Mutex, Once};
 
+use syscall::Mmio;
+
 pub use self::bar::PciBar;
 pub use self::bus::{PciBus, PciBusIter};
 pub use self::class::PciClass;
@@ -15,11 +17,15 @@ mod bus;
 pub mod cap;
 mod class;
 mod dev;
-mod func;
+pub mod func;
 pub mod header;
 pub mod msi;
 
 pub trait CfgAccess {
+    fn supports_ext(&self, bus: u8) -> bool;
+
+    unsafe fn with_mapped_mem(&self, bus: u8, dev: u8, func: u8, f: &mut dyn FnMut(Option<&'static mut [Mmio<u32>]>));
+
     unsafe fn read_nolock(&self, bus: u8, dev: u8, func: u8, offset: u16) -> u32;
     unsafe fn read(&self, bus: u8, dev: u8, func: u8, offset: u16) -> u32;
 
@@ -65,6 +71,10 @@ impl Pci {
 }
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 impl CfgAccess for Pci {
+    fn supports_ext(&self, _bus: u8) -> bool {
+        false
+    }
+
     unsafe fn read_nolock(&self, bus: u8, dev: u8, func: u8, offset: u16) -> u32 {
         self.iopl_once.call_once(Self::set_iopl);
 
@@ -101,6 +111,9 @@ impl CfgAccess for Pci {
     unsafe fn write(&self, bus: u8, dev: u8, func: u8, offset: u16, value: u32) {
         let _guard = self.lock.lock().unwrap();
         self.write_nolock(bus, dev, func, offset, value)
+    }
+    unsafe fn with_mapped_mem(&self, _bus: u8, _dev: u8, _func: u8, f: &mut dyn FnMut(Option<&'static mut [Mmio<u32>]>)) {
+        f(None);
     }
 }
 
