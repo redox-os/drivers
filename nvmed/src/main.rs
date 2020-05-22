@@ -6,15 +6,11 @@ use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
 use std::{slice, usize};
 
-<<<<<<< HEAD
-use pcid_interface::{PciBar, PciFeature, PciFeatureInfo, PciFunction, PcidServerHandle};
+use pcid_interface::{PciBar, PciFunction, PcidServerHandle};
 use pcid_interface::helpers::{irq as irq_helpers, Bar, AllocatedBars};
 
 pub use irq_helpers::InterruptSources;
 
-=======
-use pcid_interface::{PciBar, PciFunction, PcidServerHandle};
->>>>>>> b1e93d5... Simplify the interface between pcid and subdrivers.
 use syscall::{
     CloneFlags, Event, Mmio, Packet, Result, SchemeBlockMut, PHYSMAP_NO_CACHE,
     PHYSMAP_WRITE,

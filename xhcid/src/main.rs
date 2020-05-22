@@ -9,8 +9,8 @@ use syscall::data::Packet;
 use syscall::flag::{CloneFlags, O_RDWR, O_CLOEXEC, EVENT_READ};
 use syscall::io::Io;
 
-use pcid_interface::{MsiSetCapabilityInfo, PcidServerHandle, Capability, SetCapabilityInfo};
-use pcid_interface::msi::{MsiCapability, MsixCapability, MsixTableEntry};
+use pcid_interface::{MsiSetCapabilityInfo, PcidServerHandle, PciFunction, SetCapabilityInfo};
+use pcid_interface::msi::MsixTableEntry;
 use pcid_interface::helpers::{self as pci_helpers, irq as irq_helpers};
 use pci_helpers::{AllocatedBars, Bar};
 
@@ -74,18 +74,6 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
 }
 
 fn get_int_method(func: &PciFunction, pcid_handle: &mut PcidServerHandle, allocated_bars: &AllocatedBars) -> (InterruptMethod, Option<InterruptSources>) {
-    let features = pcid_handle.fetch_all_features().unwrap();
-
-    let bar_ptr = match bar {
-        pcid_interface::PciBar::Memory(ptr) => ptr,
-        other => panic!("Expected memory bar, found {}", other),
-    };
-
-    let address = unsafe {
-        syscall::physmap(bar_ptr as usize, 65536, PHYSMAP_WRITE | PHYSMAP_NO_CACHE)
-            .expect("xhcid: failed to map address")
-    };
-
     let all_pci_caps = pcid_handle.fetch_all_capabilities().expect("xhcid: failed to fetch pci capabilities");
     info!("XHCI PCI FEATURES: {:?}", all_pci_caps);
 
@@ -129,37 +117,38 @@ fn get_int_method(func: &PciFunction, pcid_handle: &mut PcidServerHandle, alloca
         };
 
         // Allocate one msi vector.
+        use pcid_interface::msi::x86_64::{DeliveryMode, self as x86_64_msix};
 
-        let method = {
-            use pcid_interface::msi::x86_64::{DeliveryMode, self as x86_64_msix};
+        assert_eq!(std::mem::size_of::<MsixTableEntry>(), 16);
+        let table_entry_pointer = &mut info.table[0];
 
-            assert_eq!(std::mem::size_of::<MsixTableEntry>(), 16);
-            let table_entry_pointer = &mut info.table[0];
+        let destination_id = irq_helpers::read_bsp_apic_id().expect("xhcid: failed to read BSP apic id");
+        let lapic_id = u8::try_from(destination_id).expect("xhcid: CPU id couldn't fit inside u8");
+        let rh = false;
+        let dm = false;
+        let addr = x86_64_msix::message_address(lapic_id, rh, dm);
 
-            let destination_id = irq_helpers::read_bsp_apic_id().expect("xhcid: failed to read BSP apic id");
-            let lapic_id = u8::try_from(destination_id).expect("xhcid: CPU id couldn't fit inside u8");
-            let rh = false;
-            let dm = false;
-            let addr = x86_64_msix::message_address(lapic_id, rh, dm);
+        let (vector, interrupt_handle) = irq_helpers::allocate_single_interrupt_vector(destination_id).expect("xhcid: failed to allocate interrupt vector").expect("xhcid: no interrupt vectors left");
+        let msg_data = x86_64_msix::message_data_edge_triggered(DeliveryMode::Fixed, vector);
 
-            let (vector, interrupt_handle) = irq_helpers::allocate_single_interrupt_vector(destination_id).expect("xhcid: failed to allocate interrupt vector").expect("xhcid: no interrupt vectors left");
-            let msg_data = x86_64_msix::message_data_edge_triggered(DeliveryMode::Fixed, vector);
+        table_entry_pointer.addr_lo.write(addr);
+        table_entry_pointer.addr_hi.write(0);
+        table_entry_pointer.msg_data.write(msg_data);
+        table_entry_pointer.vec_ctl.writef(MsixTableEntry::VEC_CTL_MASK_BIT, false);
 
-            table_entry_pointer.addr_lo.write(addr);
-            table_entry_pointer.addr_hi.write(0);
-            table_entry_pointer.msg_data.write(msg_data);
-            table_entry_pointer.vec_ctl.writef(MsixTableEntry::VEC_CTL_MASK_BIT, false);
-
-            (InterruptMethod::MsiX(Mutex::new(info)), Some(InterruptSources::MsiX(std::iter::once((0, interrupt_handle)).collect())))
-        };
 
         pcid_handle.set_capability(SetCapabilityInfo::MsiX {
             enabled: Some(true),
             function_mask: Some(false),
         }).expect("xhcid: failed to enable MSI-X");
+
+        // update our local mirror
+        info.capability.set_msix_enabled(true);
+        info.capability.set_function_mask(false);
+
         info!("Enabled MSI-X");
 
-        method
+        (InterruptMethod::MsiX(Mutex::new(info)), Some(InterruptSources::MsiX(std::iter::once((0, interrupt_handle)).collect())))
     } else if func.legacy_interrupt_pin.is_some() {
         // legacy INTx# interrupt pins.
         (InterruptMethod::Intx, Some(InterruptSources::Intx(File::open(format!("irq:{}", func.legacy_interrupt_line)).expect("xhcid: failed to open legacy IRQ file"))))
