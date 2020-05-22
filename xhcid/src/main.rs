@@ -80,34 +80,7 @@ fn get_int_method(func: &PciFunction, pcid_handle: &mut PcidServerHandle, alloca
     let msi_cap = all_pci_caps.iter().find_map(|cap| cap.as_pci()?.as_msi());
     let msix_cap = all_pci_caps.iter().find_map(|cap| cap.as_pci()?.as_msix());
 
-    if let Some(capability) = msi_cap.cloned() {
-        use pcid_interface::msi::x86_64::{DeliveryMode, self as x86_64_msix};
-
-        // TODO: Allow allocation of up to 32 vectors.
-
-        // TODO: Find a way to abstract this away, potantially as a helper module for
-        // pcid_interface, so that this can be shared between nvmed, xhcid, ixgebd, etc..
-
-        let destination_id = irq_helpers::read_bsp_apic_id().expect("xhcid: failed to read BSP apic id");
-        let lapic_id = u8::try_from(destination_id).expect("CPU id didn't fit inside u8");
-        let msg_addr = x86_64_msix::message_address(lapic_id, false, false);
-
-        let (vector, interrupt_handle) = irq_helpers::allocate_single_interrupt_vector(destination_id).expect("xhcid: failed to allocate interrupt vector").expect("xhcid: no interrupt vectors left");
-        let msg_data = x86_64_msix::message_data_edge_triggered(DeliveryMode::Fixed, vector);
-
-        let set_cap_info = MsiSetCapabilityInfo {
-            enabled: Some(true),
-            multi_message_enable: Some(0),
-            message_address: Some(msg_addr),
-            message_upper_address: Some(0),
-            message_data: Some(msg_data as u16),
-            mask_bits: None,
-        };
-        pcid_handle.set_capability(SetCapabilityInfo::Msi(set_cap_info)).expect("xhcid: failed to set capability");
-        info!("Enabled MSI");
-
-        (InterruptMethod::Msi(Mutex::new(capability)), Some(InterruptSources::Msi(vec!(interrupt_handle))))
-    } else if let Some(capability) = msix_cap.cloned() {
+    if let Some(capability) = msix_cap.cloned() {
         let (table_entries, pba_entries) = unsafe { irq_helpers::msix_cfg(func, &capability, allocated_bars).unwrap() };
 
         let mut info = xhci::MsixCfg {
@@ -149,6 +122,33 @@ fn get_int_method(func: &PciFunction, pcid_handle: &mut PcidServerHandle, alloca
         info!("Enabled MSI-X");
 
         (InterruptMethod::MsiX(Mutex::new(info)), Some(InterruptSources::MsiX(std::iter::once((0, interrupt_handle)).collect())))
+    } else if let Some(capability) = msi_cap.cloned() {
+        use pcid_interface::msi::x86_64::{DeliveryMode, self as x86_64_msix};
+
+        // TODO: Allow allocation of up to 32 vectors.
+
+        // TODO: Find a way to abstract this away, potantially as a helper module for
+        // pcid_interface, so that this can be shared between nvmed, xhcid, ixgebd, etc..
+
+        let destination_id = irq_helpers::read_bsp_apic_id().expect("xhcid: failed to read BSP apic id");
+        let lapic_id = u8::try_from(destination_id).expect("CPU id didn't fit inside u8");
+        let msg_addr = x86_64_msix::message_address(lapic_id, false, false);
+
+        let (vector, interrupt_handle) = irq_helpers::allocate_single_interrupt_vector(destination_id).expect("xhcid: failed to allocate interrupt vector").expect("xhcid: no interrupt vectors left");
+        let msg_data = x86_64_msix::message_data_edge_triggered(DeliveryMode::Fixed, vector);
+
+        let set_cap_info = MsiSetCapabilityInfo {
+            enabled: Some(true),
+            multi_message_enable: Some(0),
+            message_address: Some(msg_addr),
+            message_upper_address: Some(0),
+            message_data: Some(msg_data as u16),
+            mask_bits: None,
+        };
+        pcid_handle.set_capability(SetCapabilityInfo::Msi(set_cap_info)).expect("xhcid: failed to set capability");
+        info!("Enabled MSI");
+
+        (InterruptMethod::Msi(Mutex::new(capability)), Some(InterruptSources::Msi(vec!(interrupt_handle))))
     } else if func.legacy_interrupt_pin.is_some() {
         // legacy INTx# interrupt pins.
         (InterruptMethod::Intx, Some(InterruptSources::Intx(File::open(format!("irq:{}", func.legacy_interrupt_line)).expect("xhcid: failed to open legacy IRQ file"))))

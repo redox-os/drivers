@@ -5,9 +5,7 @@ use std::io::prelude::*;
 use std::os::unix::io::{FromRawFd, RawFd};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
-use std::{env, io, i64, thread};
-
-use syscall::iopl;
+use std::{env, i64, thread};
 
 use log::{error, info, warn, trace};
 use redox_log::{OutputBuilder, RedoxLogger};
@@ -358,7 +356,7 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, bus_num: u8,
             let driver_name = args.iter().map(|string| string.as_ref()).nth(0).unwrap_or("[unknown]");
             info!("PCI DEVICE CAPABILITIES for {}: {:?}", driver_name, pci_capabilities);
 
-            let pcie_capabilities = if pci.supports_ext(bus_num) {
+            let pcie_capabilities = if pci.supports_ext(bus_num) && pci_capabilities.iter().any(|(_, cap)| cap.is_pcie()) {
                 unsafe { pciecap::CapabilitiesIter(pciecap::CapabilityOffsetsIter::new(0x100, &func)) }.collect::<Vec<_>>()
             } else {
                 Vec::new()
@@ -477,11 +475,23 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
                 .with_filter(log::LevelFilter::Info)
                 .flush_on_newline(true)
                 .build()
-         );
+         )
+        .with_output(
+            OutputBuilder::with_endpoint(std::fs::OpenOptions::new()
+                .create_new(false)
+                .read(false)
+                .write(true)
+                .open("debug:").unwrap()
+            )
+                .with_ansi_escape_codes()
+                .with_filter(log::LevelFilter::Trace)
+                .flush_on_newline(true)
+                .build()
+        );
 
     match OutputBuilder::in_redox_logging_scheme("bus", "pci", "pcid.log") {
         Ok(b) => logger = logger.with_output(
-            b.with_filter(log::LevelFilter::Trace)
+            b.with_filter(log::LevelFilter::Debug)
                 .flush_on_newline(true)
                 .build()
         ),
@@ -489,7 +499,7 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
     }
     match OutputBuilder::in_redox_logging_scheme("bus", "pci", "pcid.ansi.log") {
         Ok(b) => logger = logger.with_output(
-            b.with_filter(log::LevelFilter::Trace)
+            b.with_filter(log::LevelFilter::Debug)
                 .with_ansi_escape_codes()
                 .flush_on_newline(true)
                 .build()

@@ -63,7 +63,7 @@ impl Capability {
         let kind = if cap_id == CapabilityId::Aer as u16 {
             CapabilityKind::Aer(CapabilityKind::parse_aer(reader, offset))
         } else {
-            log::warn!("Unimplemented/malformed PCIe capability id: {} (version {})", cap_id, cap_version);
+            log::warn!("Unimplemented/malformed PCIe capability id: {} (full dword {}) at offset {:#0x}", cap_id, dword, offset);
             CapabilityKind::Unknown(cap_id)
         };
         Capability {
@@ -101,13 +101,21 @@ where
 
         if dword == 0 { return None }
 
+        let capability_id = (dword & 0x0000_FFFF) as u16;
+
         let next_offset_raw = ((dword & 0xFFF0_0000) >> 20) as u16;
         let next_offset = next_offset_raw & 0xFFC; // mask off the bottom 2 RsvdP bits.
 
-        if next_offset <= 0x0FF {
-            log::warn!("PCI extended capability header had a next capability offset outside the extended region ({} <= 0FFh)", next_offset);
+        // Technically only allowed in the Root Complex Register Block.
+        if capability_id == 0xFFFF && next_offset == 0x000 {
             return None;
         }
+
+        // Technically only allowed in the PCIe configuration space.
+        /*if next_offset <= 0x0FF {
+            log::warn!("PCI extended capability header had a next capability offset outside the extended region ({} <= 0FFh)", next_offset);
+            return None;
+        }*/
 
         self.pointer = next_offset;
         Some(current_pointer)

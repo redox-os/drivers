@@ -76,6 +76,7 @@ impl CfgAccess for Pci {
     }
 
     unsafe fn read_nolock(&self, bus: u8, dev: u8, func: u8, offset: u16) -> u32 {
+        assert_eq!(offset & 0x00FC, offset, "incompatible PCI 3.0 offset");
         self.iopl_once.call_once(Self::set_iopl);
 
         let offset = u8::try_from(offset).expect("offset too large for PCI 3.0 configuration space");
@@ -96,6 +97,8 @@ impl CfgAccess for Pci {
     }
 
     unsafe fn write_nolock(&self, bus: u8, dev: u8, func: u8, offset: u16, value: u32) {
+        assert_eq!(offset & 0x00FC, offset, "incompatible PCI 3.0 offset");
+
         self.iopl_once.call_once(Self::set_iopl);
 
         let offset = u8::try_from(offset).expect("offset too large for PCI 3.0 configuration space");
