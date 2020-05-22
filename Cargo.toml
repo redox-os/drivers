@@ -19,3 +19,8 @@ members = [
     "usbhidd",
     "usbscsid",
 ]
+
+[patch.crates-io]
+mio = { git = "https://gitlab.redox-os.org/redox-os/mio.git", branch = "redox-unix" }
+net2 = { git = "https://gitlab.redox-os.org/redox-os/net2-rs.git", branch = "redox-unix" }
+pbr = { git = "https://github.com/jackpot51/pb.git" }
