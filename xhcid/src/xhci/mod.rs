@@ -14,8 +14,8 @@ use crossbeam_channel::{Receiver, Sender};
 use log::{debug, error, info, trace, warn};
 use serde::Deserialize;
 use syscall::error::{Error, Result, EBADF, EBADMSG, ENOENT, EIO};
-use syscall::flag::O_RDONLY;
-use syscall::io::{Dma, Io};
+use syscall::flag::{O_RDONLY, PhysallocFlags};
+use syscall::io::{Dma, Io, PhysBox};
 
 use crate::usb;
 
@@ -131,25 +131,25 @@ impl Xhci {
     }
 
     async fn fetch_dev_desc(&self, port: usize, slot: u8) -> Result<usb::DeviceDescriptor> {
-        let mut desc = Dma::<usb::DeviceDescriptor>::zeroed()?;
+        let mut desc = unsafe { self.alloc_dma_zeroed::<usb::DeviceDescriptor>()? };
         self.get_desc_raw(port, slot, usb::DescriptorKind::Device, 0, &mut desc).await?;
         Ok(*desc)
     }
 
     async fn fetch_config_desc(&self, port: usize, slot: u8, config: u8) -> Result<(usb::ConfigDescriptor, [u8; 4087])> {
-        let mut desc = Dma::<(usb::ConfigDescriptor, [u8; 4087])>::zeroed()?;
+        let mut desc = unsafe { self.alloc_dma_zeroed::<(usb::ConfigDescriptor, [u8; 4087])>()? };
         self.get_desc_raw(port, slot, usb::DescriptorKind::Configuration, config, &mut desc).await?;
         Ok(*desc)
     }
 
     async fn fetch_bos_desc(&self, port: usize, slot: u8) -> Result<(usb::BosDescriptor, [u8; 4087])> {
-        let mut desc = Dma::<(usb::BosDescriptor, [u8; 4087])>::zeroed()?;
+        let mut desc = unsafe { self.alloc_dma_zeroed::<(usb::BosDescriptor, [u8; 4087])>()? };
         self.get_desc_raw(port, slot, usb::DescriptorKind::BinaryObjectStorage, 0, &mut desc).await?;
         Ok(*desc)
     }
 
     async fn fetch_string_desc(&self, port: usize, slot: u8, index: u8) -> Result<String> {
-        let mut sdesc = Dma::<(u8, u8, [u16; 127])>::zeroed()?;
+        let mut sdesc = unsafe { self.alloc_dma_zeroed::<(u8, u8, [u16; 127])>()? };
         self.get_desc_raw(port, slot, usb::DescriptorKind::String, index, &mut sdesc).await?;
 
         let len = sdesc.0 as usize;
@@ -295,7 +295,7 @@ impl Xhci {
         // Create the command ring with 4096 / 16 (TRB size) entries, so that it uses all of the
         // DMA allocation (which is at least a 4k page).
         let entries_per_page = page_size / mem::size_of::<Trb>();
-        let cmd = Ring::new(entries_per_page, true)?;
+        let cmd = Ring::new(cap.ac64(), entries_per_page, true)?;
 
         let (irq_reactor_sender, irq_reactor_receiver) = crossbeam_channel::unbounded();
 
@@ -310,11 +310,11 @@ impl Xhci {
             dbs: Mutex::new(dbs),
             run: Mutex::new(run),
 
-            dev_ctx: DeviceContextList::new(max_slots)?,
+            dev_ctx: DeviceContextList::new(cap.ac64(), max_slots)?,
             scratchpad_buf_arr: None, // initialized in init()
 
             cmd: Mutex::new(cmd),
-            primary_event_ring: Mutex::new(EventRing::new()?),
+            primary_event_ring: Mutex::new(EventRing::new(cap.ac64())?),
             handles: CHashMap::new(),
             next_handle: AtomicUsize::new(0),
             port_states: CHashMap::new(),
@@ -410,7 +410,7 @@ impl Xhci {
         if buf_count == 0 {
             return Ok(());
         }
-        let scratchpad_buf_arr = ScratchpadBufferArray::new(self.page_size,buf_count)?;
+        let scratchpad_buf_arr = ScratchpadBufferArray::new(self.cap.ac64(), self.page_size,buf_count)?;
         self.dev_ctx.dcbaa[0] = scratchpad_buf_arr.register() as u64;
         debug!("Setting up {} scratchpads, at {:#0x}", buf_count, scratchpad_buf_arr.register());
         self.scratchpad_buf_arr = Some(scratchpad_buf_arr);
@@ -441,6 +441,26 @@ impl Xhci {
     pub fn slot_state(&self, slot: usize) -> u8 {
         self.dev_ctx.contexts[slot].slot.state()
     }
+    pub unsafe fn alloc_phys(ac64: bool, byte_count: usize) -> Result<PhysBox> {
+        let flags = if ac64 {
+            PhysallocFlags::SPACE_64
+        } else {
+            PhysallocFlags::SPACE_32
+        };
+        PhysBox::new_with_flags(byte_count, flags)
+    }
+    pub unsafe fn alloc_dma_zeroed_raw<T>(ac64: bool) -> Result<Dma<T>> {
+        Ok(Dma::from_physbox_zeroed(Self::alloc_phys(ac64, mem::size_of::<T>())?)?.assume_init())
+    }
+    pub unsafe fn alloc_dma_zeroed<T>(&self) -> Result<Dma<T>> {
+        Self::alloc_dma_zeroed_raw(self.cap.ac64())
+    }
+    pub unsafe fn alloc_dma_zeroed_unsized_raw<T>(ac64: bool, count: usize) -> Result<Dma<[T]>> {
+        Ok(Dma::from_physbox_zeroed_unsized(Self::alloc_phys(ac64, mem::size_of::<T>() * count)?, count)?.assume_init())
+    }
+    pub unsafe fn alloc_dma_zeroed_unsized<T>(&self, count: usize) -> Result<Dma<[T]>> {
+        Self::alloc_dma_zeroed_unsized_raw(self.cap.ac64(), count)
+    }
 
     pub async fn probe(&self) -> Result<()> {
         info!("XHCI capabilities: {:?}", self.capabilities_iter().collect::<Vec<_>>());
@@ -469,7 +489,7 @@ impl Xhci {
 
                 info!("Enabled port {}, which the xHC mapped to {}", i, slot);
 
-                let mut input = Dma::<InputContext>::zeroed()?;
+                let mut input = unsafe { self.alloc_dma_zeroed::<InputContext>()? };
                 let mut ring = self.address_device(&mut input, i, slot_ty, slot, speed).await?;
                 info!("Addressed device");
 
@@ -553,7 +573,7 @@ impl Xhci {
         slot: u8,
         speed: u8,
     ) -> Result<Ring> {
-        let mut ring = Ring::new(16, true)?;
+        let mut ring = Ring::new(self.cap.ac64(), 16, true)?;
 
         {
             input_context.add_context.write(1 << 1 | 1); // Enable the slot (zeroth bit) and the control endpoint (first bit).

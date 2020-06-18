@@ -3,6 +3,7 @@ use std::mem;
 use syscall::error::Result;
 use syscall::io::Dma;
 
+use super::Xhci;
 use super::trb::Trb;
 
 pub struct Ring {
@@ -13,10 +14,10 @@ pub struct Ring {
 }
 
 impl Ring {
-    pub fn new(length: usize, link: bool) -> Result<Ring> {
+    pub fn new(ac64: bool, length: usize, link: bool) -> Result<Ring> {
         Ok(Ring {
-            link: link,
-            trbs: unsafe { Dma::zeroed_unsized(length)? },
+            link,
+            trbs: unsafe { Xhci::alloc_dma_zeroed_unsized_raw(ac64, length)? },
             i: 0,
             cycle: link,
         })
@@ -64,9 +65,8 @@ impl Ring {
     ///
     /// # Panics
     /// Panics if paddr is not a multiple of 16 bytes, i.e. the size of a TRB.
-    // TODO: Use usize instead of u64.
-    pub fn phys_addr_to_index(&self, paddr: u64) -> Option<usize> {
-        let base = self.trbs.physical();
+    pub fn phys_addr_to_index(&self, ac64: bool, paddr: u64) -> Option<usize> {
+        let base = self.trbs.physical() & if ac64 { 0xFFFF_FFFF_FFFF_FFFF } else { 0xFFFF_FFFF };
         let offset = paddr.checked_sub(base as u64)? as usize;
 
         assert_eq!(offset % mem::size_of::<Trb>(), 0, "unaligned TRB physical address");
@@ -79,15 +79,15 @@ impl Ring {
 
         Some(index)
     }
-    pub fn phys_addr_to_entry_ref(&self, paddr: u64) -> Option<&Trb> {
-        Some(&self.trbs[self.phys_addr_to_index(paddr)?])
+    pub fn phys_addr_to_entry_ref(&self, ac64: bool, paddr: u64) -> Option<&Trb> {
+        Some(&self.trbs[self.phys_addr_to_index(ac64, paddr)?])
     }
-    pub fn phys_addr_to_entry_mut(&mut self, paddr: u64) -> Option<&mut Trb> {
-        let index = self.phys_addr_to_index(paddr)?;
+    pub fn phys_addr_to_entry_mut(&mut self, ac64: bool, paddr: u64) -> Option<&mut Trb> {
+        let index = self.phys_addr_to_index(ac64, paddr)?;
         Some(&mut self.trbs[index])
     }
-    pub fn phys_addr_to_entry(&self, paddr: u64) -> Option<Trb> {
-        Some(self.trbs[self.phys_addr_to_index(paddr)?].clone())
+    pub fn phys_addr_to_entry(&self, ac64: bool, paddr: u64) -> Option<Trb> {
+        Some(self.trbs[self.phys_addr_to_index(ac64, paddr)?].clone())
     }
     pub(crate) fn start_virt_addr(&self) -> *const Trb {
         self.trbs.as_ptr()
@@ -95,7 +95,7 @@ impl Ring {
     pub(crate) fn end_virt_addr(&self) -> *const Trb {
         unsafe { self.start_virt_addr().offset(self.trbs.len() as isize) }
     }
-    pub fn trb_phys_ptr(&self, trb: &Trb) -> u64 {
+    pub fn trb_phys_ptr(&self, ac64: bool, trb: &Trb) -> u64 {
         let trb_virt_pointer = trb as *const Trb;
         let trbs_base_virt_pointer = self.trbs.as_ptr();
 
@@ -104,7 +104,7 @@ impl Ring {
         }
         let trb_offset_from_base = trb_virt_pointer as u64 - trbs_base_virt_pointer as u64;
 
-        let trbs_base_phys_ptr = self.trbs.physical() as u64;
+        let trbs_base_phys_ptr = (self.trbs.physical() as u64) & if ac64 { 0xFFFF_FFFF_FFFF_FFFF } else { 0xFFFF_FFFF };
         let trb_phys_ptr = trbs_base_phys_ptr + trb_offset_from_base;
         trb_phys_ptr
     }

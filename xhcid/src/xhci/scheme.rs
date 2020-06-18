@@ -694,10 +694,10 @@ impl Xhci {
             assert_ne!(ep_ty, 0); // 0 means invalid.
 
             let ring_ptr = if usb_log_max_streams.is_some() {
-                let mut array = StreamContextArray::new(1 << (primary_streams + 1))?;
+                let mut array = StreamContextArray::new(self.cap.ac64(), 1 << (primary_streams + 1))?;
 
                 // TODO: Use as many stream rings as needed.
-                array.add_ring(1, true)?;
+                array.add_ring(self.cap.ac64(), 1, true)?;
                 let array_ptr = array.register();
 
                 assert_eq!(
@@ -715,7 +715,7 @@ impl Xhci {
 
                 array_ptr
             } else {
-                let ring = Ring::new(16, true)?;
+                let ring = Ring::new(self.cap.ac64(), 16, true)?;
                 let ring_ptr = ring.register();
 
                 assert_eq!(
@@ -796,7 +796,7 @@ impl Xhci {
         if buf.is_empty() {
             return Err(Error::new(EINVAL));
         }
-        let dma_buffer = unsafe { Dma::<[u8]>::zeroed_unsized(buf.len())? };
+        let dma_buffer = unsafe { self.alloc_dma_zeroed_unsized(buf.len())? };
 
         let (completion_code, bytes_transferred, dma_buffer) = self.transfer(
             port_num,
@@ -812,7 +812,7 @@ impl Xhci {
         if sbuf.is_empty() {
             return Err(Error::new(EINVAL));
         }
-        let mut dma_buffer = unsafe { Dma::<[u8]>::zeroed_unsized(sbuf.len()) }?;
+        let mut dma_buffer = unsafe { self.alloc_dma_zeroed_unsized(sbuf.len()) }?;
         dma_buffer.copy_from_slice(sbuf);
 
         trace!("TRANSFER_WRITE port {} ep {}, buffer at {:p}, size {}, dma buffer {:?}", port_num, endp_idx + 1, sbuf.as_ptr(), sbuf.len(), DmaSliceDbg(&dma_buffer));
@@ -1163,7 +1163,7 @@ impl Xhci {
         // TODO: Reuse buffers, or something.
         // TODO: Validate the size.
         // TODO: Sizes above 65536, *perhaps*.
-        let data_buffer = unsafe { Dma::<[u8]>::zeroed_unsized(req.length as usize)? };
+        let data_buffer = unsafe { self.alloc_dma_zeroed_unsized(req.length as usize)? };
         assert_eq!(data_buffer.len(), req.length as usize);
 
         Ok(match transfer_kind {

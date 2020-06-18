@@ -1,6 +1,7 @@
 use syscall::error::Result;
 use syscall::io::{Dma, Io, Mmio};
 
+use super::Xhci;
 use super::ring::Ring;
 use super::trb::Trb;
 
@@ -19,10 +20,10 @@ pub struct EventRing {
 }
 
 impl EventRing {
-    pub fn new() -> Result<EventRing> {
+    pub fn new(ac64: bool) -> Result<EventRing> {
         let mut ring = EventRing {
-            ste: unsafe { Dma::zeroed_unsized(1)? },
-            ring: Ring::new(256, false)?,
+            ste: unsafe { Xhci::alloc_dma_zeroed_unsized_raw(ac64, 1)? },
+            ring: Ring::new(ac64, 256, false)?,
         };
 
         ring.ste[0].address.write(ring.ring.trbs.physical() as u64);
