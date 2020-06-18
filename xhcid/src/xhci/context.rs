@@ -4,6 +4,7 @@ use log::debug;
 use syscall::error::Result;
 use syscall::io::{Dma, Io, Mmio};
 
+use super::Xhci;
 use super::ring::Ring;
 
 #[repr(packed)]
@@ -80,13 +81,13 @@ pub struct DeviceContextList {
 }
 
 impl DeviceContextList {
-    pub fn new(max_slots: u8) -> Result<DeviceContextList> {
-        let mut dcbaa = Dma::<[u64; 256]>::zeroed()?;
+    pub fn new(ac64: bool, max_slots: u8) -> Result<DeviceContextList> {
+        let mut dcbaa = unsafe { Xhci::alloc_dma_zeroed_raw::<[u64; 256]>(ac64)? };
         let mut contexts = vec![];
 
         // Create device context buffers for each slot
         for i in 0..max_slots as usize {
-            let context: Dma<DeviceContext> = Dma::zeroed()?;
+            let context: Dma<DeviceContext> = unsafe { Xhci::alloc_dma_zeroed_raw(ac64) }?;
             dcbaa[i] = context.physical() as u64;
             contexts.push(context);
         }
@@ -130,19 +131,19 @@ pub struct StreamContextArray {
 }
 
 impl StreamContextArray {
-    pub fn new(count: usize) -> Result<Self> {
+    pub fn new(ac64: bool, count: usize) -> Result<Self> {
         unsafe {
             Ok(Self {
-                contexts: Dma::zeroed_unsized(count)?,
+                contexts: Xhci::alloc_dma_zeroed_unsized_raw(ac64, count)?,
                 rings: BTreeMap::new(),
             })
         }
     }
-    pub fn add_ring(&mut self, stream_id: u16, link: bool) -> Result<()> {
+    pub fn add_ring(&mut self, ac64: bool, stream_id: u16, link: bool) -> Result<()> {
         // NOTE: stream_id 0 is reserved
         assert_ne!(stream_id, 0);
 
-        let ring = Ring::new(16, link)?;
+        let ring = Ring::new(ac64, 16, link)?;
         let pointer = ring.register();
         let sct = StreamContextType::PrimaryRing;
 
@@ -176,8 +177,8 @@ pub struct ScratchpadBufferArray {
     pub pages: Vec<usize>,
 }
 impl ScratchpadBufferArray {
-    pub fn new(page_size: usize, entries: u16) -> Result<Self> {
-        let mut entries = unsafe { Dma::zeroed_unsized(entries as usize)? };
+    pub fn new(ac64: bool, page_size: usize, entries: u16) -> Result<Self> {
+        let mut entries = unsafe { Xhci::alloc_dma_zeroed_unsized_raw(ac64, entries as usize)? };
 
         let pages = entries.iter_mut().map(|entry: &mut ScratchpadBufferEntry| -> Result<usize> {
             let pointer = unsafe { syscall::physalloc(page_size)? };

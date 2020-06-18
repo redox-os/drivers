@@ -206,8 +206,8 @@ impl Nvme {
             // map the zero interrupt vector (which according to the spec shall always point to the
             // admin completion queue) to CQID 0 (admin completion queue)
             cqs_for_ivs: RwLock::new(std::iter::once((0, smallvec!(0))).collect()),
-            buffer: Mutex::new(Dma::zeroed()?),
-            buffer_prp: Mutex::new(Dma::zeroed()?),
+            buffer: Mutex::new(unsafe { Dma::zeroed()?.assume_init() }),
+            buffer_prp: Mutex::new(unsafe { Dma::zeroed()?.assume_init() }),
             interrupt_method: Mutex::new(interrupt_method),
             pcid_interface: Mutex::new(pcid_interface),
             reactor_sender,

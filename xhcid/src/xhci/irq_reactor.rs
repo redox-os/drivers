@@ -218,7 +218,7 @@ impl IrqReactor {
 
                     // Before waking, it's crucial that the command TRB that generated this event
                     // is fetched before removing this event TRB from the queue.
-                    let command_trb = match self.hci.cmd.lock().unwrap().phys_addr_to_entry_mut(phys_ptr) {
+                    let command_trb = match self.hci.cmd.lock().unwrap().phys_addr_to_entry_mut(self.hci.cap.ac64(), phys_ptr) {
                         Some(command_trb) => {
                             let t = command_trb.clone();
                             command_trb.reserved(false);
@@ -379,7 +379,7 @@ impl Future for EventTrbFuture {
 
 impl Xhci {
     pub fn get_transfer_trb(&self, paddr: u64, id: RingId) -> Option<Trb> {
-        self.with_ring(id, |ring| ring.phys_addr_to_entry(paddr)).flatten()
+        self.with_ring(id, |ring| ring.phys_addr_to_entry(self.cap.ac64(), paddr)).flatten()
     }
     pub fn with_ring<T, F: FnOnce(&Ring) -> T>(&self, id: RingId, function: F) -> Option<T> {
         use super::RingOrStreams;
@@ -419,7 +419,7 @@ impl Xhci {
                 is_isoch_or_vf,
                 state_kind: StateKind::Transfer {
                     ring_id,
-                    phys_ptr: ring.trb_phys_ptr(trb),
+                    phys_ptr: ring.trb_phys_ptr(self.cap.ac64(), trb),
                 },
                 message: Arc::new(Mutex::new(None)),
             },
@@ -435,7 +435,7 @@ impl Xhci {
                 // This is only possible for transfers if they are isochronous, or for Force Event TRBs (virtualization).
                 is_isoch_or_vf: false,
                 state_kind: StateKind::CommandCompletion {
-                    phys_ptr: command_ring.trb_phys_ptr(trb),
+                    phys_ptr: command_ring.trb_phys_ptr(self.cap.ac64(), trb),
                 },
                 message: Arc::new(Mutex::new(None)),
             },

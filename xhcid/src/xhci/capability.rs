@@ -14,6 +14,8 @@ pub struct CapabilityRegs {
     pub hcc_params2: Mmio<u32>,
 }
 
+pub const HCC_PARAMS1_AC64_BIT: u32 = 1 << HCC_PARAMS1_AC64_SHIFT;
+pub const HCC_PARAMS1_AC64_SHIFT: u8 = 0;
 pub const HCC_PARAMS1_MAXPSASIZE_MASK: u32 = 0xF000; // 15:12
 pub const HCC_PARAMS1_MAXPSASIZE_SHIFT: u8 = 12;
 pub const HCC_PARAMS1_XECP_MASK: u32 = 0xFFFF_0000;
@@ -35,6 +37,10 @@ pub const HCS_PARAMS2_MAX_SCRATCHPAD_BUFS_HI_MASK: u32 = 0x03E0_0000;
 pub const HCS_PARAMS2_MAX_SCRATCHPAD_BUFS_HI_SHIFT: u8 = 21;
 
 impl CapabilityRegs {
+    pub fn ac64(&self) -> bool {
+        self.hcc_params1.readf(HCC_PARAMS1_AC64_BIT)
+    }
+
     pub fn lec(&self) -> bool {
         self.hcc_params2.readf(HCC_PARAMS2_LEC_BIT)
     }
