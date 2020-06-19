@@ -1,9 +1,11 @@
 use std::env;
+use std::mem;
 use std::fs::File;
 use std::io::prelude::*;
 use std::os::unix::io::{FromRawFd, RawFd};
 
-use syscall::{CloneFlags, Packet, SchemeMut};
+use syscall::{CloneFlags, Map, MapFlags, Packet, SchemeMut};
+use syscall::io_uring;
 use xhcid_interface::{ConfigureEndpointsReq, DeviceReqData, XhciClientHandle};
 
 pub mod protocol;
@@ -43,6 +45,64 @@ fn main() {
     }
 
     let disk_scheme_name = format!(":disk/{}-{}_scsi", scheme, port);
+
+    {
+        let ringfd = syscall::open("io_uring:", syscall::O_CREAT).expect("failed to open uring");
+
+        let create_info = io_uring::IoUringCreateInfo {
+            version: io_uring::IoUringVersion {
+                major: 1,
+                minor: 0,
+                patch: 0,
+                build: 0,
+            },
+            flags: io_uring::IoUringCreateFlags::empty().bits(),
+            len: mem::size_of::<io_uring::IoUringVersion>(),
+            sq_entry_count: 128,
+            cq_entry_count: 128,
+        };
+
+        let buf = unsafe { std::slice::from_raw_parts(&create_info as *const _ as *const u8, mem::size_of_val(&create_info)) };
+        let res = syscall::write(ringfd, buf).expect("failed to setup ioring");
+        if res != buf.len() {
+            println!("Wrote less (wrote {}, expected {})", res, buf.len());
+        }
+
+        // mmaps
+        let sq_ring = unsafe {
+            syscall::fmap(ringfd, &Map {
+                offset: io_uring::SQ_HEADER_MMAP_OFFSET,
+                size: 4096,
+                flags: MapFlags::MAP_SHARED | MapFlags::PROT_READ | MapFlags::PROT_WRITE,
+            }).expect("failed ot mmap sq_ring")
+        };
+        let cq_ring = unsafe {
+            syscall::fmap(ringfd, &Map {
+                offset: io_uring::CQ_HEADER_MMAP_OFFSET,
+                size: 4096,
+                flags: MapFlags::MAP_SHARED | MapFlags::PROT_READ | MapFlags::PROT_WRITE,
+            }).expect("failed ot mmap sq_ring")
+        };
+        let se_ring = unsafe {
+            syscall::fmap(ringfd, &Map {
+                offset: io_uring::SQ_ENTRIES_MMAP_OFFSET,
+                size: 4096,
+                flags: MapFlags::MAP_SHARED | MapFlags::PROT_READ | MapFlags::PROT_WRITE,
+            }).expect("failed ot mmap sq_ring")
+        };
+        let ce_ring = unsafe {
+            syscall::fmap(ringfd, &Map {
+                offset: io_uring::CQ_ENTRIES_MMAP_OFFSET,
+                size: 4096,
+                flags: MapFlags::MAP_SHARED | MapFlags::PROT_READ | MapFlags::PROT_WRITE,
+            }).expect("failed ot mmap sq_ring")
+        };
+
+        let dirfd = syscall::open(format!("{}:", scheme), syscall::O_DIRECTORY | syscall::O_CLOEXEC | syscall::O_RDONLY).expect("failed to open directory");
+        println!("RUNNING *THE* SYSCALL");
+        syscall::attach_iouring(ringfd, dirfd).expect("failed to attach ioring");
+        println!("FINISHED RUNNING *THE* SYSCALL");
+    }
 
     // TODO: Use eventfds.
     let handle = XhciClientHandle::new(scheme, port);

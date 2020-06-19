@@ -204,12 +204,12 @@ fn main() {
 
     let (interrupt_method, interrupt_sources) = get_int_method(&pci_config.func, &mut pcid_handle, &*allocated_bars);
 
-    let hci = Arc::new(Xhci::new(name, address, interrupt_method, pcid_handle).expect("xhcid: failed to allocate device"));
-    xhci::start_irq_reactor(&hci, interrupt_sources);
-    futures::executor::block_on(hci.probe()).expect("xhcid: failed to probe");
-
     let event_queue_fd = syscall::open("event:", O_RDWR | O_CLOEXEC).expect("xhcid: failed to create main event queue");
     let mut event_queue = unsafe { File::from_raw_fd(event_queue_fd as RawFd) };
+
+    let hci = Arc::new(Xhci::new(name, address, interrupt_method, pcid_handle, event_queue.try_clone().expect("xhcid: failed to dup event queue")).expect("xhcid: failed to allocate device"));
+    xhci::start_irq_reactor(&hci, interrupt_sources);
+    futures::executor::block_on(hci.probe()).expect("xhcid: failed to probe");
 
     let (mut packet_sender, mut packet_receiver) = futures::channel::mpsc::channel(256);
 
@@ -229,7 +229,7 @@ fn main() {
         let mut packets = [Packet::default(); 16];
 
         'main_loop: loop {
-            /*let events_buf = unsafe { slice::from_raw_parts_mut(events.as_mut_ptr() as *mut u8, events.len() * mem::size_of::<syscall::Event>()) };
+            let events_buf = unsafe { slice::from_raw_parts_mut(events.as_mut_ptr() as *mut u8, events.len() * mem::size_of::<syscall::Event>()) };
             let byte_count = event_queue.read(events_buf).expect("xhcid: failed to read events");
             let count = byte_count / mem::size_of::<syscall::Event>();
             let events = &events[..count];
@@ -238,7 +238,7 @@ fn main() {
                 if event.id != socket_fd || event.data != 0 {
                     panic!("xhcid: got invalid main scheme socket event: {:?}", event);
                 }
-            }*/
+            }
             'packet_loop: loop {
                 let packet_buf = unsafe { slice::from_raw_parts_mut(packets.as_mut_ptr() as *mut u8, packets.len() * mem::size_of::<Packet>()) };
                 let byte_count = match (&*socket).read(packet_buf) {

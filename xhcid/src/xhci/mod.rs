@@ -117,51 +117,27 @@ impl Xhci {
         Ok(())
     }
 
-<<<<<<< HEAD
-    async fn fetch_dev_desc(&self, port: usize, slot: u8) -> Result<usb::DeviceDescriptor> {
-        let mut desc = unsafe { self.alloc_dma_zeroed::<usb::DeviceDescriptor>()? };
-        self.get_desc_raw(port, slot, usb::DescriptorKind::Device, 0, &mut desc).await?;
-        Ok(*desc)
-    }
-
-    async fn fetch_config_desc(&self, port: usize, slot: u8, config: u8) -> Result<(usb::ConfigDescriptor, [u8; 4087])> {
-        let mut desc = unsafe { self.alloc_dma_zeroed::<(usb::ConfigDescriptor, [u8; 4087])>()? };
-        self.get_desc_raw(port, slot, usb::DescriptorKind::Configuration, config, &mut desc).await?;
-        Ok(*desc)
-    }
-
-    async fn fetch_bos_desc(&self, port: usize, slot: u8) -> Result<(usb::BosDescriptor, [u8; 4087])> {
-        let mut desc = unsafe { self.alloc_dma_zeroed::<(usb::BosDescriptor, [u8; 4087])>()? };
-        self.get_desc_raw(port, slot, usb::DescriptorKind::BinaryObjectStorage, 0, &mut desc).await?;
-        Ok(*desc)
-    }
-
-    async fn fetch_string_desc(&self, port: usize, slot: u8, index: u8) -> Result<String> {
-        let mut sdesc = unsafe { self.alloc_dma_zeroed::<(u8, u8, [u16; 127])>()? };
-        self.get_desc_raw(port, slot, usb::DescriptorKind::String, index, &mut sdesc).await?;
-=======
     async fn fetch_dev_desc(&self, slot: u8) -> Result<usb::DeviceDescriptor> {
-        let mut desc = Dma::<usb::DeviceDescriptor>::zeroed()?;
+        let mut desc = unsafe { self.alloc_dma_zeroed::<usb::DeviceDescriptor>()? };
         self.get_desc_raw(slot, usb::DescriptorKind::Device, 0, &mut desc).await?;
         Ok(*desc)
     }
 
     async fn fetch_config_desc(&self, slot: u8, config: u8) -> Result<(usb::ConfigDescriptor, [u8; 4087])> {
-        let mut desc = Dma::<(usb::ConfigDescriptor, [u8; 4087])>::zeroed()?;
+        let mut desc = unsafe { self.alloc_dma_zeroed::<(usb::ConfigDescriptor, [u8; 4087])>()? };
         self.get_desc_raw(slot, usb::DescriptorKind::Configuration, config, &mut desc).await?;
         Ok(*desc)
     }
 
     async fn fetch_bos_desc(&self, slot: u8) -> Result<(usb::BosDescriptor, [u8; 4087])> {
-        let mut desc = Dma::<(usb::BosDescriptor, [u8; 4087])>::zeroed()?;
+        let mut desc = unsafe { self.alloc_dma_zeroed::<(usb::BosDescriptor, [u8; 4087])>()? };
         self.get_desc_raw(slot, usb::DescriptorKind::BinaryObjectStorage, 0, &mut desc).await?;
         Ok(*desc)
     }
 
     async fn fetch_string_desc(&self, slot: u8, index: u8) -> Result<String> {
-        let mut sdesc = Dma::<(u8, u8, [u16; 127])>::zeroed()?;
+        let mut sdesc = unsafe { self.alloc_dma_zeroed::<(u8, u8, [u16; 127])>()? };
         self.get_desc_raw(slot, usb::DescriptorKind::String, index, &mut sdesc).await?;
->>>>>>> 9524c04... Store USB device states by slot instead of port.
 
         let len = sdesc.0 as usize;
         if len > 2 {
@@ -216,6 +192,9 @@ pub struct Xhci {
     handles: RwLock<BTreeMap<usize, Mutex<scheme::Handle>>>,
     next_handle: AtomicUsize,
 
+    iorings: RwLock<BTreeMap<usize, Mutex<scheme::IoUringHandle>>>,
+    next_ioring: AtomicUsize,
+
     slot_states: RwLock<BTreeMap<u8, Mutex<SlotState>>>,
 
     /// Associates a root port_num (starting at 1) and downstream packed, route string with the
@@ -235,6 +214,8 @@ pub struct Xhci {
     // not used, but still stored so that the thread, when created, can get the channel without the
     // channel being in a mutex.
     irq_reactor_receiver: Receiver<NewPendingTrb>,
+
+    event_queue: File,
 }
 
 unsafe impl Send for Xhci {}
@@ -296,7 +277,7 @@ impl EndpointState {
 }
 
 impl Xhci {
-    pub fn new(scheme_name: String, address: usize, interrupt_method: InterruptMethod, pcid_handle: PcidServerHandle) -> Result<Xhci> {
+    pub fn new(scheme_name: String, address: usize, interrupt_method: InterruptMethod, pcid_handle: PcidServerHandle, event_queue: File) -> Result<Xhci> {
         let cap = unsafe { &mut *(address as *mut CapabilityRegs) };
         debug!("CAP REGS BASE {:X}", address);
 
@@ -379,8 +360,11 @@ impl Xhci {
 
             cmd: Mutex::new(cmd),
             primary_event_ring: Mutex::new(EventRing::new(cap.ac64())?),
+
             handles: RwLock::new(BTreeMap::new()),
             next_handle: AtomicUsize::new(0),
+            iorings: RwLock::new(BTreeMap::new()),
+            next_ioring: AtomicUsize::new(0),
 
             slot_states: RwLock::new(BTreeMap::new()),
             port_to_slot: RwLock::new(BTreeMap::new()),
@@ -394,6 +378,8 @@ impl Xhci {
             irq_reactor: Mutex::new(None),
             irq_reactor_sender,
             irq_reactor_receiver,
+
+            event_queue,
         };
 
         xhci.init(max_slots)?;
@@ -557,18 +543,13 @@ impl Xhci {
 
                 info!("Enabled port {}, which the xHC mapped to {}", port_num, slot);
 
-<<<<<<< HEAD
                 let mut input = unsafe { self.alloc_dma_zeroed::<InputContext>()? };
-                let mut ring = self.address_device(&mut input, i, slot_ty, slot, speed).await?;
-=======
-                let mut input = Dma::<InputContext>::zeroed()?;
 
                 // we are only dealing with root ports here, so the route string shall be zero as
                 // no downstream ports are used.
                 let route_string = RouteString::new(0);
 
                 let ring = self.address_device(&mut input, port_num, route_string, slot_ty, slot, speed).await?;
->>>>>>> 9524c04... Store USB device states by slot instead of port.
                 info!("Addressed device");
 
                 // TODO: Should the descriptors be cached in SlotState, or refetched?

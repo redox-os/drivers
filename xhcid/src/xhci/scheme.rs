@@ -11,10 +11,11 @@ use log::{debug, error, info, warn, trace};
 use smallvec::SmallVec;
 
 use syscall::io::{Dma, Io};
-use syscall::scheme::Scheme;
+use syscall::io_uring::{self, IoUringRecvInfo, IoUringRecvFlags};
+use syscall::scheme::{Ctx, Scheme};
 use syscall::{
     Error, Result, Stat, EACCES, EBADF, EBADFD, EBADMSG, EEXIST, EINVAL, EIO, EISDIR, ENOENT,
-    ENOSYS, ENOTDIR, ENXIO, EOPNOTSUPP, EOVERFLOW, EPERM, EPROTO, ESPIPE, MODE_CHR, MODE_DIR,
+    ENODEV, ENOSYS, ENOTDIR, ENXIO, EOPNOTSUPP, EOVERFLOW, EPERM, EPROTO, ESPIPE, MODE_CHR, MODE_DIR,
     MODE_FILE, O_CREAT, O_DIRECTORY, O_RDONLY, O_RDWR, O_STAT, O_WRONLY, SEEK_CUR, SEEK_END,
     SEEK_SET, Packet, EFAULT, StatVfs,
     SYS_OPEN, SYS_READ, SYS_WRITE, SYS_LSEEK, SYS_FPATH, SYS_FSTAT, SYS_CLOSE, EventFlags, O_NONBLOCK, F_SETFL, F_GETFL, SYS_FCNTL, SYS_FEVENT, EWOULDBLOCK,
@@ -37,6 +38,15 @@ use super::trb::{TransferKind, Trb, TrbCompletionCode, TrbType};
 use super::usb::endpoint::{EndpointTy, ENDP_ATTR_TY_MASK};
 
 use crate::driver_interface::*;
+
+pub struct IoUringHandleGeneric<C, S> {
+    pub sender: io_uring::SpscSender<C>,
+    pub receiver: io_uring::SpscReceiver<S>,
+}
+pub enum IoUringHandle {
+    Bits32(IoUringHandle<io_uring::SqEntry32, io_uring::CqEntry32>),
+    Bits64(IoUringHandle<io_uring::SqEntry64, io_uring::CqEntry64>),
+}
 
 pub enum Buffer<'a> {
     Borrowed(&'a [u8]),
@@ -1378,6 +1388,11 @@ where
 
 impl Xhci {
     fn scheme_handle_inner<'a>(&'a self, packet: &Packet, context: &'a SchemeIfCtx) -> SchemeHandleOutput<Result<usize>, impl Future<Output = Result<usize>> + 'a> {
+        let ctx = Ctx {
+            pid: packet.pid,
+            uid: packet.uid,
+            gid: packet.gid,
+        };
         match packet.a {
             SYS_OPEN => SchemeHandleOutput::direct(self.scheme_open(unsafe { slice::from_raw_parts(packet.b as *const u8, packet.c) }, packet.d, packet.uid, packet.gid)),
             //SYS_CHMOD => self.chmod(unsafe { slice::from_raw_parts(packet.b as *const u8, packet.c) }, packet.d as u16, packet.uid, packet.gid),
@@ -1417,6 +1432,9 @@ impl Xhci {
             } else {
                 Err(Error::new(EFAULT))
             },*/
+            SYS_RECV_IORING => {
+                SchemeHandleOutput::direct(self.scheme_recv_io_uring_raw(ctx, packet.b, unsafe { slice::from_raw_parts(packet.c as *const u8, packet.d) }))
+            }
             SYS_CLOSE => SchemeHandleOutput::direct(self.scheme_close(packet.b)),
             _ => SchemeHandleOutput::direct(Err(Error::new(ENOSYS))),
         }
@@ -1959,6 +1977,58 @@ impl Xhci {
             }
             _ => return Err(Error::new(EINVAL)),
         }
+    }
+    fn scheme_recv_io_uring_raw(&self, ctx: Ctx, fd: usize, info_buf: &[u8]) -> Result<usize> {
+        if info_buf.len() < mem::size_of::<IoUringRecvInfo>() {
+            return Err(Error::new(EINVAL));
+        }
+        if (info_buf.as_ptr() as usize) % mem::align_of::<IoUringRecvInfo>() != 0 {
+            return Err(Error::new(EINVAL));
+        }
+
+        let info = unsafe { &*(info_buf.as_ptr() as *const IoUringRecvInfo) };
+
+        self.scheme_recv_io_uring(ctx, fd, info)
+    }
+
+    unsafe fn init_ring<S, C>(info: &IoUringRecvInfo) -> IoUringHandleGeneric<C, S> {
+        let sq_ring = info.sr_virtaddr as *const io_uring::Ring<S>;
+        let sq_entries = info.se_virtaddr as *const S;
+
+        let cq_ring = info.cr_virtaddr as *const io_uring::Ring<C>;
+        let cq_entries = info.ce_virtaddr as *mut C;
+
+        let sq = io_uring::SpscReceiver::from_raw(sq_ring, sq_entries);
+        let cq = io_uring::SpscSender::from_raw(cq_ring, cq_entries);
+
+        IoUringHandle {
+            sender: cq,
+            receiver: sq,
+        }
+    }
+
+    fn scheme_recv_io_uring(&self, ctx: Ctx, fd: usize, info: &IoUringRecvInfo) -> Result<usize> {
+        log::debug!("RECV_IORING recv_info = {:?}, fd = #{}", info, fd);
+        let handles = self.handles.read().unwrap();
+        let mut guard = handles.get(&fd).ok_or(Error::new(EBADF))?.lock().unwrap();
+
+        let ioring_handle = if IoUringRecvFlags::from_bits_truncate(info.flags).contains(IoUringRecvFlags::BITS_32) {
+            IoUringHandle::Bits32(Self::init_ring(info))
+        } else {
+            IoUringHandle::Bits64(Self::init_ring(info))
+        };
+
+        let next_number = self.next_ioring.fetch_add(1, atomic::Ordering::Relaxed);
+        let iorings = self.iorings.write().unwrap();
+        iorings.insert(next_number, ioring_handle);
+
+        // TODO: Use a futex that integrates with event queues.
+
+        if len != mem::size_of::<syscall::Event>() {
+            return Err(Error::new(ENODEV));
+        }
+
+        Ok(0)
     }
 }
 impl Xhci {

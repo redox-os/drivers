@@ -484,7 +484,8 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
                 .open("debug:").unwrap()
             )
                 .with_ansi_escape_codes()
-                .with_filter(log::LevelFilter::Trace)
+                //.with_filter(log::LevelFilter::Trace)
+                .with_filter(log::LevelFilter::Debug)
                 .flush_on_newline(true)
                 .build()
         );
