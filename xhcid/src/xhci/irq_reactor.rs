@@ -222,7 +222,7 @@ impl IrqReactor {
         let dequeue_pointer = dequeue_pointer_and_dcs & 0xFFFF_FFFF_FFFF_FFFE;
         assert_eq!(dequeue_pointer & 0xFFFF_FFFF_FFFF_FFF0, dequeue_pointer, "unaligned ERDP received from primary event ring");
 
-        debug!("Updated ERDP to {:#0x}", dequeue_pointer);
+        trace!("Updated ERDP to {:#0x}", dequeue_pointer);
 
         self.hci.run.lock().unwrap().ints[0].erdp.write(dequeue_pointer);
     }

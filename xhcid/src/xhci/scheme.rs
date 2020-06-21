@@ -39,13 +39,13 @@ use super::usb::endpoint::{EndpointTy, ENDP_ATTR_TY_MASK};
 
 use crate::driver_interface::*;
 
-pub struct IoUringHandleGeneric<C, S> {
+pub struct IoUringHandleGeneric<S, C> {
     pub sender: io_uring::SpscSender<C>,
     pub receiver: io_uring::SpscReceiver<S>,
 }
 pub enum IoUringHandle {
-    Bits32(IoUringHandle<io_uring::SqEntry32, io_uring::CqEntry32>),
-    Bits64(IoUringHandle<io_uring::SqEntry64, io_uring::CqEntry64>),
+    Bits32(IoUringHandleGeneric<io_uring::SqEntry32, io_uring::CqEntry32>),
+    Bits64(IoUringHandleGeneric<io_uring::SqEntry64, io_uring::CqEntry64>),
 }
 
 pub enum Buffer<'a> {
@@ -1991,7 +1991,7 @@ impl Xhci {
         self.scheme_recv_io_uring(ctx, fd, info)
     }
 
-    unsafe fn init_ring<S, C>(info: &IoUringRecvInfo) -> IoUringHandleGeneric<C, S> {
+    unsafe fn init_ring<S: std::fmt::Debug, C>(info: &IoUringRecvInfo) -> IoUringHandleGeneric<S, C> {
         let sq_ring = info.sr_virtaddr as *const io_uring::Ring<S>;
         let sq_entries = info.se_virtaddr as *const S;
 
@@ -2001,7 +2001,9 @@ impl Xhci {
         let sq = io_uring::SpscReceiver::from_raw(sq_ring, sq_entries);
         let cq = io_uring::SpscSender::from_raw(cq_ring, cq_entries);
 
-        IoUringHandle {
+        debug!("RECEIVED IO_URING ITEM: {:?}", sq.spin_on_recv());
+
+        IoUringHandleGeneric {
             sender: cq,
             receiver: sq,
         }
@@ -2013,20 +2015,20 @@ impl Xhci {
         let mut guard = handles.get(&fd).ok_or(Error::new(EBADF))?.lock().unwrap();
 
         let ioring_handle = if IoUringRecvFlags::from_bits_truncate(info.flags).contains(IoUringRecvFlags::BITS_32) {
-            IoUringHandle::Bits32(Self::init_ring(info))
+            IoUringHandle::Bits32(unsafe { Self::init_ring::<io_uring::SqEntry32, io_uring::CqEntry32>(info) })
         } else {
-            IoUringHandle::Bits64(Self::init_ring(info))
+            IoUringHandle::Bits64(unsafe { Self::init_ring::<io_uring::SqEntry64, io_uring::CqEntry64>(info) })
         };
 
         let next_number = self.next_ioring.fetch_add(1, atomic::Ordering::Relaxed);
-        let iorings = self.iorings.write().unwrap();
-        iorings.insert(next_number, ioring_handle);
+        let mut iorings = self.iorings.write().unwrap();
+        iorings.insert(next_number, Mutex::new(ioring_handle));
 
         // TODO: Use a futex that integrates with event queues.
 
-        if len != mem::size_of::<syscall::Event>() {
+        /*if len != mem::size_of::<syscall::Event>() {
             return Err(Error::new(ENODEV));
-        }
+        }*/
 
         Ok(0)
     }

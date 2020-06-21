@@ -86,17 +86,31 @@ fn main() {
         let se_ring = unsafe {
             syscall::fmap(ringfd, &Map {
                 offset: io_uring::SQ_ENTRIES_MMAP_OFFSET,
-                size: 4096,
+                size: 16384,
                 flags: MapFlags::MAP_SHARED | MapFlags::PROT_READ | MapFlags::PROT_WRITE,
             }).expect("failed ot mmap sq_ring")
         };
         let ce_ring = unsafe {
             syscall::fmap(ringfd, &Map {
                 offset: io_uring::CQ_ENTRIES_MMAP_OFFSET,
-                size: 4096,
+                size: 16384,
                 flags: MapFlags::MAP_SHARED | MapFlags::PROT_READ | MapFlags::PROT_WRITE,
             }).expect("failed ot mmap sq_ring")
         };
+
+        let sender = unsafe { io_uring::SpscSender::from_raw(sq_ring as *const _, se_ring as *mut _) };
+        sender.spin_on_send(io_uring::SqEntry64 {
+            opcode: 1,
+            flags: 0,
+            priority: 0,
+            syscall_flags: 0,
+            fd: 42,
+            user_data: 1337,
+            len: 8192,
+            addr: 0xDEADBEEF,
+            offset: 16384,
+            _pad_to_cache_line: Default::default(),
+        });
 
         let dirfd = syscall::open(format!("{}:", scheme), syscall::O_DIRECTORY | syscall::O_CLOEXEC | syscall::O_RDONLY).expect("failed to open directory");
         println!("RUNNING *THE* SYSCALL");
