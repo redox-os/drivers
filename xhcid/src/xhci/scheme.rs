@@ -18,7 +18,7 @@ use syscall::{
     ENODEV, ENOSYS, ENOTDIR, ENXIO, EOPNOTSUPP, EOVERFLOW, EPERM, EPROTO, ESPIPE, MODE_CHR, MODE_DIR,
     MODE_FILE, O_CREAT, O_DIRECTORY, O_RDONLY, O_RDWR, O_STAT, O_WRONLY, SEEK_CUR, SEEK_END,
     SEEK_SET, Packet, EFAULT, StatVfs,
-    SYS_OPEN, SYS_READ, SYS_WRITE, SYS_LSEEK, SYS_FPATH, SYS_FSTAT, SYS_CLOSE, EventFlags, O_NONBLOCK, F_SETFL, F_GETFL, SYS_FCNTL, SYS_FEVENT, EWOULDBLOCK,
+    SYS_OPEN, SYS_READ, SYS_RECV_IORING, SYS_WRITE, SYS_LSEEK, SYS_FPATH, SYS_FSTAT, SYS_CLOSE, EventFlags, O_NONBLOCK, F_SETFL, F_GETFL, SYS_FCNTL, SYS_FEVENT, EWOULDBLOCK,
 };
 
 use super::{port, usb};
@@ -492,7 +492,7 @@ impl Xhci {
         }
 
         // TODO: Handle event data
-        debug!("EVENT DATA: {:?}", event_trb.event_data());
+        trace!("EVENT DATA: {:?}", event_trb.event_data());
 
         Ok(event_trb)
     }
@@ -1433,7 +1433,7 @@ impl Xhci {
                 Err(Error::new(EFAULT))
             },*/
             SYS_RECV_IORING => {
-                SchemeHandleOutput::direct(self.scheme_recv_io_uring_raw(ctx, packet.b, unsafe { slice::from_raw_parts(packet.c as *const u8, packet.d) }))
+                SchemeHandleOutput::direct(self.scheme_recv_io_uring_raw(ctx, unsafe { slice::from_raw_parts(packet.b as *const u8, packet.c) }))
             }
             SYS_CLOSE => SchemeHandleOutput::direct(self.scheme_close(packet.b)),
             _ => SchemeHandleOutput::direct(Err(Error::new(ENOSYS))),
@@ -1978,7 +1978,7 @@ impl Xhci {
             _ => return Err(Error::new(EINVAL)),
         }
     }
-    fn scheme_recv_io_uring_raw(&self, ctx: Ctx, fd: usize, info_buf: &[u8]) -> Result<usize> {
+    fn scheme_recv_io_uring_raw(&self, ctx: Ctx, info_buf: &[u8]) -> Result<usize> {
         if info_buf.len() < mem::size_of::<IoUringRecvInfo>() {
             return Err(Error::new(EINVAL));
         }
@@ -1988,7 +1988,7 @@ impl Xhci {
 
         let info = unsafe { &*(info_buf.as_ptr() as *const IoUringRecvInfo) };
 
-        self.scheme_recv_io_uring(ctx, fd, info)
+        self.scheme_recv_io_uring(ctx, info)
     }
 
     unsafe fn init_ring<S: std::fmt::Debug, C>(info: &IoUringRecvInfo) -> IoUringHandleGeneric<S, C> {
@@ -2009,26 +2009,20 @@ impl Xhci {
         }
     }
 
-    fn scheme_recv_io_uring(&self, ctx: Ctx, fd: usize, info: &IoUringRecvInfo) -> Result<usize> {
-        log::debug!("RECV_IORING recv_info = {:?}, fd = #{}", info, fd);
-        let handles = self.handles.read().unwrap();
-        let mut guard = handles.get(&fd).ok_or(Error::new(EBADF))?.lock().unwrap();
-
-        let ioring_handle = if IoUringRecvFlags::from_bits_truncate(info.flags).contains(IoUringRecvFlags::BITS_32) {
-            IoUringHandle::Bits32(unsafe { Self::init_ring::<io_uring::SqEntry32, io_uring::CqEntry32>(info) })
-        } else {
-            IoUringHandle::Bits64(unsafe { Self::init_ring::<io_uring::SqEntry64, io_uring::CqEntry64>(info) })
+    fn scheme_recv_io_uring(&self, ctx: Ctx, info: &IoUringRecvInfo) -> Result<usize> {
+        let producer_instance = match io_uring::ProducerInstance::new_v1(info) {
+            Ok(i) => i,
+            Err(error) => {
+                log::warn!("Failed to receive io_uring from process {:?}, recv info {:?} was invalid: {}", ctx, info, error);
+                return Err(error);
+            }
         };
 
         let next_number = self.next_ioring.fetch_add(1, atomic::Ordering::Relaxed);
         let mut iorings = self.iorings.write().unwrap();
-        iorings.insert(next_number, Mutex::new(ioring_handle));
+        iorings.insert(next_number, Mutex::new(producer_instance));
 
         // TODO: Use a futex that integrates with event queues.
-
-        /*if len != mem::size_of::<syscall::Event>() {
-            return Err(Error::new(ENODEV));
-        }*/
 
         Ok(0)
     }

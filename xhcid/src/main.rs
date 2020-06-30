@@ -8,6 +8,7 @@ use std::{mem, slice, thread};
 use syscall::data::Packet;
 use syscall::flag::{CloneFlags, O_RDWR, O_CLOEXEC, EVENT_READ};
 use syscall::io::Io;
+use syscall::io_uring;
 
 use pcid_interface::{MsiSetCapabilityInfo, PcidServerHandle, PciFunction, SetCapabilityInfo};
 use pcid_interface::msi::MsixTableEntry;
@@ -203,6 +204,16 @@ fn main() {
     });
 
     let (interrupt_method, interrupt_sources) = get_int_method(&pci_config.func, &mut pcid_handle, &*allocated_bars);
+
+    let event_queue_ioring_instance = io_uring::ConsumerInstance::new_v1()
+        .with_submission_entry_count(64)   // much smaller, only a single page
+        .with_completion_entry_count(1024) // 16384 bytes for completion entries, with 16 byte entry size
+        .create_instance()
+        .expect("xhcid: failed to create event queue io_uring instance")
+        .map_all()
+        .expect("xhcid: failed to map event io_uring buffers")
+        .attach_to_kernel()
+        .expect("xhcid: failed to attach event queue to kernel");
 
     let event_queue_fd = syscall::open("event:", O_RDWR | O_CLOEXEC).expect("xhcid: failed to create main event queue");
     let mut event_queue = unsafe { File::from_raw_fd(event_queue_fd as RawFd) };

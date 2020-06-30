@@ -4,8 +4,8 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::os::unix::io::{FromRawFd, RawFd};
 
-use syscall::{CloneFlags, Map, MapFlags, Packet, SchemeMut};
-use syscall::io_uring;
+use syscall::{CloneFlags, Map, MapFlags, Event, EventFlags, Packet, SchemeMut};
+use syscall::io_uring::{self, IoUringSqeFlags};
 use xhcid_interface::{ConfigureEndpointsReq, DeviceReqData, XhciClientHandle};
 
 pub mod protocol;
@@ -38,67 +38,46 @@ fn main() {
         scheme, port, protocol
     );
 
-    // Daemonize so that xhcid can continue to do other useful work (until proper IRQs,
-    // async-await, and multithreading :D)
     if unsafe { syscall::clone(CloneFlags::empty()).unwrap() } != 0 {
         return;
     }
 
     let disk_scheme_name = format!(":disk/{}-{}_scsi", scheme, port);
 
-    {
-        let ringfd = syscall::open("io_uring:", syscall::O_CREAT).expect("failed to open uring");
+    let mut event_queue_ioring_instance = io_uring::ConsumerInstance::new_v1()
+        .with_submission_entry_count(64)   // much smaller, only a single page
+        .with_completion_entry_count(1024) // 16384 bytes for completion entries, with 16 byte entry size
+        .create_instance()
+        .expect("failed to create event queue io_uring instance")
+        .map_all()
+        .expect("failed to map event io_uring buffers")
+        .attach_to_kernel()
+        .expect("failed to attach event queue to kernel");
 
-        let create_info = io_uring::IoUringCreateInfo {
-            version: io_uring::IoUringVersion {
-                major: 1,
-                minor: 0,
-                patch: 0,
-                build: 0,
-            },
-            flags: io_uring::IoUringCreateFlags::empty().bits(),
-            len: mem::size_of::<io_uring::IoUringVersion>(),
-            sq_entry_count: 128,
-            cq_entry_count: 128,
-        };
+    event_queue_ioring_instance.sender().as_64_mut().unwrap().try_send(unsafe { io_uring::SqEntry64::new(IoUringSqeFlags::empty(), 0, 0xDA7A).open(b"event:", (syscall::O_CREAT | syscall::O_RDWR) as u64) }).expect("usbscsid: failed to send event queue creation to kernel");
+    event_queue_ioring_instance.wait(1, io_uring::IoUringEnterFlags::empty()).expect("usbscsid: failed to wait on io_uring");
 
-        let buf = unsafe { std::slice::from_raw_parts(&create_info as *const _ as *const u8, mem::size_of_val(&create_info)) };
-        let res = syscall::write(ringfd, buf).expect("failed to setup ioring");
-        if res != buf.len() {
-            println!("Wrote less (wrote {}, expected {})", res, buf.len());
-        }
+    // TODO: Proper async/await framework...
+    let cqe = event_queue_ioring_instance.receiver().as_64_mut().unwrap().try_recv().unwrap();
+    assert_eq!(cqe.user_data, 0xDA7A);
 
-        // mmaps
-        let sq_ring = unsafe {
-            syscall::fmap(ringfd, &Map {
-                offset: io_uring::SQ_HEADER_MMAP_OFFSET,
-                size: 4096,
-                flags: MapFlags::MAP_SHARED | MapFlags::PROT_READ | MapFlags::PROT_WRITE,
-            }).expect("failed ot mmap sq_ring")
-        };
-        let cq_ring = unsafe {
-            syscall::fmap(ringfd, &Map {
-                offset: io_uring::CQ_HEADER_MMAP_OFFSET,
-                size: 4096,
-                flags: MapFlags::MAP_SHARED | MapFlags::PROT_READ | MapFlags::PROT_WRITE,
-            }).expect("failed ot mmap sq_ring")
-        };
-        let se_ring = unsafe {
-            syscall::fmap(ringfd, &Map {
-                offset: io_uring::SQ_ENTRIES_MMAP_OFFSET,
-                size: 16384,
-                flags: MapFlags::MAP_SHARED | MapFlags::PROT_READ | MapFlags::PROT_WRITE,
-            }).expect("failed ot mmap sq_ring")
-        };
-        let ce_ring = unsafe {
-            syscall::fmap(ringfd, &Map {
-                offset: io_uring::CQ_ENTRIES_MMAP_OFFSET,
-                size: 16384,
-                flags: MapFlags::MAP_SHARED | MapFlags::PROT_READ | MapFlags::PROT_WRITE,
-            }).expect("failed ot mmap sq_ring")
+    let xhci_iouring = {
+        let mut consumer_instance = io_uring::ConsumerInstance::new_v1()
+            .with_recommended_completion_entry_count()
+            .with_recommended_submission_entry_count()
+            .create_instance()
+            .expect("failed to create io_uring instance")
+            .map_all()
+            .expect("failed to map io_uring ring memory locations")
+            .attach(format!("{}:", scheme))
+            .expect("failed to attach io_uring to xhcid");
+
+        let mut sender = if let &mut io_uring::ConsumerGenericSender::Bits64(ref mut sender) = consumer_instance.sender() {
+            sender
+        } else {
+            unreachable!();
         };
 
-        let sender = unsafe { io_uring::SpscSender::from_raw(sq_ring as *const _, se_ring as *mut _) };
         sender.spin_on_send(io_uring::SqEntry64 {
             opcode: 1,
             flags: 0,
@@ -109,14 +88,19 @@ fn main() {
             len: 8192,
             addr: 0xDEADBEEF,
             offset: 16384,
-            _pad_to_cache_line: Default::default(),
+            additional1: 0,
+            additional2: 0,
         });
 
-        let dirfd = syscall::open(format!("{}:", scheme), syscall::O_DIRECTORY | syscall::O_CLOEXEC | syscall::O_RDONLY).expect("failed to open directory");
-        println!("RUNNING *THE* SYSCALL");
-        syscall::attach_iouring(ringfd, dirfd).expect("failed to attach ioring");
-        println!("FINISHED RUNNING *THE* SYSCALL");
-    }
+        event_queue_ioring_instance.sender().as_64_mut().unwrap().try_send(io_uring::SqEntry64::new(io_uring::IoUringSqeFlags::empty(), 0, 0).write(0, &Event {
+            id: consumer_instance.ringfd(),
+            flags: EventFlags::EVENT_URING,
+            data: 0,
+        })).expect("usbscsid: failed to send event queue submission to kernel");
+
+
+        consumer_instance
+    };
 
     // TODO: Use eventfds.
     let handle = XhciClientHandle::new(scheme, port);
