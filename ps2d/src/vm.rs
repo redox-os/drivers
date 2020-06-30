@@ -33,7 +33,7 @@ pub unsafe fn cmd(cmd: u32, arg: u32) -> (u32, u32, u32, u32, u32, u32) {
     let si: u32;
     let di: u32;
 
-    asm!(
+    llvm_asm!(
         "in eax, dx"
         :
         "={eax}"(a),

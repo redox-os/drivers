@@ -1,6 +1,6 @@
 //! Interface to `pcid`.
 
-#![feature(asm)]
+#![feature(llvm_asm)]
 
 mod driver_interface;
 mod pci;

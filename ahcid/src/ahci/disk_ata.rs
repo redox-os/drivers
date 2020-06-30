@@ -57,7 +57,7 @@ impl DiskATA {
             clb: clb,
             ctbas: ctbas,
             _fb: fb,
-            buf: buf
+            buf: buf,
         })
     }
 

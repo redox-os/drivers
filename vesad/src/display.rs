@@ -1,7 +1,7 @@
 #[cfg(feature="rusttype")]
 extern crate rusttype;
 
-use std::alloc::{Alloc, Global, Layout};
+use std::alloc::{AllocRef, Global, Layout, AllocInit};
 use std::{cmp, slice};
 use std::ptr::NonNull;
 
@@ -42,7 +42,7 @@ impl Display {
     #[cfg(not(feature="rusttype"))]
     pub fn new(width: usize, height: usize, onscreen: usize) -> Display {
         let size = width * height;
-        let offscreen = unsafe { Global.alloc(Layout::from_size_align_unchecked(size * 4, 4096)).unwrap().as_ptr() };
+        let offscreen = unsafe { Global.alloc(Layout::from_size_align_unchecked(size * 4, 4096), AllocInit::Uninitialized).unwrap().ptr.as_ptr() };
         unsafe { fast_set64(offscreen as *mut u64, 0, size/2) };
         Display {
             width: width,
@@ -55,7 +55,7 @@ impl Display {
     #[cfg(feature="rusttype")]
     pub fn new(width: usize, height: usize, onscreen: usize) -> Display {
         let size = width * height;
-        let offscreen = unsafe { Global.alloc(Layout::from_size_align_unchecked(size * 4, 4096)).unwrap().as_ptr() };
+        let offscreen = unsafe { Global.alloc(Layout::from_size_align_unchecked(size * 4, 4096), AllocInit::Uninitialized).unwrap().as_ptr() };
         unsafe { fast_set64(offscreen as *mut u64, 0, size/2) };
         Display {
             width: width,
@@ -74,7 +74,7 @@ impl Display {
             println!("Resize display to {}, {}", width, height);
 
             let size = width * height;
-            let offscreen = unsafe { Global.alloc(Layout::from_size_align_unchecked(size * 4, 4096)).unwrap().as_ptr() };
+            let offscreen = unsafe { Global.alloc(Layout::from_size_align_unchecked(size * 4, 4096), AllocInit::Uninitialized).unwrap().ptr.as_ptr() };
 
             {
                 let mut old_ptr = self.offscreen.as_ptr();
