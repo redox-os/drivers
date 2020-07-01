@@ -213,6 +213,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "either"
+version = "1.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bb1f6b1ce1c140482ea30ddd3335fc0024ac7ee112895426e0a629a6c20adfe3"
+
+[[package]]
 name = "extra"
 version = "0.1.0"
 source = "git+https://gitlab.redox-os.org/redox-os/libextra.git#0b50f3f2127fa62b1fe74090feffbae357266eac"
@@ -903,9 +909,10 @@ source = "git+https://gitlab.redox-os.org/4lDO2/syscall?branch=backport#b830851f
 [[package]]
 name = "redox_syscall"
 version = "0.1.56"
-source = "git+https://gitlab.redox-os.org/4lDO2/syscall.git?branch=io_uring#962613e27f0027e4e28fdfd5b63666132de7598f"
+source = "git+https://gitlab.redox-os.org/4lDO2/syscall.git?branch=io_uring#a2e9c7adea37d7e4e411ecdde3eb84b55380bf33"
 dependencies = [
  "bitflags 1.2.1",
+ "either",
 ]
 
 [[package]]
@@ -1010,9 +1017,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.55"
+version = "1.0.56"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec2c5d7e739bc07a3e73381a39d61fdb5f671c60c1df26a130690665803d8226"
+checksum = "3433e879a558dde8b5e8feb2a04899cf34fdde1fafb894687e52105fc1162ac3"
 dependencies = [
  "itoa",
  "ryu",
@@ -1161,9 +1168,9 @@ dependencies = [
 
 [[package]]
 name = "unicode-width"
-version = "0.1.7"
+version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "caaa9d531767d1ff2150b9332433f32a24622147e5ebb1f26409d5da67afd479"
+checksum = "9337591893a19b88d8d87f2cec1e73fad5cdfd10e5a6f349f498ad6ea2ffb1e3"
 
 [[package]]
 name = "unicode-xid"

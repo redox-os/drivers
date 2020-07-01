@@ -54,11 +54,11 @@ fn main() {
         .attach_to_kernel()
         .expect("failed to attach event queue to kernel");
 
-    event_queue_ioring_instance.sender().as_64_mut().unwrap().try_send(unsafe { io_uring::SqEntry64::new(IoUringSqeFlags::empty(), 0, 0xDA7A).open(b"event:", (syscall::O_CREAT | syscall::O_RDWR) as u64) }).expect("usbscsid: failed to send event queue creation to kernel");
+    event_queue_ioring_instance.sender_mut().as_64_mut().unwrap().try_send(unsafe { io_uring::SqEntry64::new(IoUringSqeFlags::empty(), 0, 0xDA7A).open(b"event:", (syscall::O_CREAT | syscall::O_RDWR) as u64) }).expect("usbscsid: failed to send event queue creation to kernel");
     event_queue_ioring_instance.wait(1, io_uring::IoUringEnterFlags::empty()).expect("usbscsid: failed to wait on io_uring");
 
     // TODO: Proper async/await framework...
-    let cqe = event_queue_ioring_instance.receiver().as_64_mut().unwrap().try_recv().unwrap();
+    let cqe = event_queue_ioring_instance.receiver_mut().as_64_mut().unwrap().try_recv().unwrap();
     assert_eq!(cqe.user_data, 0xDA7A);
 
     let xhci_iouring = {
@@ -72,11 +72,7 @@ fn main() {
             .attach(format!("{}:", scheme))
             .expect("failed to attach io_uring to xhcid");
 
-        let mut sender = if let &mut io_uring::ConsumerGenericSender::Bits64(ref mut sender) = consumer_instance.sender() {
-            sender
-        } else {
-            unreachable!();
-        };
+        let mut sender = consumer_instance.sender_mut().as_64_mut().unwrap();
 
         sender.spin_on_send(io_uring::SqEntry64 {
             opcode: 1,
@@ -92,7 +88,7 @@ fn main() {
             additional2: 0,
         });
 
-        event_queue_ioring_instance.sender().as_64_mut().unwrap().try_send(io_uring::SqEntry64::new(io_uring::IoUringSqeFlags::empty(), 0, 0).write(0, &Event {
+        event_queue_ioring_instance.sender_mut().as_64_mut().unwrap().try_send(io_uring::SqEntry64::new(io_uring::IoUringSqeFlags::empty(), 0, 0).write(0, &Event {
             id: consumer_instance.ringfd(),
             flags: EventFlags::EVENT_URING,
             data: 0,
