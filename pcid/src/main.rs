@@ -539,18 +539,17 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
 }
 
 fn setup_scheme() -> syscall::Result<()> {
-    // TODO: Remove this line.
-    return Ok(());
     //
     // We give pcid a generous amount of resources here, since it may communicate with lots of
     // different drivers, especially when it comes to interrupts. INTx# and MSI-X interrupts tend
     // to work without any pcid involvement, since masking INTx# is usually done using device
     // registers in driver-mapped BARs, as with MSI-X. MSI however, which still is common, requires
     // the PCI configuration space to be changed, since the masking bits are stored in the
-    // capability structure. Because this may require I/O instructions (legacy PCI 3.0) or
-    // otherwise accessing memory used by other devices (PCIe MMCFG), there will be IPC between
-    // pcid and other drivers. io_urings are thus a great way to keep the latency low when masking
-    // MSI interrupts.
+    // capability structure.
+    //
+    // Because this may require I/O instructions (legacy PCI 3.0) or otherwise accessing memory
+    // used by other devices (PCIe MMCFG), there will be IPC between pcid and other drivers.
+    // io_urings are thus a great way to keep the latency low when masking MSI interrupts.
     //
 
     // The following consumer instance is attached to the kernel and is used to poll the status of
@@ -726,6 +725,11 @@ fn main() {
                 }
             }
         }
+    }
+
+    if unsafe { syscall::clone(syscall::CloneFlags::all()).expect("pcid: failed to fork") } != 0 {
+        log::debug!("pcid forked, exiting parent");
+        return;
     }
 
     match run_scheme() {
