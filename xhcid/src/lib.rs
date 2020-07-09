@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 mod driver_interface;
 mod usb;
 

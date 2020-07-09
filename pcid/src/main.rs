@@ -6,7 +6,7 @@ use std::io::prelude::*;
 use std::os::unix::io::{FromRawFd, RawFd};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
-use std::{env, i64, thread};
+use std::{env, mem, slice, thread};
 
 use syscall::{
     O_CREAT, O_EXCL, O_RDWR, O_NONBLOCK,
@@ -21,23 +21,49 @@ use syscall::{
         SqEntry64,
         CqEntry64,
     },
-    Error, EventFlags,
+    CloneFlags, Error, EventFlags, Packet,
 };
+use syscall::scheme::Scheme as _;
 
 use log::{error, info, warn, trace};
 use redox_log::{OutputBuilder, RedoxLogger};
-
-use crate::config::Config;
-use crate::pci::{CfgAccess, Pci, PciIter, PciBar, PciBus, PciClass, PciDev, PciFunc, PciHeader, PciHeaderError, PciHeaderType};
-use crate::pci::cap::{self as pcicap, Capability as PciCapability};
-use crate::pcie::Pcie;
-use crate::pcie::cap::{self as pciecap, Capability as PcieCapability};
 
 mod config;
 mod driver_interface;
 mod pci;
 mod pcie;
 mod scheme;
+
+use crate::config::Config;
+use crate::pci::{CfgAccess, Pci, PciIter, PciBar, PciBus, PciClass, PciDev, PciFunc, PciHeader, PciHeaderError, PciHeaderType};
+use crate::pci::cap::{self as pcicap, Capability as PciCapability};
+use crate::pcie::Pcie;
+use crate::pcie::cap::{self as pciecap, Capability as PcieCapability};
+use crate::scheme::PcidScheme;
+
+// TODO: Move this helper trait to syscall.
+trait ResultExt where Self: Sized {
+    fn and_log_err_as_error(self, msg: &str) -> Self;
+    fn and_log_err_as_warn(self, msg: &str) -> Self;
+}
+
+impl<T, E> ResultExt for core::result::Result<T, E>
+where
+    E: core::fmt::Display,
+{
+    fn and_log_err_as_error(self, msg: &str) -> Self {
+        self.map_err(|err| {
+            log::error!("{}: {}", msg, err);
+            err
+        })
+    }
+    fn and_log_err_as_warn(self, msg: &str) -> Self {
+        self.map_err(|err| {
+            log::warn!("{}: {}", msg, err);
+            err
+        })
+    }
+}
 
 pub struct DriverHandler {
     config: config::DriverConfig,
@@ -557,87 +583,72 @@ fn setup_scheme() -> syscall::Result<()> {
     // PCIe AER (TODO).
     let mut consumer_instance = ConsumerInstance::new_v1()
         .with_submission_entry_count(65536) // 64KiB, corresponds to 1024 sqes
-        .with_completion_entry_count(65536) // 64Kib, corresponds to 2048 cqes
-        .create_instance().map_err(|err| { log::debug!("failed to create io_uring instance"); err })?
-        .map_all().map_err(|err| { log::debug!("failed to map io_uring offsets"); err })?
-        .attach_to_kernel().map_err(|err| { log::debug!("failed to attach io_uring to kernel"); err })?;
+        .with_completion_entry_count(65536) // 64KiB, corresponds to 2048 cqes
+        .create_instance().and_log_err_as_error("failed to create io_uring instance")?
+        .map_all().and_log_err_as_error("failed to map io_uring offsets")?
+        .attach_to_kernel().and_log_err_as_error("failed to attach io_uring to kernel")?;
 
-    let sender = consumer_instance.sender_mut().as_64_mut().expect("expected SqEntry64");
+    let executor = {
+        let mut executor_builder = redox_iou::ExecutorBuilder::new();
 
-    sender.try_send(
-        SqEntry64::default()
-            .with_user_data(0xDA7A)
-            .open(b":pci", (O_CREAT | O_EXCL | O_NONBLOCK | O_RDWR) as u64)
-    )?;
-    consumer_instance.wait(1, IoUringEnterFlags::DRAIN).map_err(|err| { log::debug!("failed to wait for io_uring to open scheme socket"); err })?;
+        // safe because we're attaching it to the kernel
+        executor_builder = unsafe { executor_builder.assume_trusted_instance() };
 
-    let receiver = consumer_instance.receiver_mut().as_64_mut().expect("expected CqEntry64");
-
-    let cqe = receiver.try_recv()?;
-
-    if cqe.user_data != 0xDA7A {
-        // TODO: Use a proper low-overhead executor, which pushes different entries onto a separate
-        // queue.
-        log::debug!("Invalid CQE for open: {:?}", cqe);
-        return Err(Error::new(ENOMSG)); // "No message of the desired type"
-    }
-
-    let socket_fd = match Error::demux64(cqe.status) {
-        Ok(fd) => fd,
-        Err(error) => {
-            log::debug!("failed to open scheme socket: {}", error);
-            return Err(error);
-        }
+        executor_builder.build(consumer_instance)
     };
+    let handle = executor.reactor_handle().expect("expected the executor to have an integrated reactor");
 
-    let sender = consumer_instance.sender_mut().as_64_mut().expect("expected SqEntry64");
-    sender.try_send(
-        SqEntry64::default()
-            .with_user_data(0xDA7B)
-            .file_update(socket_fd, EventFlags::EVENT_READ, false)
-    )?;
-    consumer_instance.wait(1, IoUringEnterFlags::DRAIN).map_err(|err| { log::debug!("failed to wait for io_uring to subscribe to scheme socket: {}", err); err })?;
-    let receiver = consumer_instance.receiver_mut().as_64_mut().expect("expected CqEntry64");
+    const SIMULTANEOUS_PACKET_COUNT: usize = 64;
 
-    let cqe = receiver.try_recv()?;
-    if cqe.user_data != 0xDA7B {
-        log::debug!("Invalid CQE for files_update: {:?}", cqe);
-        return Err(Error::new(ENOMSG));
-    }
-    if cqe.flags & u64::from(IoUringCqeFlags::EVENT.bits()) != 0 {
-        log::debug!("Received an event completion before the status completion");
-        return Err(Error::new(ENOMSG));
-    }
+    executor.run(async move {
+        let socket_fd = handle.open_static(":pci", (O_CREAT | O_EXCL | O_RDWR | O_NONBLOCK) as u64).await?;
 
-    log::info!("`pci:` scheme initialized, listening for requests");
+        let scheme = PcidScheme::new();
 
-    'handle_scheme: loop {
-        consumer_instance.wait(1, IoUringEnterFlags::empty()).map_err(|err| { log::debug!("failed to enter io_uring: {}", err); err })?;
+        log::info!("`pci:` scheme initialized, listening for requests");
 
-        let receiver = consumer_instance.receiver_mut().as_64_mut().expect("expected CqEntry64");
-        let cqe = receiver.try_recv()?;
+        let mut packets = [Packet::default(); SIMULTANEOUS_PACKET_COUNT];
 
-        if cqe.user_data != 0xDA7B {
-            if cqe.flags & u64::from(IoUringCqeFlags::LAST_UPDATE.bits()) != 0 {
-                // The scheme has been unmounted.
+        'handle_scheme: loop {
+            let bytes_read = unsafe {
+                let packet_buf = slice::from_raw_parts_mut(packets.as_ptr() as *mut u8, packets.len() * mem::size_of::<Packet>());
+                handle.read(socket_fd, packet_buf).await?
+            };
+
+            if bytes_read == 0 {
+                log::debug!("Read zero bytes from scheme socket, thus closing scheme...");
                 break 'handle_scheme;
             }
-            if cqe.flags & u64::from(IoUringCqeFlags::EVENT.bits()) != 0 {
-            }
-        } else {
-            log::warn!("Received unknown completion entry: {:?}", cqe);
-        }
-    }
-    log::debug!("Closing `pci:` socket");
-    let sender = consumer_instance.sender_mut().as_64_mut().expect("expected SqEntry64");
-    sender.try_send(
-        SqEntry64::default()
-            .drain_first()
-            .with_user_data(0xDA7C)
-            .close(socket_fd, false)
-    )?;
 
-    Ok(())
+            if bytes_read % mem::size_of::<Packet>() != 0 {
+                log::warn!("Read from scheme socket resulted in a number of bytes not divisible by the packet size.\n{} % {} != 0", bytes_read, mem::size_of::<Packet>());
+            }
+            let packets_read = bytes_read / mem::size_of::<Packet>();
+
+            {
+                let packets = &mut packets[..packets_read];
+
+                for mut packet in packets {
+                    // TODO: The assumption that the `pci:` scheme does nothing but listing an empty
+                    // dir, may not hold if it's also going to be used for IPC as well.
+                    scheme.handle(&mut packet);
+                }
+            }
+
+            let bytes_written = unsafe {
+                let packet_buf = slice::from_raw_parts(packets.as_ptr() as *const u8, packets_read * mem::size_of::<Packet>());
+                handle.write(socket_fd, packet_buf).await?
+            };
+            if bytes_written == 0 {
+                log::warn!("Wrote zero bytes to scheme socket, thus closing scheme...");
+                break 'handle_scheme;
+            }
+        }
+        log::debug!("Closing `pci:` socket");
+        unsafe { handle.close(socket_fd, true /* unused since a scheme socket ain't a disk */) }.await?;
+
+        Ok(())
+    })
 }
 
 fn run_scheme() -> syscall::Result<()> {
@@ -727,7 +738,7 @@ fn main() {
         }
     }
 
-    if unsafe { syscall::clone(syscall::CloneFlags::all()).expect("pcid: failed to fork") } != 0 {
+    if unsafe { syscall::clone(CloneFlags::empty()).expect("pcid: failed to fork") } != 0 {
         log::debug!("pcid forked, exiting parent");
         return;
     }

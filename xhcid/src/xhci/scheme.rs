@@ -1998,7 +1998,7 @@ impl Xhci {
         let cq_ring = info.cr_virtaddr as *const io_uring::Ring<C>;
         let cq_entries = info.ce_virtaddr as *mut C;
 
-        let sq = io_uring::SpscReceiver::from_raw(sq_ring, sq_entries);
+        let mut sq = io_uring::SpscReceiver::from_raw(sq_ring, sq_entries);
         let cq = io_uring::SpscSender::from_raw(cq_ring, cq_entries);
 
         debug!("RECEIVED IO_URING ITEM: {:?}", sq.spin_on_recv());
