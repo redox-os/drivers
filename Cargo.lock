@@ -992,7 +992,7 @@ dependencies = [
 [[package]]
 name = "redox-iou"
 version = "0.1.0"
-source = "git+https://gitlab.redox-os.org/redox-os/redox-iou.git#96c470ce3578fb2723b420d82ace3415f0b0dcb9"
+source = "git+https://gitlab.redox-os.org/redox-os/redox-iou.git#301932b1c79ec6e5f722eb299d527237ae50f003"
 dependencies = [
  "async-task",
  "bytes",
@@ -1033,7 +1033,7 @@ source = "git+https://gitlab.redox-os.org/4lDO2/syscall?branch=backport#b830851f
 [[package]]
 name = "redox_syscall"
 version = "0.1.56"
-source = "git+https://gitlab.redox-os.org/4lDO2/syscall.git?branch=io_uring#8457e18c9135f059cc002194557bc97fb7af8efa"
+source = "git+https://gitlab.redox-os.org/4lDO2/syscall.git?branch=io_uring#b6e93016915c1d7d772ae46e64f7a90c26a47752"
 dependencies = [
  "bitflags 1.2.1",
  "either",

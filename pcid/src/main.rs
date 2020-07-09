@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::{env, mem, slice, thread};
 
 use syscall::{
-    O_CREAT, O_EXCL, O_RDWR, O_NONBLOCK,
+    O_CREAT, O_EXCL, O_RDWR,
 
     ENOMSG,
 
@@ -534,6 +534,7 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
                 .build()
         );
 
+    #[cfg(target_os = "redox")]
     match OutputBuilder::in_redox_logging_scheme("bus", "pci", "pcid.log") {
         Ok(b) => logger = logger.with_output(
             b.with_filter(log::LevelFilter::Debug)
@@ -542,6 +543,7 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
         ),
         Err(error) => eprintln!("pcid: failed to open pcid.log"),
     }
+    #[cfg(target_os = "redox")]
     match OutputBuilder::in_redox_logging_scheme("bus", "pci", "pcid.ansi.log") {
         Ok(b) => logger = logger.with_output(
             b.with_filter(log::LevelFilter::Debug)
@@ -582,11 +584,12 @@ fn setup_scheme() -> syscall::Result<()> {
     // every other io_uring when that is not done by busy-waiting, and for MSI/MSI-X IRQs used by
     // PCIe AER (TODO).
     let mut consumer_instance = ConsumerInstance::new_v1()
-        .with_submission_entry_count(65536) // 64KiB, corresponds to 1024 sqes
-        .with_completion_entry_count(65536) // 64KiB, corresponds to 2048 cqes
+        .with_submission_entry_count(1024)  // 64KiB
+        .with_completion_entry_count(2048)  // 64KiB
         .create_instance().and_log_err_as_error("failed to create io_uring instance")?
         .map_all().and_log_err_as_error("failed to map io_uring offsets")?
         .attach_to_kernel().and_log_err_as_error("failed to attach io_uring to kernel")?;
+    println!("#SQ = {} #CQ = {}", unsafe { consumer_instance.sender().as_64().unwrap().ring_header().size }, unsafe { consumer_instance.receiver().as_64().unwrap().ring_header().size });
 
     let executor = {
         let mut executor_builder = redox_iou::ExecutorBuilder::new();
@@ -601,7 +604,7 @@ fn setup_scheme() -> syscall::Result<()> {
     const SIMULTANEOUS_PACKET_COUNT: usize = 64;
 
     executor.run(async move {
-        let socket_fd = handle.open_static(":pci", (O_CREAT | O_EXCL | O_RDWR | O_NONBLOCK) as u64).await?;
+        let socket_fd = handle.open_static(":pci", (O_CREAT | O_EXCL | O_RDWR) as u64).await.and_log_err_as_error("failed to open scheme socket")?;
 
         let scheme = PcidScheme::new();
 
@@ -612,7 +615,7 @@ fn setup_scheme() -> syscall::Result<()> {
         'handle_scheme: loop {
             let bytes_read = unsafe {
                 let packet_buf = slice::from_raw_parts_mut(packets.as_ptr() as *mut u8, packets.len() * mem::size_of::<Packet>());
-                handle.read(socket_fd, packet_buf).await?
+                handle.read(socket_fd, packet_buf).await.and_log_err_as_error("failed to read from scheme socket")?
             };
 
             if bytes_read == 0 {
@@ -637,7 +640,7 @@ fn setup_scheme() -> syscall::Result<()> {
 
             let bytes_written = unsafe {
                 let packet_buf = slice::from_raw_parts(packets.as_ptr() as *const u8, packets_read * mem::size_of::<Packet>());
-                handle.write(socket_fd, packet_buf).await?
+                handle.write(socket_fd, packet_buf).await.and_log_err_as_error("failed to write to scheme socket")?
             };
             if bytes_written == 0 {
                 log::warn!("Wrote zero bytes to scheme socket, thus closing scheme...");
@@ -645,7 +648,15 @@ fn setup_scheme() -> syscall::Result<()> {
             }
         }
         log::debug!("Closing `pci:` socket");
-        unsafe { handle.close(socket_fd, true /* unused since a scheme socket ain't a disk */) }.await?;
+
+        unsafe {
+            handle.close(
+                socket_fd,
+
+                // unused since a scheme socket ain't a disk
+                true
+            )
+        }.await.and_log_err_as_error("failed to close scheme socket")?;
 
         Ok(())
     })

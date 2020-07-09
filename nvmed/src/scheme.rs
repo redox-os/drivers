@@ -424,12 +424,12 @@ impl SchemeBlockMut for DiskScheme {
         }
     }
 
-    fn seek(&mut self, id: usize, pos: usize, whence: usize) -> Result<Option<usize>> {
+    fn seek(&mut self, id: usize, pos: isize, whence: usize) -> Result<Option<isize>> {
         match *self.handles.get_mut(&id).ok_or(Error::new(EBADF))? {
             Handle::List(ref mut handle, ref mut size) => {
                 let len = handle.len() as usize;
                 *size = match whence {
-                    SEEK_SET => cmp::min(len, pos),
+                    SEEK_SET => cmp::min(len, pos as usize),
                     SEEK_CUR => {
                         cmp::max(0, cmp::min(len as isize, *size as isize + pos as isize)) as usize
                     }
@@ -439,13 +439,13 @@ impl SchemeBlockMut for DiskScheme {
                     _ => return Err(Error::new(EINVAL)),
                 };
 
-                Ok(Some(*size))
+                Ok(Some(*size as isize))
             }
             Handle::Disk(number, ref mut size) => {
                 let disk = self.disks.get_mut(&number).ok_or(Error::new(EBADF))?;
                 let len = (disk.as_ref().blocks * disk.as_ref().block_size) as usize;
                 *size = match whence {
-                    SEEK_SET => cmp::min(len, pos),
+                    SEEK_SET => cmp::min(len, pos as usize),
                     SEEK_CUR => {
                         cmp::max(0, cmp::min(len as isize, *size as isize + pos as isize)) as usize
                     }
@@ -455,7 +455,7 @@ impl SchemeBlockMut for DiskScheme {
                     _ => return Err(Error::new(EINVAL)),
                 };
 
-                Ok(Some(*size))
+                Ok(Some(*size as isize))
             }
             Handle::Partition(disk_num, part_num, ref mut size) => {
                 let disk = self.disks.get_mut(&disk_num).ok_or(Error::new(EBADF))?;
@@ -470,7 +470,7 @@ impl SchemeBlockMut for DiskScheme {
                 let len = (part.size * disk.as_ref().block_size) as usize;
 
                 *size = match whence {
-                    SEEK_SET => cmp::min(len, pos),
+                    SEEK_SET => cmp::min(len, pos as usize),
                     SEEK_CUR => {
                         cmp::max(0, cmp::min(len as isize, *size as isize + pos as isize)) as usize
                     }
@@ -480,7 +480,7 @@ impl SchemeBlockMut for DiskScheme {
                     _ => return Err(Error::new(EINVAL)),
                 };
 
-                Ok(Some(*size))
+                Ok(Some(*size as isize))
             }
         }
     }

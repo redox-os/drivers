@@ -87,7 +87,8 @@ impl<'a> SchemeMut for ScsiScheme<'a> {
         buf[..min].copy_from_slice(&path[..min]);
         Ok(min)
     }
-    fn seek(&mut self, fd: usize, pos: usize, whence: usize) -> Result<usize> {
+    fn seek(&mut self, fd: usize, pos: isize, whence: usize) -> Result<isize> {
+        let pos = pos as usize;
         match self.handles.get_mut(&fd).ok_or(Error::new(EBADF))? {
             Handle::Disk(ref mut offset) => {
                 let len = self.scsi.get_disk_size() as usize;
@@ -97,7 +98,7 @@ impl<'a> SchemeMut for ScsiScheme<'a> {
                     SEEK_END => cmp::max(0, cmp::min(len + pos, len)),
                     _ => return Err(Error::new(EINVAL)),
                 };
-                Ok(*offset)
+                Ok(*offset as isize)
             }
             Handle::List(ref mut offset) => {
                 let len = LIST_CONTENTS.len();
@@ -107,7 +108,7 @@ impl<'a> SchemeMut for ScsiScheme<'a> {
                     SEEK_END => cmp::max(0, cmp::min(len + pos, len)),
                     _ => return Err(Error::new(EINVAL)),
                 };
-                Ok(*offset)
+                Ok(*offset as isize)
             }
         }
     }
