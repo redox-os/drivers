@@ -1373,6 +1373,7 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "plain",
+ "redox-iou",
  "redox_syscall 0.1.56",
  "thiserror",
  "xhcid",
@@ -1488,6 +1489,7 @@ dependencies = [
  "log",
  "pcid",
  "plain",
+ "redox-iou",
  "redox-log",
  "redox_syscall 0.1.56",
  "serde",

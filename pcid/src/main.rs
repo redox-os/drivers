@@ -1,6 +1,5 @@
 #![feature(llvm_asm)]
 
-use std::convert::TryInto;
 use std::fs::{File, metadata, read_dir};
 use std::io::prelude::*;
 use std::os::unix::io::{FromRawFd, RawFd};
@@ -16,7 +15,6 @@ use syscall::{
     io_uring::{
         v1,
         IoUringCqeFlags, IoUringSqeFlags, IoUringEnterFlags,
-        ConsumerInstance,
 
         SqEntry64,
         CqEntry64,
@@ -26,6 +24,9 @@ use syscall::{
 use syscall::scheme::Scheme as _;
 
 use log::{error, info, warn, trace};
+use redox_iou::executor::Executor;
+use redox_iou::instance::ConsumerInstanceBuilder;
+use redox_iou::reactor::ReactorBuilder;
 use redox_log::{OutputBuilder, RedoxLogger};
 
 mod config;
@@ -583,7 +584,7 @@ fn setup_scheme() -> syscall::Result<()> {
     // The following consumer instance is attached to the kernel and is used to poll the status of
     // every other io_uring when that is not done by busy-waiting, and for MSI/MSI-X IRQs used by
     // PCIe AER (TODO).
-    let consumer_instance = ConsumerInstance::new_v1()
+    let consumer_instance = ConsumerInstanceBuilder::new()
         .with_submission_entry_count(1024)  // 64KiB
         .with_completion_entry_count(2048)  // 64KiB
         .create_instance().and_log_err_as_error("failed to create io_uring instance")?
@@ -591,14 +592,15 @@ fn setup_scheme() -> syscall::Result<()> {
         .attach_to_kernel().and_log_err_as_error("failed to attach io_uring to kernel")?;
     println!("#SQ = {} #CQ = {}", unsafe { consumer_instance.sender().as_64().unwrap().ring_header().size }, unsafe { consumer_instance.receiver().as_64().unwrap().ring_header().size });
 
-    let executor = {
-        let mut executor_builder = redox_iou::ExecutorBuilder::new();
+    let reactor = {
+        let mut reactor_builder = ReactorBuilder::new();
 
         // safe because we're attaching it to the kernel
-        executor_builder = unsafe { executor_builder.assume_trusted_instance() };
+        reactor_builder = unsafe { reactor_builder.assume_trusted_instance() };
 
-        executor_builder.build(consumer_instance)
+        reactor_builder.with_primary_instance(consumer_instance).build()
     };
+    let executor = Executor::with_reactor(reactor);
     let handle = executor.reactor_handle().expect("expected the executor to have an integrated reactor");
 
     const SIMULTANEOUS_PACKET_COUNT: usize = 64;

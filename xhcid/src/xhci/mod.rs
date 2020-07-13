@@ -192,7 +192,7 @@ pub struct Xhci {
     handles: RwLock<BTreeMap<usize, Mutex<scheme::Handle>>>,
     next_handle: AtomicUsize,
 
-    iorings: RwLock<BTreeMap<usize, Mutex<syscall::io_uring::v1::ProducerInstance>>>,
+    iorings: RwLock<BTreeMap<usize, Mutex<redox_iou::instance::ProducerInstance>>>,
     next_ioring: AtomicUsize,
 
     slot_states: RwLock<BTreeMap<u8, Mutex<SlotState>>>,

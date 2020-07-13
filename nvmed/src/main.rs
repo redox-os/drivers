@@ -26,14 +26,14 @@ mod scheme;
 /// Get the most optimal yet functional interrupt mechanism: either (in the order of preference):
 /// MSI-X, MSI, and INTx# pin. Returns both runtime interrupt structures (MSI/MSI-X capability
 /// structures), and the handles to the interrupts.
-fn get_int_method(
+async fn get_int_method(
     pcid_handle: &mut PcidServerHandle,
     function: &PciFunction,
     allocated_bars: &AllocatedBars,
 ) -> Result<(InterruptMethod, InterruptSources)> {
     log::trace!("Begin get_int_method");
 
-    let capabilities = pcid_handle.fetch_all_capabilities().expect("nvmed: failed to fetch all PCI(e) capabilities from pcid");
+    let capabilities = pcid_handle.fetch_all_capabilities().await.expect("nvmed: failed to fetch all PCI(e) capabilities from pcid");
 
     // Cloning here is cheap because NVME doesn't use any function specific caps.
     let msi_cap = capabilities.iter().find_map(|cap| cap.as_pci()?.as_msi()).cloned();
@@ -119,7 +119,7 @@ fn get_int_method(
                 message_data: Some(msg_data),
                 multi_message_enable: Some(0), // enable 2^0=1 vectors
                 mask_bits: None,
-            })).expect("nvmed: failed to set MSI registers");
+            })).await.expect("nvmed: failed to set MSI registers");
 
             irq_handle
         };
@@ -193,9 +193,9 @@ fn main() {
     let _logger_ref = setup_logging();
 
     let mut pcid_handle =
-        PcidServerHandle::connect_default().expect("nvmed: failed to setup channel to pcid");
-    let pci_config = pcid_handle
-        .fetch_config()
+        PcidServerHandle::connect_using_pipes_from_env_fds().expect("nvmed: failed to setup channel to pcid");
+    let pci_config = futures::executor::block_on(pcid_handle
+        .fetch_config())
         .expect("nvmed: failed to fetch config");
 
     let bar = match pci_config.func.bars[0] {
@@ -238,7 +238,7 @@ fn main() {
 
     let (reactor_sender, reactor_receiver) = crossbeam_channel::unbounded();
     let (interrupt_method, interrupt_sources) =
-        get_int_method(&mut pcid_handle, &pci_config.func, &allocated_bars)
+        futures::executor::block_on(get_int_method(&mut pcid_handle, &pci_config.func, &allocated_bars))
             .expect("nvmed: failed to find a suitable interrupt method");
     let mut nvme = Nvme::new(address, interrupt_method, pcid_handle, reactor_sender)
         .expect("nvmed: failed to allocate driver data");

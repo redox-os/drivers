@@ -11,6 +11,7 @@ license = "MIT"
 base64 = "0.11" # Only for debugging
 plain = "0.2"
 #redox_syscall = { git = "https://gitlab.redox-os.org/redox-os/syscall.git" }
+redox-iou = { git = "https://gitlab.redox-os.org/redox-os/redox-iou.git" }
 redox_syscall = { git = "https://gitlab.redox-os.org/4lDO2/syscall.git", branch = "io_uring" }
 thiserror = "1"
 xhcid = { path = "../xhcid" }

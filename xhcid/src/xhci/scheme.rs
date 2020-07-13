@@ -6,10 +6,6 @@ use std::pin::Pin;
 use std::sync::{Arc, atomic, Mutex};
 use std::{cmp, fmt, io, mem, path, slice, str, task};
 
-use futures::FutureExt;
-use log::{debug, error, info, warn, trace};
-use smallvec::SmallVec;
-
 use syscall::io::{Dma, Io};
 use syscall::io_uring::{self, IoUringRecvInfo, IoUringRecvFlags};
 use syscall::scheme::{Ctx, Scheme};
@@ -20,6 +16,12 @@ use syscall::{
     SEEK_SET, Packet, EFAULT, StatVfs,
     SYS_OPEN, SYS_READ, SYS_RECV_IORING, SYS_WRITE, SYS_LSEEK, SYS_FPATH, SYS_FSTAT, SYS_CLOSE, EventFlags, O_NONBLOCK, F_SETFL, F_GETFL, SYS_FCNTL, SYS_FEVENT, EWOULDBLOCK,
 };
+
+use redox_iou::instance::ProducerInstance;
+
+use futures::FutureExt;
+use log::{debug, error, info, warn, trace};
+use smallvec::SmallVec;
 
 use super::{port, usb};
 use super::{EndpointState, ForceSendFuture, RouteString, SchemeIfCtx, Xhci};
@@ -38,15 +40,6 @@ use super::trb::{TransferKind, Trb, TrbCompletionCode, TrbType};
 use super::usb::endpoint::{EndpointTy, ENDP_ATTR_TY_MASK};
 
 use crate::driver_interface::*;
-
-pub struct IoUringHandleGeneric<S, C> {
-    pub sender: io_uring::SpscSender<C>,
-    pub receiver: io_uring::SpscReceiver<S>,
-}
-pub enum IoUringHandle {
-    Bits32(IoUringHandleGeneric<io_uring::SqEntry32, io_uring::CqEntry32>),
-    Bits64(IoUringHandleGeneric<io_uring::SqEntry64, io_uring::CqEntry64>),
-}
 
 pub enum Buffer<'a> {
     Borrowed(&'a [u8]),
@@ -1991,26 +1984,8 @@ impl Xhci {
         self.scheme_recv_io_uring(ctx, info)
     }
 
-    unsafe fn init_ring<S: std::fmt::Debug, C>(info: &IoUringRecvInfo) -> IoUringHandleGeneric<S, C> {
-        let sq_ring = info.sr_virtaddr as *const io_uring::Ring<S>;
-        let sq_entries = info.se_virtaddr as *const S;
-
-        let cq_ring = info.cr_virtaddr as *const io_uring::Ring<C>;
-        let cq_entries = info.ce_virtaddr as *mut C;
-
-        let mut sq = io_uring::SpscReceiver::from_raw(sq_ring, sq_entries);
-        let cq = io_uring::SpscSender::from_raw(cq_ring, cq_entries);
-
-        debug!("RECEIVED IO_URING ITEM: {:?}", sq.spin_on_recv());
-
-        IoUringHandleGeneric {
-            sender: cq,
-            receiver: sq,
-        }
-    }
-
     fn scheme_recv_io_uring(&self, ctx: Ctx, info: &IoUringRecvInfo) -> Result<usize> {
-        let producer_instance = match io_uring::ProducerInstance::new_v1(info) {
+        let producer_instance = match ProducerInstance::new(info) {
             Ok(i) => i,
             Err(error) => {
                 log::warn!("Failed to receive io_uring from process {:?}, recv info {:?} was invalid: {}", ctx, info, error);
@@ -2021,8 +1996,6 @@ impl Xhci {
         let next_number = self.next_ioring.fetch_add(1, atomic::Ordering::Relaxed);
         let mut iorings = self.iorings.write().unwrap();
         iorings.insert(next_number, Mutex::new(producer_instance));
-
-        // TODO: Use a futex that integrates with event queues.
 
         Ok(0)
     }

@@ -6,6 +6,8 @@ use std::os::unix::io::{FromRawFd, RawFd};
 
 use syscall::{CloneFlags, Map, MapFlags, Event, EventFlags, Packet, SchemeMut};
 use syscall::io_uring::{self, IoUringSqeFlags};
+
+use redox_iou::instance::ConsumerInstanceBuilder;
 use xhcid_interface::{ConfigureEndpointsReq, DeviceReqData, XhciClientHandle};
 
 pub mod protocol;
@@ -44,7 +46,7 @@ fn main() {
 
     let disk_scheme_name = format!(":disk/{}-{}_scsi", scheme, port);
 
-    let mut event_queue_ioring_instance = io_uring::ConsumerInstance::new_v1()
+    let mut event_queue_ioring_instance = ConsumerInstanceBuilder::new()
         .with_submission_entry_count(64)   // much smaller, only a single page
         .with_completion_entry_count(1024) // 16384 bytes for completion entries, with 16 byte entry size
         .create_instance()
@@ -62,7 +64,7 @@ fn main() {
     assert_eq!(cqe.user_data, 0xDA7A);
 
     let xhci_iouring = {
-        let mut consumer_instance = io_uring::ConsumerInstance::new_v1()
+        let mut consumer_instance = ConsumerInstanceBuilder::new()
             .with_recommended_completion_entry_count()
             .with_recommended_submission_entry_count()
             .create_instance()

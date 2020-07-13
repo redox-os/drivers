@@ -8,12 +8,12 @@ use std::{mem, slice, thread};
 use syscall::data::Packet;
 use syscall::flag::{CloneFlags, O_RDWR, O_CLOEXEC, EVENT_READ};
 use syscall::io::Io;
-use syscall::io_uring;
 
 use pcid_interface::{MsiSetCapabilityInfo, PcidServerHandle, PciFunction, SetCapabilityInfo};
 use pcid_interface::msi::MsixTableEntry;
 use pcid_interface::helpers::{self as pci_helpers, irq as irq_helpers};
 use pci_helpers::{AllocatedBars, Bar};
+use redox_iou::instance::ConsumerInstanceBuilder;
 
 use futures::{SinkExt, StreamExt};
 use futures::task::SpawnExt;
@@ -74,8 +74,8 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
     }
 }
 
-fn get_int_method(func: &PciFunction, pcid_handle: &mut PcidServerHandle, allocated_bars: &AllocatedBars) -> (InterruptMethod, Option<InterruptSources>) {
-    let all_pci_caps = pcid_handle.fetch_all_capabilities().expect("xhcid: failed to fetch pci capabilities");
+async fn get_int_method(func: &PciFunction, pcid_handle: &mut PcidServerHandle, allocated_bars: &AllocatedBars) -> (InterruptMethod, Option<InterruptSources>) {
+    let all_pci_caps = pcid_handle.fetch_all_capabilities().await.expect("xhcid: failed to fetch pci capabilities");
     info!("XHCI PCI FEATURES: {:?}", all_pci_caps);
 
     let msi_cap = all_pci_caps.iter().find_map(|cap| cap.as_pci()?.as_msi());
@@ -114,7 +114,7 @@ fn get_int_method(func: &PciFunction, pcid_handle: &mut PcidServerHandle, alloca
         pcid_handle.set_capability(SetCapabilityInfo::MsiX {
             enabled: Some(true),
             function_mask: Some(false),
-        }).expect("xhcid: failed to enable MSI-X");
+        }).await.expect("xhcid: failed to enable MSI-X");
 
         // update our local mirror
         info.capability.set_msix_enabled(true);
@@ -146,7 +146,7 @@ fn get_int_method(func: &PciFunction, pcid_handle: &mut PcidServerHandle, alloca
             message_data: Some(msg_data as u16),
             mask_bits: None,
         };
-        pcid_handle.set_capability(SetCapabilityInfo::Msi(set_cap_info)).expect("xhcid: failed to set capability");
+        pcid_handle.set_capability(SetCapabilityInfo::Msi(set_cap_info)).await.expect("xhcid: failed to set capability");
         info!("Enabled MSI");
 
         (InterruptMethod::Msi(Mutex::new(capability)), Some(InterruptSources::Msi(vec!(interrupt_handle))))
@@ -167,8 +167,8 @@ fn main() {
 
     let _logger_ref = setup_logging();
 
-    let mut pcid_handle = PcidServerHandle::connect_default().expect("xhcid: failed to setup channel to pcid");
-    let pci_config = pcid_handle.fetch_config().expect("xhcid: failed to fetch config");
+    let mut pcid_handle = PcidServerHandle::connect_using_pipes_from_env_fds().expect("xhcid: failed to setup channel to pcid");
+    let pci_config = futures::executor::block_on(pcid_handle.fetch_config()).expect("xhcid: failed to fetch config");
     info!("XHCI PCI CONFIG: {:?}", pci_config);
 
     let bar = pci_config.func.bars[0];
@@ -203,9 +203,9 @@ fn main() {
         File::from_raw_fd(socket_fd as RawFd)
     });
 
-    let (interrupt_method, interrupt_sources) = get_int_method(&pci_config.func, &mut pcid_handle, &*allocated_bars);
+    let (interrupt_method, interrupt_sources) = futures::executor::block_on(get_int_method(&pci_config.func, &mut pcid_handle, &*allocated_bars));
 
-    let event_queue_ioring_instance = io_uring::ConsumerInstance::new_v1()
+    let event_queue_ioring_instance = ConsumerInstanceBuilder::new()
         .with_submission_entry_count(64)   // much smaller, only a single page
         .with_completion_entry_count(1024) // 16384 bytes for completion entries, with 16 byte entry size
         .create_instance()
