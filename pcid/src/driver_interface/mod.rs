@@ -4,6 +4,9 @@ use std::{env, io};
 
 use std::os::unix::io::{FromRawFd, RawFd};
 
+use redox_iou::instance::ConsumerInstanceBuilder;
+use redox_iou::reactor::Handle as IoringReactorHandle;
+
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use thiserror::Error;
 
@@ -45,6 +48,7 @@ pub struct PciFunction {
 
     /// Legacy IRQ line: It's the responsibility of pcid to make sure that it be mapped in either
     /// the I/O APIC or the 8259 PIC, so that the subdriver can map the interrupt vector directly.
+    ///
     /// The vector to map is always this field, plus 32.
     pub legacy_interrupt_line: u8,
 
@@ -147,6 +151,19 @@ pub enum PcidClientHandleError {
     #[error("invalid response: {0:?}")]
     InvalidResponse(PcidClientResponse),
 }
+
+#[derive(Debug, Error)]
+pub enum IoUringSetupError {
+    #[error("io_uring instance creation error: {0}")]
+    CreateInstanceError(syscall::Error),
+
+    #[error("io_uring fmap error: {0}")]
+    MapAllError(syscall::Error),
+
+    #[error("io_uring attach error: {0}")]
+    AttachError(syscall::Error),
+}
+
 pub type Result<T, E = PcidClientHandleError> = std::result::Result<T, E>;
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -219,14 +236,19 @@ pub enum PcidClientResponse {
     Error(PcidServerResponseError),
 }
 
-// TODO: Ideally, pcid might have its own scheme, like lots of other Redox drivers, where this kind of IPC is done. Otherwise, instead of writing serde messages over
-// a channel, the communication could potentially be done via mmap, using a channel
-// very similar to crossbeam-channel or libstd's mpsc (except the cycle, enqueue and dequeue fields
-// are stored in the same buffer as the actual data).
 /// A handle from a `pcid` client (e.g. `ahcid`) to `pcid`.
 pub struct PcidServerHandle {
-    pcid_to_client: File,
-    pcid_from_client: File,
+    inner: PcidServerTransport,
+}
+
+enum PcidServerTransport {
+    Pipe {
+        pcid_to_client: File,
+        pcid_from_client: File,
+    },
+    IoUring {
+        handle: IoringReactorHandle,
+    },
 }
 
 pub(crate) fn send<W: Write, T: Serialize>(w: &mut W, message: &T) -> Result<()> {
@@ -251,50 +273,95 @@ pub(crate) fn recv<R: Read, T: DeserializeOwned>(r: &mut R) -> Result<T> {
 }
 
 impl PcidServerHandle {
-    pub fn connect(pcid_to_client: RawFd, pcid_from_client: RawFd) -> Result<Self> {
+    #[deprecated = "use connect_using_iouring instead"]
+    pub fn connect_using_pipes(pcid_to_client: RawFd, pcid_from_client: RawFd) -> Result<Self> {
         Ok(Self {
-            pcid_to_client: unsafe { File::from_raw_fd(pcid_to_client) },
-            pcid_from_client: unsafe { File::from_raw_fd(pcid_from_client) },
+            inner: PcidServerTransport::Pipe {
+                pcid_to_client: unsafe { File::from_raw_fd(pcid_to_client) },
+                pcid_from_client: unsafe { File::from_raw_fd(pcid_from_client) },
+            }
         })
     }
-    pub fn connect_default() -> Result<Self> {
+    pub fn connect_using_iouring(handle: IoringReactorHandle) -> Result<Self, IoUringSetupError> {
+        let instance = ConsumerInstanceBuilder::new()
+            .with_submission_entry_count(64)    // 4KiB, one page (minimum size)
+            .with_completion_entry_count(128)   // 4KiB, one page (minimum size)
+            .create_instance().map_err(IoUringSetupError::CreateInstanceError)?
+            .map_all().map_err(IoUringSetupError::MapAllError)?
+            .attach("pci:").map_err(IoUringSetupError::AttachError)?;
+
+        handle.reactor().add_secondary_instance(instance);
+
+        Ok(Self {
+            inner: PcidServerTransport::IoUring {
+                handle,
+            }
+        })
+    }
+
+    #[deprecated = "use connect_using_iouring instead"]
+    pub fn connect_using_pipes_from_env_fds() -> Result<Self> {
         let pcid_to_client_fd = env::var("PCID_TO_CLIENT_FD")?.parse::<RawFd>().map_err(PcidClientHandleError::EnvValidityError)?;
         let pcid_from_client_fd = env::var("PCID_FROM_CLIENT_FD")?.parse::<RawFd>().map_err(PcidClientHandleError::EnvValidityError)?;
 
-        Self::connect(pcid_to_client_fd, pcid_from_client_fd)
+        #[allow(deprecated)]
+        Self::connect_using_pipes(pcid_to_client_fd, pcid_from_client_fd)
     }
-    pub(crate) fn send(&mut self, req: &PcidClientRequest) -> Result<()> {
-        send(&mut self.pcid_from_client, req)
+
+    fn pipe_transport(&self) -> Option<(&File, &File)> {
+        match self.inner {
+            PcidServerTransport::Pipe { ref pcid_to_client, ref pcid_from_client } => Some((pcid_to_client, pcid_from_client)),
+            _ => None,
+        }
     }
-    pub(crate) fn recv(&mut self) -> Result<PcidClientResponse> {
-        recv(&mut self.pcid_to_client)
+    fn pcid_from_client(&self) -> Option<&File> {
+        self.pipe_transport().map(|(_, from)| from)
     }
-    pub fn fetch_config(&mut self) -> Result<SubdriverArguments> {
-        self.send(&PcidClientRequest::RequestConfig)?;
-        match self.recv()? {
+    fn pcid_to_client(&self) -> Option<&File> {
+        self.pipe_transport().map(|(to, _)| to)
+    }
+
+    pub(crate) async fn send(&mut self, req: &PcidClientRequest) -> Result<()> {
+        match self.inner {
+            PcidServerTransport::Pipe { ref pcid_from_client, .. } => send(&mut &*pcid_from_client, req),
+            PcidServerTransport::IoUring { ref handle } => todo!(),
+        }
+    }
+    pub(crate) async fn recv(&mut self) -> Result<PcidClientResponse> {
+        match self.inner {
+            PcidServerTransport::Pipe { ref pcid_to_client, .. } => recv(&mut &*pcid_to_client),
+            PcidServerTransport::IoUring { ref handle } => todo!(),
+        }
+    }
+    pub async fn fetch_config(&mut self) -> Result<SubdriverArguments> {
+        self.send(&PcidClientRequest::RequestConfig).await?;
+        match self.recv().await? {
             PcidClientResponse::Config(a) => Ok(a),
             other => Err(PcidClientHandleError::InvalidResponse(other)),
         }
     }
-    pub fn fetch_all_capabilities(&mut self) -> Result<Vec<Capability>> {
-        self.send(&PcidClientRequest::GetCapabilities)?;
-        match self.recv()? {
+    pub async fn fetch_all_capabilities(&mut self) -> Result<Vec<Capability>> {
+        self.send(&PcidClientRequest::GetCapabilities).await?;
+        match self.recv().await? {
             PcidClientResponse::AllCapabilities(a) => Ok(a),
             other => Err(PcidClientHandleError::InvalidResponse(other)),
         }
     }
-    pub fn feature_capability(&mut self, ty: CapabilityType) -> Result<Option<Capability>> {
-        self.send(&PcidClientRequest::GetCapability(ty))?;
-        match self.recv()? {
+    pub async fn feature_capability(&mut self, ty: CapabilityType) -> Result<Option<Capability>> {
+        self.send(&PcidClientRequest::GetCapability(ty)).await?;
+        match self.recv().await? {
             PcidClientResponse::Capability(c) => Ok(c),
             other => Err(PcidClientHandleError::InvalidResponse(other)),
         }
     }
-    pub fn set_capability(&mut self, info: SetCapabilityInfo) -> Result<()> {
-        self.send(&PcidClientRequest::SetCapability(info))?;
-        match self.recv()? {
+    pub async fn set_capability(&mut self, info: SetCapabilityInfo) -> Result<()> {
+        self.send(&PcidClientRequest::SetCapability(info)).await?;
+        match self.recv().await? {
             PcidClientResponse::SetCapability => Ok(()),
             other => Err(PcidClientHandleError::InvalidResponse(other)),
         }
     }
+}
+
+pub enum PcidOpcode {
 }

@@ -583,7 +583,7 @@ fn setup_scheme() -> syscall::Result<()> {
     // The following consumer instance is attached to the kernel and is used to poll the status of
     // every other io_uring when that is not done by busy-waiting, and for MSI/MSI-X IRQs used by
     // PCIe AER (TODO).
-    let mut consumer_instance = ConsumerInstance::new_v1()
+    let consumer_instance = ConsumerInstance::new_v1()
         .with_submission_entry_count(1024)  // 64KiB
         .with_completion_entry_count(2048)  // 64KiB
         .create_instance().and_log_err_as_error("failed to create io_uring instance")?
