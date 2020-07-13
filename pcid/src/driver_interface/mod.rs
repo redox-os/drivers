@@ -1,8 +1,9 @@
 use std::fs::File;
 use std::io::prelude::*;
 use std::{env, io};
-
 use std::os::unix::io::{FromRawFd, RawFd};
+
+use syscall::io_uring::SqEntry64;
 
 use redox_iou::instance::ConsumerInstanceBuilder;
 use redox_iou::reactor::Handle as IoringReactorHandle;
@@ -30,6 +31,7 @@ pub enum LegacyInterruptPin {
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[repr(C)]
 pub struct PciFunction {
     /// Number of PCI bus
     pub bus_num: u8,
@@ -53,25 +55,43 @@ pub struct PciFunction {
     pub legacy_interrupt_line: u8,
 
     /// Legacy interrupt pin (INTx#), none if INTx# interrupts aren't supported at all.
-    pub legacy_interrupt_pin: Option<LegacyInterruptPin>,
+    ///
+    /// This field must either be 0 for no INTx# IRQ support, or 1 to 4 for INTa# to INTd#,
+    /// respectively.
+    pub legacy_interrupt_pin: u8,
 
     /// Vendor ID
     pub venid: u16,
+
     /// Device ID
     pub devid: u16,
 }
+unsafe impl plain::Plain for PciFunction {}
+
 impl PciFunction {
     pub fn name(&self) -> String {
         format!("pci-{:>02X}.{:>02X}.{:>02X}", self.bus_num, self.dev_num, self.func_num)
     }
+    pub fn legacy_interrupt_pin(&self) -> Option<LegacyInterruptPin> {
+        match self.legacy_interrupt_pin {
+            0 => None,
+            1 => Some(LegacyInterruptPin::IntA),
+            2 => Some(LegacyInterruptPin::IntB),
+            3 => Some(LegacyInterruptPin::IntC),
+            4 => Some(LegacyInterruptPin::IntD),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[repr(C)]
 pub struct SubdriverArguments {
     pub func: PciFunction,
 }
+unsafe impl plain::Plain for SubdriverArguments {}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+#[repr(u8)]
 pub enum CapabilityType {
     Msi,
     MsiX,
@@ -150,6 +170,9 @@ pub enum PcidClientHandleError {
 
     #[error("invalid response: {0:?}")]
     InvalidResponse(PcidClientResponse),
+
+    #[error("io_uring transport error: {0}")]
+    IoUringTransportError(syscall::Error),
 }
 
 #[derive(Debug, Error)]
@@ -308,60 +331,187 @@ impl PcidServerHandle {
         Self::connect_using_pipes(pcid_to_client_fd, pcid_from_client_fd)
     }
 
-    fn pipe_transport(&self) -> Option<(&File, &File)> {
-        match self.inner {
-            PcidServerTransport::Pipe { ref pcid_to_client, ref pcid_from_client } => Some((pcid_to_client, pcid_from_client)),
-            _ => None,
-        }
-    }
-    fn pcid_from_client(&self) -> Option<&File> {
-        self.pipe_transport().map(|(_, from)| from)
-    }
-    fn pcid_to_client(&self) -> Option<&File> {
-        self.pipe_transport().map(|(to, _)| to)
+    fn uses_pipes(&self) -> bool {
+        matches!(self.inner, PcidServerTransport::Pipe { .. })
     }
 
-    pub(crate) async fn send(&mut self, req: &PcidClientRequest) -> Result<()> {
+    pub(crate) fn send(&mut self, req: &PcidClientRequest) -> Result<()> {
         match self.inner {
             PcidServerTransport::Pipe { ref pcid_from_client, .. } => send(&mut &*pcid_from_client, req),
-            PcidServerTransport::IoUring { ref handle } => todo!(),
+            PcidServerTransport::IoUring { ref handle } => unreachable!(),
         }
     }
-    pub(crate) async fn recv(&mut self) -> Result<PcidClientResponse> {
+    pub(crate) fn recv(&mut self) -> Result<PcidClientResponse> {
         match self.inner {
             PcidServerTransport::Pipe { ref pcid_to_client, .. } => recv(&mut &*pcid_to_client),
-            PcidServerTransport::IoUring { ref handle } => todo!(),
+            PcidServerTransport::IoUring { ref handle } => unreachable!(),
         }
     }
-    pub async fn fetch_config(&mut self) -> Result<SubdriverArguments> {
-        self.send(&PcidClientRequest::RequestConfig).await?;
-        match self.recv().await? {
-            PcidClientResponse::Config(a) => Ok(a),
-            other => Err(PcidClientHandleError::InvalidResponse(other)),
+    pub async fn fetch_config(&mut self, priority: u16) -> Result<SubdriverArguments> {
+        if let PcidServerTransport::IoUring { ref handle } = self.inner {
+            unsafe {
+                let cqe = handle.send(SqEntry64 {
+                    priority,
+                    syscall_flags: 1, // version
+                    addr: todo!(),
+                    len: mem::size_of::<SubdriverArguments>(),
+                    fd: todo!(),
+                    .. SqEntry64::default()
+                }).await.map_err(PcidClientHandleError::IoUringTransportError)?;
+
+                todo!();
+            }
+        } else {
+            self.send(&PcidClientRequest::RequestConfig)?;
+            match self.recv()? {
+                PcidClientResponse::Config(a) => Ok(a),
+                other => Err(PcidClientHandleError::InvalidResponse(other)),
+            }
         }
     }
     pub async fn fetch_all_capabilities(&mut self) -> Result<Vec<Capability>> {
-        self.send(&PcidClientRequest::GetCapabilities).await?;
-        match self.recv().await? {
+        self.send(&PcidClientRequest::GetCapabilities)?;
+        match self.recv()? {
             PcidClientResponse::AllCapabilities(a) => Ok(a),
             other => Err(PcidClientHandleError::InvalidResponse(other)),
         }
     }
-    pub async fn feature_capability(&mut self, ty: CapabilityType) -> Result<Option<Capability>> {
-        self.send(&PcidClientRequest::GetCapability(ty)).await?;
-        match self.recv().await? {
+    pub async fn get_capability(&mut self, ty: CapabilityType) -> Result<Option<Capability>> {
+        self.send(&PcidClientRequest::GetCapability(ty))?;
+        match self.recv()? {
             PcidClientResponse::Capability(c) => Ok(c),
             other => Err(PcidClientHandleError::InvalidResponse(other)),
         }
     }
     pub async fn set_capability(&mut self, info: SetCapabilityInfo) -> Result<()> {
-        self.send(&PcidClientRequest::SetCapability(info)).await?;
-        match self.recv().await? {
+        self.send(&PcidClientRequest::SetCapability(info))?;
+        match self.recv()? {
             PcidClientResponse::SetCapability => Ok(()),
             other => Err(PcidClientHandleError::InvalidResponse(other)),
         }
     }
 }
 
-pub enum PcidOpcode {
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+enum PcidOpcode {
+    /// Fetch the PCI config, containing all necessary subdriver arguments. This information will
+    /// be written to a [`SubdriverArguments` ]struct within a shared buffer pool. Uses all implicit
+    /// fields.
+    ///
+    /// # Parameters
+    ///
+    /// | required field | usage description                                         | SIZE |
+    /// |----------------|-----------------------------------------------------------|------|
+    /// | syscall_flags  | the version of this API to use (currently 1)              | BOTH |
+    /// | addr           | not used                                                  | BOTH |
+    /// | len            | the length of that struct                                 | BOTH |
+    /// | fd             | the index of the shared buffer pool                       | BOTH |
+    /// | offset         | the offset within that buffer pool, to write into         | BOTH |
+    /// | additional1    | not used                                                  | 64   |
+    /// | additional2    | not used                                                  | 64   |
+    ///
+    /// # Return value
+    ///
+    /// The return value of this opcode, is a Result of usize, which is always zero or error.
+    ///
+    /// # Errors (non-exhausive, all error conditions may not be checked for)
+    ///
+    /// * `ENOSYS` - the version field is unsupported (at the moment: not equal to 1)
+    /// * `EBADF` - the index of shared buffer pool that was inputted, was invalid
+    /// * `EINVAL` - the length field was insufficient to store a [`SubdriverArguments`].
+    /// * `EFAULT` - the offset was outside the pool limit
+    /// * `EADDRINUSE` - the offset+len pair overlapped an already-in-use address of the pool
+    ///
+    FetchConfig = 128,
+
+    /// Fetch one or more PCI capabilities, with some extra data attached to them. Uses all
+    /// implicit fields.
+    ///
+    /// # Parameters
+    ///
+    /// | required field | usage description                                         | SIZE |
+    /// |----------------|-----------------------------------------------------------|------|
+    /// | syscall_flags  | the version of this API to use (currently 1)              | BOTH |
+    /// | addr           | the start index of the capabilities to read               | BOTH |
+    /// | len            | the number of capabilities to read                        | BOTH |
+    /// | fd             | the index of the shared buffer pool                       | BOTH |
+    /// | offset         | the offset within that buffer pool, to write into         | BOTH |
+    /// | additional1    | not used                                                  | 64   |
+    /// | additional2    | not used                                                  | 64   |
+    ///
+    /// # Return value
+    ///
+    /// The return value of this opcode, is a Result of usize, indicating the number of
+    /// capabilities read. If the extra field is present, it will contain the number of
+    /// capabilities left to read.
+    ///
+    /// # Errors (non-exhausive, all error conditions may not be checked for)
+    ///
+    /// * `ENOSYS` - the version field is unsupported (at the moment: not equal to 1)
+    /// * `EBADF` - the index of shared buffer pool that was inputted, was invalid
+    /// * `EFAULT` - the offset was outside the pool limit
+    /// * `EADDRINUSE` - the offset+len pair overlapped an already-in-use address of the pool
+    ///
+    FetchAllCapabilities,
+
+    /// Get the current static and runtime parameters of a specific capability. TODO: struct to
+    /// use for this. Uses all implicit fields.
+    ///
+    /// # Parameters
+    ///
+    /// | required field | usage description                                         | SIZE |
+    /// |----------------|-----------------------------------------------------------|------|
+    /// | syscall_flags  | the version of this API to use (currently 1)              | BOTH |
+    /// | addr           | the index of the capability to read                       | BOTH |
+    /// | len            | the size of the buffer to write the capability into       | BOTH |
+    /// | fd             | the index of the shared buffer pool                       | BOTH |
+    /// | offset         | the offset within that buffer pool, to write into         | BOTH |
+    /// | additional1    | not used                                                  | 64   |
+    /// | additional2    | not used                                                  | 64   |
+    ///
+    /// # Return value
+    ///
+    /// The return value of this opcode, is a Result of usize, which is the byte size of the
+    /// capability struct.
+    ///
+    /// # Errors (non-exhausive, all error conditions may not be checked for)
+    ///
+    /// * `ENOSYS` - the version field is unsupported (at the moment: not equal to 1)
+    /// * `EBADF` - the index of shared buffer pool that was inputted, was invalid
+    /// * `EFAULT` - the offset was outside the pool limit
+    /// * `EADDRINUSE` - the offset+len pair overlapped an already-in-use address of the pool
+    /// * `ENOENT` - the index of the capability to read was non-existent
+    ///
+    GetCapability,
+
+    /// Set capability parameters for a specific capability. TODO: struct to use. Uses all implicit
+    /// fields.
+    ///
+    /// # Parameters
+    ///
+    /// | required field | usage description                                         | SIZE |
+    /// |----------------|-----------------------------------------------------------|------|
+    /// | syscall_flags  | the version of this API to use (currently 1)              | BOTH |
+    /// | addr           | the index of the capability to modify                     | BOTH |
+    /// | len            | the size of the buffer to modify the capability from      | BOTH |
+    /// | fd             | the index of the shared buffer pool                       | BOTH |
+    /// | offset         | the offset within that buffer pool, to write into         | BOTH |
+    /// | additional1    | not used                                                  | 64   |
+    /// | additional2    | not used                                                  | 64   |
+    ///
+    /// # Return value
+    ///
+    /// The return value of this opcode, is a Result of usize, is always zero or error.
+    ///
+    /// # Errors (non-exhausive, all error conditions may not be checked for)
+    ///
+    /// * `ENOSYS` - the version field is unsupported (at the moment: not equal to 1)
+    /// * `EBADF` - the index of shared buffer pool that was inputted, was invalid
+    /// * `EFAULT` - the offset was outside the pool limit
+    /// * `EADDRINUSE` - the offset+len pair overlapped an already-in-use address of the pool
+    /// * `ENOENT` - the index of the capability to write was non-existent
+    /// * `EBADMSG` - the set capability data has malformed, or used an unsupported capability ID.
+    ///
+    SetCapability,
 }
