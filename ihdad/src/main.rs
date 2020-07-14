@@ -77,7 +77,7 @@ fn main() {
 				let mut irq = [0; 8];
 				irq_file.read(&mut irq)?;
 
-				if unsafe { device_irq.borrow_mut().irq() } {
+				if device_irq.borrow_mut().irq() {
 					irq_file.write(&mut irq)?;
 
 					let mut todo = todo_irq.borrow_mut();

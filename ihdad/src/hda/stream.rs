@@ -209,12 +209,10 @@ pub struct OutputStream {
 
 impl OutputStream {
 	pub fn new(block_count: usize, block_length: usize, regs: &'static mut StreamDescriptorRegs) -> OutputStream {
-		unsafe {
-			OutputStream {
-				buff: StreamBuffer::new(block_length, block_count).unwrap(),
+		OutputStream {
+			buff: StreamBuffer::new(block_length, block_count).unwrap(),
 
-				desc_regs: regs,
-			}
+			desc_regs: regs,
 		}
 	}
 
