@@ -95,10 +95,10 @@ fn main() {
                 .expect("ixgbed: failed to map address")
         };
         {
-            let device = Arc::new(RefCell::new(unsafe {
+            let device = Arc::new(RefCell::new(
                 device::Intel8259x::new(address, IXGBE_MMIO_SIZE)
                     .expect("ixgbed: failed to allocate device")
-            }));
+            ));
 
             let mut event_queue =
                 EventQueue::<usize>::new().expect("ixgbed: failed to create event queue");
@@ -116,7 +116,7 @@ fn main() {
                     move |_event| -> Result<Option<usize>> {
                         let mut irq = [0; 8];
                         irq_file.read(&mut irq)?;
-                        if unsafe { device_irq.borrow().irq() } {
+                        if device_irq.borrow().irq() {
                             irq_file.write(&irq)?;
 
                             if handle_update(

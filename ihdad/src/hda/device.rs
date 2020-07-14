@@ -153,26 +153,23 @@ impl IntelHDA {
 	pub unsafe fn new(base: usize, vend_prod:u32) -> Result<Self> {
 		let regs = &mut *(base as *mut Regs);
 
-		let buff_desc_phys = unsafe {
+		let buff_desc_phys =
 			syscall::physalloc(0x1000)
-				.expect("Could not allocate physical memory for buffer descriptor list.")
-		};
+				.expect("Could not allocate physical memory for buffer descriptor list.");
 
-		let buff_desc_virt = unsafe {
+		let buff_desc_virt =
 			syscall::physmap(buff_desc_phys, 0x1000, PHYSMAP_WRITE | PHYSMAP_NO_CACHE)
-				.expect("ihdad: failed to map address for buffer descriptor list.")
-		};
+				.expect("ihdad: failed to map address for buffer descriptor list.");
 
 		print!("Virt: {:016X}, Phys: {:016X}\n", buff_desc_virt, buff_desc_phys);
 
 		let buff_desc = &mut *(buff_desc_virt as *mut [BufferDescriptorListEntry;256]);
 
-		let cmd_buff_address = unsafe {
+		let cmd_buff_address =
 			syscall::physalloc(0x1000)
-				.expect("Could not allocate physical memory for CORB and RIRB.")
-		};
+				.expect("Could not allocate physical memory for CORB and RIRB.");
 
-		let cmd_buff_virt = unsafe { syscall::physmap(cmd_buff_address, 0x1000, PHYSMAP_WRITE | PHYSMAP_NO_CACHE).expect("ihdad: failed to map address for CORB/RIRB buff") };
+		let cmd_buff_virt = syscall::physmap(cmd_buff_address, 0x1000, PHYSMAP_WRITE | PHYSMAP_NO_CACHE).expect("ihdad: failed to map address for CORB/RIRB buff");
 
 		print!("Virt: {:016X}, Phys: {:016X}\n", cmd_buff_virt, cmd_buff_address);
 		let mut module = IntelHDA {

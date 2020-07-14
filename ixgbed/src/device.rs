@@ -75,10 +75,8 @@ impl SchemeBlockMut for Intel8259x {
             let i = cmp::min(buf.len(), data.len());
             buf[..i].copy_from_slice(&data[..i]);
 
-            unsafe {
                 desc.read.pkt_addr = self.receive_buffer[self.receive_index].physical() as u64;
                 desc.read.hdr_addr = 0;
-            }
 
             self.write_reg(IXGBE_RDT(0), self.receive_index as u32);
             self.receive_index = wrap_ring(self.receive_index, self.receive_ring.len());
@@ -131,7 +129,6 @@ impl SchemeBlockMut for Intel8259x {
         let i = cmp::min(buf.len(), data.len());
         data[..i].copy_from_slice(&buf[..i]);
 
-        unsafe {
             desc.read.cmd_type_len = IXGBE_ADVTXD_DCMD_EOP
                 | IXGBE_ADVTXD_DCMD_RS
                 | IXGBE_ADVTXD_DCMD_IFCS
@@ -140,7 +137,6 @@ impl SchemeBlockMut for Intel8259x {
                 | buf.len() as u32;
 
             desc.read.olinfo_status = (buf.len() as u32) << IXGBE_ADVTXD_PAYLEN_SHIFT;
-        }
 
         self.transmit_index = wrap_ring(self.transmit_index, self.transmit_ring.len());
         self.transmit_ring_free -= 1;
@@ -506,10 +502,8 @@ impl Intel8259x {
         }
 
         for i in 0..self.receive_ring.len() {
-            unsafe {
-                self.receive_ring[i].read.pkt_addr = self.receive_buffer[i].physical() as u64;
-                self.receive_ring[i].read.hdr_addr = 0;
-            }
+            self.receive_ring[i].read.pkt_addr = self.receive_buffer[i].physical() as u64;
+            self.receive_ring[i].read.hdr_addr = 0;
         }
 
         // enable queue and wait if necessary
@@ -536,9 +530,7 @@ impl Intel8259x {
         }
 
         for i in 0..self.transmit_ring.len() {
-            unsafe {
-                self.transmit_ring[i].read.buffer_addr = self.transmit_buffer[i].physical() as u64;
-            }
+            self.transmit_ring[i].read.buffer_addr = self.transmit_buffer[i].physical() as u64;
         }
 
         // tx queue starts out empty
