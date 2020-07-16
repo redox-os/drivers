@@ -246,8 +246,6 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, bus_num: u8,
         }
     }
 
-    string.push('\n');
-
     info!("{}", string);
 
     for driver in config.drivers.iter() {
