@@ -9,7 +9,7 @@ use syscall::data::Packet;
 use syscall::flag::{CloneFlags, O_RDWR, O_CLOEXEC, EVENT_READ};
 use syscall::io::Io;
 
-use pcid_interface::{MsiSetCapabilityInfo, PcidServerHandle, PciFunction, SetCapabilityInfo};
+use pcid_interface::{MsiSetCapabilityInfo, MsiSetCapabilityInfoFlags, MsiXSetCapabilityInfo, MsiXSetCapabilityInfoFlags, PcidServerHandle, PciFunction, SetCapabilityInfo};
 use pcid_interface::msi::MsixTableEntry;
 use pcid_interface::helpers::{self as pci_helpers, irq as irq_helpers};
 use pci_helpers::{AllocatedBars, Bar};
@@ -111,10 +111,11 @@ async fn get_int_method(func: &PciFunction, pcid_handle: &mut PcidServerHandle, 
         table_entry_pointer.vec_ctl.writef(MsixTableEntry::VEC_CTL_MASK_BIT, false);
 
 
-        pcid_handle.set_capability(SetCapabilityInfo::MsiX {
-            enabled: Some(true),
-            function_mask: Some(false),
-        }, 0u16).await.expect("xhcid: failed to enable MSI-X");
+        pcid_handle.set_capability(SetCapabilityInfo::MsiX(MsiXSetCapabilityInfo {
+            flags: MsiXSetCapabilityInfoFlags::all().bits(),
+            enabled: true.into(),
+            function_mask: false.into(),
+        }), 0u16).await.expect("xhcid: failed to enable MSI-X");
 
         // update our local mirror
         info.capability.set_msix_enabled(true);
@@ -139,12 +140,13 @@ async fn get_int_method(func: &PciFunction, pcid_handle: &mut PcidServerHandle, 
         let msg_data = x86_64_msix::message_data_edge_triggered(DeliveryMode::Fixed, vector);
 
         let set_cap_info = MsiSetCapabilityInfo {
-            enabled: Some(true),
-            multi_message_enable: Some(0),
-            message_address: Some(msg_addr),
-            message_upper_address: Some(0),
-            message_data: Some(msg_data as u16),
-            mask_bits: None,
+            flags: (MsiSetCapabilityInfoFlags::ENABLED | MsiSetCapabilityInfoFlags::MULTI_MESSAGE_ENABLE | MsiSetCapabilityInfoFlags::MESSAGE_ADDRESS | MsiSetCapabilityInfoFlags::MESSAGE_UPPER_ADDRESS | MsiSetCapabilityInfoFlags::MESSAGE_DATA).bits(),
+            enabled: true.into(),
+            multi_message_enable: 0,
+            message_address: msg_addr,
+            message_upper_address: 0,
+            message_data: msg_data as u16,
+            mask_bits: 0, // omitted due to lack of flag
         };
         pcid_handle.set_capability(SetCapabilityInfo::Msi(set_cap_info), 0u16).await.expect("xhcid: failed to set capability");
         info!("Enabled MSI");

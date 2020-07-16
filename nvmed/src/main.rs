@@ -53,10 +53,11 @@ async fn get_int_method(
             table_entry.mask();
         }
 
-        pcid_handle.set_capability(pcid_interface::SetCapabilityInfo::MsiX {
-            enabled: Some(true),
-            function_mask: Some(false),
-        }, 0);
+        pcid_handle.set_capability(pcid_interface::SetCapabilityInfo::MsiX(pcid_interface::MsiXSetCapabilityInfo {
+            flags: pcid_interface::MsiXSetCapabilityInfoFlags::all().bits(),
+            enabled: true.into(),
+            function_mask: false.into(),
+        }), 0);
         capability_struct.set_msix_enabled(true); // only affects our local mirror of the cap
 
         let (msix_vector_number, irq_handle) = {
@@ -97,7 +98,7 @@ async fn get_int_method(
         let irq_handle = {
             use msi_x86_64::DeliveryMode;
             use pcid_interface::msi::x86_64 as msi_x86_64;
-            use pcid_interface::{MsiSetCapabilityInfo, SetCapabilityInfo};
+            use pcid_interface::{MsiSetCapabilityInfo, MsiSetCapabilityInfoFlags, SetCapabilityInfo};
 
             let bsp_cpu_id =
                 irq_helpers::read_bsp_apic_id().expect("nvmed: failed to read BSP APIC ID");
@@ -113,12 +114,13 @@ async fn get_int_method(
                 msi_x86_64::message_data_edge_triggered(DeliveryMode::Fixed, vector) as u16;
 
             pcid_handle.set_capability(SetCapabilityInfo::Msi(MsiSetCapabilityInfo {
-                enabled: Some(true),
-                message_address: Some(msg_addr),
-                message_upper_address: Some(0),
-                message_data: Some(msg_data),
-                multi_message_enable: Some(0), // enable 2^0=1 vectors
-                mask_bits: None,
+                flags: (MsiSetCapabilityInfoFlags::ENABLED | MsiSetCapabilityInfoFlags::MESSAGE_ADDRESS | MsiSetCapabilityInfoFlags::MESSAGE_UPPER_ADDRESS | MsiSetCapabilityInfoFlags::MESSAGE_DATA | MsiSetCapabilityInfoFlags::MULTI_MESSAGE_ENABLE).bits(),
+                enabled: true.into(),
+                message_address: msg_addr,
+                message_upper_address: 0,
+                message_data: msg_data,
+                multi_message_enable: 0, // enable 2^0=1 vectors
+                mask_bits: 0, // omitted due to lack of flag
             }), 0u16).await.expect("nvmed: failed to set MSI registers");
 
             irq_handle
