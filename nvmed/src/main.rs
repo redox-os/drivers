@@ -33,7 +33,7 @@ async fn get_int_method(
 ) -> Result<(InterruptMethod, InterruptSources)> {
     log::trace!("Begin get_int_method");
 
-    let capabilities = pcid_handle.fetch_all_capabilities().await.expect("nvmed: failed to fetch all PCI(e) capabilities from pcid");
+    let capabilities = pcid_handle.fetch_all_capabilities(0).await.expect("nvmed: failed to fetch all PCI(e) capabilities from pcid");
 
     // Cloning here is cheap because NVME doesn't use any function specific caps.
     let msi_cap = capabilities.iter().find_map(|cap| cap.as_pci()?.as_msi()).cloned();
@@ -56,7 +56,7 @@ async fn get_int_method(
         pcid_handle.set_capability(pcid_interface::SetCapabilityInfo::MsiX {
             enabled: Some(true),
             function_mask: Some(false),
-        });
+        }, 0);
         capability_struct.set_msix_enabled(true); // only affects our local mirror of the cap
 
         let (msix_vector_number, irq_handle) = {
@@ -119,7 +119,7 @@ async fn get_int_method(
                 message_data: Some(msg_data),
                 multi_message_enable: Some(0), // enable 2^0=1 vectors
                 mask_bits: None,
-            })).await.expect("nvmed: failed to set MSI registers");
+            }), 0u16).await.expect("nvmed: failed to set MSI registers");
 
             irq_handle
         };
@@ -129,7 +129,7 @@ async fn get_int_method(
             InterruptSources::Msi(std::iter::once(irq_handle).collect());
 
         Ok((interrupt_method, interrupt_sources))
-    } else if function.legacy_interrupt_pin.is_some() {
+    } else if function.legacy_interrupt_pin().is_some() {
         // INTx# pin based interrupts.
         let irq_handle = File::open(format!("irq:{}", function.legacy_interrupt_line))
             .expect("nvmed: failed to open INTx# interrupt line");
@@ -195,7 +195,7 @@ fn main() {
     let mut pcid_handle =
         PcidServerHandle::connect_using_pipes_from_env_fds().expect("nvmed: failed to setup channel to pcid");
     let pci_config = futures::executor::block_on(pcid_handle
-        .fetch_config())
+        .fetch_config(0u16))
         .expect("nvmed: failed to fetch config");
 
     let bar = match pci_config.func.bars[0] {

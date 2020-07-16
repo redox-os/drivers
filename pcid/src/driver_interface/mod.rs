@@ -1,11 +1,15 @@
+use std::convert::TryFrom;
 use std::fs::File;
 use std::io::prelude::*;
-use std::{env, io};
+use std::{env, mem, io};
 use std::os::unix::io::{FromRawFd, RawFd};
 
+use syscall::error::Error as Errno;
+use syscall::error::ENOMEM;
 use syscall::io_uring::SqEntry64;
 
 use redox_iou::instance::ConsumerInstanceBuilder;
+use redox_iou::memory::{BufferPool, BufferSlice};
 use redox_iou::reactor::Handle as IoringReactorHandle;
 
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
@@ -79,11 +83,15 @@ impl PciFunction {
             2 => Some(LegacyInterruptPin::IntB),
             3 => Some(LegacyInterruptPin::IntC),
             4 => Some(LegacyInterruptPin::IntD),
+            _ => {
+                log::warn!("Invalid interrupt pin number sent by pcid, returning None");
+                None
+            }
         }
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[repr(C)]
 pub struct SubdriverArguments {
     pub func: PciFunction,
@@ -185,6 +193,9 @@ pub enum IoUringSetupError {
 
     #[error("io_uring attach error: {0}")]
     AttachError(syscall::Error),
+
+    #[error("io_uring buffer error: {0}")]
+    BufferError(syscall::Error),
 }
 
 pub type Result<T, E = PcidClientHandleError> = std::result::Result<T, E>;
@@ -271,6 +282,7 @@ enum PcidServerTransport {
     },
     IoUring {
         handle: IoringReactorHandle,
+        pool: BufferPool,
     },
 }
 
@@ -305,7 +317,7 @@ impl PcidServerHandle {
             }
         })
     }
-    pub fn connect_using_iouring(handle: IoringReactorHandle) -> Result<Self, IoUringSetupError> {
+    pub async fn connect_using_iouring(handle: IoringReactorHandle) -> Result<Self, IoUringSetupError> {
         let instance = ConsumerInstanceBuilder::new()
             .with_submission_entry_count(64)    // 4KiB, one page (minimum size)
             .with_completion_entry_count(128)   // 4KiB, one page (minimum size)
@@ -317,6 +329,9 @@ impl PcidServerHandle {
 
         Ok(Self {
             inner: PcidServerTransport::IoUring {
+                pool: handle
+                    .create_buffer_pool(0, 16384).await
+                    .map_err(IoUringSetupError::BufferError)?,
                 handle,
             }
         })
@@ -338,28 +353,40 @@ impl PcidServerHandle {
     pub(crate) fn send(&mut self, req: &PcidClientRequest) -> Result<()> {
         match self.inner {
             PcidServerTransport::Pipe { ref pcid_from_client, .. } => send(&mut &*pcid_from_client, req),
-            PcidServerTransport::IoUring { ref handle } => unreachable!(),
+            PcidServerTransport::IoUring { ref handle, ref pool } => unreachable!(),
         }
     }
     pub(crate) fn recv(&mut self) -> Result<PcidClientResponse> {
         match self.inner {
             PcidServerTransport::Pipe { ref pcid_to_client, .. } => recv(&mut &*pcid_to_client),
-            PcidServerTransport::IoUring { ref handle } => unreachable!(),
+            PcidServerTransport::IoUring { ref handle, ref pool } => unreachable!(),
         }
     }
     pub async fn fetch_config(&mut self, priority: u16) -> Result<SubdriverArguments> {
-        if let PcidServerTransport::IoUring { ref handle } = self.inner {
+        if let PcidServerTransport::IoUring { ref handle, ref pool } = self.inner {
+            let len = u32::try_from(mem::size_of::<SubdriverArguments>()).expect("SubdriverArguments has got too bloated");
+            let alignment = u32::try_from(mem::align_of::<SubdriverArguments>()).expect("unexpected huge alignment for SubdriverArguments");
+
+            let slice = pool
+                .acquire_borrowed_slice(len, alignment)
+                .ok_or(
+                    PcidClientHandleError::IoUringTransportError(Errno::new(ENOMEM)
+                ))?;
             unsafe {
                 let cqe = handle.send(SqEntry64 {
                     priority,
                     syscall_flags: 1, // version
-                    addr: todo!(),
-                    len: mem::size_of::<SubdriverArguments>(),
-                    fd: todo!(),
+                    addr: slice.offset().into(),
+                    len: len.into(),
+                    fd: 0, // FIXME
                     .. SqEntry64::default()
                 }).await.map_err(PcidClientHandleError::IoUringTransportError)?;
 
-                todo!();
+                let result = Errno::demux64(cqe.status).map_err(PcidClientHandleError::IoUringTransportError)?;
+                if result != 0 {
+                    log::warn!("Expected zero as CQE return value when fetching config");
+                }
+                Ok(*plain::from_bytes(&*slice).expect("buffer pool allocator gave us an insufficient alignment"))
             }
         } else {
             self.send(&PcidClientRequest::RequestConfig)?;
@@ -369,25 +396,41 @@ impl PcidServerHandle {
             }
         }
     }
-    pub async fn fetch_all_capabilities(&mut self) -> Result<Vec<Capability>> {
-        self.send(&PcidClientRequest::GetCapabilities)?;
-        match self.recv()? {
-            PcidClientResponse::AllCapabilities(a) => Ok(a),
-            other => Err(PcidClientHandleError::InvalidResponse(other)),
+    pub async fn fetch_all_capabilities(&mut self, priority: u16) -> Result<Vec<Capability>> {
+        if let PcidServerTransport::IoUring { ref handle, ref pool } = self.inner {
+            let mut caps = Vec::new();
+            todo!();
+            Ok(caps)
+        } else {
+            self.send(&PcidClientRequest::GetCapabilities)?;
+            match self.recv()? {
+                PcidClientResponse::AllCapabilities(a) => Ok(a),
+                other => Err(PcidClientHandleError::InvalidResponse(other)),
+            }
         }
     }
-    pub async fn get_capability(&mut self, ty: CapabilityType) -> Result<Option<Capability>> {
-        self.send(&PcidClientRequest::GetCapability(ty))?;
-        match self.recv()? {
-            PcidClientResponse::Capability(c) => Ok(c),
-            other => Err(PcidClientHandleError::InvalidResponse(other)),
+    pub async fn get_capability(&mut self, ty: CapabilityType, priority: u16) -> Result<Option<Capability>> {
+        if let PcidServerTransport::IoUring { ref handle, ref pool } = self.inner {
+            todo!();
+            Ok(None)
+        } else {
+            self.send(&PcidClientRequest::GetCapability(ty))?;
+            match self.recv()? {
+                PcidClientResponse::Capability(c) => Ok(c),
+                other => Err(PcidClientHandleError::InvalidResponse(other)),
+            }
         }
     }
-    pub async fn set_capability(&mut self, info: SetCapabilityInfo) -> Result<()> {
-        self.send(&PcidClientRequest::SetCapability(info))?;
-        match self.recv()? {
-            PcidClientResponse::SetCapability => Ok(()),
-            other => Err(PcidClientHandleError::InvalidResponse(other)),
+    pub async fn set_capability(&mut self, info: SetCapabilityInfo, priority: u16) -> Result<()> {
+        if let PcidServerTransport::IoUring { ref handle, ref pool } = self.inner {
+            todo!();
+            Ok(())
+        } else {
+            self.send(&PcidClientRequest::SetCapability(info))?;
+            match self.recv()? {
+                PcidClientResponse::SetCapability => Ok(()),
+                other => Err(PcidClientHandleError::InvalidResponse(other)),
+            }
         }
     }
 }

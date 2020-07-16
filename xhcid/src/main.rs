@@ -75,7 +75,7 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
 }
 
 async fn get_int_method(func: &PciFunction, pcid_handle: &mut PcidServerHandle, allocated_bars: &AllocatedBars) -> (InterruptMethod, Option<InterruptSources>) {
-    let all_pci_caps = pcid_handle.fetch_all_capabilities().await.expect("xhcid: failed to fetch pci capabilities");
+    let all_pci_caps = pcid_handle.fetch_all_capabilities(0u16).await.expect("xhcid: failed to fetch pci capabilities");
     info!("XHCI PCI FEATURES: {:?}", all_pci_caps);
 
     let msi_cap = all_pci_caps.iter().find_map(|cap| cap.as_pci()?.as_msi());
@@ -114,7 +114,7 @@ async fn get_int_method(func: &PciFunction, pcid_handle: &mut PcidServerHandle, 
         pcid_handle.set_capability(SetCapabilityInfo::MsiX {
             enabled: Some(true),
             function_mask: Some(false),
-        }).await.expect("xhcid: failed to enable MSI-X");
+        }, 0u16).await.expect("xhcid: failed to enable MSI-X");
 
         // update our local mirror
         info.capability.set_msix_enabled(true);
@@ -146,11 +146,11 @@ async fn get_int_method(func: &PciFunction, pcid_handle: &mut PcidServerHandle, 
             message_data: Some(msg_data as u16),
             mask_bits: None,
         };
-        pcid_handle.set_capability(SetCapabilityInfo::Msi(set_cap_info)).await.expect("xhcid: failed to set capability");
+        pcid_handle.set_capability(SetCapabilityInfo::Msi(set_cap_info), 0u16).await.expect("xhcid: failed to set capability");
         info!("Enabled MSI");
 
         (InterruptMethod::Msi(Mutex::new(capability)), Some(InterruptSources::Msi(vec!(interrupt_handle))))
-    } else if func.legacy_interrupt_pin.is_some() {
+    } else if func.legacy_interrupt_pin().is_some() {
         // legacy INTx# interrupt pins.
         (InterruptMethod::Intx, Some(InterruptSources::Intx(File::open(format!("irq:{}", func.legacy_interrupt_line)).expect("xhcid: failed to open legacy IRQ file"))))
     } else {
@@ -168,7 +168,7 @@ fn main() {
     let _logger_ref = setup_logging();
 
     let mut pcid_handle = PcidServerHandle::connect_using_pipes_from_env_fds().expect("xhcid: failed to setup channel to pcid");
-    let pci_config = futures::executor::block_on(pcid_handle.fetch_config()).expect("xhcid: failed to fetch config");
+    let pci_config = futures::executor::block_on(pcid_handle.fetch_config(0)).expect("xhcid: failed to fetch config");
     info!("XHCI PCI CONFIG: {:?}", pci_config);
 
     let bar = pci_config.func.bars[0];

@@ -431,7 +431,7 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, bus_num: u8,
                 func_num,
                 devid: header.device_id(),
                 legacy_interrupt_line: irq,
-                legacy_interrupt_pin,
+                legacy_interrupt_pin: legacy_interrupt_pin.map_or(0, |pin| pin as u8),
                 venid: header.vendor_id(),
             };
 
