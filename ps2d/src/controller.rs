@@ -200,6 +200,8 @@ impl Ps2 {
     }
 
     pub fn init(&mut self) -> bool {
+        let mut b = 0;
+
         // Clear remaining data
         self.flush_read("init start");
 
@@ -233,12 +235,14 @@ impl Ps2 {
         self.flush_read("enable");
 
         // Reset keyboard
-        if self.keyboard_command(KeyboardCommand::Reset) == 0xFA {
-            if self.read() != 0xAA {
-                println!("ps2d: keyboard failed self test");
+        b = self.keyboard_command(KeyboardCommand::Reset);
+        if b == 0xFA {
+            b = self.read();
+            if b != 0xAA {
+                println!("ps2d: keyboard failed self test: {:02X}", b);
             }
         } else {
-            println!("ps2d: keyboard failed to reset");
+            println!("ps2d: keyboard failed to reset: {:02X}", b);
         }
 
         // Clear remaining data
@@ -246,52 +250,63 @@ impl Ps2 {
 
         // Set scancode set to 2
         let scancode_set = 2;
-        if self.keyboard_command_data(KeyboardCommandData::ScancodeSet, scancode_set) != 0xFA {
-            println!("ps2d: keyboard failed to set scancode set {}", scancode_set);
+        b = self.keyboard_command_data(KeyboardCommandData::ScancodeSet, scancode_set);
+        if b != 0xFA {
+            println!("ps2d: keyboard failed to set scancode set {}: {:02X}", scancode_set, b);
         }
 
         // Enable data reporting
-        if self.keyboard_command(KeyboardCommand::EnableReporting) != 0xFA {
-            println!("ps2d: keyboard failed to enable reporting");
+        b = self.keyboard_command(KeyboardCommand::EnableReporting);
+        if b != 0xFA {
+            println!("ps2d: keyboard failed to enable reporting: {:02X}", b);
         }
 
         // Reset mouse and set up scroll
-        if self.mouse_command(MouseCommand::Reset) == 0xFA {
-            let a = self.read();
-            let b = self.read();
-            if a != 0xAA || b != 0x00 {
-                println!("ps2d: mouse failed self test");
+        b = self.mouse_command(MouseCommand::Reset);
+        if b == 0xFA {
+            b = self.read();
+            if b != 0xAA {
+                println!("ps2d: mouse failed self test 1: {:02X}", b);
+            }
+
+            b = self.read();
+            if b != 0x00 {
+                println!("ps2d: mouse failed self test 2: {:02X}", b);
             }
         } else {
-            println!("ps2d: mouse failed to reset");
+            println!("ps2d: mouse failed to reset: {:02X}", b);
         }
 
         // Clear remaining data
         self.flush_read("mouse defaults");
 
         // Enable extra packet on mouse
+        //TODO: show error return values
         if self.mouse_command_data(MouseCommandData::SetSampleRate, 200) != 0xFA
         || self.mouse_command_data(MouseCommandData::SetSampleRate, 100) != 0xFA
         || self.mouse_command_data(MouseCommandData::SetSampleRate, 80) != 0xFA {
             println!("ps2d: mouse failed to enable extra packet");
         }
 
-        let mouse_extra = if self.mouse_command(MouseCommand::GetDeviceId) == 0xFA {
+        b = self.mouse_command(MouseCommand::GetDeviceId);
+        let mouse_extra = if b == 0xFA {
             self.read() == 3
         } else {
-            println!("ps2d: mouse failed to get device id");
+            println!("ps2d: mouse failed to get device id: {:02X}", b);
             false
         };
 
         // Set sample rate to maximum
         let sample_rate = 200;
-        if self.mouse_command_data(MouseCommandData::SetSampleRate, sample_rate) != 0xFA {
-            println!("ps2d: mouse failed to set sample rate to {}", sample_rate);
+        b = self.mouse_command_data(MouseCommandData::SetSampleRate, sample_rate);
+        if b != 0xFA {
+            println!("ps2d: mouse failed to set sample rate to {}: {:02X}", sample_rate, b);
         }
 
         // Enable data reporting
-        if self.mouse_command(MouseCommand::EnableReporting) != 0xFA {
-            println!("ps2d: mouse failed to enable reporting");
+        b = self.mouse_command(MouseCommand::EnableReporting);
+        if b != 0xFA {
+            println!("ps2d: mouse failed to enable reporting: {:02X}", b);
         }
 
         // Enable clocks and interrupts
