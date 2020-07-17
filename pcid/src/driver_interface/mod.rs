@@ -15,8 +15,8 @@ use redox_iou::reactor::Handle as IoringReactorHandle;
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use thiserror::Error;
 
-pub use crate::pci::{cap::Capability as PciCapability, msi, PciBar};
-pub use crate::pcie::cap::Capability as PcieCapability;
+pub use crate::pci::{cap::{Capability as PciCapability, CapabilityRawTagged as PciCapabilityRawTagged}, msi, PciBar};
+pub use crate::pcie::cap::{Capability as PcieCapability, CapabilityRawTagged as PcieCapabilityRawTagged};
 
 pub mod helpers;
 
@@ -123,7 +123,44 @@ pub enum Capability {
     Pci(PciCapability),
     Pcie(PcieCapability),
 }
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[repr(u8)]
+pub enum CapabilityKind {
+    Pci,
+    Pcie,
+}
+
+#[derive(Clone, Copy)]
+pub union CapabilityRaw {
+    pub pci: PciCapabilityRawTagged,
+    pub pcie: PcieCapabilityRawTagged,
+}
+#[derive(Clone, Copy)]
+pub struct CapabilityRawTagged {
+    pub kind: u8,
+    pub raw: CapabilityRaw,
+}
+unsafe impl plain::Plain for CapabilityRawTagged {}
+
 impl Capability {
+    pub fn construct(kind: u8, raw: CapabilityRaw) -> Option<Self> {
+        // unsafe due to accessing union fields
+        unsafe {
+            Some(if kind == CapabilityKind::Pci as u8 {
+                Self::Pci(PciCapability::construct(raw.pci.id, raw.pci.raw)?)
+            } else if kind == CapabilityKind::Pcie as u8 {
+                Self::Pcie(PcieCapability::construct(raw.pcie.id, raw.pcie.version, raw.pcie.raw))
+            } else {
+                return None;
+            })
+        }
+    }
+    pub fn kind(&self) -> CapabilityKind {
+        match self {
+            Self::Pci(_) => CapabilityKind::Pci,
+            Self::Pcie(_) => CapabilityKind::Pcie,
+        }
+    }
     pub fn as_pci_mut(&mut self) -> Option<&mut PciCapability> {
         match self {
             &mut Self::Pci(ref mut inner) => Some(inner),
@@ -468,9 +505,44 @@ impl PcidServerHandle {
     }
     pub async fn fetch_all_capabilities(&mut self, priority: u16) -> Result<Vec<Capability>> {
         if let PcidServerTransport::IoUring { ref handle, ref pool } = self.inner {
-            let mut caps = Vec::new();
-            todo!();
-            Ok(caps)
+            let mut all_caps = Vec::new();
+
+            let size: u32 = mem::size_of::<CapabilityRawTagged>().try_into().unwrap();
+            let align: u32 = mem::align_of::<CapabilityRawTagged>().try_into().unwrap();
+
+            let mut buffer = pool.acquire_borrowed_slice(size * 4, align).ok_or(PcidClientHandleError::IoUringTransportError(Errno::new(ENOMEM)))?;
+
+            loop {
+                let caps_read = unsafe {
+                    let fut = handle.send(SqEntry64 {
+                        opcode: PcidOpcode::FetchAllCapabilities as u8,
+                        flags: 0,
+                        priority,
+                        user_data: 0, // overridden
+
+                        syscall_flags: 1,
+                        addr: 0, // unused
+                        fd: 0, // unused
+                        len: (buffer.len() / size).into(),
+                        offset: buffer.offset().into(),
+
+                        additional1: 0, // unused
+                        additional2: 0, // unused
+                    });
+                    fut.guard(&mut buffer);
+                    let cqe = fut.await.map_err(PcidClientHandleError::IoUringTransportError)?;
+
+                    Errno::demux64(cqe.status).map_err(PcidClientHandleError::IoUringTransportError)?
+                };
+
+                if caps_read == 0 { break }
+
+                let bytes_read = usize::try_from(caps_read * u64::from(size)).or(Err(PcidClientHandleError::IoUringTransportError(Errno::new(EOVERFLOW))))?;
+                let caps = plain::slice_from_bytes::<CapabilityRawTagged>(&buffer[..bytes_read]).expect("somehow redox_iou didn't consider alignment");
+
+                all_caps.extend(caps.into_iter().filter_map(|raw| Capability::construct(raw.kind, raw.raw)));
+            }
+            Ok(all_caps)
         } else {
             self.send(&PcidClientRequest::GetCapabilities)?;
             match self.recv()? {
@@ -481,8 +553,35 @@ impl PcidServerHandle {
     }
     pub async fn get_capability(&mut self, ty: CapabilityType, priority: u16) -> Result<Option<Capability>> {
         if let PcidServerTransport::IoUring { ref handle, ref pool } = self.inner {
-            todo!();
-            Ok(None)
+            let size = mem::size_of::<CapabilityRawTagged>().try_into().unwrap();
+            let align = mem::align_of::<CapabilityRawTagged>().try_into().unwrap();
+
+            let mut buffer = pool.acquire_borrowed_slice(size, align).ok_or(PcidClientHandleError::IoUringTransportError(Errno::new(ENOMEM)))?;
+
+            unsafe {
+                let fut = handle.send(SqEntry64 {
+                    opcode: PcidOpcode::GetCapability as u8,
+                    flags: 0,
+                    priority,
+                    user_data: 0, // overridden
+
+                    syscall_flags: 1,
+                    fd: 0, // unused
+                    len: size.into(),
+                    addr: 0, // FIXME
+                    offset: buffer.offset().into(),
+
+                    additional1: 0, // unused
+                    additional2: 0, // unused
+                });
+                fut.guard(&mut buffer);
+                let cqe = fut.await.map_err(PcidClientHandleError::IoUringTransportError)?;
+                Errno::demux64(cqe.status).map_err(PcidClientHandleError::IoUringTransportError)?;
+            }
+
+            let raw_tagged = *plain::from_bytes::<CapabilityRawTagged>(&*buffer).expect("somehow redox_iou gave us an insufficient alignment");
+
+            Ok(Capability::construct(raw_tagged.kind, raw_tagged.raw))
         } else {
             self.send(&PcidClientRequest::GetCapability(ty))?;
             match self.recv()? {

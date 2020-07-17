@@ -1,4 +1,4 @@
-use std::mem;
+use std::{fmt, mem};
 
 use syscall::{Io, Mmio};
 use serde::{Serialize, Deserialize};
@@ -15,6 +15,27 @@ pub enum CapabilityKind {
     // TODO: AER
     Unknown(u16),
     Aer(AerCap),
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union CapabilityRaw {
+    pub aer: AerCap,
+    pub unknown: (),
+}
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct CapabilityRawTagged {
+    pub id: u16,
+    pub version: u8,
+    pub raw: CapabilityRaw,
+}
+unsafe impl plain::Plain for CapabilityRawTagged {}
+
+impl fmt::Debug for CapabilityRawTagged {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&Capability::construct(self.id, self.version, self.raw), f)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
@@ -55,6 +76,17 @@ impl CapabilityKind {
 }
 
 impl Capability {
+    pub fn construct(id: u16, version: u8, raw: CapabilityRaw) -> Self {
+        let kind = if id == CapabilityId::Aer as u16 {
+            CapabilityKind::Aer(unsafe { raw.aer })
+        } else {
+            CapabilityKind::Unknown(id)
+        };
+        Self {
+            kind,
+            cap_version: version,
+        }
+    }
     unsafe fn parse<R: ConfigReader>(reader: &R, offset: u16) -> Self {
         let dword = reader.read_u32(offset);
         let cap_version = ((dword & 0x000F_0000) >> 16) as u8;

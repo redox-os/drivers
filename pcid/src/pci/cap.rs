@@ -1,3 +1,4 @@
+use std::fmt;
 use super::func::ConfigReader;
 use serde::{Serialize, Deserialize};
 
@@ -51,36 +52,182 @@ pub enum CapabilityId {
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub enum MsiCapability {
-    _32BitAddress {
-        message_control: u32,
-        message_address: u32,
-        message_data: u16,
-    },
-    _64BitAddress {
-        message_control: u32,
-        message_address_lo: u32,
-        message_address_hi: u32,
-        message_data: u16,
-    },
-    _32BitAddressWithPvm {
-        message_control: u32,
-        message_address: u32,
-        message_data: u32,
-        mask_bits: u32,
-        pending_bits: u32,
-    },
-    _64BitAddressWithPvm {
-        message_control: u32,
-        message_address_lo: u32,
-        message_address_hi: u32,
-        message_data: u32,
-        mask_bits: u32,
-        pending_bits: u32,
-    },
+    _32BitAddress(MsiCapability32bAddr),
+    _64BitAddress(MsiCapability64bAddr),
+    _32BitAddressWithPvm(MsiCapability32bAddrWithPvm),
+    _64BitAddressWithPvm(MsiCapability64bAddrWithPvm),
+}
+impl MsiCapability {
+    pub fn kind(&self) -> MsiCapabilityKind {
+        match self {
+            Self::_32BitAddress(_) => MsiCapabilityKind::Addr32,
+            Self::_64BitAddress(_) => MsiCapabilityKind::Addr64,
+            Self::_32BitAddressWithPvm(_) => MsiCapabilityKind::Addr32Pvm,
+            Self::_64BitAddressWithPvm(_) => MsiCapabilityKind::Addr64Pvm,
+        }
+    }
+    pub fn construct(kind: MsiCapabilityKind, raw: MsiCapabilityRaw) -> Self {
+        unsafe {
+            match kind {
+                MsiCapabilityKind::Addr32 => Self::_32BitAddress(raw.addr32),
+                MsiCapabilityKind::Addr64 => Self::_64BitAddress(raw.addr64),
+                MsiCapabilityKind::Addr32Pvm => Self::_32BitAddressWithPvm(raw.addr32pvm),
+                MsiCapabilityKind::Addr64Pvm => Self::_64BitAddressWithPvm(raw.addr64pvm),
+            }
+        }
+    }
+}
+#[repr(u8)]
+pub enum MsiCapabilityKind {
+    Addr32 = 0,
+    Addr64,
+    Addr32Pvm,
+    Addr64Pvm,
+}
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union MsiCapabilityRaw {
+    pub addr32: MsiCapability32bAddr,
+    pub addr64: MsiCapability64bAddr,
+    pub addr32pvm: MsiCapability32bAddrWithPvm,
+    pub addr64pvm: MsiCapability64bAddrWithPvm,
+}
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct MsiCapabilityRawTagged {
+    pub kind: u8,
+    pub raw: MsiCapabilityRaw,
+}
+impl MsiCapabilityRawTagged {
+    pub fn kind(&self) -> Option<MsiCapabilityKind> {
+        match self.kind {
+            0 => Some(MsiCapabilityKind::Addr32),
+            1 => Some(MsiCapabilityKind::Addr64),
+            2 => Some(MsiCapabilityKind::Addr32Pvm),
+            3 => Some(MsiCapabilityKind::Addr64Pvm),
+            _ => None,
+        }
+    }
+}
+impl fmt::Debug for MsiCapabilityRawTagged {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(kind) = self.kind() {
+            fmt::Debug::fmt(&MsiCapability::construct(kind, self.raw), f)
+        } else {
+            write!(f, "<MsiCapabilityRawTagged of unknown kind>")
+        }
+    }
 }
 
+pub trait MsiCapabilityProps {
+    fn message_control(&self) -> u32;
+    fn message_address(&self) -> u32;
+    fn message_data(&self) -> u16;
+
+    fn message_upper_address(&self) -> Option<u32> { None }
+    fn mask_bits(&self) -> Option<u32> { None }
+    fn pending_bits(&self) -> Option<u32> { None }
+}
+impl MsiCapabilityProps for MsiCapability32bAddr {
+    fn message_address(&self) -> u32 {
+        self.message_address
+    }
+    fn message_control(&self) -> u32 {
+        self.message_control
+    }
+    fn message_data(&self) -> u16 {
+        self.message_data
+    }
+}
+impl MsiCapabilityProps for MsiCapability64bAddr {
+    fn message_address(&self) -> u32 {
+        self.message_address_lo
+    }
+    fn message_control(&self) -> u32 {
+        self.message_control
+    }
+    fn message_data(&self) -> u16 {
+        self.message_data
+    }
+    fn message_upper_address(&self) -> Option<u32> {
+        Some(self.message_address_hi)
+    }
+}
+impl MsiCapabilityProps for MsiCapability32bAddrWithPvm {
+    fn message_address(&self) -> u32 {
+        self.message_address
+    }
+    fn message_control(&self) -> u32 {
+        self.message_control
+    }
+    fn message_data(&self) -> u16 {
+        self.message_data as u16
+    }
+    fn mask_bits(&self) -> Option<u32> {
+        Some(self.mask_bits)
+    }
+    fn pending_bits(&self) -> Option<u32> {
+        Some(self.pending_bits)
+    }
+}
+impl MsiCapabilityProps for MsiCapability64bAddrWithPvm {
+    fn message_address(&self) -> u32 {
+        self.message_address_lo
+    }
+    fn message_control(&self) -> u32 {
+        self.message_control
+    }
+    fn message_data(&self) -> u16 {
+        self.message_data as u16
+    }
+    fn message_upper_address(&self) -> Option<u32> {
+        Some(self.message_address_hi)
+    }
+    fn mask_bits(&self) -> Option<u32> {
+        Some(self.mask_bits)
+    }
+    fn pending_bits(&self) -> Option<u32> {
+        Some(self.pending_bits)
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+pub struct MsiCapability32bAddr {
+    pub message_control: u32,
+    pub message_address: u32,
+    pub message_data: u16,
+}
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+pub struct MsiCapability64bAddr {
+    pub message_control: u32,
+    pub message_address_lo: u32,
+    pub message_address_hi: u32,
+    pub message_data: u16,
+}
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+pub struct MsiCapability32bAddrWithPvm {
+    pub message_control: u32,
+    pub message_address: u32,
+    pub message_data: u32,
+    pub mask_bits: u32,
+    pub pending_bits: u32,
+}
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+pub struct MsiCapability64bAddrWithPvm {
+    pub message_control: u32,
+    pub message_address_lo: u32,
+    pub message_address_hi: u32,
+    pub message_data: u32,
+    pub mask_bits: u32,
+    pub pending_bits: u32,
+}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+#[repr(C)]
 pub struct PcieCapability {
     pub pcie_caps: u32,
     pub dev_caps: u32,
@@ -100,12 +247,14 @@ pub struct PcieCapability {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+#[repr(C)]
 pub struct PwrMgmtCapability {
     pub a: u32,
     pub b: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+#[repr(C)]
 pub struct MsixCapability {
     pub a: u32,
     pub b: u32,
@@ -122,7 +271,56 @@ pub enum Capability {
     Other(u8),
 }
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct CapabilityRawTagged {
+    pub id: u8,
+    pub raw: CapabilityRaw,
+}
+
+#[derive(Clone, Copy)]
+pub struct FunctionSpecific {
+    pub id: u8,
+    pub len: u16,
+    pub bytes: [u8; 4096 - 0x40],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union CapabilityRaw {
+    pub msi: MsiCapabilityRawTagged,
+    pub msix: MsixCapability,
+    pub pcie: PcieCapability,
+    pub pwrmgmt: PwrMgmtCapability,
+
+    // This may take up some space (that's the maximum size of the PCIe conf space), but since
+    // capabilities aren't enumerated that often, it will not harm performance and/or memory usage
+    // in the general case.
+    //
+    // Capabilities that are set often (like MSI), only use a few bytes of this struct for that,
+    // even though the buffer will have to be a page large.
+    pub func_specific: FunctionSpecific,
+    pub other: (),
+}
+
 impl Capability {
+    pub fn construct(id: u8, raw: CapabilityRaw) -> Option<Self> {
+        unsafe {
+            Some(if id == CapabilityId::Msi as u8 {
+                Self::Msi(MsiCapability::construct(raw.msi.kind()?, raw.msi.raw))
+            } else if id == CapabilityId::MsiX as u8 {
+                Self::MsiX(raw.msix)
+            } else if id == CapabilityId::Pcie as u8 {
+                Self::Pcie(raw.pcie)
+            } else if id == CapabilityId::PwrMgmt as u8 {
+                Self::PwrMgmt(raw.pwrmgmt)
+            } else if id == CapabilityId::Sata as u8 {
+                Self::FunctionSpecific(id, raw.func_specific.bytes[..raw.func_specific.len as usize].to_vec())
+            } else {
+                Self::Other(id)
+            })
+        }
+    }
     pub fn is_pcie(&self) -> bool {
         self.as_pcie().is_some()
     }
