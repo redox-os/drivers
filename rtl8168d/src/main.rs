@@ -5,7 +5,7 @@ extern crate netutils;
 extern crate syscall;
 
 use std::cell::RefCell;
-use std::env;
+use std::{env, process};
 use std::fs::File;
 use std::io::{ErrorKind, Read, Result, Write};
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
@@ -77,7 +77,24 @@ fn main() {
     println!(" + RTL8168 {} on: {:X} size: {} IRQ: {}", name, bar, bar_size, irq);
 
     // Daemonize
-    if unsafe { syscall::clone(0).unwrap() } == 0 {
+    let mut pipes = [0; 2];
+    syscall::pipe2(&mut pipes, 0).unwrap();
+    let mut read = unsafe { File::from_raw_fd(pipes[0] as RawFd) };
+    let mut write = unsafe { File::from_raw_fd(pipes[1] as RawFd) };
+    let pid = unsafe { syscall::clone(0).unwrap() };
+    if pid != 0 {
+        drop(write);
+
+        let mut res = [0];
+        if read.read(&mut res).unwrap() == res.len() {
+            process::exit(res[0] as i32);
+        } else {
+            eprintln!("rtl8168d: daemon pipe EOF");
+            process::exit(1);
+        }
+    } else {
+        drop(read);
+
         let socket_fd = syscall::open(
             ":network",
             syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK,
@@ -106,6 +123,9 @@ fn main() {
                 EventQueue::<usize>::new().expect("rtl8168d: failed to create event queue");
 
             syscall::setrens(0, 0).expect("rtl8168d: failed to enter null namespace");
+
+            write.write(&[0]).unwrap();
+            drop(write);
 
             let todo = Arc::new(RefCell::new(Vec::<Packet>::new()));
 
