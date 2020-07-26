@@ -1,38 +1,31 @@
 use std::str;
 
-use std::collections::BTreeMap;
-use std::sync::{Mutex, RwLock};
-use std::sync::atomic::{AtomicUsize, Ordering};
-
 use syscall::{
     error::{Error, Result},
     scheme::{self, Scheme},
 
-    io_uring::{
-        v1,
-        IoUringRecvInfo,
-    },
+    io_uring::IoUringRecvInfo,
+    io_uring::v1::Priority,
 
     data::Stat,
 
-    EACCES, EBADF, EBADFD, EINVAL, ENOENT,
+    EACCES, EBADF, EINVAL, ENOENT,
     SEEK_CUR, SEEK_END, SEEK_SET,
     MODE_DIR,
     O_CREAT, O_STAT, O_DIRECTORY, O_ACCMODE, O_RDONLY,
 };
 
+use redox_iou::executor::SpawnHandle;
 use redox_iou::instance::ProducerInstance;
+use redox_iou::reactor;
+
+use futures::StreamExt;
+
+use super::ResultExt;
 
 pub struct PcidScheme {
-    next_handle: AtomicUsize,
-
-    // TODO: Concurrent B-tree.
-    io_uring_handles: RwLock<BTreeMap<usize, Handle>>,
-}
-
-struct Handle {
-    ctx: scheme::Ctx,
-    instance: RwLock<ProducerInstance>,
+    spawn_handle: SpawnHandle,
+    reactor_handle: reactor::Handle,
 }
 
 const HANDLE_STAT: usize = 0;
@@ -40,10 +33,10 @@ const HANDLE_LIST: usize = 1;
 const FIRST_HANDL: usize = 2;
 
 impl PcidScheme {
-    pub fn new() -> Self {
+    pub fn new(spawn_handle: SpawnHandle, reactor_handle: reactor::Handle) -> Self {
         Self {
-            next_handle: AtomicUsize::new(FIRST_HANDL),
-            io_uring_handles: RwLock::new(BTreeMap::new()),
+            spawn_handle,
+            reactor_handle,
         }
     }
 }
@@ -129,23 +122,23 @@ impl Scheme for PcidScheme {
     }
 
     fn recv_io_uring(&self, ctx: scheme::Ctx, info: &IoUringRecvInfo) -> Result<usize> {
-        let fd = self.next_handle.fetch_add(1, Ordering::Relaxed);
-        log::trace!(
-            "PCI SCHEME RECV_IOURING CTX=<PID={pid} UID={uid} GID={gid}> NEW_FD={newfd} VERSION={major}.{minor}.{patch}",
-            pid=ctx.pid, uid=ctx.uid, gid=ctx.gid, newfd=fd, major=info.version.major,
+        log::debug!(
+            "PCI SCHEME RECV_IOURING CTX=<PID={pid} UID={uid} GID={gid}> VERSION={major}.{minor}.{patch}",
+            pid=ctx.pid, uid=ctx.uid, gid=ctx.gid, major=info.version.major,
             minor=info.version.minor, patch=info.version.patch);
 
-        let instance = ProducerInstance::new(info)?;
+        let instance = ProducerInstance::new(info).and_log_err_as_warn("failed to create producer instance")?;
         
-        let handle = Handle {
-            ctx,
-            instance: RwLock::new(instance),
-        };
+        let reactor_handle = self.reactor_handle.clone();
+        let ring = reactor_handle.reactor().add_producer_instance(instance, Priority::default()).and_log_err_as_warn("failed to register producer instance to reactor")?;
+        let mut stream = reactor_handle.producer_sqes(ring, 64);
 
-        if self.io_uring_handles.write().unwrap().insert(fd, handle).is_some() {
-            log::warn!("Already a handle at fd {}, returning EBADFD", fd);
-            return Err(Error::new(EBADFD));
-        }
+        self.spawn_handle.spawn(async move {
+            log::info!("Spawning works");
+            while let Some(sqe) = stream.next().await {
+                log::info!("PCI SCHEME RECV SQE {:?}", sqe);
+            }
+        });
 
         Ok(0)
     }

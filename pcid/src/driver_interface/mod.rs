@@ -6,11 +6,11 @@ use std::os::unix::io::{FromRawFd, RawFd};
 
 use syscall::error::Error as Errno;
 use syscall::error::{ENOMEM, EOVERFLOW};
-use syscall::io_uring::SqEntry64;
+use syscall::io_uring::v1::{Priority, SqEntry64};
 
 use redox_iou::instance::ConsumerInstanceBuilder;
 use redox_iou::memory::{BufferPool, BufferSlice};
-use redox_iou::reactor::Handle as IoringReactorHandle;
+use redox_iou::reactor::{Handle as IoringReactorHandle, SecondaryRingId};
 
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use thiserror::Error;
@@ -233,6 +233,9 @@ pub enum IoUringSetupError {
 
     #[error("io_uring buffer error: {0}")]
     BufferError(syscall::Error),
+
+    #[error("io_uring secondary instance error: {0}")]
+    AddInstanceError(syscall::Error),
 }
 
 pub type Result<T, E = PcidClientHandleError> = std::result::Result<T, E>;
@@ -386,6 +389,7 @@ enum PcidServerTransport {
     IoUring {
         handle: IoringReactorHandle,
         pool: BufferPool,
+        ring: SecondaryRingId,
     },
 }
 
@@ -421,20 +425,29 @@ impl PcidServerHandle {
         })
     }
     pub async fn connect_using_iouring(handle: IoringReactorHandle) -> Result<Self, IoUringSetupError> {
+        log::debug!("creating instance");
         let instance = ConsumerInstanceBuilder::new()
             .with_submission_entry_count(64)    // 4KiB, one page (minimum size)
             .with_completion_entry_count(128)   // 4KiB, one page (minimum size)
             .create_instance().map_err(IoUringSetupError::CreateInstanceError)?
             .map_all().map_err(IoUringSetupError::MapAllError)?
             .attach("pci:").map_err(IoUringSetupError::AttachError)?;
+        log::debug!("created instance");
 
-        handle.reactor().add_secondary_instance(instance);
+        log::debug!("adding sec instance");
+        let ring = handle.reactor().add_secondary_instance(instance, Priority::default()).map_err(IoUringSetupError::AddInstanceError)?;
+        log::debug!("added sec instance");
+
+        log::debug!("creating pool");
+        let pool = handle
+                    .create_buffer_pool(ring, Priority::default(), 16384, ()).await
+                    .map_err(IoUringSetupError::BufferError)?;
+        log::debug!("created pool");
 
         Ok(Self {
             inner: PcidServerTransport::IoUring {
-                pool: handle
-                    .create_buffer_pool(0, 16384).await
-                    .map_err(IoUringSetupError::BufferError)?,
+                pool,
+                ring,
                 handle,
             }
         })
@@ -465,10 +478,12 @@ impl PcidServerHandle {
             PcidServerTransport::IoUring { .. } => unreachable!(),
         }
     }
-    pub async fn fetch_config(&mut self, priority: u16) -> Result<SubdriverArguments> {
-        if let PcidServerTransport::IoUring { ref handle, ref pool } = self.inner {
+    pub async fn fetch_config(&mut self, priority: Priority) -> Result<SubdriverArguments> {
+        if let PcidServerTransport::IoUring { ref handle, ref pool, ring } = self.inner {
             let len = u32::try_from(mem::size_of::<SubdriverArguments>()).expect("SubdriverArguments has got too bloated");
             let alignment = u32::try_from(mem::align_of::<SubdriverArguments>()).expect("unexpected huge alignment for SubdriverArguments");
+
+            log::debug!("LEN {} ALIGN {}", len, alignment);
 
             let mut slice = pool
                 .acquire_borrowed_slice(len, alignment)
@@ -476,7 +491,8 @@ impl PcidServerHandle {
                     PcidClientHandleError::IoUringTransportError(Errno::new(ENOMEM)
                 ))?;
             unsafe {
-                let fut = handle.send(SqEntry64 {
+                let fut = handle.send(ring, SqEntry64 {
+                    opcode: PcidOpcode::FetchConfig as u8,
                     priority,
                     syscall_flags: 1, // version
                     addr: slice.offset().into(),
@@ -486,6 +502,7 @@ impl PcidServerHandle {
                 });
                 // Prevent data race by leaking memory if this future is forgotten using `mem::forget`.
                 fut.guard(&mut slice);
+                log::debug!("Future sent");
 
                 let cqe = fut.await.map_err(PcidClientHandleError::IoUringTransportError)?;
 
@@ -503,8 +520,8 @@ impl PcidServerHandle {
             }
         }
     }
-    pub async fn fetch_all_capabilities(&mut self, priority: u16) -> Result<Vec<Capability>> {
-        if let PcidServerTransport::IoUring { ref handle, ref pool } = self.inner {
+    pub async fn fetch_all_capabilities(&mut self, priority: Priority) -> Result<Vec<Capability>> {
+        if let PcidServerTransport::IoUring { ref handle, ref pool, ring } = self.inner {
             let mut all_caps = Vec::new();
 
             let size: u32 = mem::size_of::<CapabilityRawTagged>().try_into().unwrap();
@@ -514,7 +531,7 @@ impl PcidServerHandle {
 
             loop {
                 let caps_read = unsafe {
-                    let fut = handle.send(SqEntry64 {
+                    let fut = handle.send(ring, SqEntry64 {
                         opcode: PcidOpcode::FetchAllCapabilities as u8,
                         flags: 0,
                         priority,
@@ -551,15 +568,15 @@ impl PcidServerHandle {
             }
         }
     }
-    pub async fn get_capability(&mut self, ty: CapabilityType, priority: u16) -> Result<Option<Capability>> {
-        if let PcidServerTransport::IoUring { ref handle, ref pool } = self.inner {
+    pub async fn get_capability(&mut self, ty: CapabilityType, priority: Priority) -> Result<Option<Capability>> {
+        if let PcidServerTransport::IoUring { ref handle, ref pool, ring } = self.inner {
             let size = mem::size_of::<CapabilityRawTagged>().try_into().unwrap();
             let align = mem::align_of::<CapabilityRawTagged>().try_into().unwrap();
 
             let mut buffer = pool.acquire_borrowed_slice(size, align).ok_or(PcidClientHandleError::IoUringTransportError(Errno::new(ENOMEM)))?;
 
             unsafe {
-                let fut = handle.send(SqEntry64 {
+                let fut = handle.send(ring, SqEntry64 {
                     opcode: PcidOpcode::GetCapability as u8,
                     flags: 0,
                     priority,
@@ -590,8 +607,8 @@ impl PcidServerHandle {
             }
         }
     }
-    pub async fn set_capability(&mut self, info: SetCapabilityInfo, priority: u16) -> Result<()> {
-        if let PcidServerTransport::IoUring { ref handle, ref pool } = self.inner {
+    pub async fn set_capability(&mut self, info: SetCapabilityInfo, priority: Priority) -> Result<()> {
+        if let PcidServerTransport::IoUring { ref handle, ref pool, ring } = self.inner {
             let size = 
                 mem::size_of::<SetCapabilityInfoRaw>().try_into().or(Err(Errno::new(EOVERFLOW))).map_err(PcidClientHandleError::IoUringTransportError)?;
             let align = 
@@ -621,6 +638,7 @@ impl PcidServerHandle {
 
             unsafe {
                 let fut = handle.send(
+                    ring,
                     SqEntry64 {
                         opcode: PcidOpcode::SetCapability as u8,
                         flags: 0,

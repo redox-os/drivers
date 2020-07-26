@@ -6,6 +6,8 @@ use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
 use std::{slice, usize};
 
+use syscall::io_uring::v1::Priority;
+
 use pcid_interface::{PciBar, PciFunction, PcidServerHandle};
 use pcid_interface::helpers::{irq as irq_helpers, Bar, AllocatedBars};
 
@@ -33,7 +35,7 @@ async fn get_int_method(
 ) -> Result<(InterruptMethod, InterruptSources)> {
     log::trace!("Begin get_int_method");
 
-    let capabilities = pcid_handle.fetch_all_capabilities(0).await.expect("nvmed: failed to fetch all PCI(e) capabilities from pcid");
+    let capabilities = pcid_handle.fetch_all_capabilities(Priority::default()).await.expect("nvmed: failed to fetch all PCI(e) capabilities from pcid");
 
     // Cloning here is cheap because NVME doesn't use any function specific caps.
     let msi_cap = capabilities.iter().find_map(|cap| cap.as_pci()?.as_msi()).cloned();
@@ -57,7 +59,7 @@ async fn get_int_method(
             flags: pcid_interface::MsiXSetCapabilityInfoFlags::all().bits(),
             enabled: true.into(),
             function_mask: false.into(),
-        }), 0);
+        }), Priority::default());
         capability_struct.set_msix_enabled(true); // only affects our local mirror of the cap
 
         let (msix_vector_number, irq_handle) = {
@@ -121,7 +123,7 @@ async fn get_int_method(
                 message_data: msg_data,
                 multi_message_enable: 0, // enable 2^0=1 vectors
                 mask_bits: 0, // omitted due to lack of flag
-            }), 0u16).await.expect("nvmed: failed to set MSI registers");
+            }), Priority::default()).await.expect("nvmed: failed to set MSI registers");
 
             irq_handle
         };
@@ -197,7 +199,7 @@ fn main() {
     let mut pcid_handle =
         PcidServerHandle::connect_using_pipes_from_env_fds().expect("nvmed: failed to setup channel to pcid");
     let pci_config = futures::executor::block_on(pcid_handle
-        .fetch_config(0u16))
+        .fetch_config(Priority::default()))
         .expect("nvmed: failed to fetch config");
 
     let bar = match pci_config.func.bars[0] {

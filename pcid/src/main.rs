@@ -10,7 +10,7 @@ use std::{env, mem, slice, thread};
 use syscall::{
     O_CREAT, O_EXCL, O_RDWR,
 
-    ENOMSG,
+    EINTR, ENOMSG,
 
     io_uring::{
         v1,
@@ -30,7 +30,10 @@ use redox_iou::reactor::ReactorBuilder;
 use redox_log::{OutputBuilder, RedoxLogger};
 
 mod config;
+
+#[allow(dead_code)]
 mod driver_interface;
+
 mod pci;
 mod pcie;
 mod scheme;
@@ -42,7 +45,7 @@ use crate::pcie::Pcie;
 use crate::pcie::cap::{self as pciecap, Capability as PcieCapability};
 use crate::scheme::PcidScheme;
 
-// TODO: Move this helper trait to syscall.
+// TODO: Move this helper trait to redox-log.
 trait ResultExt where Self: Sized {
     fn and_log_err_as_error(self, msg: &str) -> Self;
     fn and_log_err_as_warn(self, msg: &str) -> Self;
@@ -346,7 +349,7 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, bus_num: u8,
 
             // Set IRQ line to 9 if not set
             let mut irq;
-            let mut interrupt_pin;
+            let interrupt_pin;
 
             unsafe {
                 let mut data = pci.read(bus_num, dev_num, func_num, 0x3C);
@@ -528,13 +531,14 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, bus_num: u8,
 
 fn setup_logging() -> Option<&'static RedoxLogger> {
     let mut logger = RedoxLogger::new()
-        .with_output(
+        .with_process_name("pcid".into())
+        /*.with_output(
             OutputBuilder::stderr()
                 .with_ansi_escape_codes()
                 .with_filter(log::LevelFilter::Info)
                 .flush_on_newline(true)
                 .build()
-         )
+         )*/
         .with_output(
             OutputBuilder::with_endpoint(std::fs::OpenOptions::new()
                 .create_new(false)
@@ -581,7 +585,7 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
     }
 }
 
-fn setup_scheme() -> syscall::Result<()> {
+fn setup_scheme(schemefd: usize) -> syscall::Result<()> {
     //
     // We give pcid a generous amount of resources here, since it may communicate with lots of
     // different drivers, especially when it comes to interrupts. INTx# and MSI-X interrupts tend
@@ -615,23 +619,34 @@ fn setup_scheme() -> syscall::Result<()> {
         reactor_builder.with_primary_instance(consumer_instance).build()
     };
     let executor = Executor::with_reactor(reactor);
+    let spawn_handle = executor.spawn_handle();
     let handle = executor.reactor_handle().expect("expected the executor to have an integrated reactor");
+    let reactor_handle = handle.clone();
 
     const SIMULTANEOUS_PACKET_COUNT: usize = 64;
 
-    executor.run(async move {
-        let socket_fd = handle.open_static(":pci", (O_CREAT | O_EXCL | O_RDWR) as u64).await.and_log_err_as_error("failed to open scheme socket")?;
+    let main_ring = handle.reactor().primary_instance();
 
-        let scheme = PcidScheme::new();
+    let scheme_fut = async move {
+        let scheme = PcidScheme::new(spawn_handle, reactor_handle);
 
         log::info!("`pci:` scheme initialized, listening for requests");
 
         let mut packets = [Packet::default(); SIMULTANEOUS_PACKET_COUNT];
 
         'handle_scheme: loop {
-            let bytes_read = unsafe {
-                let packet_buf = slice::from_raw_parts_mut(packets.as_ptr() as *mut u8, packets.len() * mem::size_of::<Packet>());
-                handle.read(socket_fd, packet_buf).await.and_log_err_as_error("failed to read from scheme socket")?
+            let bytes_read = 'retry_reading: loop {
+                unsafe {
+                    let packet_buf = slice::from_raw_parts_mut(packets.as_ptr() as *mut u8, packets.len() * mem::size_of::<Packet>());
+                    match handle.read(main_ring, schemefd, packet_buf).await {
+                        Ok(count) => break 'retry_reading count,
+                        Err(error) if error == Error::new(EINTR) => continue 'retry_reading,
+                        Err(other) => {
+                            log::error!("Failed to read bytes from scheme socket, closing scheme: {}", other);
+                            break 'handle_scheme;
+                        }
+                    }
+                }
             };
 
             if bytes_read == 0 {
@@ -654,9 +669,18 @@ fn setup_scheme() -> syscall::Result<()> {
                 }
             }
 
-            let bytes_written = unsafe {
-                let packet_buf = slice::from_raw_parts(packets.as_ptr() as *const u8, packets_read * mem::size_of::<Packet>());
-                handle.write(socket_fd, packet_buf).await.and_log_err_as_error("failed to write to scheme socket")?
+            let bytes_written = 'retry_writing: loop {
+                unsafe {
+                    let packet_buf = slice::from_raw_parts(packets.as_ptr() as *const u8, packets_read * mem::size_of::<Packet>());
+                    match handle.write(main_ring, schemefd, packet_buf).await {
+                        Ok(count) => break 'retry_writing count,
+                        Err(error) if error == Error::new(EINTR) => continue 'retry_writing,
+                        Err(other) => {
+                            log::warn!("Failed to write to scheme socket, closing scheme: {}", other);
+                            break 'handle_scheme;
+                        }
+                    }
+                }
             };
             if bytes_written == 0 {
                 log::warn!("Wrote zero bytes to scheme socket, thus closing scheme...");
@@ -667,7 +691,8 @@ fn setup_scheme() -> syscall::Result<()> {
 
         unsafe {
             handle.close(
-                socket_fd,
+                main_ring,
+                schemefd,
 
                 // unused since a scheme socket ain't a disk
                 true
@@ -675,11 +700,13 @@ fn setup_scheme() -> syscall::Result<()> {
         }.await.and_log_err_as_error("failed to close scheme socket")?;
 
         Ok(())
-    })
+    };
+
+    executor.run(scheme_fut)
 }
 
-fn run_scheme() -> syscall::Result<()> {
-    match setup_scheme() {
+fn run_scheme(schemefd: usize) -> syscall::Result<()> {
+    match setup_scheme(schemefd) {
         Ok(()) => Ok(()),
         Err(error) => {
             error!("`pci:` failed to setup: \"{}\"", error);
@@ -765,19 +792,20 @@ fn main() {
         }
     }
 
-    if unsafe { syscall::clone(CloneFlags::empty()).expect("pcid: failed to fork") } != 0 {
-        log::debug!("pcid forked, exiting parent");
+    if unsafe { syscall::clone(CloneFlags::empty()) }.expect("pcid: failed to fork") == 0 {
+        let schemefd = syscall::open(":pci", O_CREAT | O_EXCL | O_RDWR).expect("pcid: failed to open scheme socket");
+
+        match run_scheme(schemefd) {
+            Ok(()) => info!("`pci:` scheme unmounted"),
+            Err(error) => error!("`pci:` scheme failed: \"{}\"", error),
+        }
         return;
     }
 
-    match run_scheme() {
-        Ok(()) => info!("`pci:` scheme unmounted"),
-        Err(error) => error!("`pci:` scheme failed: \"{}\"", error),
-    }
-
-    info!("Exiting pcid");
+    info!("pcid forked, about to exit parent");
 
     for thread in state.threads.lock().unwrap().drain(..) {
         thread.join().unwrap();
     }
+    info!("exited pcid");
 }

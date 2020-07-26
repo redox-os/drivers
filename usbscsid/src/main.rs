@@ -1,11 +1,10 @@
-use std::env;
-use std::mem;
 use std::fs::File;
 use std::io::prelude::*;
 use std::os::unix::io::{FromRawFd, RawFd};
+use std::{env, mem};
 
 use syscall::{CloneFlags, Map, MapFlags, Event, EventFlags, Packet, SchemeMut};
-use syscall::io_uring::{self, IoUringSqeFlags};
+use syscall::io_uring::{self, v1::{IoUringSqeFlags, Priority}};
 
 use redox_iou::instance::ConsumerInstanceBuilder;
 use xhcid_interface::{ConfigureEndpointsReq, DeviceReqData, XhciClientHandle};
@@ -56,7 +55,7 @@ fn main() {
         .attach_to_kernel()
         .expect("failed to attach event queue to kernel");
 
-    event_queue_ioring_instance.sender_mut().as_64_mut().unwrap().try_send(unsafe { io_uring::SqEntry64::new(IoUringSqeFlags::empty(), 0, 0xDA7A).open(b"event:", (syscall::O_CREAT | syscall::O_RDWR) as u64) }).expect("usbscsid: failed to send event queue creation to kernel");
+    event_queue_ioring_instance.sender_mut().as_64_mut().unwrap().try_send(unsafe { io_uring::SqEntry64::new(IoUringSqeFlags::empty(), Priority::default(), 0xDA7A).open(b"event:", (syscall::O_CREAT | syscall::O_RDWR) as u64) }).expect("usbscsid: failed to send event queue creation to kernel");
     event_queue_ioring_instance.wait(1, io_uring::IoUringEnterFlags::empty()).expect("usbscsid: failed to wait on io_uring");
 
     // TODO: Proper async/await framework...
@@ -79,7 +78,7 @@ fn main() {
         sender.spin_on_send(io_uring::SqEntry64 {
             opcode: 1,
             flags: 0,
-            priority: 0,
+            priority: Priority::default(),
             syscall_flags: 0,
             fd: 42,
             user_data: 1337,
@@ -90,9 +89,9 @@ fn main() {
             additional2: 0,
         });
 
-        event_queue_ioring_instance.sender_mut().as_64_mut().unwrap().try_send(io_uring::SqEntry64::new(io_uring::IoUringSqeFlags::empty(), 0, 0).write(0, &Event {
+        event_queue_ioring_instance.sender_mut().as_64_mut().unwrap().try_send(io_uring::SqEntry64::new(io_uring::IoUringSqeFlags::empty(), Priority::default(), 0).write(0, &Event {
             id: consumer_instance.ringfd(),
-            flags: EventFlags::EVENT_URING,
+            flags: EventFlags::EVENT_IO_URING,
             data: 0,
         })).expect("usbscsid: failed to send event queue submission to kernel");
 

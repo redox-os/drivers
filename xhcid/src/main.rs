@@ -8,6 +8,7 @@ use std::{mem, slice, thread};
 use syscall::data::Packet;
 use syscall::flag::{CloneFlags, O_RDWR, O_CLOEXEC, EVENT_READ};
 use syscall::io::Io;
+use syscall::io_uring::v1::Priority;
 
 use pcid_interface::{MsiSetCapabilityInfo, MsiSetCapabilityInfoFlags, MsiXSetCapabilityInfo, MsiXSetCapabilityInfoFlags, PcidServerHandle, PciFunction, SetCapabilityInfo};
 use pcid_interface::msi::MsixTableEntry;
@@ -25,6 +26,7 @@ use crate::xhci::{InterruptMethod, InterruptSources, ForceSendFuture, Xhci};
 // Declare as pub so that no warnings appear due to parts of the interface code not being used by
 // the driver. Since there's also a dedicated crate for the driver interface, those warnings don't
 // mean anything.
+#[allow(dead_code)]
 pub mod driver_interface;
 
 mod usb;
@@ -32,10 +34,24 @@ mod xhci;
 
 fn setup_logging() -> Option<&'static RedoxLogger> {
     let mut logger = RedoxLogger::new()
+        .with_process_name("xhcid".into())
         .with_output(
             OutputBuilder::stderr()
                 .with_filter(log::LevelFilter::Debug) // limit global output to important info
                 .with_ansi_escape_codes()
+                .flush_on_newline(true)
+                .build()
+        )
+        .with_output(
+            OutputBuilder::with_endpoint(std::fs::OpenOptions::new()
+                .create_new(false)
+                .read(false)
+                .write(true)
+                .open("debug:").unwrap()
+            )
+                .with_ansi_escape_codes()
+                //.with_filter(log::LevelFilter::Trace)
+                .with_filter(log::LevelFilter::Debug)
                 .flush_on_newline(true)
                 .build()
         );
@@ -75,7 +91,7 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
 }
 
 async fn get_int_method(func: &PciFunction, pcid_handle: &mut PcidServerHandle, allocated_bars: &AllocatedBars) -> (InterruptMethod, Option<InterruptSources>) {
-    let all_pci_caps = pcid_handle.fetch_all_capabilities(0u16).await.expect("xhcid: failed to fetch pci capabilities");
+    let all_pci_caps = pcid_handle.fetch_all_capabilities(Priority::default()).await.expect("xhcid: failed to fetch pci capabilities");
     info!("XHCI PCI FEATURES: {:?}", all_pci_caps);
 
     let msi_cap = all_pci_caps.iter().find_map(|cap| cap.as_pci()?.as_msi());
@@ -115,7 +131,7 @@ async fn get_int_method(func: &PciFunction, pcid_handle: &mut PcidServerHandle, 
             flags: MsiXSetCapabilityInfoFlags::all().bits(),
             enabled: true.into(),
             function_mask: false.into(),
-        }), 0u16).await.expect("xhcid: failed to enable MSI-X");
+        }), Priority::default()).await.expect("xhcid: failed to enable MSI-X");
 
         // update our local mirror
         info.capability.set_msix_enabled(true);
@@ -148,7 +164,7 @@ async fn get_int_method(func: &PciFunction, pcid_handle: &mut PcidServerHandle, 
             message_data: msg_data as u16,
             mask_bits: 0, // omitted due to lack of flag
         };
-        pcid_handle.set_capability(SetCapabilityInfo::Msi(set_cap_info), 0u16).await.expect("xhcid: failed to set capability");
+        pcid_handle.set_capability(SetCapabilityInfo::Msi(set_cap_info), Priority::default()).await.expect("xhcid: failed to set capability");
         info!("Enabled MSI");
 
         (InterruptMethod::Msi(Mutex::new(capability)), Some(InterruptSources::Msi(vec!(interrupt_handle))))
@@ -166,11 +182,32 @@ fn main() {
     if unsafe { syscall::clone(CloneFlags::empty()).unwrap() } != 0 {
         return;
     }
+    std::thread::sleep(std::time::Duration::from_secs(2));
 
     let _logger_ref = setup_logging();
 
-    let mut pcid_handle = PcidServerHandle::connect_using_pipes_from_env_fds().expect("xhcid: failed to setup channel to pcid");
-    let pci_config = futures::executor::block_on(pcid_handle.fetch_config(0)).expect("xhcid: failed to fetch config");
+    let main_instance = ConsumerInstanceBuilder::new()
+        .with_submission_entry_count(64)   // much smaller, only a single page
+        .with_completion_entry_count(1024) // 16384 bytes for completion entries, with 16 byte entry size
+        .create_instance()
+        .expect("xhcid: failed to create event queue io_uring instance")
+        .map_all()
+        .expect("xhcid: failed to map event io_uring buffers")
+        .attach_to_kernel()
+        .expect("xhcid: failed to attach event queue to kernel");
+
+    let reactor = redox_iou::reactor::ReactorBuilder::new()
+        .with_primary_instance(main_instance);
+    let reactor = unsafe { reactor.assume_trusted_instance() };
+    let reactor = reactor.build();
+
+    let executor = redox_iou::executor::Executor::with_reactor(Arc::clone(&reactor));
+
+    log::debug!("About to connect,..");
+    let mut pcid_handle = executor.run(PcidServerHandle::connect_using_iouring(reactor.handle())).expect("xhcid: failed to setup channel to pcid");
+    log::debug!("Connected");
+    log::debug!("Fetching config...");
+    let pci_config = executor.run(pcid_handle.fetch_config(Priority::default())).expect("xhcid: failed to fetch config");
     info!("XHCI PCI CONFIG: {:?}", pci_config);
 
     let bar = pci_config.func.bars[0];
@@ -206,16 +243,6 @@ fn main() {
     });
 
     let (interrupt_method, interrupt_sources) = futures::executor::block_on(get_int_method(&pci_config.func, &mut pcid_handle, &*allocated_bars));
-
-    let event_queue_ioring_instance = ConsumerInstanceBuilder::new()
-        .with_submission_entry_count(64)   // much smaller, only a single page
-        .with_completion_entry_count(1024) // 16384 bytes for completion entries, with 16 byte entry size
-        .create_instance()
-        .expect("xhcid: failed to create event queue io_uring instance")
-        .map_all()
-        .expect("xhcid: failed to map event io_uring buffers")
-        .attach_to_kernel()
-        .expect("xhcid: failed to attach event queue to kernel");
 
     let event_queue_fd = syscall::open("event:", O_RDWR | O_CLOEXEC).expect("xhcid: failed to create main event queue");
     let mut event_queue = unsafe { File::from_raw_fd(event_queue_fd as RawFd) };
