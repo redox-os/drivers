@@ -1,26 +1,19 @@
 #![feature(llvm_asm)]
 
+use std::collections::BTreeMap;
 use std::fs::{File, metadata, read_dir};
 use std::io::prelude::*;
 use std::os::unix::io::{FromRawFd, RawFd};
 use std::process::Command;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::{env, mem, slice, thread};
 
-use syscall::{
-    O_CREAT, O_EXCL, O_RDWR,
+use syscall::data::Packet;
+use syscall::error::EINTR;
+use syscall::error::Error;
+use syscall::flag::{O_CREAT, O_EXCL, O_RDWR};
+use syscall::flag::CloneFlags;
 
-    EINTR, ENOMSG,
-
-    io_uring::{
-        v1,
-        IoUringCqeFlags, IoUringSqeFlags, IoUringEnterFlags,
-
-        SqEntry64,
-        CqEntry64,
-    },
-    CloneFlags, Error, EventFlags, Packet,
-};
 use syscall::scheme::Scheme as _;
 
 use log::{error, info, warn, trace};
@@ -39,6 +32,7 @@ mod pcie;
 mod scheme;
 
 use crate::config::Config;
+use crate::driver_interface::PciAddress32;
 use crate::pci::{CfgAccess, Pci, PciIter, PciBar, PciBus, PciClass, PciDev, PciFunc, PciHeader, PciHeaderError, PciHeaderType};
 use crate::pci::cap::{self as pcicap, Capability as PciCapability};
 use crate::pcie::Pcie;
@@ -69,14 +63,23 @@ where
     }
 }
 
+pub struct Func {
+    header: PciHeader,
+    pci_capabilities: Vec<(u8, PciCapability)>,
+    pcie_capabilities: Vec<(u16, PcieCapability)>,
+}
+
+impl Func {
+}
+
+pub type DeviceTree = BTreeMap<PciAddress32, Arc<RwLock<Func>>>;
+
 pub struct DriverHandler {
     config: config::DriverConfig,
     bus_num: u8,
     dev_num: u8,
     func_num: u8,
-    header: PciHeader,
-    pci_capabilities: Vec<(u8, PciCapability)>,
-    pcie_capabilities: Vec<(u16, PcieCapability)>,
+    func: Func,
 
     state: Arc<State>,
 }
@@ -109,14 +112,14 @@ impl DriverHandler {
             }
             PcidClientRequest::GetCapabilities => {
                 PcidClientResponse::AllCapabilities(
-                    self.pci_capabilities.iter().map(|(_, capability)| Capability::Pci(capability.clone()))
-                        .chain(self.pcie_capabilities.iter().map(|(_, capability)| Capability::Pcie(capability.clone())))
+                    self.func.pci_capabilities.iter().map(|(_, capability)| Capability::Pci(capability.clone()))
+                        .chain(self.func.pcie_capabilities.iter().map(|(_, capability)| Capability::Pcie(capability.clone())))
                         .collect()
                 )
             }
             PcidClientRequest::GetCapability(ty) => PcidClientResponse::Capability(match ty {
-                CapabilityType::Msi => self.pci_capabilities.iter().find_map(|(_, capability)| capability.as_msi().copied()).map(PciCapability::Msi).map(Capability::Pci),
-                CapabilityType::MsiX => self.pci_capabilities.iter().find_map(|(_, capability)| capability.as_msix().copied()).map(PciCapability::MsiX).map(Capability::Pci),
+                CapabilityType::Msi => self.func.pci_capabilities.iter().find_map(|(_, capability)| capability.as_msi().copied()).map(PciCapability::Msi).map(Capability::Pci),
+                CapabilityType::MsiX => self.func.pci_capabilities.iter().find_map(|(_, capability)| capability.as_msix().copied()).map(PciCapability::MsiX).map(Capability::Pci),
                 // TODO
                 other => return PcidClientResponse::Error(PcidServerResponseError::NonexistentCapability(other)),
             }),
@@ -124,7 +127,7 @@ impl DriverHandler {
                 let mut msi_enabled = false;
                 let mut msix_enabled = false;
 
-                for cap in self.pci_capabilities.iter() {
+                for cap in self.func.pci_capabilities.iter() {
                     match cap {
                         &(_, PciCapability::Msi(ref cap)) => msi_enabled = cap.enabled(),
                         &(_, PciCapability::MsiX(ref cap)) => msix_enabled = cap.msix_enabled(),
@@ -133,7 +136,7 @@ impl DriverHandler {
                 }
 
                 match info_to_set {
-                    SetCapabilityInfo::Msi(info_to_set) => if let Some((offset, info)) = self.pci_capabilities.iter_mut().find_map(|(offset, capability)| Some((*offset, capability.as_msi_mut()?))) {
+                    SetCapabilityInfo::Msi(info_to_set) => if let Some((offset, info)) = self.func.pci_capabilities.iter_mut().find_map(|(offset, capability)| Some((*offset, capability.as_msi_mut()?))) {
                         let info_to_set_flags = match MsiSetCapabilityInfoFlags::from_bits(info_to_set.flags) {
                             Some(f) => f,
                             None => return PcidClientResponse::Error(PcidServerResponseError::InvalidBitPattern),
@@ -185,7 +188,7 @@ impl DriverHandler {
                     } else {
                         return PcidClientResponse::Error(PcidServerResponseError::NonexistentCapability(CapabilityType::Msi));
                     }
-                    SetCapabilityInfo::MsiX(MsiXSetCapabilityInfo { function_mask, enabled, flags }) => if let Some((offset, info)) = self.pci_capabilities.iter_mut().find_map(|(offset, capability)| Some((*offset, capability.as_msix_mut()?))) {
+                    SetCapabilityInfo::MsiX(MsiXSetCapabilityInfo { function_mask, enabled, flags }) => if let Some((offset, info)) = self.func.pci_capabilities.iter_mut().find_map(|(offset, capability)| Some((*offset, capability.as_msix_mut()?))) {
                         let mut write = false;
 
                         let flags = match MsiXSetCapabilityInfoFlags::from_bits(flags) {

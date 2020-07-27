@@ -670,9 +670,64 @@ impl PcidServerHandle {
     }
 }
 
+/// A 32-bit PCI function address.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct PciAddress32 {
+    /// The PCI Segment Group, as described by the "PCI Firmware Specification rev 3.0". TL;DR it's
+    /// a PCIe-specific extension to the regular 8-bits bus numbers.
+    pub seg_group: u16,
+    /// The bus number, which according to the "PCI Express Base Specification rev 3.0", is 1-8
+    /// bits wide.
+    pub bus: u8,
+    /// The device and function number, which according to the aforementioned PCIe spec (ECAM
+    /// section), is five bits wide at the moment. The device number is bits 7:5 of this field,
+    /// whereas the function number is bits 4:0.
+    pub dev_and_fun: u8,
+}
+impl PciAddress32 {
+    pub fn seg_group(&self) -> u16 {
+        self.seg_group
+    }
+    pub fn bus(&self) -> u8 {
+        self.bus
+    }
+    pub fn device(&self) -> u8 {
+        (self.dev_and_fun & 0xE0) >> 5
+    }
+    pub fn function(&self) -> u8 {
+        self.dev_and_fun & 0x7F
+    }
+}
+unsafe impl plain::Plain for PciAddress32 {}
+
+/// A 64-bit PCI function address, that apart from the regular [`PciAddress32`], only contains an
+/// extra field if PCI addresses were to get bigger in the future (or if they already have in PCI
+/// 4.0).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct PciAddress64 {
+    /// The lower 32 bits of the `fd` field of the SQE, that provides exactly the number of bits
+    /// required by PCIe 3.0 to store a full PCI function address.
+    pub base: PciAddress32,
+    /// Used to store 32 additional bits of information, to support future versions of PCI or
+    /// similar that could use larger addresses, or for vendor-specific information.
+    pub extra: u32,
+}
+unsafe impl plain::Plain for PciAddress64 {}
+
+pub const PCID_OPCODE_FLAG_DEF_DEV: u32 = 1 << 31;
+
+/// The producer-specific opcodes that `pcid` uses for low-overhead IPC.
+///
+/// The `syscall_flags` field is currently always the version (`1` at the moment). The `fd` field
+/// is mainly for specifying addresses to PCI functions, since pcid cannot immediately know when it
+/// receives an io_uring, which device the IPC will actually be targeting.
+// TODO: Get a proper permission system to limit the information that a subdriver can receive about
+// other devices.
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-enum PcidOpcode {
+pub enum PcidOpcode {
     /// Fetch the PCI config, containing all necessary subdriver arguments. This information will
     /// be written to a [`SubdriverArguments` ]struct within a shared buffer pool. Uses all implicit
     /// fields.
@@ -684,8 +739,8 @@ enum PcidOpcode {
     /// | syscall_flags  | the version of this API to use (currently 1)              | BOTH |
     /// | addr           | not used                                                  | BOTH |
     /// | len            | the length of that struct                                 | BOTH |
-    /// | fd             | the index of the shared buffer pool                       | BOTH |
-    /// | offset         | the offset within that buffer pool, to write into         | BOTH |
+    /// | fd             | the address of the PCI function                           | BOTH |
+    /// | offset         | the offset within the buffer pool, to write into          | BOTH |
     /// | additional1    | not used                                                  | 64   |
     /// | additional2    | not used                                                  | 64   |
     ///
@@ -713,7 +768,7 @@ enum PcidOpcode {
     /// | syscall_flags  | the version of this API to use (currently 1)              | BOTH |
     /// | addr           | the start index of the capabilities to read               | BOTH |
     /// | len            | the number of capabilities to read                        | BOTH |
-    /// | fd             | not used                                                  | BOTH |
+    /// | fd             | the address of the PCI function                           | BOTH |
     /// | offset         | the offset within that buffer pool, to write into         | BOTH |
     /// | additional1    | not used                                                  | 64   |
     /// | additional2    | not used                                                  | 64   |
@@ -732,8 +787,8 @@ enum PcidOpcode {
     ///
     FetchAllCapabilities,
 
-    /// Get the current static and runtime parameters of a specific capability. TODO: struct to
-    /// use for this. Uses all implicit fields.
+    /// Get the current static and runtime parameters of a specific capability. Uses all implicit
+    /// fields.
     ///
     /// # Parameters
     ///
@@ -742,7 +797,7 @@ enum PcidOpcode {
     /// | syscall_flags  | the version of this API to use (currently 1)              | BOTH |
     /// | addr           | the index of the capability to read                       | BOTH |
     /// | len            | the size of the buffer to write the capability into       | BOTH |
-    /// | fd             | not used                                                  | BOTH |
+    /// | fd             | the offset of the PCI function                            | BOTH |
     /// | offset         | the offset within that buffer pool, to write into         | BOTH |
     /// | additional1    | not used                                                  | 64   |
     /// | additional2    | not used                                                  | 64   |
@@ -761,8 +816,7 @@ enum PcidOpcode {
     ///
     GetCapability,
 
-    /// Set capability parameters for a specific capability. TODO: struct to use. Uses all implicit
-    /// fields.
+    /// Set capability parameters for a specific capability. Uses all implicit fields.
     ///
     /// # Parameters
     ///
@@ -771,7 +825,7 @@ enum PcidOpcode {
     /// | syscall_flags  | the version of this API to use (currently 1)              | BOTH |
     /// | addr           | the index of the capability to modify                     | BOTH |
     /// | len            | the size of the buffer to modify the capability from      | BOTH |
-    /// | fd             | not used                                                  | BOTH |
+    /// | fd             | the address of the PCI function                           | BOTH |
     /// | offset         | the offset within that buffer pool, to write into         | BOTH |
     /// | additional1    | not used                                                  | 64   |
     /// | additional2    | not used                                                  | 64   |
@@ -789,4 +843,20 @@ enum PcidOpcode {
     /// * `EBADMSG` - the set capability data has malformed, or used an unsupported capability ID.
     ///
     SetCapability,
+}
+
+impl PcidOpcode {
+    pub fn from_raw(raw: u8) -> Option<Self> {
+        Some(if raw == Self::FetchConfig as u8 {
+            Self::FetchConfig
+        } else if raw == Self::FetchAllCapabilities as u8 {
+            Self::FetchAllCapabilities
+        } else if raw == Self::GetCapability as u8 {
+            Self::GetCapability
+        } else if raw == Self::SetCapability as u8 {
+            Self::SetCapability
+        } else {
+            return None
+        })
+    }
 }
