@@ -686,17 +686,54 @@ pub struct PciAddress32 {
     pub dev_and_fun: u8,
 }
 impl PciAddress32 {
-    pub fn seg_group(&self) -> u16 {
+    pub const fn seg_group(&self) -> u16 {
         self.seg_group
     }
-    pub fn bus(&self) -> u8 {
+    pub const fn bus(&self) -> u8 {
         self.bus
     }
-    pub fn device(&self) -> u8 {
+    pub const fn device(&self) -> u8 {
         (self.dev_and_fun & 0xE0) >> 5
     }
-    pub fn function(&self) -> u8 {
+    pub const fn function(&self) -> u8 {
         self.dev_and_fun & 0x7F
+    }
+
+    pub fn set_seg_group(&mut self, group: u16) {
+        self.seg_group = group;
+    }
+    pub fn set_bus(&mut self, bus: u8) {
+        self.bus = bus;
+    }
+    pub fn set_device(&mut self, dev: u8) {
+        assert_eq!((dev << 5) & 0xE0, (dev << 5), "device field is too large");
+        self.dev_and_fun &= 0x7F;
+        self.dev_and_fun |= dev << 5;
+    }
+    pub fn set_function(&mut self, func: u8) {
+        assert_eq!(func & 0x7F, func, "function field is too large");
+        self.dev_and_fun &= 0xE0;
+        self.dev_and_fun |= func;
+    }
+    pub const fn with_seg_group(self, seg_group: u16) -> Self {
+        Self {
+            seg_group,
+            ..self
+        }
+    }
+    pub const fn with_bus(self, bus: u8) -> Self {
+        Self {
+            bus,
+            ..self
+        }
+    }
+    pub fn with_device(mut self, dev: u8) -> Self {
+        self.set_device(dev);
+        self
+    }
+    pub fn with_function(mut self, func: u8) -> Self {
+        self.set_function(func);
+        self
     }
 }
 unsafe impl plain::Plain for PciAddress32 {}

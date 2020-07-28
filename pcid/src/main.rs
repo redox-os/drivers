@@ -1,6 +1,6 @@
-#![feature(llvm_asm)]
+#![feature(get_mut_unchecked, llvm_asm)]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{File, metadata, read_dir};
 use std::io::prelude::*;
 use std::os::unix::io::{FromRawFd, RawFd};
@@ -16,6 +16,7 @@ use syscall::flag::CloneFlags;
 
 use syscall::scheme::Scheme as _;
 
+use either::*;
 use log::{error, info, warn, trace};
 use redox_iou::executor::Executor;
 use redox_iou::instance::ConsumerInstanceBuilder;
@@ -69,17 +70,19 @@ pub struct Func {
     pcie_capabilities: Vec<(u16, PcieCapability)>,
 }
 
-impl Func {
+pub struct DeviceTree {
+    pub functions: BTreeMap<PciAddress32, Arc<RwLock<Func>>>,
+    pub devices: BTreeSet<(u16, u8, u8)>,
+    pub busses: BTreeSet<(u16, u8)>,
+    pub uses_seg_groups: bool,
 }
-
-pub type DeviceTree = BTreeMap<PciAddress32, Arc<RwLock<Func>>>;
 
 pub struct DriverHandler {
     config: config::DriverConfig,
     bus_num: u8,
     dev_num: u8,
     func_num: u8,
-    func: Func,
+    func: Arc<RwLock<Func>>,
 
     state: Arc<State>,
 }
@@ -106,20 +109,23 @@ impl DriverHandler {
     fn respond(&mut self, request: driver_interface::PcidClientRequest, args: &driver_interface::SubdriverArguments) -> driver_interface::PcidClientResponse {
         use driver_interface::*;
 
+
         match request {
             PcidClientRequest::RequestConfig => {
                 PcidClientResponse::Config(args.clone())
             }
             PcidClientRequest::GetCapabilities => {
+                let func = self.func.read().unwrap();
+
                 PcidClientResponse::AllCapabilities(
-                    self.func.pci_capabilities.iter().map(|(_, capability)| Capability::Pci(capability.clone()))
-                        .chain(self.func.pcie_capabilities.iter().map(|(_, capability)| Capability::Pcie(capability.clone())))
+                    func.pci_capabilities.iter().map(|(_, capability)| Capability::Pci(capability.clone()))
+                        .chain(func.pcie_capabilities.iter().map(|(_, capability)| Capability::Pcie(capability.clone())))
                         .collect()
                 )
             }
             PcidClientRequest::GetCapability(ty) => PcidClientResponse::Capability(match ty {
-                CapabilityType::Msi => self.func.pci_capabilities.iter().find_map(|(_, capability)| capability.as_msi().copied()).map(PciCapability::Msi).map(Capability::Pci),
-                CapabilityType::MsiX => self.func.pci_capabilities.iter().find_map(|(_, capability)| capability.as_msix().copied()).map(PciCapability::MsiX).map(Capability::Pci),
+                CapabilityType::Msi => self.func.read().unwrap().pci_capabilities.iter().find_map(|(_, capability)| capability.as_msi().copied()).map(PciCapability::Msi).map(Capability::Pci),
+                CapabilityType::MsiX => self.func.read().unwrap().pci_capabilities.iter().find_map(|(_, capability)| capability.as_msix().copied()).map(PciCapability::MsiX).map(Capability::Pci),
                 // TODO
                 other => return PcidClientResponse::Error(PcidServerResponseError::NonexistentCapability(other)),
             }),
@@ -127,7 +133,7 @@ impl DriverHandler {
                 let mut msi_enabled = false;
                 let mut msix_enabled = false;
 
-                for cap in self.func.pci_capabilities.iter() {
+                for cap in self.func.read().unwrap().pci_capabilities.iter() {
                     match cap {
                         &(_, PciCapability::Msi(ref cap)) => msi_enabled = cap.enabled(),
                         &(_, PciCapability::MsiX(ref cap)) => msix_enabled = cap.msix_enabled(),
@@ -136,7 +142,7 @@ impl DriverHandler {
                 }
 
                 match info_to_set {
-                    SetCapabilityInfo::Msi(info_to_set) => if let Some((offset, info)) = self.func.pci_capabilities.iter_mut().find_map(|(offset, capability)| Some((*offset, capability.as_msi_mut()?))) {
+                    SetCapabilityInfo::Msi(info_to_set) => if let Some((offset, info)) = self.func.write().unwrap().pci_capabilities.iter_mut().find_map(|(offset, capability)| Some((*offset, capability.as_msi_mut()?))) {
                         let info_to_set_flags = match MsiSetCapabilityInfoFlags::from_bits(info_to_set.flags) {
                             Some(f) => f,
                             None => return PcidClientResponse::Error(PcidServerResponseError::InvalidBitPattern),
@@ -188,7 +194,7 @@ impl DriverHandler {
                     } else {
                         return PcidClientResponse::Error(PcidServerResponseError::NonexistentCapability(CapabilityType::Msi));
                     }
-                    SetCapabilityInfo::MsiX(MsiXSetCapabilityInfo { function_mask, enabled, flags }) => if let Some((offset, info)) = self.func.pci_capabilities.iter_mut().find_map(|(offset, capability)| Some((*offset, capability.as_msix_mut()?))) {
+                    SetCapabilityInfo::MsiX(MsiXSetCapabilityInfo { function_mask, enabled, flags }) => if let Some((offset, info)) = self.func.write().unwrap().pci_capabilities.iter_mut().find_map(|(offset, capability)| Some((*offset, capability.as_msix_mut()?))) {
                         let mut write = false;
 
                         let flags = match MsiXSetCapabilityInfoFlags::from_bits(flags) {
@@ -248,7 +254,7 @@ impl State {
     }
 }
 
-fn handle_parsed_header(state: Arc<State>, config: &Config, bus_num: u8,
+fn handle_parsed_header(state: Arc<State>, tree: &mut DeviceTree, config: &Config, bus_num: u8,
                         dev_num: u8, func_num: u8, header: PciHeader) {
     let pci = state.preferred_cfg_access();
 
@@ -505,6 +511,23 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, bus_num: u8,
                     (None, None, vec! [])
                 };
 
+                let func = Arc::new(RwLock::new(Func {
+                    pci_capabilities,
+                    pcie_capabilities,
+                    header,
+                }));
+
+                let address32 = PciAddress32::default()
+                    .with_seg_group(0) // TODO
+                    .with_bus(bus_num)
+                    .with_device(dev_num)
+                    .with_function(func_num);
+
+                tree.functions.insert(
+                    address32,
+                    Arc::clone(&func),
+                );
+
                 match command.envs(envs).spawn() {
                     Ok(mut child) => {
                         let driver_handler = DriverHandler {
@@ -512,10 +535,8 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, bus_num: u8,
                             dev_num,
                             func_num,
                             config: driver.clone(),
-                            header,
                             state: Arc::clone(&state),
-                            pci_capabilities,
-                            pcie_capabilities,
+                            func,
                         };
                         let thread = thread::spawn(move || {
                             driver_handler.handle_spawn(pcid_to_client_write, pcid_from_client_read, subdriver_args);
@@ -588,7 +609,7 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
     }
 }
 
-fn setup_scheme(schemefd: usize) -> syscall::Result<()> {
+fn setup_scheme(schemefd: usize, tree: Arc<RwLock<DeviceTree>>, state: Arc<State>) -> syscall::Result<()> {
     //
     // We give pcid a generous amount of resources here, since it may communicate with lots of
     // different drivers, especially when it comes to interrupts. INTx# and MSI-X interrupts tend
@@ -631,7 +652,7 @@ fn setup_scheme(schemefd: usize) -> syscall::Result<()> {
     let main_ring = handle.reactor().primary_instance();
 
     let scheme_fut = async move {
-        let scheme = PcidScheme::new(spawn_handle, reactor_handle);
+        let scheme = PcidScheme::new(spawn_handle, reactor_handle, tree, state);
 
         log::info!("`pci:` scheme initialized, listening for requests");
 
@@ -666,9 +687,10 @@ fn setup_scheme(schemefd: usize) -> syscall::Result<()> {
                 let packets = &mut packets[..packets_read];
 
                 for mut packet in packets {
-                    // TODO: The assumption that the `pci:` scheme does nothing but listing an empty
-                    // dir, may not hold if it's also going to be used for IPC as well.
+                    // TODO: scheme.async_handle if required
+                    log::debug!("Packet previously: {:?}", packet);
                     scheme.handle(&mut packet);
+                    log::debug!("Packet after: {:?}", packet);
                 }
             }
 
@@ -708,8 +730,8 @@ fn setup_scheme(schemefd: usize) -> syscall::Result<()> {
     executor.run(scheme_fut)
 }
 
-fn run_scheme(schemefd: usize) -> syscall::Result<()> {
-    match setup_scheme(schemefd) {
+fn run_scheme(schemefd: usize, tree: Arc<RwLock<DeviceTree>>, state: Arc<State>) -> syscall::Result<()> {
+    match setup_scheme(schemefd, tree, state) {
         Ok(()) => Ok(()),
         Err(error) => {
             error!("`pci:` failed to setup: \"{}\"", error);
@@ -765,6 +787,14 @@ fn main() {
     });
 
     let pci = state.preferred_cfg_access();
+    let mut device_tree = DeviceTree {
+        busses: BTreeSet::new(),
+        devices: BTreeSet::new(),
+        functions: BTreeMap::new(),
+
+        // TODO
+        uses_seg_groups: false,
+    };
 
     info!("PCI BS/DV/FN VEND:DEVI CL.SC.IN.RV");
 
@@ -774,7 +804,10 @@ fn main() {
                 let func_num = func.num;
                 match PciHeader::from_reader(func) {
                     Ok(header) => {
-                        handle_parsed_header(Arc::clone(&state), &config, bus.num, dev.num, func_num, header);
+                        // TODO: PCIe Segment Groups
+                        let _ = device_tree.busses.insert((0, bus.num));
+                        let _ = device_tree.devices.insert((0, bus.num, dev.num));
+                        handle_parsed_header(Arc::clone(&state), &mut device_tree, &config, bus.num, dev.num, func_num, header);
                     }
                     Err(PciHeaderError::NoDevice) => {
                         if func_num == 0 {
@@ -794,11 +827,12 @@ fn main() {
             }
         }
     }
+    let device_tree = Arc::new(RwLock::new(device_tree));
 
     if unsafe { syscall::clone(CloneFlags::empty()) }.expect("pcid: failed to fork") == 0 {
         let schemefd = syscall::open(":pci", O_CREAT | O_EXCL | O_RDWR).expect("pcid: failed to open scheme socket");
 
-        match run_scheme(schemefd) {
+        match run_scheme(schemefd, device_tree, state) {
             Ok(()) => info!("`pci:` scheme unmounted"),
             Err(error) => error!("`pci:` scheme failed: \"{}\"", error),
         }
