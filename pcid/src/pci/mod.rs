@@ -106,14 +106,14 @@ impl CfgAccess for Pci {
 
 pub struct PciIter<'pci> {
     pci: &'pci dyn CfgAccess,
-    num: u32
+    num: Option<u8>
 }
 
 impl<'pci> PciIter<'pci> {
     pub fn new(pci: &'pci dyn CfgAccess) -> Self {
         PciIter {
             pci,
-            num: 0
+            num: Some(0)
         }
     }
 }
@@ -121,15 +121,16 @@ impl<'pci> PciIter<'pci> {
 impl<'pci> Iterator for PciIter<'pci> {
     type Item = PciBus<'pci>;
     fn next(&mut self) -> Option<Self::Item> {
-        if self.num < 255 { /* TODO: Do not ignore 0xFF bus */
-            let bus = PciBus {
-                pci: self.pci,
-                num: self.num as u8
-            };
-            self.num += 1;
-            Some(bus)
-        } else {
-            None
+        match self.num {
+            Some(bus_num) => {
+                let bus = PciBus {
+                    pci: self.pci,
+                    num: bus_num
+                };
+                self.num = bus_num.checked_add(1);
+                Some(bus)
+            },
+            None => None,
         }
     }
 }

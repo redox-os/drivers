@@ -20,7 +20,7 @@ impl<'pci> PciDev<'pci> {
 
 pub struct PciDevIter<'pci> {
     dev: &'pci PciDev<'pci>,
-    num: u32
+    num: u8
 }
 
 impl<'pci> PciDevIter<'pci> {
@@ -35,15 +35,16 @@ impl<'pci> PciDevIter<'pci> {
 impl<'pci> Iterator for PciDevIter<'pci> {
     type Item = PciFunc<'pci>;
     fn next(&mut self) -> Option<Self::Item> {
-        if self.num < 8 {
-            let func = PciFunc {
-                dev: self.dev,
-                num: self.num as u8
-            };
-            self.num += 1;
-            Some(func)
-        } else {
-            None
+        match self.num {
+            func_num if func_num < 8 => {
+                let func = PciFunc {
+                    dev: self.dev,
+                    num: self.num
+                };
+                self.num += 1;
+                Some(func)
+            },
+            _ => None,
         }
     }
 }
