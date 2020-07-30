@@ -376,11 +376,19 @@ impl State {
     }
 }
 
+fn process_config(config: &Config, device_tree: &DeviceTree, state: &Arc<State>) {
+    // TODO: Something faster than O(n^2)!
+
+    for (&addr, func) in device_tree.functions.iter() {
+        find_and_spawn_subdriver(addr, func, config, state);
+    }
+}
+
 fn find_and_spawn_subdriver(
     addr: PciAddress32,
-    func_arc: Arc<RwLock<Func>>,
+    func_arc: &Arc<RwLock<Func>>,
     config: &Config,
-    state: Arc<State>,
+    state: &Arc<State>,
 ) {
     let func = func_arc.read().unwrap();
     let header = &func.header;
@@ -553,8 +561,8 @@ fn find_and_spawn_subdriver(
                         dev_num: addr.device(),
                         func_num: addr.function(),
                         config: driver.clone(),
-                        state: Arc::clone(&state),
-                        func: Arc::clone(&func_arc),
+                        state: Arc::clone(state),
+                        func: Arc::clone(func_arc),
                     };
                     let thread = thread::spawn(move || {
                         driver_handler.handle_spawn(
@@ -1183,6 +1191,9 @@ fn main() {
             }
         }
     }
+
+    process_config(&config, &device_tree, &state);
+
     let device_tree = Arc::new(RwLock::new(device_tree));
 
     match run_scheme(schemefd, device_tree, Arc::clone(&state)) {

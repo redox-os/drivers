@@ -971,7 +971,7 @@ impl Scheme for PcidScheme {
                 let os_str = OsStr::from_bytes(&data);
                 let mut config = crate::config::Config::default();
                 crate::load_config_dir(os_str, &mut config);
-                log::info!("TODO: load data {:?}", config);
+                crate::process_config(&config, &*self.tree.read().unwrap(), &self.state);
             }
             Handle::CtlSocket(_) => (),
             Handle::List(_) => (),

@@ -217,19 +217,17 @@ fn main() {
     let allocated_bars = Arc::new(AllocatedBars::default());
 
     let bar_ptr = match bar {
-        pcid_interface::PciBar::Memory(ptr) => ptr,
-        other => panic!("Expected memory bar, found {}", other),
+        // TODO: Select memory type based on the uncachable bit, when physmapping (or
+        // physallocating, when using MTRRs).
+        Some(pcid_interface::PciBar::MemorySpace32 { address, .. }) => u64::from(address),
+        Some(pcid_interface::PciBar::MemorySpace64 { address, .. }) => address,
+        other => panic!("Expected memory bar, found {:?}", other),
     };
 
     let bar_wrapper = unsafe { Bar::map(bar_ptr as usize, 65536).expect("xhcid: failed to map BAR 0") };
     let address = bar_wrapper.pointer().as_ptr() as usize;
 
     *allocated_bars.0[0].lock().unwrap() = Some(bar_wrapper);
-
-    print!(
-        "{}",
-        format!(" + XHCI {} on: {} IRQ: {}\n", name, bar, irq)
-    );
 
     let socket_fd = syscall::open(
         format!(":usb/{}", name),
