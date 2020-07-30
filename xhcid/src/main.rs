@@ -182,8 +182,6 @@ fn main() {
     if unsafe { syscall::clone(CloneFlags::empty()).unwrap() } != 0 {
         return;
     }
-    std::thread::sleep(std::time::Duration::from_secs(2));
-
     let _logger_ref = setup_logging();
 
     let main_instance = ConsumerInstanceBuilder::new()

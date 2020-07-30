@@ -1,14 +1,16 @@
 use std::collections::BTreeMap;
 use std::convert::{TryFrom, TryInto};
+use std::ffi::OsStr;
 use std::fmt::Write as _;
 use std::io::Write as _;
+use std::os::unix::ffi::OsStrExt;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock, Weak};
 use std::{cmp, io, str};
 
 use syscall::error::{Error, Result};
 use syscall::data::Stat;
-use syscall::error::{EACCES, EBADF, EINVAL, EISDIR, ENOENT, ENOSYS, ENOTDIR, EOPNOTSUPP, EOVERFLOW, ESPIPE, ESRCH};
+use syscall::error::{EACCES, EBADF, EBADFD, EINVAL, EISDIR, ENOENT, ENOMEM, ENOSYS, ENOTDIR, EOPNOTSUPP, EOVERFLOW, ESPIPE, ESRCH};
 use syscall::flag::{
     MODE_CHR, MODE_DIR,
     O_CREAT, O_STAT, O_DIRECTORY, O_ACCMODE, O_RDONLY, O_WRONLY, O_RDWR,
@@ -334,6 +336,7 @@ impl CtlSocket {
 enum Handle {
     List(List),
     CtlSocket(CtlSocket),
+    ReadConfigDir(u64, Vec<u8>),
 }
 impl Handle {
     fn list(kind: ListKind) -> Self {
@@ -477,7 +480,7 @@ impl PcidScheme {
         Ok(())
     }
     fn validate_is_not_directory(flags: usize) -> Result<()> {
-        if flags & O_DIRECTORY != O_DIRECTORY && flags & O_STAT != O_STAT {
+        if flags & O_DIRECTORY == O_DIRECTORY && flags & O_STAT != O_STAT {
             return Err(Error::new(EISDIR));
         }
         Ok(())
@@ -503,6 +506,14 @@ impl Scheme for PcidScheme {
                 Self::validate_is_directory(flags).and_log_err_as_warn("EISDIR")?;
                 Self::validate_is_rdonly(flags).and_log_err_as_warn("EISDIR RDONLY")?;
                 Handle::list(ListKind::TopLevel)
+            }
+            ["read_config_dir"] => {
+                if uid != 0 {
+                    return Err(Error::new(EACCES));
+                }
+                Self::validate_is_not_directory(flags)?;
+                // TODO: validate O_WRONLY
+                Handle::ReadConfigDir(0, Vec::new())
             }
             ["bus"] => {
                 Self::validate_is_directory(flags)?;
@@ -560,6 +571,18 @@ impl Scheme for PcidScheme {
                 Ok(isize::try_from(list.offset)?)
             },
             Handle::CtlSocket(_) => return Err(Error::new(ESPIPE)),
+            Handle::ReadConfigDir(ref mut offset, _) => {
+                match whence {
+                    SEEK_SET => *offset = pos as u64,
+                    SEEK_CUR => if pos > 0 {
+                        *offset += pos as u64;
+                    } else {
+                        *offset = offset.checked_sub((-pos) as u64).ok_or(Error::new(EINVAL))?;
+                    }
+                    SEEK_END | _ => return Err(Error::new(ESPIPE)),
+                }
+                Ok(isize::try_from(*offset)?)
+            }
         }
     }
     fn read(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
@@ -590,6 +613,7 @@ impl Scheme for PcidScheme {
                 Ok(bytes_to_read)
             }
             Handle::CtlSocket(_) => Err(Error::new(EBADF)),
+            Handle::ReadConfigDir(_, _) => Err(Error::new(EBADF)),
         }
     }
     fn fpath(&self, fd: usize, buf: &mut [u8]) -> Result<usize> {
@@ -647,9 +671,25 @@ impl Scheme for PcidScheme {
                     write!(cursor, "/dev/{:02x}/func/{:01x}/ctl", func_num.dev.id, func_num.id).unwrap();
                 }
             }
+            Handle::ReadConfigDir(_, _) => write!(cursor, "/read_config_dir").unwrap(),
         }
 
         Ok(cursor.position().try_into()?)
+    }
+    fn write(&self, fd: usize, buf: &[u8]) -> Result<usize> {
+        log::debug!("PCI SCHEME WRITE FD={}, BUF=<AT {:p} LEN {}>", fd, buf.as_ptr(), buf.len());
+
+        let handles_guard = self.file_handles.read().unwrap();
+        let mut handle = handles_guard.get(&fd).ok_or(Error::new(EBADF))?.lock().or(Err(Error::new(EBADFD)))?;
+
+        match *handle {
+            Handle::ReadConfigDir(ref mut offset, ref mut data) => {
+                data.try_reserve_exact(buf.len()).or(Err(Error::new(ENOMEM)))?;
+                data.extend(buf);
+                Ok(buf.len())
+            }
+            Handle::CtlSocket(_) | Handle::List(_) => return Err(Error::new(EBADF)),
+        }
     }
     fn fstat(&self, fd: usize, stat: &mut Stat) -> Result<usize> {
         log::debug!("PCI SCHEME FSTAT FD={}, STAT=<`Stat` AT {:p}>", fd, stat as *mut Stat);
@@ -668,9 +708,12 @@ impl Scheme for PcidScheme {
                 *stat = Stat {
                     st_dev: 0,
                     st_blksize: BLKSZ,
-                    st_blocks: (size + u64::from(BLKSZ) - 1) / u64::from(BLKSZ) * u64::from(BLKSZ),
+                    st_blocks: (size + u64::from(BLKSZ) - 1) / u64::from(BLKSZ),
                     st_size: size,
-                    st_ino: list.inode(),
+
+                    // FIXME: Somehow directories with inodes (maybe because of the higher bits
+                    // here?) behave weirdly when listing.
+                    st_ino: 0, // list.inode(),
 
                     st_mode: MODE_DIR,
                     st_nlink: if list.kind == ListKind::TopLevel { 1 } else { 2 },
@@ -694,7 +737,9 @@ impl Scheme for PcidScheme {
                     st_blksize: 4096,
                     st_blocks: 0,
                     st_size: 0,
-                    st_ino: socket.inode(),
+
+                    // FIXME
+                    st_ino: 0,//socket.inode(),
 
                     st_mode: MODE_CHR | 0o000,
                     st_nlink: 1,
@@ -710,6 +755,9 @@ impl Scheme for PcidScheme {
                     st_mtime: 0,      // TODO
                     st_mtime_nsec: 0, // TODO
                 }
+            }
+            Handle::ReadConfigDir(_, _) => {
+                stat.st_mode = MODE_CHR;
             }
         }
         Ok(0)
@@ -774,9 +822,18 @@ impl Scheme for PcidScheme {
         log::debug!("PCI SCHEME CLOSE FD={}", fd);
 
         let mut handles_guard = self.file_handles.write().unwrap();
-        if handles_guard.remove(&fd).is_none() {
-            return Err(Error::new(EBADF));
+
+        match handles_guard.remove(&fd).ok_or(Error::new(EBADF))?.into_inner().or(Err(Error::new(EBADFD)))? {
+            Handle::ReadConfigDir(_, ref data) => {
+                let os_str = OsStr::from_bytes(&data);
+                let mut config = crate::config::Config::default();
+                crate::load_config_dir(os_str, &mut config);
+                log::info!("TODO: load data {:?}", config);
+            }
+            Handle::CtlSocket(_) => (),
+            Handle::List(_) => (),
         }
+
         Ok(0)
     }
 }

@@ -1,4 +1,4 @@
-#![feature(get_mut_unchecked, llvm_asm)]
+#![feature(get_mut_unchecked, llvm_asm, try_reserve)]
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{File, metadata, read_dir};
@@ -740,33 +740,97 @@ fn run_scheme(schemefd: usize, tree: Arc<RwLock<DeviceTree>>, state: Arc<State>)
     }
 }
 
+fn only_inform_about_file_scheme() {
+    std::fs::write(
+        "pci:read_config_dir",
+        env::args()
+            .nth(2)
+            .expect("expected argument after --add-config-dir")
+        ).expect("failed to inform pci scheme that file: has appeared");
+}
+fn load_config_dir<P: ?Sized + AsRef<std::path::Path>>(config_path: &P, config: &mut Config) {
+    let config_path = config_path.as_ref();
+
+    let paths = match read_dir(&config_path) {
+        Ok(d) => d,
+        Err(err) => {
+            eprintln!("pcid: failed to read configuration directory at `{}`: {}. Reverting to the default config.", config_path.as_os_str().to_string_lossy(), err);
+            return;
+        }
+    };
+
+    let mut config_data = String::new();
+
+    for entry in paths {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(err) => {
+                eprintln!("pcid: failed to retrieve path for directory iterator at `{}`: {}, skipping.", config_path.as_os_str().to_string_lossy(), err);
+                continue;
+            }
+        };
+
+        let mut config_file = match File::open(&entry.path()) {
+            Ok(file) => file,
+            Err(err) => {
+                eprintln!("pcid: failed to open config file `{file}` within config dir `{dir}`: {err}. Skipping config file.", file=entry.path().as_os_str().to_string_lossy(), dir=config_path.as_os_str().to_string_lossy(), err=err);
+                continue;
+            }
+        };
+        // TODO: read_to_string says it'll append to the String, so this temporary isn't required,
+        // right?
+        let mut tmp = String::new();
+
+        match config_file.read_to_string(&mut tmp) {
+            Ok(_bytes_read) => config_data.push_str(&tmp),
+            Err(err) => {
+                eprintln!("pcid: failed to read from config file `{file}` within config dir `{dir}`: {err}. Skipping config file.", file=entry.path().as_os_str().to_string_lossy(), dir=config_path.as_os_str().to_string_lossy(), err=err);
+                continue;
+            }
+        }
+    }
+
+    match toml::from_str(&config_data) {
+        Ok(cfg) => *config = cfg,
+        Err(err) => {
+            eprintln!("pcid: couldn't parse configuration data from files in `{}`: {}. Reverting to the default config", config_path.as_os_str().to_string_lossy(), err);
+            return;
+        }
+    }
+}
+fn load_config_file<P: ?Sized + AsRef<std::path::Path>>(config_path: &P, config: &mut Config) {
+    let config_path = config_path.as_ref();
+    let config_data = match std::fs::read_to_string(config_path) {
+        Ok(s) => s,
+        Err(error) => {
+            eprintln!("pcid: failed to read config from `{}`: {}, reverting to the default config", config_path.as_os_str().to_string_lossy(), error);
+            return;
+        }
+    };
+
+    match toml::from_str(&config_data) {
+        Ok(cfg) => *config = cfg,
+        Err(err) => {
+            eprintln!("pcid: invalid config data at `{}`: {}, reverting to the default config", config_path.as_os_str().to_string_lossy(), err);
+            return;
+        }
+    }
+}
+
 fn main() {
+    if env::args().nth(1).as_deref() == Some("--add-config-dir") {
+        // TODO: Find a better way; let some other process write to the pci: scheme from init.
+        return only_inform_about_file_scheme();
+    }
+
     let mut config = Config::default();
 
-    let mut args = env::args().skip(1);
+    let mut args = env::args_os().skip(1);
     if let Some(config_path) = args.next() {
         if metadata(&config_path).unwrap().is_file() {
-            if let Ok(mut config_file) = File::open(&config_path) {
-                let mut config_data = String::new();
-                if let Ok(_) = config_file.read_to_string(&mut config_data) {
-                    config = toml::from_str(&config_data).unwrap_or(Config::default());
-                }
-            }
+            load_config_file(&config_path, &mut config);
         } else {
-            let paths = read_dir(&config_path).unwrap();
-
-            let mut config_data = String::new();
-
-            for path in paths {
-                if let Ok(mut config_file) = File::open(&path.unwrap().path()) {
-                    let mut tmp = String::new();
-                    if let Ok(_) = config_file.read_to_string(&mut tmp) {
-                        config_data.push_str(&tmp);
-                    }
-                }
-            }
-
-            config = toml::from_str(&config_data).unwrap_or(Config::default());
+            load_config_dir(&config_path, &mut config);
         }
     }
 
@@ -795,6 +859,11 @@ fn main() {
         // TODO
         uses_seg_groups: false,
     };
+
+    info!("PCI ENV: {:?}", env::vars().collect::<Vec<_>>());
+
+    // Open scheme socket early to prevent subdrivers from not having `pci:`.
+    let schemefd = syscall::open(":pci", O_CREAT | O_EXCL | O_RDWR).expect("pcid: failed to open scheme socket");
 
     info!("PCI BS/DV/FN VEND:DEVI CL.SC.IN.RV");
 
@@ -829,17 +898,10 @@ fn main() {
     }
     let device_tree = Arc::new(RwLock::new(device_tree));
 
-    if unsafe { syscall::clone(CloneFlags::empty()) }.expect("pcid: failed to fork") == 0 {
-        let schemefd = syscall::open(":pci", O_CREAT | O_EXCL | O_RDWR).expect("pcid: failed to open scheme socket");
-
-        match run_scheme(schemefd, device_tree, state) {
-            Ok(()) => info!("`pci:` scheme unmounted"),
-            Err(error) => error!("`pci:` scheme failed: \"{}\"", error),
-        }
-        return;
+    match run_scheme(schemefd, device_tree, Arc::clone(&state)) {
+        Ok(()) => info!("`pci:` scheme unmounted"),
+        Err(error) => error!("`pci:` scheme failed: \"{}\"", error),
     }
-
-    info!("pcid forked, about to exit parent");
 
     for thread in state.threads.lock().unwrap().drain(..) {
         thread.join().unwrap();
