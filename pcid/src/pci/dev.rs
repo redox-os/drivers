@@ -2,7 +2,7 @@ use super::{PciBus, PciFunc};
 
 pub struct PciDev<'pci> {
     pub bus: &'pci PciBus<'pci>,
-    pub num: u8
+    pub num: u8,
 }
 
 impl<'pci> PciDev<'pci> {
@@ -25,10 +25,7 @@ pub struct PciDevIter<'pci> {
 
 impl<'pci> PciDevIter<'pci> {
     pub fn new(dev: &'pci PciDev<'pci>) -> Self {
-        PciDevIter {
-            dev: dev,
-            num: 0
-        }
+        PciDevIter { dev: dev, num: 0 }
     }
 }
 

@@ -1,6 +1,6 @@
-use std::{fmt, fs, io, mem, ptr, slice};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
+use std::{fmt, fs, io, mem, ptr, slice};
 
 use syscall::flag::PhysmapFlags;
 use syscall::io::{Dma, Io, Mmio};
@@ -52,21 +52,26 @@ impl Mcfg {
         assert!(total_length > mem::size_of::<Self>());
         let len = total_length - 44;
         // safe because the length cannot be changed arbitrarily
-        unsafe { slice::from_raw_parts(&self.base_addrs as *const PcieAlloc, len / mem::size_of::<PcieAlloc>()) }
+        unsafe {
+            slice::from_raw_parts(
+                &self.base_addrs as *const PcieAlloc,
+                len / mem::size_of::<PcieAlloc>(),
+            )
+        }
     }
 }
 impl fmt::Debug for Mcfg {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("Mcfg")
             .field("name", &"MCFG")
-            .field("length", &{self.length})
-            .field("revision", &{self.revision})
-            .field("checksum", &{self.checksum})
-            .field("oem_id", &{self.oem_id})
-            .field("oem_table_id", &{self.oem_table_id})
-            .field("oem_revision", &{self.oem_revision})
-            .field("creator_revision", &{self.creator_revision})
-            .field("creator_id", &{self.creator_id})
+            .field("length", &{ self.length })
+            .field("revision", &{ self.revision })
+            .field("checksum", &{ self.checksum })
+            .field("oem_id", &{ self.oem_id })
+            .field("oem_table_id", &{ self.oem_table_id })
+            .field("oem_revision", &{ self.oem_revision })
+            .field("creator_revision", &{ self.creator_revision })
+            .field("creator_id", &{ self.creator_id })
             .field("base_addrs", &self.base_addr_structs())
             .finish()
     }
@@ -87,39 +92,48 @@ impl Mcfgs {
         })
     }
     pub fn allocs<'a>(&'a self) -> impl Iterator<Item = &'a PcieAlloc> + 'a {
-        self.tables().map(|table| table.base_addr_structs().iter()).flatten()
+        self.tables()
+            .map(|table| table.base_addr_structs().iter())
+            .flatten()
     }
 
     pub fn fetch() -> io::Result<Self> {
         log::debug!("Fetching MCFG table.");
         let table_dir = fs::read_dir("acpi:tables")?;
 
-        let tables = table_dir.map(|table_direntry| -> io::Result<Option<_>> {
-            let table_direntry = table_direntry?;
-            let table_path = table_direntry.path();
+        let tables = table_dir
+            .map(|table_direntry| -> io::Result<Option<_>> {
+                let table_direntry = table_direntry?;
+                let table_path = table_direntry.path();
 
-            let table_filename = match table_path.file_name() {
-                Some(n) => n.to_str().ok_or(io::Error::new(io::ErrorKind::InvalidData, "Non-UTF-8 ACPI table filename"))?,
-                None => return Ok(None),
-            };
+                let table_filename = match table_path.file_name() {
+                    Some(n) => n.to_str().ok_or(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "Non-UTF-8 ACPI table filename",
+                    ))?,
+                    None => return Ok(None),
+                };
 
-            if table_filename.starts_with("MCFG") {
-                log::debug!("Found table: {}", &*table_path.to_string_lossy());
-                Ok(Some(fs::read(table_path)?))
-            } else {
-                Ok(None)
-            }
-        }).filter_map(|result_option| result_option.transpose()).collect::<Result<SmallVec<_>, _>>()?;
+                if table_filename.starts_with("MCFG") {
+                    log::debug!("Found table: {}", &*table_path.to_string_lossy());
+                    Ok(Some(fs::read(table_path)?))
+                } else {
+                    Ok(None)
+                }
+            })
+            .filter_map(|result_option| result_option.transpose())
+            .collect::<Result<SmallVec<_>, _>>()?;
 
-        Ok(Self {
-            tables,
-        })
+        Ok(Self { tables })
     }
     pub fn table_and_alloc_at_bus(&self, bus: u8) -> Option<(&Mcfg, &PcieAlloc)> {
         self.tables().find_map(|table| {
-            Some((table, table.base_addr_structs().iter().find(|addr_struct| {
-                (addr_struct.start_bus..addr_struct.end_bus).contains(&bus)
-            })?))
+            Some((
+                table,
+                table.base_addr_structs().iter().find(|addr_struct| {
+                    (addr_struct.start_bus..addr_struct.end_bus).contains(&bus)
+                })?,
+            ))
         })
     }
     pub fn at_bus(&self, bus: u8) -> Option<&PcieAlloc> {
@@ -153,7 +167,10 @@ impl Pcie {
     pub fn new(fallback: Arc<Pci>) -> io::Result<Self> {
         let mcfgs = Mcfgs::fetch()?;
 
-        log::debug!("Found MCFG tables: {:?}", mcfgs.tables().collect::<Vec<_>>());
+        log::debug!(
+            "Found MCFG tables: {:?}",
+            mcfgs.tables().collect::<Vec<_>>()
+        );
 
         Ok(Self {
             lock: Mutex::new(()),
@@ -168,32 +185,77 @@ impl Pcie {
         assert_eq!(dev & 0x1F, dev, "pcie dev number larger than 5 bits");
         assert_eq!(func & 0x7, func, "pcie func number larger than 3 bits");
 
-        (((bus - starting_bus) as usize) << 20) | ((dev as usize) << 15) | ((func as usize) << 12) | (offset as usize)
+        (((bus - starting_bus) as usize) << 20)
+            | ((dev as usize) << 15)
+            | ((func as usize) << 12)
+            | (offset as usize)
     }
     fn addr_offset_in_dwords(starting_bus: u8, bus: u8, dev: u8, func: u8, offset: u16) -> usize {
         Self::addr_offset_in_bytes(starting_bus, bus, dev, func, offset) / mem::size_of::<u32>()
     }
-    unsafe fn with_pointer<T, F: FnOnce(Option<&mut Mmio<u32>>) -> T>(&self, bus: u8, dev: u8, func: u8, offset: u16, f: F) -> T {
+    unsafe fn with_pointer<T, F: FnOnce(Option<&mut Mmio<u32>>) -> T>(
+        &self,
+        bus: u8,
+        dev: u8,
+        func: u8,
+        offset: u16,
+        f: F,
+    ) -> T {
         assert!(offset < 4096);
 
-        self.with_slice(bus, dev, func, move |slice: Option<&'static mut [Mmio<u32>]>| {
-            f(slice.map(|slice| &mut slice[offset as usize / mem::size_of::<Mmio<u32>>()]))
-        })
+        self.with_slice(
+            bus,
+            dev,
+            func,
+            move |slice: Option<&'static mut [Mmio<u32>]>| {
+                f(slice.map(|slice| &mut slice[offset as usize / mem::size_of::<Mmio<u32>>()]))
+            },
+        )
     }
-    unsafe fn with_func_mem<T, F: FnOnce(Option<*mut u32>) -> T>(&self, bus: u8, dev: u8, func: u8, f: F) -> T {
+    unsafe fn with_func_mem<T, F: FnOnce(Option<*mut u32>) -> T>(
+        &self,
+        bus: u8,
+        dev: u8,
+        func: u8,
+        f: F,
+    ) -> T {
         let (base_address_phys, starting_bus) = match self.mcfgs.at_bus(bus) {
             Some(t) => (t.base_addr, t.start_bus),
             None => return f(None),
         };
-        let physical = base_address_phys as usize + Self::addr_offset_in_bytes(starting_bus, bus, dev, func, 0);
+        let physical = base_address_phys as usize
+            + Self::addr_offset_in_bytes(starting_bus, bus, dev, func, 0);
         let mut maps_lock = self.maps.lock().unwrap();
         let virt_pointer: *mut u32 = *maps_lock.entry((bus, dev, func)).or_insert_with(|| {
-            syscall::physmap(physical, 4096, PhysmapFlags::PHYSMAP_NO_CACHE | PhysmapFlags::PHYSMAP_WRITE).unwrap_or_else(|error| panic!("failed to physmap pcie configuration space for {:2x}:{:2x}.{:2x}: {:?}", bus, dev, func, error)) as *mut u32
+            syscall::physmap(
+                physical,
+                4096,
+                PhysmapFlags::PHYSMAP_NO_CACHE | PhysmapFlags::PHYSMAP_WRITE,
+            )
+            .unwrap_or_else(|error| {
+                panic!(
+                    "failed to physmap pcie configuration space for {:2x}:{:2x}.{:2x}: {:?}",
+                    bus, dev, func, error
+                )
+            }) as *mut u32
         });
-        log::trace!("PCIe func {}:{}.{} has physaddr {:p} and virtaddr {:p}", bus, dev, func, physical as *mut u32, virt_pointer as *mut u32);
+        log::trace!(
+            "PCIe func {}:{}.{} has physaddr {:p} and virtaddr {:p}",
+            bus,
+            dev,
+            func,
+            physical as *mut u32,
+            virt_pointer as *mut u32
+        );
         f(Some(virt_pointer))
     }
-    unsafe fn with_slice<T, F: FnOnce(Option<&'static mut [Mmio<u32>]>) -> T>(&self, bus: u8, dev: u8, func: u8, f: F) -> T {
+    unsafe fn with_slice<T, F: FnOnce(Option<&'static mut [Mmio<u32>]>) -> T>(
+        &self,
+        bus: u8,
+        dev: u8,
+        func: u8,
+        f: F,
+    ) -> T {
         self.with_func_mem(bus, dev, func, move |func_base_ptr| {
             f(func_base_ptr.map(|ptr| {
                 slice::from_raw_parts_mut(ptr as *mut Mmio<u32>, 4096 / mem::size_of::<Mmio<u32>>())
@@ -227,14 +289,22 @@ impl CfgAccess for Pcie {
 
         self.with_func_mem(bus, dev, func, |pointer| match pointer {
             Some(address) => std::ptr::write_volatile(address.add(offset as usize / 4), value),
-            None => { self.fallback.read(bus, dev, func, offset); }
+            None => {
+                self.fallback.read(bus, dev, func, offset);
+            }
         });
     }
     unsafe fn write(&self, bus: u8, dev: u8, func: u8, offset: u16, value: u32) {
         let _guard = self.lock.lock().unwrap();
         self.write_nolock(bus, dev, func, offset, value);
     }
-    unsafe fn with_mapped_mem(&self, bus: u8, dev: u8, func: u8, f: &mut dyn FnMut(Option<&'static mut [Mmio<u32>]>)) {
+    unsafe fn with_mapped_mem(
+        &self,
+        bus: u8,
+        dev: u8,
+        func: u8,
+        f: &mut dyn FnMut(Option<&'static mut [Mmio<u32>]>),
+    ) {
         self.with_slice(bus, dev, func, f);
     }
 }

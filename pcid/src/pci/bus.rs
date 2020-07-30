@@ -1,8 +1,8 @@
-use super::{Pci, PciDev, CfgAccess};
+use super::{CfgAccess, Pci, PciDev};
 
 pub struct PciBus<'pci> {
     pub pci: &'pci dyn CfgAccess,
-    pub num: u8
+    pub num: u8,
 }
 
 impl<'pci> PciBus<'pci> {
@@ -25,10 +25,7 @@ pub struct PciBusIter<'pci> {
 
 impl<'pci> PciBusIter<'pci> {
     pub fn new(bus: &'pci PciBus<'pci>) -> Self {
-        PciBusIter {
-            bus,
-            num: 0
-        }
+        PciBusIter { bus, num: 0 }
     }
 }
 

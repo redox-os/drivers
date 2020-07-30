@@ -1,19 +1,28 @@
-use syscall::Mmio;
-use byteorder::{LittleEndian, ByteOrder};
-
 use super::PciDev;
+use std::convert::TryFrom;
+use syscall::Mmio;
 
 pub trait ConfigReader {
+    unsafe fn read_range_into(&self, offset: u16, buf: &mut [u8]) {
+        assert!(buf.len() >= 4);
+        assert!(buf.len() % 4 == 0);
+
+        let len = u16::try_from(buf.len()).unwrap();
+
+        for (i, dword_off) in (offset..offset + len).step_by(4).enumerate() {
+            //if dword_off + 4 > len { break }
+
+            let dword = self.read_u32(dword_off);
+
+            let dword_off = usize::try_from(dword_off).expect("sorry, fellow 8-bit computer :(");
+            buf[i * 4..(i + 1) * 4].copy_from_slice(&u32::to_le_bytes(dword));
+        }
+    }
     unsafe fn read_range(&self, offset: u16, len: u16) -> Vec<u8> {
-        assert!(len > 3 && len % 4 == 0);
-        let mut ret = Vec::with_capacity(len as usize);
-        let results = (offset..offset + len).step_by(4).fold(Vec::new(), |mut acc, offset| {
-            let val = self.read_u32(offset);
-            acc.push(val);
-            acc
-        });
-        ret.set_len(len as usize);
-        LittleEndian::write_u32_into(&*results, &mut ret);
+        let len_usize = usize::try_from(len).expect("sorry, fellow 8-bit computer :(");
+
+        let mut ret = vec![0u8; len_usize];
+        self.read_range_into(offset, &mut ret);
         ret
     }
 
@@ -26,7 +35,9 @@ pub trait ConfigReader {
         let shift = (offset % 4) * 8;
         ((dword >> shift) & 0xFF) as u8
     }
-    unsafe fn with_mapped_mem(&self, f: &mut dyn FnMut(Option<&'static mut [Mmio<u32>]>));
+    unsafe fn with_mapped_mem(&self, f: &mut dyn FnMut(Option<&'static mut [Mmio<u32>]>)) {
+        f(None);
+    }
 }
 pub trait ConfigWriter {
     unsafe fn write_u32(&self, offset: u16, value: u32);
@@ -42,7 +53,10 @@ impl<'pci> ConfigReader for PciFunc<'pci> {
         self.dev.read(self.num, offset)
     }
     unsafe fn with_mapped_mem(&self, f: &mut dyn FnMut(Option<&'static mut [Mmio<u32>]>)) {
-        self.dev.bus.pci.with_mapped_mem(self.dev.bus.num, self.dev.num, self.num, f);
+        self.dev
+            .bus
+            .pci
+            .with_mapped_mem(self.dev.bus.num, self.dev.num, self.num, f);
     }
 }
 impl<'pci> ConfigWriter for PciFunc<'pci> {

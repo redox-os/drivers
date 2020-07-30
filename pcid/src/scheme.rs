@@ -8,16 +8,18 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock, Weak};
 use std::{cmp, io, str};
 
-use syscall::error::{Error, Result};
 use syscall::data::Stat;
-use syscall::error::{EACCES, EBADF, EBADFD, EINVAL, EISDIR, ENOENT, ENOMEM, ENOSYS, ENOTDIR, EOPNOTSUPP, EOVERFLOW, ESPIPE, ESRCH};
+use syscall::error::{Error, Result};
+use syscall::error::{
+    EACCES, EBADF, EBADFD, EINVAL, EISDIR, ENOENT, ENOMEM, ENOSYS, ENOTDIR, EOPNOTSUPP, EOVERFLOW,
+    ESPIPE, ESRCH,
+};
 use syscall::flag::{
-    MODE_CHR, MODE_DIR,
-    O_CREAT, O_STAT, O_DIRECTORY, O_ACCMODE, O_RDONLY, O_WRONLY, O_RDWR,
+    MODE_CHR, MODE_DIR, O_ACCMODE, O_CREAT, O_DIRECTORY, O_RDONLY, O_RDWR, O_STAT, O_WRONLY,
     SEEK_CUR, SEEK_END, SEEK_SET,
 };
+use syscall::io_uring::v1::{CqEntry64, IoUringSqeFlags, Priority, SqEntry64, StandardOpcode};
 use syscall::io_uring::IoUringRecvInfo;
-use syscall::io_uring::v1::{CqEntry64, IoUringSqeFlags, Priority, StandardOpcode, SqEntry64};
 use syscall::scheme::{self, Scheme};
 
 use redox_iou::executor::SpawnHandle;
@@ -29,8 +31,8 @@ use either::*;
 use futures::StreamExt;
 use once_cell::sync::OnceCell;
 
-use crate::{DeviceTree, Func, State as PcidState, ResultExt};
 use crate::driver_interface::{PciAddress32, PcidOpcode};
+use crate::{DeviceTree, Func, ResultExt, State as PcidState};
 
 /// The PCI scheme, `pci:`.
 ///
@@ -110,7 +112,6 @@ impl List {
         }
     }
     fn try_init(kind: &ListKind, scheme: &PcidScheme) -> Result<Box<[u8]>> {
-
         // TODO: Avoid allocation, by also allowing static references in List.
         fn from_static_str(s: &'static str) -> Box<[u8]> {
             s.as_bytes().to_vec().into_boxed_slice()
@@ -123,7 +124,10 @@ impl List {
             Ok(())
         }
         fn verify_dev_existence(tree: &DeviceTree, dev_num: DeviceNum) -> Result<()> {
-            if !tree.devices.contains(&(dev_num.bus.seg.0, dev_num.bus.id, dev_num.id)) {
+            if !tree
+                .devices
+                .contains(&(dev_num.bus.seg.0, dev_num.bus.id, dev_num.id))
+            {
                 return Err(Error::new(ENOENT));
             }
             Ok(())
@@ -146,7 +150,7 @@ impl List {
             ListKind::Busses => {
                 let tree_guard = scheme.tree.read().unwrap();
                 Self::try_init_busses(&*tree_guard)?
-            },
+            }
             ListKind::Bus(bus_num) => {
                 verify_bus_existence(&*scheme.tree.read().unwrap(), bus_num)?;
                 from_static_str(BUS_DIR)
@@ -155,7 +159,8 @@ impl List {
                 let tree_guard = scheme.tree.read().unwrap();
                 verify_bus_existence(&*tree_guard, bus_num)?;
 
-                let range = (bus_num.seg.0, bus_num.id, 0)..=(bus_num.seg.0, bus_num.id, u8::max_value());
+                let range =
+                    (bus_num.seg.0, bus_num.id, 0)..=(bus_num.seg.0, bus_num.id, u8::max_value());
 
                 const LEN_PER_DEV: usize = "XX\n".len();
 
@@ -190,8 +195,7 @@ impl List {
                         .with_bus(device_num.bus.id)
                         .with_device(device_num.id)
                         .with_function(0);
-                    let end = start
-                        .with_function(u8::max_value());
+                    let end = start.with_function(u8::max_value());
 
                     start..=end
                 };
@@ -223,7 +227,8 @@ impl List {
             let with_seg_groups = &tree.busses;
 
             // This should be the exact capacity.
-            let capacity = with_seg_groups.len() * LEN_PER_SEG_GRP_BUS + with_seg_groups.range((0, 0)..(1, 0)).count() * LEN_PER_REG_BUS;
+            let capacity = with_seg_groups.len() * LEN_PER_SEG_GRP_BUS
+                + with_seg_groups.range((0, 0)..(1, 0)).count() * LEN_PER_REG_BUS;
             let mut content = String::with_capacity(capacity);
 
             for (seg_group, bus_num) in with_seg_groups.iter().copied() {
@@ -250,9 +255,9 @@ impl List {
         Ok(content.into_bytes().into_boxed_slice())
     }
     fn data(&self, scheme: &PcidScheme) -> Result<&[u8]> {
-        self.data.get_or_try_init(|| {
-            Self::try_init(&self.kind, scheme)
-        }).map(|boxed_slice| &**boxed_slice)
+        self.data
+            .get_or_try_init(|| Self::try_init(&self.kind, scheme))
+            .map(|boxed_slice| &**boxed_slice)
     }
     fn inode(&self) -> u64 {
         use self::inode::*;
@@ -261,14 +266,23 @@ impl List {
 
         match self.kind {
             // Count from 1 because inode 0 may be interpreted as invalid by some applications.
-
             ListKind::TopLevel => LIST | kind(1),
             ListKind::Busses => LIST | kind(2),
             ListKind::Bus(num) => LIST | kind(3) | seg(num.seg.0) | bus(num.id),
             ListKind::Devices(num) => LIST | kind(4) | seg(num.seg.0) | bus(num.id),
-            ListKind::Device(num) => LIST | kind(5) | seg(num.bus.seg.0) | bus(num.bus.id) | dev(num.id),
-            ListKind::Functions(num) => LIST | kind(6) | seg(num.bus.seg.0) | bus(num.bus.id) | dev(num.id),
-            ListKind::Function(num) => LIST | kind(7) | seg(num.dev.bus.seg.0) | bus(num.dev.bus.id) | dev(num.dev.id) | func(num.id),
+            ListKind::Device(num) => {
+                LIST | kind(5) | seg(num.bus.seg.0) | bus(num.bus.id) | dev(num.id)
+            }
+            ListKind::Functions(num) => {
+                LIST | kind(6) | seg(num.bus.seg.0) | bus(num.bus.id) | dev(num.id)
+            }
+            ListKind::Function(num) => {
+                LIST | kind(7)
+                    | seg(num.dev.bus.seg.0)
+                    | bus(num.dev.bus.id)
+                    | dev(num.dev.id)
+                    | func(num.id)
+            }
         }
     }
 }
@@ -324,11 +338,18 @@ impl CtlSocket {
 
         const CTL_SOCKET: u64 = 2 << 60;
 
-        CTL_SOCKET | match self {
-            Self::Bus(num) => kind(1) | seg(num.seg.0) | bus(num.id),
-            Self::Device(num) => kind(1) | seg(num.bus.seg.0) | bus(num.bus.id) | dev(num.id),
-            Self::Function(num) => kind(1) | seg(num.dev.bus.seg.0) | bus(num.dev.bus.id) | dev(num.dev.id) | func(num.id),
-        }
+        CTL_SOCKET
+            | match self {
+                Self::Bus(num) => kind(1) | seg(num.seg.0) | bus(num.id),
+                Self::Device(num) => kind(1) | seg(num.bus.seg.0) | bus(num.bus.id) | dev(num.id),
+                Self::Function(num) => {
+                    kind(1)
+                        | seg(num.dev.bus.seg.0)
+                        | bus(num.dev.bus.id)
+                        | dev(num.dev.id)
+                        | func(num.id)
+                }
+            }
     }
 }
 
@@ -345,7 +366,12 @@ impl Handle {
 }
 
 impl PcidScheme {
-    pub fn new(spawn_handle: SpawnHandle, reactor_handle: reactor::Handle, tree: Arc<RwLock<DeviceTree>>, state: Arc<PcidState>) -> Arc<Self> {
+    pub fn new(
+        spawn_handle: SpawnHandle,
+        reactor_handle: reactor::Handle,
+        tree: Arc<RwLock<DeviceTree>>,
+        state: Arc<PcidState>,
+    ) -> Arc<Self> {
         let mut self_arc = Arc::new(Self {
             spawn_handle,
             reactor_handle,
@@ -364,10 +390,14 @@ impl PcidScheme {
         self_arc
     }
     fn self_weak(&self) -> &Weak<Self> {
-        self.self_weak.as_ref().expect("expected PcidScheme to actually contain a self-ref after init")
+        self.self_weak
+            .as_ref()
+            .expect("expected PcidScheme to actually contain a self-ref after init")
     }
     fn self_arc(&self) -> Arc<Self> {
-        self.self_weak().upgrade().expect("how would one get a ref to PciScheme if the Arc is dead?")
+        self.self_weak()
+            .upgrade()
+            .expect("how would one get a ref to PciScheme if the Arc is dead?")
     }
     fn try_parse_bus_num(bus_num_str: &str) -> Option<BusNum> {
         if bus_num_str.len() == 2 {
@@ -419,7 +449,9 @@ impl PcidScheme {
         })
     }
     fn try_parse_dev_num(bus: BusNum, dev_num_str: &str) -> Option<DeviceNum> {
-        if dev_num_str.len() != 2 { return None }
+        if dev_num_str.len() != 2 {
+            return None;
+        }
         Some(DeviceNum {
             bus,
             id: u8::from_str_radix(dev_num_str, 16).ok()?,
@@ -446,14 +478,21 @@ impl PcidScheme {
         })
     }
     fn try_parse_func_num(dev: DeviceNum, func_num_str: &str) -> Option<FunctionNum> {
-        if func_num_str.len() == 1 { return None }
+        if func_num_str.len() == 1 {
+            return None;
+        }
 
         Some(FunctionNum {
             dev,
             id: u8::from_str_radix(func_num_str, 16).ok()?,
         })
     }
-    fn open_func(&self, func_num: FunctionNum, after_func: &[&str], flags: usize) -> Result<Handle> {
+    fn open_func(
+        &self,
+        func_num: FunctionNum,
+        after_func: &[&str],
+        flags: usize,
+    ) -> Result<Handle> {
         Ok(match *after_func {
             [] => {
                 Self::validate_is_directory(flags)?;
@@ -495,8 +534,16 @@ impl PcidScheme {
 
 impl Scheme for PcidScheme {
     fn open(&self, path: &[u8], flags: usize, uid: u32, gid: u32) -> Result<usize> {
-        let path_str = str::from_utf8(path).or(Err(Error::new(ENOENT)))?.trim_start_matches('/');
-        log::debug!("PCI SCHEME OPEN PATH=`{}` FLAGS={:#0x} uid={} gid={}", path_str, flags, uid, gid);
+        let path_str = str::from_utf8(path)
+            .or(Err(Error::new(ENOENT)))?
+            .trim_start_matches('/');
+        log::debug!(
+            "PCI SCHEME OPEN PATH=`{}` FLAGS={:#0x} uid={} gid={}",
+            path_str,
+            flags,
+            uid,
+            gid
+        );
 
         // TODO: Don't heap allocate.
         let components = path_str.split('/').collect::<Vec<_>>();
@@ -528,12 +575,15 @@ impl Scheme for PcidScheme {
             _ => return Err(Error::new(ENOENT)),
         };
 
-
         let fd = self.next_handle.fetch_add(1, Ordering::Relaxed);
 
         log::info!("New handle: {:?}, FD={}", handle, fd);
 
-        let prev = self.file_handles.write().unwrap().insert(fd, Mutex::new(handle));
+        let prev = self
+            .file_handles
+            .write()
+            .unwrap()
+            .insert(fd, Mutex::new(handle));
         if prev.is_some() {
             log::error!("Overwrote file handle {}", fd);
         }
@@ -543,7 +593,11 @@ impl Scheme for PcidScheme {
         log::debug!("PCI SCHEME SEEK FD={} POS={} whence={}", fd, pos, whence);
 
         let handles_guard = self.file_handles.read().unwrap();
-        let mut handle = handles_guard.get(&fd).ok_or(Error::new(EBADF))?.lock().unwrap();
+        let mut handle = handles_guard
+            .get(&fd)
+            .ok_or(Error::new(EBADF))?
+            .lock()
+            .unwrap();
 
         let pos = i64::try_from(pos)?;
 
@@ -551,33 +605,44 @@ impl Scheme for PcidScheme {
             Handle::List(ref mut list) => {
                 match whence {
                     SEEK_SET => list.offset = pos as u64,
-                    SEEK_CUR => list.offset = if pos >= 0 {
-                        list.offset.checked_add(pos as u64).ok_or(Error::new(EOVERFLOW))?
-                    } else {
-                        list.offset - (-pos) as u64
-                    },
+                    SEEK_CUR => {
+                        list.offset = if pos >= 0 {
+                            list.offset
+                                .checked_add(pos as u64)
+                                .ok_or(Error::new(EOVERFLOW))?
+                        } else {
+                            list.offset - (-pos) as u64
+                        }
+                    }
                     // TODO
                     SEEK_END => {
                         let len = u64::try_from(list.data(self)?.len())?;
-                        
+
                         if pos > 0 {
-                            list.offset = len.checked_add(pos as u64).ok_or(Error::new(EOVERFLOW))?;
+                            list.offset =
+                                len.checked_add(pos as u64).ok_or(Error::new(EOVERFLOW))?;
                         } else {
-                            list.offset = len.checked_sub((-pos) as u64).ok_or(Error::new(EOVERFLOW))?;
+                            list.offset = len
+                                .checked_sub((-pos) as u64)
+                                .ok_or(Error::new(EOVERFLOW))?;
                         }
                     }
                     _ => return Err(Error::new(EINVAL)),
                 }
                 Ok(isize::try_from(list.offset)?)
-            },
+            }
             Handle::CtlSocket(_) => return Err(Error::new(ESPIPE)),
             Handle::ReadConfigDir(ref mut offset, _) => {
                 match whence {
                     SEEK_SET => *offset = pos as u64,
-                    SEEK_CUR => if pos > 0 {
-                        *offset += pos as u64;
-                    } else {
-                        *offset = offset.checked_sub((-pos) as u64).ok_or(Error::new(EINVAL))?;
+                    SEEK_CUR => {
+                        if pos > 0 {
+                            *offset += pos as u64;
+                        } else {
+                            *offset = offset
+                                .checked_sub((-pos) as u64)
+                                .ok_or(Error::new(EINVAL))?;
+                        }
                     }
                     SEEK_END | _ => return Err(Error::new(ESPIPE)),
                 }
@@ -586,10 +651,19 @@ impl Scheme for PcidScheme {
         }
     }
     fn read(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
-        log::debug!("PCI SCHEME READ FD={} BUF=<AT {:p} LEN {}>", id, buf.as_mut_ptr(), buf.len());
+        log::debug!(
+            "PCI SCHEME READ FD={} BUF=<AT {:p} LEN {}>",
+            id,
+            buf.as_mut_ptr(),
+            buf.len()
+        );
 
         let handles_guard = self.file_handles.read().unwrap();
-        let mut handle = handles_guard.get(&id).ok_or(Error::new(EBADF))?.lock().unwrap();
+        let mut handle = handles_guard
+            .get(&id)
+            .ok_or(Error::new(EBADF))?
+            .lock()
+            .unwrap();
 
         match *handle {
             Handle::List(ref mut list) => {
@@ -602,14 +676,22 @@ impl Scheme for PcidScheme {
                 log::info!("LIST HANDLE: {:?}", list);
 
                 let start_buf_offset = cmp::min(offset, data.len());
-                let end_buf_offset = cmp::min(start_buf_offset.checked_add(buf.len()).ok_or(Error::new(EOVERFLOW))?, data.len());
+                let end_buf_offset = cmp::min(
+                    start_buf_offset
+                        .checked_add(buf.len())
+                        .ok_or(Error::new(EOVERFLOW))?,
+                    data.len(),
+                );
                 let src_buf = &data[start_buf_offset..end_buf_offset];
 
                 let bytes_to_read = end_buf_offset - start_buf_offset;
                 let bytes_to_read_u64 = u64::try_from(bytes_to_read)?;
 
                 buf[..bytes_to_read].copy_from_slice(&src_buf[..bytes_to_read]);
-                list.offset = list.offset.checked_add(bytes_to_read_u64).ok_or(Error::new(EOVERFLOW))?;
+                list.offset = list
+                    .offset
+                    .checked_add(bytes_to_read_u64)
+                    .ok_or(Error::new(EOVERFLOW))?;
                 Ok(bytes_to_read)
             }
             Handle::CtlSocket(_) => Err(Error::new(EBADF)),
@@ -617,10 +699,19 @@ impl Scheme for PcidScheme {
         }
     }
     fn fpath(&self, fd: usize, buf: &mut [u8]) -> Result<usize> {
-        log::debug!("PCI SCHEME FPATH FD={}, BUF=<AT {:p} LEN {}>", fd, buf.as_ptr(), buf.len());
+        log::debug!(
+            "PCI SCHEME FPATH FD={}, BUF=<AT {:p} LEN {}>",
+            fd,
+            buf.as_ptr(),
+            buf.len()
+        );
 
         let handles_guard = self.file_handles.read().unwrap();
-        let handle = handles_guard.get(&fd).ok_or(Error::new(EBADF))?.lock().unwrap();
+        let handle = handles_guard
+            .get(&fd)
+            .ok_or(Error::new(EBADF))?
+            .lock()
+            .unwrap();
 
         let mut cursor = io::Cursor::new(buf);
         write!(cursor, "pci:").unwrap();
@@ -654,9 +745,14 @@ impl Scheme for PcidScheme {
                 }
                 ListKind::Function(func_num) => {
                     write_bus(&mut cursor, func_num.dev.bus, uses_seg_groups);
-                    write!(cursor, "/dev/{:02x}/func/{:02x}", func_num.dev.id, func_num.id).unwrap();
+                    write!(
+                        cursor,
+                        "/dev/{:02x}/func/{:02x}",
+                        func_num.dev.id, func_num.id
+                    )
+                    .unwrap();
                 }
-            }
+            },
             Handle::CtlSocket(ref socket) => match *socket {
                 CtlSocket::Bus(bus_num) => {
                     write_bus(&mut cursor, bus_num, uses_seg_groups);
@@ -668,23 +764,38 @@ impl Scheme for PcidScheme {
                 }
                 CtlSocket::Function(func_num) => {
                     write_bus(&mut cursor, func_num.dev.bus, uses_seg_groups);
-                    write!(cursor, "/dev/{:02x}/func/{:01x}/ctl", func_num.dev.id, func_num.id).unwrap();
+                    write!(
+                        cursor,
+                        "/dev/{:02x}/func/{:01x}/ctl",
+                        func_num.dev.id, func_num.id
+                    )
+                    .unwrap();
                 }
-            }
+            },
             Handle::ReadConfigDir(_, _) => write!(cursor, "/read_config_dir").unwrap(),
         }
 
         Ok(cursor.position().try_into()?)
     }
     fn write(&self, fd: usize, buf: &[u8]) -> Result<usize> {
-        log::debug!("PCI SCHEME WRITE FD={}, BUF=<AT {:p} LEN {}>", fd, buf.as_ptr(), buf.len());
+        log::debug!(
+            "PCI SCHEME WRITE FD={}, BUF=<AT {:p} LEN {}>",
+            fd,
+            buf.as_ptr(),
+            buf.len()
+        );
 
         let handles_guard = self.file_handles.read().unwrap();
-        let mut handle = handles_guard.get(&fd).ok_or(Error::new(EBADF))?.lock().or(Err(Error::new(EBADFD)))?;
+        let mut handle = handles_guard
+            .get(&fd)
+            .ok_or(Error::new(EBADF))?
+            .lock()
+            .or(Err(Error::new(EBADFD)))?;
 
         match *handle {
             Handle::ReadConfigDir(ref mut offset, ref mut data) => {
-                data.try_reserve_exact(buf.len()).or(Err(Error::new(ENOMEM)))?;
+                data.try_reserve_exact(buf.len())
+                    .or(Err(Error::new(ENOMEM)))?;
                 data.extend(buf);
                 Ok(buf.len())
             }
@@ -692,10 +803,18 @@ impl Scheme for PcidScheme {
         }
     }
     fn fstat(&self, fd: usize, stat: &mut Stat) -> Result<usize> {
-        log::debug!("PCI SCHEME FSTAT FD={}, STAT=<`Stat` AT {:p}>", fd, stat as *mut Stat);
+        log::debug!(
+            "PCI SCHEME FSTAT FD={}, STAT=<`Stat` AT {:p}>",
+            fd,
+            stat as *mut Stat
+        );
 
         let handles_guard = self.file_handles.read().unwrap();
-        let handle = handles_guard.get(&fd).ok_or(Error::new(EBADF))?.lock().unwrap();
+        let handle = handles_guard
+            .get(&fd)
+            .ok_or(Error::new(EBADF))?
+            .lock()
+            .unwrap();
 
         match *handle {
             Handle::List(ref list) => {
@@ -716,7 +835,11 @@ impl Scheme for PcidScheme {
                     st_ino: 0, // list.inode(),
 
                     st_mode: MODE_DIR,
-                    st_nlink: if list.kind == ListKind::TopLevel { 1 } else { 2 },
+                    st_nlink: if list.kind == ListKind::TopLevel {
+                        1
+                    } else {
+                        2
+                    },
 
                     // TODO: PCI user and group
                     st_uid: 0,
@@ -739,7 +862,7 @@ impl Scheme for PcidScheme {
                     st_size: 0,
 
                     // FIXME
-                    st_ino: 0,//socket.inode(),
+                    st_ino: 0, //socket.inode(),
 
                     st_mode: MODE_CHR | 0o000,
                     st_nlink: 1,
@@ -769,10 +892,14 @@ impl Scheme for PcidScheme {
             pid=ctx.pid, uid=ctx.uid, gid=ctx.gid, major=info.version.major,
             minor=info.version.minor, patch=info.version.patch);
 
-        let instance = ProducerInstance::new(info).and_log_err_as_warn("failed to create producer instance")?;
-        
+        let instance = ProducerInstance::new(info)
+            .and_log_err_as_warn("failed to create producer instance")?;
+
         let reactor_handle = self.reactor_handle.clone();
-        let ring = reactor_handle.reactor().add_producer_instance(instance, Priority::default()).and_log_err_as_warn("failed to register producer instance to reactor")?;
+        let ring = reactor_handle
+            .reactor()
+            .add_producer_instance(instance, Priority::default())
+            .and_log_err_as_warn("failed to register producer instance to reactor")?;
         let mut stream = reactor_handle.producer_sqes(ring, 64);
 
         let this = self.self_arc();
@@ -791,13 +918,24 @@ impl Scheme for PcidScheme {
                     }
                 };
 
-                /*let cqe = */if let Some(standard_opcode) = StandardOpcode::from_raw(sqe.opcode) {
+                /*let cqe = */
+                if let Some(standard_opcode) = StandardOpcode::from_raw(sqe.opcode) {
                     let cqe_res = this.handle_standard_opcode(standard_opcode, &sqe).await;
                     let _ = Self::or_error(&sqe, cqe_res, 0);
                 } else if let Some(pcid_opcode) = PcidOpcode::from_raw(sqe.opcode) {
-                    let cqe_res = this.handle_pcid_opcode(&ctx, &reactor_handle, ring, &mut pool, pcid_opcode, &sqe).await;
+                    let cqe_res = this
+                        .handle_pcid_opcode(
+                            &ctx,
+                            &reactor_handle,
+                            ring,
+                            &mut pool,
+                            pcid_opcode,
+                            &sqe,
+                        )
+                        .await;
                     let _ = Self::or_error(&sqe, cqe_res, 0);
-                };/* else*/ let cqe = {
+                }; /* else*/
+                let cqe = {
                     CqEntry64 {
                         user_data: sqe.user_data,
                         flags: 0, // TODO
@@ -823,7 +961,12 @@ impl Scheme for PcidScheme {
 
         let mut handles_guard = self.file_handles.write().unwrap();
 
-        match handles_guard.remove(&fd).ok_or(Error::new(EBADF))?.into_inner().or(Err(Error::new(EBADFD)))? {
+        match handles_guard
+            .remove(&fd)
+            .ok_or(Error::new(EBADF))?
+            .into_inner()
+            .or(Err(Error::new(EBADFD)))?
+        {
             Handle::ReadConfigDir(_, ref data) => {
                 let os_str = OsStr::from_bytes(&data);
                 let mut config = crate::config::Config::default();
@@ -840,19 +983,33 @@ impl Scheme for PcidScheme {
 impl PcidScheme {
     // TODO: Make it possible to get an Arc of the driver, to avoid lifetime errors with the
     // executor.
-    pub async fn handle_standard_opcode(&self, opcode: StandardOpcode, sqe: &SqEntry64) -> Result<CqEntry64> {
+    pub async fn handle_standard_opcode(
+        &self,
+        opcode: StandardOpcode,
+        sqe: &SqEntry64,
+    ) -> Result<CqEntry64> {
         log::warn!("TODO: handle standard opcode {:?}, sqe {:?}", opcode, sqe);
         Ok(CqEntry64::default())
     }
-    pub async fn handle_pcid_opcode(&self, ctx: &scheme::Ctx, reactor: &reactor::Handle, ring: SecondaryRingId, pool: &mut Option<redox_iou::memory::BufferPool>, opcode: PcidOpcode, sqe: &SqEntry64) -> Result<CqEntry64> {
+    pub async fn handle_pcid_opcode(
+        &self,
+        ctx: &scheme::Ctx,
+        reactor: &reactor::Handle,
+        ring: SecondaryRingId,
+        pool: &mut Option<redox_iou::memory::BufferPool>,
+        opcode: PcidOpcode,
+        sqe: &SqEntry64,
+    ) -> Result<CqEntry64> {
         let pool = match pool {
             Some(p) => p,
             None => {
                 log::info!("Creating producer pool");
-                let new_pool = reactor.create_producer_buffer_pool(ring, Priority::default()).await?;
+                let new_pool = reactor
+                    .create_producer_buffer_pool(ring, Priority::default())
+                    .await?;
                 *pool = Some(new_pool);
                 pool.as_mut().unwrap()
-            },
+            }
         };
         log::warn!("Buffer pool initialized; TODO");
 
@@ -864,22 +1021,24 @@ impl PcidScheme {
             Ok(())
         }
         fn find_device(tree: &DeviceTree, addr: PciAddress32) -> Result<Arc<RwLock<Func>>> {
-            Ok(Arc::clone(tree.functions.get(&addr).ok_or(Error::new(ENOENT))?))
+            Ok(Arc::clone(
+                tree.functions.get(&addr).ok_or(Error::new(ENOENT))?,
+            ))
         }
 
         match opcode {
             PcidOpcode::FetchConfig => {
                 check_if_version(sqe)?;
-            },
+            }
             PcidOpcode::FetchAllCapabilities => {
                 check_if_version(sqe)?;
-            },
+            }
             PcidOpcode::GetCapability => {
                 check_if_version(sqe)?;
-            },
+            }
             PcidOpcode::SetCapability => {
                 check_if_version(sqe)?;
-            },
+            }
         }
 
         Ok(CqEntry64::default())

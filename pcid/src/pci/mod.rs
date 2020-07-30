@@ -24,7 +24,13 @@ pub mod msi;
 pub trait CfgAccess {
     fn supports_ext(&self, bus: u8) -> bool;
 
-    unsafe fn with_mapped_mem(&self, bus: u8, dev: u8, func: u8, f: &mut dyn FnMut(Option<&'static mut [Mmio<u32>]>));
+    unsafe fn with_mapped_mem(
+        &self,
+        bus: u8,
+        dev: u8,
+        func: u8,
+        f: &mut dyn FnMut(Option<&'static mut [Mmio<u32>]>),
+    );
 
     unsafe fn read_nolock(&self, bus: u8, dev: u8, func: u8, offset: u16) -> u32;
     unsafe fn read(&self, bus: u8, dev: u8, func: u8, offset: u16) -> u32;
@@ -54,7 +60,9 @@ impl Pci {
         // make sure that pcid is not granted io port permission unless pcie memory-mapped
         // configuration space is not available.
         info!("PCI: couldn't find or access PCIe extended configuration, and thus falling back to PCI 3.0 io ports");
-        unsafe { syscall::iopl(3).expect("pcid: failed to set iopl to 3"); }
+        unsafe {
+            syscall::iopl(3).expect("pcid: failed to set iopl to 3");
+        }
     }
     fn address(bus: u8, dev: u8, func: u8, offset: u8) -> u32 {
         // TODO: Find the part of pcid that uses an unaligned offset!
@@ -66,7 +74,11 @@ impl Pci {
         assert_eq!(dev & 0x1F, dev, "pci device larger than 5 bits");
         assert_eq!(func & 0x7, func, "pci func larger than 3 bits");
 
-        0x80000000 | (u32::from(bus) << 16) | (u32::from(dev) << 11) | (u32::from(func) << 8) | u32::from(offset)
+        0x80000000
+            | (u32::from(bus) << 16)
+            | (u32::from(dev) << 11)
+            | (u32::from(func) << 8)
+            | u32::from(offset)
     }
 }
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -79,7 +91,8 @@ impl CfgAccess for Pci {
         assert_eq!(offset & 0x00FC, offset, "incompatible PCI 3.0 offset");
         self.iopl_once.call_once(Self::set_iopl);
 
-        let offset = u8::try_from(offset).expect("offset too large for PCI 3.0 configuration space");
+        let offset =
+            u8::try_from(offset).expect("offset too large for PCI 3.0 configuration space");
         let address = Self::address(bus, dev, func, offset);
 
         let value: u32;
@@ -101,7 +114,8 @@ impl CfgAccess for Pci {
 
         self.iopl_once.call_once(Self::set_iopl);
 
-        let offset = u8::try_from(offset).expect("offset too large for PCI 3.0 configuration space");
+        let offset =
+            u8::try_from(offset).expect("offset too large for PCI 3.0 configuration space");
         let address = Self::address(bus, dev, func, offset);
 
         llvm_asm!("mov dx, 0xCF8
@@ -115,7 +129,13 @@ impl CfgAccess for Pci {
         let _guard = self.lock.lock().unwrap();
         self.write_nolock(bus, dev, func, offset, value)
     }
-    unsafe fn with_mapped_mem(&self, _bus: u8, _dev: u8, _func: u8, f: &mut dyn FnMut(Option<&'static mut [Mmio<u32>]>)) {
+    unsafe fn with_mapped_mem(
+        &self,
+        _bus: u8,
+        _dev: u8,
+        _func: u8,
+        f: &mut dyn FnMut(Option<&'static mut [Mmio<u32>]>),
+    ) {
         f(None);
     }
 }

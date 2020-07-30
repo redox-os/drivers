@@ -1,6 +1,6 @@
-use std::fmt;
 use super::func::ConfigReader;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
+use std::fmt;
 
 pub struct CapabilityOffsetsIter<'a, R> {
     offset: u8,
@@ -8,15 +8,12 @@ pub struct CapabilityOffsetsIter<'a, R> {
 }
 impl<'a, R> CapabilityOffsetsIter<'a, R> {
     pub fn new(offset: u8, reader: &'a R) -> Self {
-        Self {
-            offset,
-            reader,
-        }
+        Self { offset, reader }
     }
 }
 impl<'a, R> Iterator for CapabilityOffsetsIter<'a, R>
 where
-    R: ConfigReader
+    R: ConfigReader,
 {
     type Item = u8;
 
@@ -25,7 +22,9 @@ where
             // mask RsvdP bits
             self.offset = self.offset & 0xFC;
 
-            if self.offset == 0 { return None };
+            if self.offset == 0 {
+                return None;
+            };
 
             let first_dword = self.reader.read_u32(u16::from(self.offset));
             let next = ((first_dword >> 8) & 0xFF) as u8;
@@ -41,13 +40,12 @@ where
 #[repr(u8)]
 pub enum CapabilityId {
     PwrMgmt = 0x01,
-    Msi     = 0x05,
-    MsiX    = 0x11,
-    Pcie    = 0x10,
+    Msi = 0x05,
+    MsiX = 0x11,
+    Pcie = 0x10,
 
     // function specific
-
-    Sata    = 0x12, // only on AHCI functions
+    Sata = 0x12, // only on AHCI functions
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
@@ -124,9 +122,15 @@ pub trait MsiCapabilityProps {
     fn message_address(&self) -> u32;
     fn message_data(&self) -> u16;
 
-    fn message_upper_address(&self) -> Option<u32> { None }
-    fn mask_bits(&self) -> Option<u32> { None }
-    fn pending_bits(&self) -> Option<u32> { None }
+    fn message_upper_address(&self) -> Option<u32> {
+        None
+    }
+    fn mask_bits(&self) -> Option<u32> {
+        None
+    }
+    fn pending_bits(&self) -> Option<u32> {
+        None
+    }
 }
 impl MsiCapabilityProps for MsiCapability32bAddr {
     fn message_address(&self) -> u32 {
@@ -315,7 +319,10 @@ impl Capability {
             } else if id == CapabilityId::PwrMgmt as u8 {
                 Self::PwrMgmt(raw.pwrmgmt)
             } else if id == CapabilityId::Sata as u8 {
-                Self::FunctionSpecific(id, raw.func_specific.bytes[..raw.func_specific.len as usize].to_vec())
+                Self::FunctionSpecific(
+                    id,
+                    raw.func_specific.bytes[..raw.func_specific.len as usize].to_vec(),
+                )
             } else {
                 Self::Other(id)
             })
@@ -386,21 +393,21 @@ impl Capability {
         let offset = u16::from(offset);
 
         Self::Pcie(PcieCapability {
-            pcie_caps:      reader.read_u32(offset),
-            dev_caps:       reader.read_u32(offset + 0x04),
-            dev_sts_ctl:    reader.read_u32(offset + 0x08),
-            link_caps:      reader.read_u32(offset + 0x0C),
-            link_sts_ctl:   reader.read_u32(offset + 0x10),
-            slot_caps:      reader.read_u32(offset + 0x14),
-            slot_sts_ctl:   reader.read_u32(offset + 0x18),
-            root_cap_ctl:   reader.read_u32(offset + 0x1C),
-            root_sts:       reader.read_u32(offset + 0x20),
-            dev_caps2:      reader.read_u32(offset + 0x24),
-            dev_sts_ctl2:   reader.read_u32(offset + 0x28),
-            link_caps2:     reader.read_u32(offset + 0x2C),
-            link_sts_ctl2:  reader.read_u32(offset + 0x30),
-            slot_caps2:     reader.read_u32(offset + 0x34),
-            slot_sts_ctl2:  reader.read_u32(offset + 0x38),
+            pcie_caps: reader.read_u32(offset),
+            dev_caps: reader.read_u32(offset + 0x04),
+            dev_sts_ctl: reader.read_u32(offset + 0x08),
+            link_caps: reader.read_u32(offset + 0x0C),
+            link_sts_ctl: reader.read_u32(offset + 0x10),
+            slot_caps: reader.read_u32(offset + 0x14),
+            slot_sts_ctl: reader.read_u32(offset + 0x18),
+            root_cap_ctl: reader.read_u32(offset + 0x1C),
+            root_sts: reader.read_u32(offset + 0x20),
+            dev_caps2: reader.read_u32(offset + 0x24),
+            dev_sts_ctl2: reader.read_u32(offset + 0x28),
+            link_caps2: reader.read_u32(offset + 0x2C),
+            link_sts_ctl2: reader.read_u32(offset + 0x30),
+            slot_caps2: reader.read_u32(offset + 0x34),
+            slot_sts_ctl2: reader.read_u32(offset + 0x38),
         })
     }
     unsafe fn parse<R: ConfigReader>(reader: &R, offset: u8) -> Self {
@@ -415,12 +422,15 @@ impl Capability {
             Self::parse_msix(reader, offset)
         } else if capability_id == CapabilityId::Pcie as u8 {
             Self::parse_pcie(reader, offset)
-        } else if capability_id == CapabilityId::PwrMgmt as u8{
+        } else if capability_id == CapabilityId::PwrMgmt as u8 {
             Self::parse_pwr(reader, offset)
         } else if capability_id == CapabilityId::Sata as u8 {
             Self::FunctionSpecific(capability_id, reader.read_range(offset.into(), 8))
         } else {
-            log::warn!("unimplemented or malformed capability id: {}", capability_id);
+            log::warn!(
+                "unimplemented or malformed capability id: {}",
+                capability_id
+            );
             Self::Other(capability_id)
         }
     }
@@ -430,7 +440,7 @@ pub struct CapabilitiesIter<'a, R>(pub CapabilityOffsetsIter<'a, R>);
 
 impl<'a, R> Iterator for CapabilitiesIter<'a, R>
 where
-    R: ConfigReader
+    R: ConfigReader,
 {
     type Item = (u8, Capability);
 

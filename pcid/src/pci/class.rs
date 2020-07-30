@@ -1,4 +1,4 @@
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum PciClass {
     Legacy,
     Storage,
@@ -19,7 +19,12 @@ pub enum PciClass {
     Cryptography,
     SignalProc,
     Reserved(u8),
-    Unknown
+    Unknown,
+}
+impl Default for PciClass {
+    fn default() -> Self {
+        Self::Unknown
+    }
 }
 
 impl From<u8> for PciClass {
@@ -44,14 +49,14 @@ impl From<u8> for PciClass {
             0x10 => PciClass::Cryptography,
             0x11 => PciClass::SignalProc,
             0xFF => PciClass::Unknown,
-            reserved => PciClass::Reserved(reserved)
+            reserved => PciClass::Reserved(reserved),
         }
     }
 }
 
-impl Into<u8> for PciClass {
-    fn into(self) -> u8 {
-        match self {
+impl From<PciClass> for u8 {
+    fn from(class: PciClass) -> u8 {
+        match class {
             PciClass::Legacy => 0x00,
             PciClass::Storage => 0x01,
             PciClass::Network => 0x02,
@@ -71,7 +76,7 @@ impl Into<u8> for PciClass {
             PciClass::Cryptography => 0x10,
             PciClass::SignalProc => 0x11,
             PciClass::Unknown => 0xFF,
-            PciClass::Reserved(reserved) => reserved
+            PciClass::Reserved(reserved) => reserved,
         }
     }
 }

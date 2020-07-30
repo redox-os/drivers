@@ -1,7 +1,10 @@
 use std::fmt;
 
 use super::bar::PciBar;
-pub use super::cap::{MsiCapability, MsiCapability32bAddr, MsiCapability32bAddrWithPvm, MsiCapability64bAddr, MsiCapability64bAddrWithPvm, MsiCapabilityProps, MsixCapability};
+pub use super::cap::{
+    MsiCapability, MsiCapability32bAddr, MsiCapability32bAddrWithPvm, MsiCapability64bAddr,
+    MsiCapability64bAddrWithPvm, MsiCapabilityProps, MsixCapability,
+};
 use super::func::{ConfigReader, ConfigWriter};
 
 use syscall::{Io, Mmio};
@@ -101,13 +104,16 @@ impl MsiCapability {
         self.set_message_control(new_message_control);
     }
     pub fn multi_message_capable(&self) -> u8 {
-        ((self.message_control() & Self::MC_MULTI_MESSAGE_MASK) >> Self::MC_MULTI_MESSAGE_SHIFT) as u8
+        ((self.message_control() & Self::MC_MULTI_MESSAGE_MASK) >> Self::MC_MULTI_MESSAGE_SHIFT)
+            as u8
     }
     pub fn multi_message_enable(&self) -> u8 {
-        ((self.message_control() & Self::MC_MULTI_MESSAGE_ENABLE_MASK) >> Self::MC_MULTI_MESSAGE_ENABLE_SHIFT) as u8
+        ((self.message_control() & Self::MC_MULTI_MESSAGE_ENABLE_MASK)
+            >> Self::MC_MULTI_MESSAGE_ENABLE_SHIFT) as u8
     }
     pub fn set_multi_message_enable(&mut self, log_mme: u8) {
-        let mut new_message_control = self.message_control() & (!Self::MC_MULTI_MESSAGE_ENABLE_MASK);
+        let mut new_message_control =
+            self.message_control() & (!Self::MC_MULTI_MESSAGE_ENABLE_MASK);
         new_message_control |= u16::from(log_mme) << Self::MC_MULTI_MESSAGE_ENABLE_SHIFT;
         self.set_message_control(new_message_control);
     }
@@ -151,24 +157,63 @@ impl MsiCapability {
         }
     }
     pub fn set_message_address(&mut self, message_address: u32) {
-        assert_eq!(message_address & 0xFFFF_FFFC, message_address, "unaligned message address (this should already be validated)");
+        assert_eq!(
+            message_address & 0xFFFF_FFFC,
+            message_address,
+            "unaligned message address (this should already be validated)"
+        );
 
         match self {
-            &mut Self::_32BitAddress(MsiCapability32bAddr { message_address: ref mut addr, .. }) | &mut Self::_32BitAddressWithPvm(MsiCapability32bAddrWithPvm { message_address: ref mut addr, .. }) => *addr = message_address,
-            &mut Self::_64BitAddress(MsiCapability64bAddr { message_address_lo: ref mut addr, .. }) | &mut Self::_64BitAddressWithPvm(MsiCapability64bAddrWithPvm { message_address_lo: ref mut addr, .. }) => *addr = message_address,
+            &mut Self::_32BitAddress(MsiCapability32bAddr {
+                message_address: ref mut addr,
+                ..
+            })
+            | &mut Self::_32BitAddressWithPvm(MsiCapability32bAddrWithPvm {
+                message_address: ref mut addr,
+                ..
+            }) => *addr = message_address,
+            &mut Self::_64BitAddress(MsiCapability64bAddr {
+                message_address_lo: ref mut addr,
+                ..
+            })
+            | &mut Self::_64BitAddressWithPvm(MsiCapability64bAddrWithPvm {
+                message_address_lo: ref mut addr,
+                ..
+            }) => *addr = message_address,
         }
     }
     pub fn set_message_upper_address(&mut self, message_upper_address: u32) -> Option<()> {
         match self {
-            &mut Self::_64BitAddress(MsiCapability64bAddr { ref mut message_address_hi, .. }) | &mut Self::_64BitAddressWithPvm(MsiCapability64bAddrWithPvm { ref mut message_address_hi, .. }) => *message_address_hi = message_upper_address,
+            &mut Self::_64BitAddress(MsiCapability64bAddr {
+                ref mut message_address_hi,
+                ..
+            })
+            | &mut Self::_64BitAddressWithPvm(MsiCapability64bAddrWithPvm {
+                ref mut message_address_hi,
+                ..
+            }) => *message_address_hi = message_upper_address,
             &mut Self::_32BitAddress(_) | &mut Self::_32BitAddressWithPvm(_) => return None,
         }
         Some(())
     }
     pub fn set_message_data(&mut self, value: u16) {
         match self {
-            &mut Self::_32BitAddress(MsiCapability32bAddr { ref mut message_data, .. }) | &mut Self::_64BitAddress(MsiCapability64bAddr { ref mut message_data, .. }) => *message_data = value,
-            &mut Self::_32BitAddressWithPvm(MsiCapability32bAddrWithPvm { ref mut message_data, .. }) | &mut Self::_64BitAddressWithPvm(MsiCapability64bAddrWithPvm { ref mut message_data, .. }) => {
+            &mut Self::_32BitAddress(MsiCapability32bAddr {
+                ref mut message_data,
+                ..
+            })
+            | &mut Self::_64BitAddress(MsiCapability64bAddr {
+                ref mut message_data,
+                ..
+            }) => *message_data = value,
+            &mut Self::_32BitAddressWithPvm(MsiCapability32bAddrWithPvm {
+                ref mut message_data,
+                ..
+            })
+            | &mut Self::_64BitAddressWithPvm(MsiCapability64bAddrWithPvm {
+                ref mut message_data,
+                ..
+            }) => {
                 *message_data &= 0xFFFF_0000;
                 *message_data |= u32::from(value);
             }
@@ -176,7 +221,14 @@ impl MsiCapability {
     }
     pub fn set_mask_bits(&mut self, mask_bits: u32) -> Option<()> {
         match self {
-            &mut Self::_32BitAddressWithPvm(MsiCapability32bAddrWithPvm { mask_bits: ref mut bits, .. }) | &mut Self::_64BitAddressWithPvm(MsiCapability64bAddrWithPvm { mask_bits: ref mut bits, .. }) => *bits = mask_bits,
+            &mut Self::_32BitAddressWithPvm(MsiCapability32bAddrWithPvm {
+                mask_bits: ref mut bits,
+                ..
+            })
+            | &mut Self::_64BitAddressWithPvm(MsiCapability64bAddrWithPvm {
+                mask_bits: ref mut bits,
+                ..
+            }) => *bits = mask_bits,
             &mut Self::_32BitAddress(_) | &mut Self::_64BitAddress(_) => return None,
         }
         Some(())
@@ -184,7 +236,11 @@ impl MsiCapability {
     pub unsafe fn write_message_address<W: ConfigWriter>(&self, writer: &W, offset: u8) {
         writer.write_u32(u16::from(offset) + 4, self.message_address())
     }
-    pub unsafe fn write_message_upper_address<W: ConfigWriter>(&self, writer: &W, offset: u8) -> Option<()> {
+    pub unsafe fn write_message_upper_address<W: ConfigWriter>(
+        &self,
+        writer: &W,
+        offset: u8,
+    ) -> Option<()> {
         let value = self.message_upper_address()?;
         writer.write_u32(u16::from(offset + 8), value);
         Some(())
@@ -194,16 +250,28 @@ impl MsiCapability {
         // untouched.
 
         match self {
-            &Self::_32BitAddress(ref s) => writer.write_u32(u16::from(offset + 8), s.message_data().into()),
-            &Self::_32BitAddressWithPvm(ref s) => writer.write_u32(u16::from(offset + 8), s.message_data().into()),
-            &Self::_64BitAddress(ref s) => writer.write_u32(u16::from(offset + 12), s.message_data().into()),
-            &Self::_64BitAddressWithPvm(ref s) => writer.write_u32(u16::from(offset + 12), s.message_data().into()),
+            &Self::_32BitAddress(ref s) => {
+                writer.write_u32(u16::from(offset + 8), s.message_data().into())
+            }
+            &Self::_32BitAddressWithPvm(ref s) => {
+                writer.write_u32(u16::from(offset + 8), s.message_data().into())
+            }
+            &Self::_64BitAddress(ref s) => {
+                writer.write_u32(u16::from(offset + 12), s.message_data().into())
+            }
+            &Self::_64BitAddressWithPvm(ref s) => {
+                writer.write_u32(u16::from(offset + 12), s.message_data().into())
+            }
         }
     }
     pub unsafe fn write_mask_bits<W: ConfigWriter>(&self, writer: &W, offset: u8) -> Option<()> {
         match self {
-            &Self::_32BitAddressWithPvm(MsiCapability32bAddrWithPvm { mask_bits, .. }) => writer.write_u32(u16::from(offset + 12), mask_bits),
-            &Self::_64BitAddressWithPvm(MsiCapability64bAddrWithPvm { mask_bits, .. }) => writer.write_u32(u16::from(offset + 16), mask_bits),
+            &Self::_32BitAddressWithPvm(MsiCapability32bAddrWithPvm { mask_bits, .. }) => {
+                writer.write_u32(u16::from(offset + 12), mask_bits)
+            }
+            &Self::_64BitAddressWithPvm(MsiCapability64bAddrWithPvm { mask_bits, .. }) => {
+                writer.write_u32(u16::from(offset + 16), mask_bits)
+            }
             &Self::_32BitAddress(_) | &Self::_64BitAddress(_) => return None,
         }
         Some(())
@@ -278,7 +346,11 @@ impl MsixCapability {
     }
 
     pub fn set_table_offset(&mut self, offset: u32) {
-        assert_eq!(offset & Self::TABLE_OFFSET_MASK, offset, "MSI-X table offset has to be QWORD aligned");
+        assert_eq!(
+            offset & Self::TABLE_OFFSET_MASK,
+            offset,
+            "MSI-X table offset has to be QWORD aligned"
+        );
         self.b &= !Self::TABLE_OFFSET_MASK;
         self.b |= offset;
     }
@@ -295,22 +367,33 @@ impl MsixCapability {
     }
 
     pub fn set_pba_offset(&mut self, offset: u32) {
-        assert_eq!(offset & Self::PBA_OFFSET_MASK, offset, "MSI-X Pending Bit Array offset has to be QWORD aligned");
+        assert_eq!(
+            offset & Self::PBA_OFFSET_MASK,
+            offset,
+            "MSI-X Pending Bit Array offset has to be QWORD aligned"
+        );
         self.c &= !Self::PBA_OFFSET_MASK;
         self.c |= offset;
     }
 
     pub fn table_base_pointer(&self, bars: [PciBar; 6]) -> usize {
         if self.table_bir() > 5 {
-            panic!("MSI-X Table BIR contained a reserved enum value: {}", self.table_bir());
+            panic!(
+                "MSI-X Table BIR contained a reserved enum value: {}",
+                self.table_bir()
+            );
         }
         let base = bars[usize::from(self.table_bir())];
 
-        if let PciBar::Memory(ptr) = base {
-            ptr as usize + self.table_offset() as usize
-        } else {
-            panic!("MSI-X Table BIR referenced a non-memory BAR: {:?}", base);
-        }
+        let address = match base {
+            PciBar::MemorySpace32 { address, .. } => address as usize,
+            PciBar::MemorySpace64 { address, .. } => address as usize,
+            PciBar::IoSpace { .. } => {
+                panic!("MSI-X Table BIR referenced a non-memory BAR: {:?}", base)
+            }
+        };
+
+        address as usize + self.table_offset() as usize
     }
     pub fn table_pointer(&self, bars: [PciBar; 6], k: u16) -> usize {
         self.table_base_pointer(bars) + k as usize * 16
@@ -318,15 +401,22 @@ impl MsixCapability {
 
     pub fn pba_base_pointer(&self, bars: [PciBar; 6]) -> usize {
         if self.pba_bir() > 5 {
-            panic!("MSI-X PBA BIR contained a reserved enum value: {}", self.pba_bir());
+            panic!(
+                "MSI-X PBA BIR contained a reserved enum value: {}",
+                self.pba_bir()
+            );
         }
         let base = bars[usize::from(self.pba_bir())];
 
-        if let PciBar::Memory(ptr) = base {
-            ptr as usize + self.pba_offset() as usize
-        } else {
-            panic!("MSI-X PBA BIR referenced a non-memory BAR: {:?}", base);
-        }
+        let address = match base {
+            PciBar::MemorySpace32 { address, .. } => address as usize,
+            PciBar::MemorySpace64 { address, .. } => address as usize,
+            PciBar::IoSpace { .. } => {
+                panic!("MSI-X PBA BIR referenced a non-memory BAR: {:?}", base)
+            }
+        };
+
+        address as usize + self.pba_offset() as usize
     }
     pub fn pba_pointer_dword(&self, bars: [PciBar; 6], k: u16) -> usize {
         self.pba_base_pointer(bars) + (k as usize / 32) * 4
@@ -401,22 +491,38 @@ pub mod x86_64 {
 
     // TODO: should the reserved field be preserved?
     pub const fn message_address(destination_id: u8, rh: bool, dm: bool) -> u32 {
-        0xFEE0_0000u32
-            | ((destination_id as u32) << 12)
-            | ((rh as u32) << 3)
-            | ((dm as u32) << 2)
+        0xFEE0_0000u32 | ((destination_id as u32) << 12) | ((rh as u32) << 3) | ((dm as u32) << 2)
     }
-    pub const fn message_data(trigger_mode: TriggerMode, level_trigger_mode: LevelTriggerMode, delivery_mode: DeliveryMode, vector: u8) -> u32 {
+    pub const fn message_data(
+        trigger_mode: TriggerMode,
+        level_trigger_mode: LevelTriggerMode,
+        delivery_mode: DeliveryMode,
+        vector: u8,
+    ) -> u32 {
         ((trigger_mode as u32) << 15)
             | ((level_trigger_mode as u32) << 14)
             | ((delivery_mode as u32) << 8)
             | vector as u32
     }
-    pub const fn message_data_level_triggered(level_trigger_mode: LevelTriggerMode, delivery_mode: DeliveryMode, vector: u8) -> u32 {
-        message_data(TriggerMode::Level, level_trigger_mode, delivery_mode, vector)
+    pub const fn message_data_level_triggered(
+        level_trigger_mode: LevelTriggerMode,
+        delivery_mode: DeliveryMode,
+        vector: u8,
+    ) -> u32 {
+        message_data(
+            TriggerMode::Level,
+            level_trigger_mode,
+            delivery_mode,
+            vector,
+        )
     }
     pub const fn message_data_edge_triggered(delivery_mode: DeliveryMode, vector: u8) -> u32 {
-        message_data(TriggerMode::Edge, LevelTriggerMode::Deassert, delivery_mode, vector)
+        message_data(
+            TriggerMode::Edge,
+            LevelTriggerMode::Deassert,
+            delivery_mode,
+            vector,
+        )
     }
 }
 

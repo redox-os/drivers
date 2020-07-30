@@ -1,7 +1,7 @@
 use std::{fmt, mem};
 
+use serde::{Deserialize, Serialize};
 use syscall::{Io, Mmio};
-use serde::{Serialize, Deserialize};
 
 use crate::pci::func::ConfigReader;
 
@@ -69,7 +69,9 @@ impl CapabilityKind {
             assert_eq!((slice.as_ptr() as usize) % mem::align_of::<AerCap>(), 0);
             assert_eq!(offset & 0b11, offset);
             assert!(slice.len() * mem::size_of::<u32>() >= mem::size_of::<AerCap>());
-            cap = Some(std::ptr::read_volatile(slice.as_ptr() as *mut AerCap as *const AerCap));
+            cap = Some(std::ptr::read_volatile(
+                slice.as_ptr() as *mut AerCap as *const AerCap
+            ));
         });
         cap.expect("closure not called")
     }
@@ -95,13 +97,15 @@ impl Capability {
         let kind = if cap_id == CapabilityId::Aer as u16 {
             CapabilityKind::Aer(CapabilityKind::parse_aer(reader, offset))
         } else {
-            log::warn!("Unimplemented/malformed PCIe capability id: {} (full dword {}) at offset {:#0x}", cap_id, dword, offset);
+            log::warn!(
+                "Unimplemented/malformed PCIe capability id: {} (full dword {}) at offset {:#0x}",
+                cap_id,
+                dword,
+                offset
+            );
             CapabilityKind::Unknown(cap_id)
         };
-        Capability {
-            kind,
-            cap_version,
-        }
+        Capability { kind, cap_version }
     }
 }
 
@@ -119,7 +123,7 @@ impl<'a, R> CapabilityOffsetsIter<'a, R> {
 }
 impl<'a, R> Iterator for CapabilityOffsetsIter<'a, R>
 where
-    R: ConfigReader
+    R: ConfigReader,
 {
     type Item = u16;
 
@@ -131,7 +135,9 @@ where
         }
         let dword = unsafe { self.reader.read_u32(self.pointer) };
 
-        if dword == 0 { return None }
+        if dword == 0 {
+            return None;
+        }
 
         let capability_id = (dword & 0x0000_FFFF) as u16;
 
@@ -158,7 +164,7 @@ pub struct CapabilitiesIter<'a, R>(pub CapabilityOffsetsIter<'a, R>);
 
 impl<'a, R> Iterator for CapabilitiesIter<'a, R>
 where
-    R: ConfigReader
+    R: ConfigReader,
 {
     type Item = (u16, Capability);
 

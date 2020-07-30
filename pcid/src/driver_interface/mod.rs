@@ -1,8 +1,8 @@
 use std::convert::{TryFrom, TryInto};
 use std::fs::File;
 use std::io::prelude::*;
-use std::{env, fmt, mem, io};
 use std::os::unix::io::{FromRawFd, RawFd};
+use std::{env, fmt, io, mem};
 
 use syscall::error::Error as Errno;
 use syscall::error::{ENOMEM, EOVERFLOW};
@@ -12,16 +12,21 @@ use redox_iou::instance::ConsumerInstanceBuilder;
 use redox_iou::memory::{BufferPool, BufferSlice};
 use redox_iou::reactor::{Handle as IoringReactorHandle, SecondaryRingId};
 
-use serde::{Serialize, Deserialize, de::DeserializeOwned};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use thiserror::Error;
 
-pub use crate::pci::{cap::{Capability as PciCapability, CapabilityRawTagged as PciCapabilityRawTagged}, msi, PciBar};
-pub use crate::pcie::cap::{Capability as PcieCapability, CapabilityRawTagged as PcieCapabilityRawTagged};
+pub use crate::pci::{
+    cap::{Capability as PciCapability, CapabilityRawTagged as PciCapabilityRawTagged},
+    msi, PciBar,
+};
+pub use crate::pcie::cap::{
+    Capability as PcieCapability, CapabilityRawTagged as PcieCapabilityRawTagged,
+};
 
 pub mod helpers;
 
 /// A legacy INTx# pin, mapped to an interrupt through the 8259 PIC or the I/O APIC.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum LegacyInterruptPin {
     /// INTa#
@@ -47,7 +52,7 @@ pub struct PciFunction {
     pub func_num: u8,
 
     /// PCI Base Address Registers
-    pub bars: [PciBar; 6],
+    pub bars: [Option<PciBar>; 6],
 
     /// BAR sizes
     pub bar_sizes: [u32; 6],
@@ -74,7 +79,10 @@ unsafe impl plain::Plain for PciFunction {}
 
 impl PciFunction {
     pub fn name(&self) -> String {
-        format!("pci-{:>02X}.{:>02X}.{:>02X}", self.bus_num, self.dev_num, self.func_num)
+        format!(
+            "pci-{:>02X}.{:>02X}.{:>02X}",
+            self.bus_num, self.dev_num, self.func_num
+        )
     }
     pub fn legacy_interrupt_pin(&self) -> Option<LegacyInterruptPin> {
         match self.legacy_interrupt_pin {
@@ -112,10 +120,18 @@ pub enum CapabilityType {
 }
 impl CapabilityType {
     pub fn is_msi(&self) -> bool {
-        if let &Self::Msi = self { true } else { false }
+        if let &Self::Msi = self {
+            true
+        } else {
+            false
+        }
     }
     pub fn is_msix(&self) -> bool {
-        if let &Self::MsiX = self { true } else { false }
+        if let &Self::MsiX = self {
+            true
+        } else {
+            false
+        }
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -149,7 +165,11 @@ impl Capability {
             Some(if kind == CapabilityKind::Pci as u8 {
                 Self::Pci(PciCapability::construct(raw.pci.id, raw.pci.raw)?)
             } else if kind == CapabilityKind::Pcie as u8 {
-                Self::Pcie(PcieCapability::construct(raw.pcie.id, raw.pcie.version, raw.pcie.raw))
+                Self::Pcie(PcieCapability::construct(
+                    raw.pcie.id,
+                    raw.pcie.version,
+                    raw.pcie.raw,
+                ))
             } else {
                 return None;
             })
@@ -323,7 +343,7 @@ unsafe impl plain::Plain for SetCapabilityInfoRaw {}
 
 impl fmt::Debug for SetCapabilityInfoRaw {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.id ==  CapabilityType::Msi as u32 {
+        if self.id == CapabilityType::Msi as u32 {
             f.debug_tuple("SetCapabilityInfo::Msi")
                 .field(unsafe { &self.inner.msi })
                 .finish()
@@ -408,7 +428,7 @@ pub(crate) fn recv<R: Read, T: DeserializeOwned>(r: &mut R) -> Result<T> {
     if length > 0x100_000 {
         panic!("pcid_interface: buffer too large");
     }
-    let mut data = vec! [0u8; length as usize];
+    let mut data = vec![0u8; length as usize];
     r.read_exact(&mut data)?;
 
     Ok(bincode::deserialize_from(&data[..])?)
@@ -421,42 +441,51 @@ impl PcidServerHandle {
             inner: PcidServerTransport::Pipe {
                 pcid_to_client: unsafe { File::from_raw_fd(pcid_to_client) },
                 pcid_from_client: unsafe { File::from_raw_fd(pcid_from_client) },
-            }
+            },
         })
     }
-    pub async fn connect_using_iouring(handle: IoringReactorHandle) -> Result<Self, IoUringSetupError> {
+    pub async fn connect_using_iouring(
+        handle: IoringReactorHandle,
+    ) -> Result<Self, IoUringSetupError> {
         log::debug!("creating instance");
         let instance = ConsumerInstanceBuilder::new()
-            .with_submission_entry_count(64)    // 4KiB, one page (minimum size)
-            .with_completion_entry_count(128)   // 4KiB, one page (minimum size)
-            .create_instance().map_err(IoUringSetupError::CreateInstanceError)?
-            .map_all().map_err(IoUringSetupError::MapAllError)?
-            .attach("pci:").map_err(IoUringSetupError::AttachError)?;
+            .with_submission_entry_count(64) // 4KiB, one page (minimum size)
+            .with_completion_entry_count(128) // 4KiB, one page (minimum size)
+            .create_instance()
+            .map_err(IoUringSetupError::CreateInstanceError)?
+            .map_all()
+            .map_err(IoUringSetupError::MapAllError)?
+            .attach("pci:")
+            .map_err(IoUringSetupError::AttachError)?;
         log::debug!("created instance");
 
         log::debug!("adding sec instance");
-        let ring = handle.reactor().add_secondary_instance(instance, Priority::default()).map_err(IoUringSetupError::AddInstanceError)?;
+        let ring = handle
+            .reactor()
+            .add_secondary_instance(instance, Priority::default())
+            .map_err(IoUringSetupError::AddInstanceError)?;
         log::debug!("added sec instance");
 
         log::debug!("creating pool");
         let pool = handle
-                    .create_buffer_pool(ring, Priority::default(), 16384, ()).await
-                    .map_err(IoUringSetupError::BufferError)?;
+            .create_buffer_pool(ring, Priority::default(), 16384, ())
+            .await
+            .map_err(IoUringSetupError::BufferError)?;
         log::debug!("created pool");
 
         Ok(Self {
-            inner: PcidServerTransport::IoUring {
-                pool,
-                ring,
-                handle,
-            }
+            inner: PcidServerTransport::IoUring { pool, ring, handle },
         })
     }
 
     #[deprecated = "use connect_using_iouring instead"]
     pub fn connect_using_pipes_from_env_fds() -> Result<Self> {
-        let pcid_to_client_fd = env::var("PCID_TO_CLIENT_FD")?.parse::<RawFd>().map_err(PcidClientHandleError::EnvValidityError)?;
-        let pcid_from_client_fd = env::var("PCID_FROM_CLIENT_FD")?.parse::<RawFd>().map_err(PcidClientHandleError::EnvValidityError)?;
+        let pcid_to_client_fd = env::var("PCID_TO_CLIENT_FD")?
+            .parse::<RawFd>()
+            .map_err(PcidClientHandleError::EnvValidityError)?;
+        let pcid_from_client_fd = env::var("PCID_FROM_CLIENT_FD")?
+            .parse::<RawFd>()
+            .map_err(PcidClientHandleError::EnvValidityError)?;
 
         #[allow(deprecated)]
         Self::connect_using_pipes(pcid_to_client_fd, pcid_from_client_fd)
@@ -468,49 +497,66 @@ impl PcidServerHandle {
 
     pub(crate) fn send(&mut self, req: &PcidClientRequest) -> Result<()> {
         match self.inner {
-            PcidServerTransport::Pipe { ref pcid_from_client, .. } => send(&mut &*pcid_from_client, req),
+            PcidServerTransport::Pipe {
+                ref pcid_from_client,
+                ..
+            } => send(&mut &*pcid_from_client, req),
             PcidServerTransport::IoUring { .. } => unreachable!(),
         }
     }
     pub(crate) fn recv(&mut self) -> Result<PcidClientResponse> {
         match self.inner {
-            PcidServerTransport::Pipe { ref pcid_to_client, .. } => recv(&mut &*pcid_to_client),
+            PcidServerTransport::Pipe {
+                ref pcid_to_client, ..
+            } => recv(&mut &*pcid_to_client),
             PcidServerTransport::IoUring { .. } => unreachable!(),
         }
     }
     pub async fn fetch_config(&mut self, priority: Priority) -> Result<SubdriverArguments> {
-        if let PcidServerTransport::IoUring { ref handle, ref pool, ring } = self.inner {
-            let len = u32::try_from(mem::size_of::<SubdriverArguments>()).expect("SubdriverArguments has got too bloated");
-            let alignment = u32::try_from(mem::align_of::<SubdriverArguments>()).expect("unexpected huge alignment for SubdriverArguments");
+        if let PcidServerTransport::IoUring {
+            ref handle,
+            ref pool,
+            ring,
+        } = self.inner
+        {
+            let len = u32::try_from(mem::size_of::<SubdriverArguments>())
+                .expect("SubdriverArguments has got too bloated");
+            let alignment = u32::try_from(mem::align_of::<SubdriverArguments>())
+                .expect("unexpected huge alignment for SubdriverArguments");
 
             log::debug!("LEN {} ALIGN {}", len, alignment);
 
-            let mut slice = pool
-                .acquire_borrowed_slice(len, alignment)
-                .ok_or(
-                    PcidClientHandleError::IoUringTransportError(Errno::new(ENOMEM)
-                ))?;
+            let mut slice = pool.acquire_borrowed_slice(len, alignment).ok_or(
+                PcidClientHandleError::IoUringTransportError(Errno::new(ENOMEM)),
+            )?;
             unsafe {
-                let fut = handle.send(ring, SqEntry64 {
-                    opcode: PcidOpcode::FetchConfig as u8,
-                    priority,
-                    syscall_flags: 1, // version
-                    addr: slice.offset().into(),
-                    len: len.into(),
-                    fd: 0,
-                    .. SqEntry64::default()
-                });
+                let fut = handle.send(
+                    ring,
+                    SqEntry64 {
+                        opcode: PcidOpcode::FetchConfig as u8,
+                        priority,
+                        syscall_flags: 1, // version
+                        addr: slice.offset().into(),
+                        len: len.into(),
+                        fd: 0,
+                        ..SqEntry64::default()
+                    },
+                );
                 // Prevent data race by leaking memory if this future is forgotten using `mem::forget`.
                 fut.guard(&mut slice);
                 log::debug!("Future sent");
 
-                let cqe = fut.await.map_err(PcidClientHandleError::IoUringTransportError)?;
+                let cqe = fut
+                    .await
+                    .map_err(PcidClientHandleError::IoUringTransportError)?;
 
-                let result = Errno::demux64(cqe.status).map_err(PcidClientHandleError::IoUringTransportError)?;
+                let result = Errno::demux64(cqe.status)
+                    .map_err(PcidClientHandleError::IoUringTransportError)?;
                 if result != 0 {
                     log::warn!("Expected zero as CQE return value when fetching config");
                 }
-                Ok(*plain::from_bytes(&*slice).expect("buffer pool allocator gave us an insufficient alignment"))
+                Ok(*plain::from_bytes(&*slice)
+                    .expect("buffer pool allocator gave us an insufficient alignment"))
             }
         } else {
             self.send(&PcidClientRequest::RequestConfig)?;
@@ -521,43 +567,64 @@ impl PcidServerHandle {
         }
     }
     pub async fn fetch_all_capabilities(&mut self, priority: Priority) -> Result<Vec<Capability>> {
-        if let PcidServerTransport::IoUring { ref handle, ref pool, ring } = self.inner {
+        if let PcidServerTransport::IoUring {
+            ref handle,
+            ref pool,
+            ring,
+        } = self.inner
+        {
             let mut all_caps = Vec::new();
 
             let size: u32 = mem::size_of::<CapabilityRawTagged>().try_into().unwrap();
             let align: u32 = mem::align_of::<CapabilityRawTagged>().try_into().unwrap();
 
-            let mut buffer = pool.acquire_borrowed_slice(size * 4, align).ok_or(PcidClientHandleError::IoUringTransportError(Errno::new(ENOMEM)))?;
+            let mut buffer = pool.acquire_borrowed_slice(size * 4, align).ok_or(
+                PcidClientHandleError::IoUringTransportError(Errno::new(ENOMEM)),
+            )?;
 
             loop {
                 let caps_read = unsafe {
-                    let fut = handle.send(ring, SqEntry64 {
-                        opcode: PcidOpcode::FetchAllCapabilities as u8,
-                        flags: 0,
-                        priority,
-                        user_data: 0, // overridden
+                    let fut = handle.send(
+                        ring,
+                        SqEntry64 {
+                            opcode: PcidOpcode::FetchAllCapabilities as u8,
+                            flags: 0,
+                            priority,
+                            user_data: 0, // overridden
 
-                        syscall_flags: 1,
-                        addr: 0, // unused
-                        fd: 0, // unused
-                        len: (buffer.len() / size).into(),
-                        offset: buffer.offset().into(),
+                            syscall_flags: 1,
+                            addr: 0, // unused
+                            fd: 0,   // unused
+                            len: (buffer.len() / size).into(),
+                            offset: buffer.offset().into(),
 
-                        additional1: 0, // unused
-                        additional2: 0, // unused
-                    });
+                            additional1: 0, // unused
+                            additional2: 0, // unused
+                        },
+                    );
                     fut.guard(&mut buffer);
-                    let cqe = fut.await.map_err(PcidClientHandleError::IoUringTransportError)?;
+                    let cqe = fut
+                        .await
+                        .map_err(PcidClientHandleError::IoUringTransportError)?;
 
-                    Errno::demux64(cqe.status).map_err(PcidClientHandleError::IoUringTransportError)?
+                    Errno::demux64(cqe.status)
+                        .map_err(PcidClientHandleError::IoUringTransportError)?
                 };
 
-                if caps_read == 0 { break }
+                if caps_read == 0 {
+                    break;
+                }
 
-                let bytes_read = usize::try_from(caps_read * u64::from(size)).or(Err(PcidClientHandleError::IoUringTransportError(Errno::new(EOVERFLOW))))?;
-                let caps = plain::slice_from_bytes::<CapabilityRawTagged>(&buffer[..bytes_read]).expect("somehow redox_iou didn't consider alignment");
+                let bytes_read = usize::try_from(caps_read * u64::from(size)).or(Err(
+                    PcidClientHandleError::IoUringTransportError(Errno::new(EOVERFLOW)),
+                ))?;
+                let caps = plain::slice_from_bytes::<CapabilityRawTagged>(&buffer[..bytes_read])
+                    .expect("somehow redox_iou didn't consider alignment");
 
-                all_caps.extend(caps.into_iter().filter_map(|raw| Capability::construct(raw.kind, raw.raw)));
+                all_caps.extend(
+                    caps.into_iter()
+                        .filter_map(|raw| Capability::construct(raw.kind, raw.raw)),
+                );
             }
             Ok(all_caps)
         } else {
@@ -568,35 +635,52 @@ impl PcidServerHandle {
             }
         }
     }
-    pub async fn get_capability(&mut self, ty: CapabilityType, priority: Priority) -> Result<Option<Capability>> {
-        if let PcidServerTransport::IoUring { ref handle, ref pool, ring } = self.inner {
+    pub async fn get_capability(
+        &mut self,
+        ty: CapabilityType,
+        priority: Priority,
+    ) -> Result<Option<Capability>> {
+        if let PcidServerTransport::IoUring {
+            ref handle,
+            ref pool,
+            ring,
+        } = self.inner
+        {
             let size = mem::size_of::<CapabilityRawTagged>().try_into().unwrap();
             let align = mem::align_of::<CapabilityRawTagged>().try_into().unwrap();
 
-            let mut buffer = pool.acquire_borrowed_slice(size, align).ok_or(PcidClientHandleError::IoUringTransportError(Errno::new(ENOMEM)))?;
+            let mut buffer = pool.acquire_borrowed_slice(size, align).ok_or(
+                PcidClientHandleError::IoUringTransportError(Errno::new(ENOMEM)),
+            )?;
 
             unsafe {
-                let fut = handle.send(ring, SqEntry64 {
-                    opcode: PcidOpcode::GetCapability as u8,
-                    flags: 0,
-                    priority,
-                    user_data: 0, // overridden
+                let fut = handle.send(
+                    ring,
+                    SqEntry64 {
+                        opcode: PcidOpcode::GetCapability as u8,
+                        flags: 0,
+                        priority,
+                        user_data: 0, // overridden
 
-                    syscall_flags: 1,
-                    fd: 0, // unused
-                    len: size.into(),
-                    addr: 0, // FIXME
-                    offset: buffer.offset().into(),
+                        syscall_flags: 1,
+                        fd: 0, // unused
+                        len: size.into(),
+                        addr: 0, // FIXME
+                        offset: buffer.offset().into(),
 
-                    additional1: 0, // unused
-                    additional2: 0, // unused
-                });
+                        additional1: 0, // unused
+                        additional2: 0, // unused
+                    },
+                );
                 fut.guard(&mut buffer);
-                let cqe = fut.await.map_err(PcidClientHandleError::IoUringTransportError)?;
+                let cqe = fut
+                    .await
+                    .map_err(PcidClientHandleError::IoUringTransportError)?;
                 Errno::demux64(cqe.status).map_err(PcidClientHandleError::IoUringTransportError)?;
             }
 
-            let raw_tagged = *plain::from_bytes::<CapabilityRawTagged>(&*buffer).expect("somehow redox_iou gave us an insufficient alignment");
+            let raw_tagged = *plain::from_bytes::<CapabilityRawTagged>(&*buffer)
+                .expect("somehow redox_iou gave us an insufficient alignment");
 
             Ok(Capability::construct(raw_tagged.kind, raw_tagged.raw))
         } else {
@@ -607,16 +691,29 @@ impl PcidServerHandle {
             }
         }
     }
-    pub async fn set_capability(&mut self, info: SetCapabilityInfo, priority: Priority) -> Result<()> {
-        if let PcidServerTransport::IoUring { ref handle, ref pool, ring } = self.inner {
-            let size = 
-                mem::size_of::<SetCapabilityInfoRaw>().try_into().or(Err(Errno::new(EOVERFLOW))).map_err(PcidClientHandleError::IoUringTransportError)?;
-            let align = 
-                mem::align_of::<SetCapabilityInfoRaw>().try_into().or(Err(Errno::new(EOVERFLOW))).map_err(PcidClientHandleError::IoUringTransportError)?;
+    pub async fn set_capability(
+        &mut self,
+        info: SetCapabilityInfo,
+        priority: Priority,
+    ) -> Result<()> {
+        if let PcidServerTransport::IoUring {
+            ref handle,
+            ref pool,
+            ring,
+        } = self.inner
+        {
+            let size = mem::size_of::<SetCapabilityInfoRaw>()
+                .try_into()
+                .or(Err(Errno::new(EOVERFLOW)))
+                .map_err(PcidClientHandleError::IoUringTransportError)?;
+            let align = mem::align_of::<SetCapabilityInfoRaw>()
+                .try_into()
+                .or(Err(Errno::new(EOVERFLOW)))
+                .map_err(PcidClientHandleError::IoUringTransportError)?;
 
-            let mut slice = pool.acquire_borrowed_slice(
-                size, align,
-            ).ok_or(PcidClientHandleError::IoUringTransportError(Errno::new(ENOMEM)))?;
+            let mut slice = pool.acquire_borrowed_slice(size, align).ok_or(
+                PcidClientHandleError::IoUringTransportError(Errno::new(ENOMEM)),
+            )?;
 
             let set_info = plain::from_mut_bytes(&mut *slice)
                 .expect("expected redox_iou to give us the correct alignment");
@@ -624,16 +721,12 @@ impl PcidServerHandle {
             *set_info = match info {
                 SetCapabilityInfo::Msi(info) => SetCapabilityInfoRaw {
                     id: CapabilityType::Msi as u32,
-                    inner: SetCapabilityInfoInner {
-                        msi: info,
-                    }
+                    inner: SetCapabilityInfoInner { msi: info },
                 },
                 SetCapabilityInfo::MsiX(info) => SetCapabilityInfoRaw {
                     id: CapabilityType::MsiX as u32,
-                    inner: SetCapabilityInfoInner {
-                        msix: info,
-                    }
-                }
+                    inner: SetCapabilityInfoInner { msix: info },
+                },
             };
 
             unsafe {
@@ -653,11 +746,14 @@ impl PcidServerHandle {
 
                         additional1: 0,
                         additional2: 0,
-                    }
+                    },
                 );
                 fut.guard(&mut slice);
-                let cqe = fut.await.map_err(PcidClientHandleError::IoUringTransportError)?;
-                let _ = Errno::demux64(cqe.status).map_err(PcidClientHandleError::IoUringTransportError)?;
+                let cqe = fut
+                    .await
+                    .map_err(PcidClientHandleError::IoUringTransportError)?;
+                let _ = Errno::demux64(cqe.status)
+                    .map_err(PcidClientHandleError::IoUringTransportError)?;
             }
             Ok(())
         } else {
@@ -716,16 +812,10 @@ impl PciAddress32 {
         self.dev_and_fun |= func;
     }
     pub const fn with_seg_group(self, seg_group: u16) -> Self {
-        Self {
-            seg_group,
-            ..self
-        }
+        Self { seg_group, ..self }
     }
     pub const fn with_bus(self, bus: u8) -> Self {
-        Self {
-            bus,
-            ..self
-        }
+        Self { bus, ..self }
     }
     pub fn with_device(mut self, dev: u8) -> Self {
         self.set_device(dev);
@@ -893,7 +983,7 @@ impl PcidOpcode {
         } else if raw == Self::SetCapability as u8 {
             Self::SetCapability
         } else {
-            return None
+            return None;
         })
     }
 }

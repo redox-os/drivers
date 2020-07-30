@@ -1,7 +1,7 @@
 use std::ptr::NonNull;
 use std::sync::Mutex;
 
-use syscall::{PHYSMAP_WRITE, PHYSMAP_NO_CACHE};
+use syscall::{PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
 
 /// A wrapper for an RAII-based BAR allocation. Freed on drop, so it's recommended that these be
 /// stored in `Arc<AllocatedBars>` for the lifetime of a driver.
@@ -33,7 +33,9 @@ impl Bar {
     /// Unmap the bar, doing the same thing as just dropping but doesn't silently drop any
     /// potential errors.
     pub fn unmap(self) -> syscall::Result<()> {
-        unsafe { syscall::physunmap(self.physical)?; }
+        unsafe {
+            syscall::physunmap(self.physical)?;
+        }
         // bypass drop, avoiding a double free
         std::mem::forget(self);
         Ok(())
@@ -68,11 +70,11 @@ pub mod irq {
     use syscall::Mmio;
 
     use super::{
-        AllocatedBars, Bar,
         super::{
             msi::{MsixCapability, MsixTableEntry},
             PciBar, PciFunction,
         },
+        AllocatedBars, Bar,
     };
 
     /// Read the local APIC ID of the bootstrap processor.
@@ -85,29 +87,45 @@ pub mod irq {
         (if bytes_read == 8 {
             usize::try_from(u64::from_le_bytes(buffer))
         } else if bytes_read == 4 {
-            usize::try_from(u32::from_le_bytes([buffer[0], buffer[1], buffer[2], buffer[3]]))
+            usize::try_from(u32::from_le_bytes([
+                buffer[0], buffer[1], buffer[2], buffer[3],
+            ]))
         } else {
-            panic!("`irq:` scheme responded with {} bytes, expected {}", bytes_read, std::mem::size_of::<usize>());
-        }).or(Err(io::Error::new(io::ErrorKind::InvalidData, "bad BSP int size")))
+            panic!(
+                "`irq:` scheme responded with {} bytes, expected {}",
+                bytes_read,
+                std::mem::size_of::<usize>()
+            );
+        })
+        .or(Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "bad BSP int size",
+        )))
     }
 
     // TODO: Perhaps read the MADT instead?
     /// Obtains an interator over all of the visible CPU ids, for use in IRQ allocation and MSI
     /// capability structs or MSI-X tables.
     pub fn cpu_ids() -> io::Result<impl Iterator<Item = io::Result<usize>> + 'static> {
-        Ok(fs::read_dir("irq:")?
-            .filter_map(|entry| -> Option<io::Result<_>> { match entry {
-                Ok(e) => {
-                    let path = e.path();
-                    let file_name = path.file_name()?.to_str()?;
-                    // the file name should be in the format `cpu-<CPU ID>`
-                    if ! file_name.starts_with("cpu-") {
-                        return None;
+        Ok(
+            fs::read_dir("irq:")?.filter_map(|entry| -> Option<io::Result<_>> {
+                match entry {
+                    Ok(e) => {
+                        let path = e.path();
+                        let file_name = path.file_name()?.to_str()?;
+                        // the file name should be in the format `cpu-<CPU ID>`
+                        if !file_name.starts_with("cpu-") {
+                            return None;
+                        }
+                        u8::from_str_radix(&file_name[4..], 16)
+                            .map(usize::from)
+                            .map(Ok)
+                            .ok()
                     }
-                    u8::from_str_radix(&file_name[4..], 16).map(usize::from).map(Ok).ok()
+                    Err(e) => Some(Err(e)),
                 }
-                Err(e) => Some(Err(e)),
-            } }))
+            }),
+        )
     }
 
     /// Allocate multiple interrupt vectors, from the IDT of the specified processor, returning the
@@ -127,34 +145,41 @@ pub mod irq {
     /// individually allocated vectors that might be spread out, even on multiple CPUs. Thus, multiple
     /// invocations with alignment 1 and count 1 are totally acceptable, although allocating in bulk
     /// minimizes the initialization overhead.
-    pub fn allocate_aligned_interrupt_vectors(cpu_id: usize, alignment: NonZeroU8, count: u8) -> io::Result<Option<(u8, Vec<File>)>> {
+    pub fn allocate_aligned_interrupt_vectors(
+        cpu_id: usize,
+        alignment: NonZeroU8,
+        count: u8,
+    ) -> io::Result<Option<(u8, Vec<File>)>> {
         let cpu_id = u8::try_from(cpu_id).expect("usize cpu ids not implemented yet");
-        if count == 0 { return Ok(None) }
+        if count == 0 {
+            return Ok(None);
+        }
 
         let available_irqs = fs::read_dir(format!("irq:cpu-{:02x}", cpu_id))?;
-        let mut available_irq_numbers = available_irqs.filter_map(|entry| -> Option<io::Result<_>> {
-            let entry = match entry {
-                Ok(e) => e,
-                Err(err) => return Some(Err(err)),
-            };
+        let mut available_irq_numbers =
+            available_irqs.filter_map(|entry| -> Option<io::Result<_>> {
+                let entry = match entry {
+                    Ok(e) => e,
+                    Err(err) => return Some(Err(err)),
+                };
 
-            let path = entry.path();
+                let path = entry.path();
 
-            let file_name = match path.file_name() {
-                Some(f) => f,
-                None => return None,
-            };
+                let file_name = match path.file_name() {
+                    Some(f) => f,
+                    None => return None,
+                };
 
-            let path_str = match file_name.to_str() {
-                Some(s) => s,
-                None => return None,
-            };
+                let path_str = match file_name.to_str() {
+                    Some(s) => s,
+                    None => return None,
+                };
 
-            match path_str.parse::<u8>() {
-                Ok(p) => Some(Ok(p)),
-                Err(_) => None,
-            }
-        });
+                match path_str.parse::<u8>() {
+                    Ok(p) => Some(Ok(p)),
+                    Err(_) => None,
+                }
+            });
 
         // TODO: fcntl F_SETLK on `irq:/`?
 
@@ -204,7 +229,10 @@ pub mod irq {
 
     /// Allocate at most `count` interrupt vectors, which can start at any offset. Unless MSI is used
     /// and an entire aligned range of vectors is needed, this function should be used.
-    pub fn allocate_interrupt_vectors(cpu_id: usize, count: u8) -> io::Result<Option<(u8, Vec<File>)>> {
+    pub fn allocate_interrupt_vectors(
+        cpu_id: usize,
+        count: u8,
+    ) -> io::Result<Option<(u8, Vec<File>)>> {
         allocate_aligned_interrupt_vectors(cpu_id, NonZeroU8::new(1).unwrap(), count)
     }
 
@@ -221,7 +249,11 @@ pub mod irq {
         Ok(Some((base, files.pop().unwrap())))
     }
     /// Retrieve slices to the entries and PBA array of an MSI-X capability struct.
-    pub unsafe fn msix_cfg(function: &PciFunction, capability_struct: &MsixCapability, allocated_bars: &AllocatedBars) -> syscall::Result<(&'static mut [MsixTableEntry], &'static mut [Mmio<u64>])> {
+    pub unsafe fn msix_cfg(
+        function: &PciFunction,
+        capability_struct: &MsixCapability,
+        allocated_bars: &AllocatedBars,
+    ) -> syscall::Result<(&'static mut [MsixTableEntry], &'static mut [Mmio<u64>])> {
         unsafe fn bar_base(
             allocated_bars: &AllocatedBars,
             function: &PciFunction,
@@ -232,8 +264,9 @@ pub mod irq {
             match &mut *bar_guard {
                 &mut Some(ref bar) => Ok(bar.ptr),
                 bar_to_set @ &mut None => {
-                    let bar = match function.bars[bir] {
-                        PciBar::Memory(addr) => addr,
+                    let bar = match function.bars[bir].unwrap() {
+                        PciBar::MemorySpace32 { address, .. } => address as usize,
+                        PciBar::MemorySpace64 { address, .. } => address as usize,
                         other => panic!("Expected memory BAR, found {:?}", other),
                     };
                     let bar_size = function.bar_sizes[bir];
@@ -252,12 +285,12 @@ pub mod irq {
         let pba_base = pba_bar_base.offset(capability_struct.pba_offset() as isize);
 
         let vector_count = capability_struct.table_size();
-        let table_entries: &'static mut [MsixTableEntry] = slice::from_raw_parts_mut(table_base as *mut MsixTableEntry, vector_count as usize);
-        let pba_entries: &'static mut [Mmio<u64>] = 
-            slice::from_raw_parts_mut(
-                pba_base as *mut Mmio<u64>,
-                (vector_count as usize + 63) / 64,
-            );
+        let table_entries: &'static mut [MsixTableEntry] =
+            slice::from_raw_parts_mut(table_base as *mut MsixTableEntry, vector_count as usize);
+        let pba_entries: &'static mut [Mmio<u64>] = slice::from_raw_parts_mut(
+            pba_base as *mut Mmio<u64>,
+            (vector_count as usize + 63) / 64,
+        );
         Ok((table_entries, pba_entries))
     }
     /// A an iterable collection of interrupt sources, either INTx#, MSI, or MSI-X.
@@ -351,14 +384,26 @@ pub mod irq {
         }
         pub fn get(&self, vector: u16) -> Option<&File> {
             match self {
-                &Self::Intx(ref handle) => if vector == 0 { Some(handle) } else { None },
+                &Self::Intx(ref handle) => {
+                    if vector == 0 {
+                        Some(handle)
+                    } else {
+                        None
+                    }
+                }
                 &Self::Msi(ref vec) => vec.get(vector as usize),
                 &Self::MsiX(ref map) => map.get(&vector),
             }
         }
         pub fn get_mut(&mut self, vector: u16) -> Option<&mut File> {
             match self {
-                &mut Self::Intx(ref mut handle) => if vector == 0 { Some(handle) } else { None },
+                &mut Self::Intx(ref mut handle) => {
+                    if vector == 0 {
+                        Some(handle)
+                    } else {
+                        None
+                    }
+                }
                 &mut Self::Msi(ref mut vec) => vec.get_mut(vector as usize),
                 &mut Self::MsiX(ref mut map) => map.get_mut(&vector),
             }
