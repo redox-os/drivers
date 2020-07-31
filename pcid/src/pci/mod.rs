@@ -61,6 +61,7 @@ impl Pci {
         // configuration space is not available.
         info!("PCI: couldn't find or access PCIe extended configuration, and thus falling back to PCI 3.0 io ports");
         unsafe {
+            // TODO: Use I/O ports bitmap in the processor's TSS instead.
             syscall::iopl(3).expect("pcid: failed to set iopl to 3");
         }
     }

@@ -36,9 +36,9 @@ pub const BAR_MEMSPACE_TY_MASK: u32 = 0x0000_0006;
 pub const BAR_MEMSPACE_TY_SHIFT: u8 = 1;
 pub const BAR_MEMSPACE_PREFETCH_SHIFT: u8 = 3;
 pub const BAR_MEMSPACE_PREFETCH_BIT: u32 = 1 << BAR_MEMSPACE_PREFETCH_SHIFT;
-pub const BAR_MEMSPACE32_ADDR_MASK: u32 = 0xFFFF_FFFC;
+pub const BAR_MEMSPACE32_ADDR_MASK: u32 = 0xFFFF_FFF0;
 pub const BAR_MEMSPACE32_ADDR_SHIFT: u8 = 0;
-pub const BAR_MEMSPACE64_ADDR_MASK: u64 = 0xFFFF_FFFF_FFFF_FFFC;
+pub const BAR_MEMSPACE64_ADDR_MASK: u64 = 0xFFFF_FFFF_FFFF_FFF0;
 pub const BAR_MEMSPACE64_ADDR_SHIFT: u8 = 0;
 
 #[repr(u8)]
@@ -77,7 +77,7 @@ impl PciBar {
             _rsvd => return None,
         };
 
-        Some((is_64, prefetch))
+        Some((prefetch, is_64))
     }
     pub fn from_raw_32(raw_u32: u32) -> Result<Option<Self>, BarFromRawError> {
         if raw_u32 == 0 {

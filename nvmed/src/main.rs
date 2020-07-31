@@ -59,7 +59,7 @@ async fn get_int_method(
             flags: pcid_interface::MsiXSetCapabilityInfoFlags::all().bits(),
             enabled: true.into(),
             function_mask: false.into(),
-        }), Priority::default());
+        }), Priority::default()).await.expect("nvmed: failed to set MSI-X capability");
         capability_struct.set_msix_enabled(true); // only affects our local mirror of the cap
 
         let (msix_vector_number, irq_handle) = {
@@ -189,11 +189,6 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
 }
 
 fn main() {
-    // Daemonize
-    if unsafe { syscall::clone(CloneFlags::empty()).unwrap() } != 0 {
-        return;
-    }
-
     let _logger_ref = setup_logging();
 
     let mut pcid_handle =

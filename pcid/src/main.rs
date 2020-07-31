@@ -370,8 +370,7 @@ impl State {
     fn preferred_cfg_access(&self) -> &dyn CfgAccess {
         self.pcie
             .as_ref()
-            .map(|pcie| pcie as &dyn CfgAccess)
-            .unwrap_or(&*self.pci as &dyn CfgAccess)
+            .map_or(&*self.pci as &dyn CfgAccess, |pcie| pcie as &dyn CfgAccess)
     }
 }
 
@@ -497,10 +496,20 @@ fn find_and_spawn_subdriver(
 
             let subdriver_args = driver_interface::SubdriverArguments { func: func_if };
 
+            let mut uses_deprecated_args = false;
+
             for arg in args {
                 fn bar_str(bar: &Option<PciBar>) -> String {
                     bar.as_ref()
                         .map_or_else(|| "00000000".to_owned(), |bar| format!("{:>08X}", bar.address()))
+                }
+
+                // The following arguments are the only ones that are not warned about, if they are
+                // passed
+                let allowed = ["$BUS", "$DEV", "$FUNC"];
+
+                if !allowed.contains(&arg.as_str()) {
+                    uses_deprecated_args = true;
                 }
 
                 // TODO: Deprecate this primitive form of message passing.
@@ -552,38 +561,45 @@ fn find_and_spawn_subdriver(
                         true,
                     )
                 } else {
-                    log::warn!("Driver {} uses the deprecated message passing, based on command line arguments.", program);
                     (None, None, vec![], false)
                 };
 
-            match command.envs(envs).spawn() {
-                Ok(mut child) => {
-                    if requires_handling {
-                        let driver_handler = DriverHandler {
-                            bus_num: addr.bus(),
-                            dev_num: addr.device(),
-                            func_num: addr.function(),
-                            config: driver.clone(),
-                            state: Arc::clone(state),
-                            func: Arc::clone(func_arc),
-                        };
-                        let thread = thread::spawn(move || {
-                            driver_handler.handle_spawn(
-                                pcid_to_client_write,
-                                pcid_from_client_read,
-                                subdriver_args,
-                            );
-                            match child.wait() {
-                                Ok(status) => log::debug!("waited for {:?}, returned status {}", command, status),
-                                Err(err) => log::error!("failed to wait for {:?}: {}", command, err),
-                            }
-                        });
-                        state.threads.lock().unwrap().push(thread);
-                    } else {
-                        state.bare_commands.lock().unwrap().push(child);
-                    }
+            if uses_deprecated_args {
+                log::warn!("Driver {} uses the deprecated message passing, based on command line arguments.", program);
+            }
+
+            let mut child = match command.envs(envs).spawn() {
+                Ok(child) => child,
+                Err(err) => {
+                    log::error!("failed to execute {:?}: {}", command, err);
+                    return;
                 }
-                Err(err) => log::error!("failed to execute {:?}: {}", command, err),
+            };
+            if requires_handling {
+                let driver_handler = DriverHandler {
+                    bus_num: addr.bus(),
+                    dev_num: addr.device(),
+                    func_num: addr.function(),
+                    config: driver.clone(),
+                    state: Arc::clone(state),
+                    func: Arc::clone(func_arc),
+                };
+                let thread = thread::Builder::new()
+                    .name(format!("pcid `{}` handler", driver_name))
+                    .spawn(move || {
+                        driver_handler.handle_spawn(
+                            pcid_to_client_write,
+                            pcid_from_client_read,
+                            subdriver_args,
+                        );
+                        match child.wait() {
+                            Ok(status) => log::debug!("waited for {:?}, returned status {}", command, status),
+                            Err(err) => log::error!("failed to wait for {:?}: {}", command, err),
+                        }
+                    }).expect("failed to spawn handler thread");
+                state.threads.lock().unwrap().push(thread);
+            } else {
+                state.bare_commands.lock().unwrap().push(child);
             }
         }
     }
@@ -597,11 +613,11 @@ fn handle_parsed_header(
     func_num: u8,
     header: PciHeader,
 ) {
-    let pci = state.preferred_cfg_access();
+    let cfg_access = state.preferred_cfg_access();
 
     let raw_class: u8 = header.base().class.into();
     let mut string = format!(
-        "PCI {:>02X}/{:>02X}/{:>02X} {:>04X}:{:>04X} {:>02X}.{:>02X}.{:>02X}.{:>02X} {:?}",
+        "PCI {:>02x}:{:>02x}.{:>01x} {:>04X}:{:>04X} {:>02X}.{:>02X}.{:>02X}.{:>02X} {:?}",
         bus_num,
         dev_num,
         func_num,
@@ -655,39 +671,33 @@ fn handle_parsed_header(
         }
     }
 
-    string.push('\n');
-
-    log::info!("{}", string);
-
     // TODO: Should we disable these by default, and only enable them when the drivers allow us to
     // do that?
 
     // Enable bus mastering, memory space, and I/O space
     unsafe {
-        let mut data = pci.read(bus_num, dev_num, func_num, 0x04);
+        let mut data = cfg_access.read(bus_num, dev_num, func_num, 0x04);
         data |= 7;
-        pci.write(bus_num, dev_num, func_num, 0x04, data);
+        cfg_access.write(bus_num, dev_num, func_num, 0x04, data);
     }
 
     // TODO: Right now only the good old 8259 PIC is used, since AML is bloat and nobody has yet
-    // managed to read the _PRT (pci routing table) AML "Object". Hence, we're limited to IRQ 9,
+    // managed to read the _PRT (PCI routing table) AML "Object". Hence, we're limited to IRQ 9,
     // 10, and 11, for devices that use INTx# and not MSI/MSI-X for their interrupts.
     // TODO: Also, balance these interrupt lines for devices that can otherwise use MSI/MSI-X.
 
     // Set IRQ line to 9 if not set
 
     let mut irq;
-    let interrupt_pin;
 
     unsafe {
-        let mut data = pci.read(bus_num, dev_num, func_num, 0x3C);
+        let mut data = cfg_access.read(bus_num, dev_num, func_num, 0x3C);
         irq = (data & 0xFF) as u8;
-        interrupt_pin = ((data & 0x0000_FF00) >> 8) as u8;
         if irq == 0xFF {
             irq = 9;
         }
         data = (data & 0xFFFFFF00) | irq as u32;
-        pci.write(bus_num, dev_num, func_num, 0x3C, data);
+        cfg_access.write(bus_num, dev_num, func_num, 0x3C, data);
     };
 
     // Find BAR sizes
@@ -698,14 +708,14 @@ fn handle_parsed_header(
     bars[..bar_count].copy_from_slice(header.bars());
 
     unsafe {
-        for (i, bar) in header.bars().iter().enumerate() {
+        for (i, _) in header.bars().iter().enumerate() {
             let offset = 0x10 + (i as u8) * 4;
 
-            let original = pci.read(bus_num, dev_num, func_num, offset.into());
-            pci.write(bus_num, dev_num, func_num, offset.into(), 0xFFFFFFFF);
+            let original = cfg_access.read(bus_num, dev_num, func_num, offset.into());
+            cfg_access.write(bus_num, dev_num, func_num, offset.into(), 0xFFFFFFFF);
 
-            let new = pci.read(bus_num, dev_num, func_num, offset.into());
-            pci.write(bus_num, dev_num, func_num, offset.into(), original);
+            let new = cfg_access.read(bus_num, dev_num, func_num, offset.into());
+            cfg_access.write(bus_num, dev_num, func_num, offset.into(), original);
 
             let masked = if new & 1 == 1 {
                 // I/O space
@@ -741,15 +751,20 @@ fn handle_parsed_header(
     } else {
         Vec::new()
     };
-    let pcie_capabilities =
-        if pci.supports_ext(bus_num) && pci_capabilities.iter().any(|(_, cap)| cap.is_pcie()) {
+    let pcie_capabilities = {
+        let supports_ext = cfg_access.supports_ext(bus_num);
+        let has_pcie_cap = pci_capabilities.iter().any(|(_, cap)| cap.is_pcie());
+
+        if supports_ext && has_pcie_cap {
             unsafe { pciecap::CapabilitiesIter(pciecap::CapabilityOffsetsIter::new(0x100, &func)) }
                 .collect::<Vec<_>>()
         } else {
+            log::debug!("Skipping PCIe capability enumeration. supports_ext={}, has_pcie_cap={}", supports_ext, has_pcie_cap);
             Vec::new()
-        };
+        }
+    };
 
-    use driver_interface::LegacyInterruptPin;
+    log::info!("{}. PCI capabilities: {:?}, PCI Express capabilities: {:?}", string, pci_capabilities, pcie_capabilities);
 
     let func = Arc::new(RwLock::new(Func {
         pci_capabilities,
@@ -1119,9 +1134,13 @@ fn main() {
     let state = Arc::new(State {
         pci: Arc::clone(&pci),
         pcie: match Pcie::new(Arc::clone(&pci)) {
-            Ok(pcie) => Some(pcie),
+            Ok(pcie) => {
+                log::info!("Using PCI Express memory-mapped extended configuration space");
+                Some(pcie)
+            }
             Err(error) => {
                 log::debug!("Couldn't retrieve PCIe info, perhaps the kernel is not compiled with acpi? Using the PCI 3.0 configuration space instead. Error: {:?}", error);
+                log::info!("Using PCI 3.0 port I/O configuration space");
                 None
             }
         },
@@ -1129,7 +1148,8 @@ fn main() {
         bare_commands: Mutex::new(Vec::new()),
     });
 
-    let pci = state.preferred_cfg_access();
+    let cfg_access = state.preferred_cfg_access();
+
     let mut device_tree = DeviceTree {
         busses: BTreeSet::new(),
         devices: BTreeSet::new(),
@@ -1150,12 +1170,14 @@ fn main() {
     // Enumerate the bus, filling the Device Tree with information about the devices. This only
     // happens once, although different drivers may get started by pcid at different stages (for
     // drivers that lay on disk, for example).
-    'bus: for bus in PciIter::new(pci) {
+    'bus: for bus in PciIter::new(cfg_access) {
         'dev: for dev in bus.devs() {
             for func in dev.funcs() {
                 let func_num = func.num;
                 match PciHeader::from_reader(func) {
                     Ok(header) => {
+                        let is_multifunction = header.base().header_type.multifunction;
+
                         // TODO: PCIe Segment Groups
                         let _ = device_tree.busses.insert((0, bus.num));
                         let _ = device_tree.devices.insert((0, bus.num, dev.num));
@@ -1167,6 +1189,9 @@ fn main() {
                             func_num,
                             header,
                         );
+                        if !is_multifunction {
+                            continue 'dev;
+                        }
                     }
                     Err(PciHeaderError::NoDevice) => {
                         if func_num == 0 {

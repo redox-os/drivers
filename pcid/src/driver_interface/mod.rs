@@ -792,7 +792,7 @@ impl PciAddress32 {
         (self.dev_and_fun & 0xE0) >> 5
     }
     pub const fn function(&self) -> u8 {
-        self.dev_and_fun & 0x7F
+        self.dev_and_fun & 0x07
     }
 
     pub fn set_seg_group(&mut self, group: u16) {

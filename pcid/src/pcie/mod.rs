@@ -167,6 +167,10 @@ impl Pcie {
     pub fn new(fallback: Arc<Pci>) -> io::Result<Self> {
         let mcfgs = Mcfgs::fetch()?;
 
+        // TODO: We need that _CBA method. The PCI Firmware Specification states that the MCFG is
+        // only supposed for usage in "system boot". I presume our belovèd OEMs really want us to
+        // execute their code.
+
         log::debug!(
             "Found MCFG tables: {:?}",
             mcfgs.tables().collect::<Vec<_>>()
@@ -277,7 +281,10 @@ impl CfgAccess for Pcie {
 
         self.with_func_mem(bus, dev, func, |pointer| match pointer {
             Some(address) => std::ptr::read_volatile(address.add(offset as usize / 4)),
-            None => self.fallback.read(bus, dev, func, offset),
+            None => {
+                log::debug!("PCIe: couldn't read offset {:#0x} from device {:02x}:{:02x}.{:02x}", offset, bus, dev, func);
+                self.fallback.read(bus, dev, func, offset)
+            }
         })
     }
     unsafe fn read(&self, bus: u8, dev: u8, func: u8, offset: u16) -> u32 {
@@ -290,6 +297,7 @@ impl CfgAccess for Pcie {
         self.with_func_mem(bus, dev, func, |pointer| match pointer {
             Some(address) => std::ptr::write_volatile(address.add(offset as usize / 4), value),
             None => {
+                log::debug!("PCIe: couldn't write offset {:#0x} to device {:02x}:{:02x}.{:02x}", offset, bus, dev, func);
                 self.fallback.read(bus, dev, func, offset);
             }
         });
