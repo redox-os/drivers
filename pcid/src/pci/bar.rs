@@ -172,6 +172,12 @@ impl PciBar {
         }
         Ok(())
     }
+    pub fn address(&self) -> u64 {
+        match *self {
+            Self::MemorySpace32 { address, .. } | Self::IoSpace { address } => u64::from(address),
+            Self::MemorySpace64 { address, .. } => address,
+        }
+    }
 }
 
 impl fmt::Display for PciBar {

@@ -4,9 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{metadata, read_dir, File};
 use std::io::prelude::*;
 use std::os::unix::io::{FromRawFd, RawFd};
-use std::process::Command;
 use std::sync::{Arc, Mutex, RwLock};
-use std::{env, mem, slice, thread};
+use std::{env, mem, process, slice, thread};
 
 use syscall::data::Packet;
 use syscall::error::Error;
@@ -17,7 +16,6 @@ use syscall::flag::{O_CREAT, O_EXCL, O_RDWR};
 use syscall::scheme::Scheme as _;
 
 use either::*;
-use log::{error, info, trace, warn};
 use redox_iou::executor::Executor;
 use redox_iou::instance::ConsumerInstanceBuilder;
 use redox_iou::reactor::ReactorBuilder;
@@ -364,6 +362,7 @@ impl DriverHandler {
 
 pub struct State {
     threads: Mutex<Vec<thread::JoinHandle<()>>>,
+    bare_commands: Mutex<Vec<process::Child>>,
     pci: Arc<Pci>,
     pcie: Option<Pcie>,
 }
@@ -463,11 +462,11 @@ fn find_and_spawn_subdriver(
             .nth(0)
             .unwrap_or("[unknown]");
 
-        info!(
+        log::info!(
             "PCI device capabilities for {}: {:?}",
             driver_name, func.pci_capabilities
         );
-        info!(
+        log::info!(
             "PCI Express device capabilities for {}: {:?}",
             driver_name, func.pcie_capabilities
         );
@@ -478,7 +477,7 @@ fn find_and_spawn_subdriver(
         let irq = header.legacy_interrupt_line();
 
         if let Some(program) = args.next() {
-            let mut command = Command::new(program);
+            let mut command = process::Command::new(program);
 
             let func_if = driver_interface::PciFunction {
                 bars: {
@@ -501,7 +500,7 @@ fn find_and_spawn_subdriver(
             for arg in args {
                 fn bar_str(bar: &Option<PciBar>) -> String {
                     bar.as_ref()
-                        .map_or_else(|| "00000000".to_owned(), |bar| format!("{}", bar))
+                        .map_or_else(|| "00000000".to_owned(), |bar| format!("{:>08X}", bar.address()))
                 }
 
                 // TODO: Deprecate this primitive form of message passing.
@@ -530,9 +529,9 @@ fn find_and_spawn_subdriver(
                 command.arg(&arg);
             }
 
-            info!("PCID SPAWN {:?}", command);
+            log::info!("PCID SPAWN {:?}", command);
 
-            let (pcid_to_client_write, pcid_from_client_read, envs) =
+            let (pcid_to_client_write, pcid_from_client_read, envs, requires_handling) =
                 if driver.use_channel.unwrap_or(false) {
                     let mut fds1 = [0usize; 2];
                     let mut fds2 = [0usize; 2];
@@ -550,33 +549,41 @@ fn find_and_spawn_subdriver(
                             ("PCID_TO_CLIENT_FD", format!("{}", pcid_to_client_read)),
                             ("PCID_FROM_CLIENT_FD", format!("{}", pcid_from_client_write)),
                         ],
+                        true,
                     )
                 } else {
-                    (None, None, vec![])
+                    log::warn!("Driver {} uses the deprecated message passing, based on command line arguments.", program);
+                    (None, None, vec![], false)
                 };
+
             match command.envs(envs).spawn() {
                 Ok(mut child) => {
-                    let driver_handler = DriverHandler {
-                        bus_num: addr.bus(),
-                        dev_num: addr.device(),
-                        func_num: addr.function(),
-                        config: driver.clone(),
-                        state: Arc::clone(state),
-                        func: Arc::clone(func_arc),
-                    };
-                    let thread = thread::spawn(move || {
-                        driver_handler.handle_spawn(
-                            pcid_to_client_write,
-                            pcid_from_client_read,
-                            subdriver_args,
-                        );
-                    });
-                    match child.wait() {
-                        Ok(_status) => (),
-                        Err(err) => error!("pcid: failed to wait for {:?}: {}", command, err),
+                    if requires_handling {
+                        let driver_handler = DriverHandler {
+                            bus_num: addr.bus(),
+                            dev_num: addr.device(),
+                            func_num: addr.function(),
+                            config: driver.clone(),
+                            state: Arc::clone(state),
+                            func: Arc::clone(func_arc),
+                        };
+                        let thread = thread::spawn(move || {
+                            driver_handler.handle_spawn(
+                                pcid_to_client_write,
+                                pcid_from_client_read,
+                                subdriver_args,
+                            );
+                            match child.wait() {
+                                Ok(status) => log::debug!("waited for {:?}, returned status {}", command, status),
+                                Err(err) => log::error!("failed to wait for {:?}: {}", command, err),
+                            }
+                        });
+                        state.threads.lock().unwrap().push(thread);
+                    } else {
+                        state.bare_commands.lock().unwrap().push(child);
                     }
                 }
-                Err(err) => error!("pcid: failed to execute {:?}: {}", command, err),
+                Err(err) => log::error!("failed to execute {:?}: {}", command, err),
             }
         }
     }
@@ -650,7 +657,7 @@ fn handle_parsed_header(
 
     string.push('\n');
 
-    info!("{}", string);
+    log::info!("{}", string);
 
     // TODO: Should we disable these by default, and only enable them when the drivers allow us to
     // do that?
@@ -991,7 +998,7 @@ fn run_scheme(
     match setup_scheme(schemefd, tree, state) {
         Ok(()) => Ok(()),
         Err(error) => {
-            error!("`pci:` failed to setup: \"{}\"", error);
+            log::error!("`pci:` scheme failed to setup: \"{}\"", error);
             Err(error)
         }
     }
@@ -1005,6 +1012,7 @@ fn only_inform_about_file_scheme() {
             .expect("expected argument after --add-config-dir"),
     )
     .expect("failed to inform pci scheme that file: has appeared");
+    println!("pcid inform syscall finished");
 }
 fn load_config_dir<P: ?Sized + AsRef<std::path::Path>>(config_path: &P, config: &mut Config) {
     let config_path = config_path.as_ref();
@@ -1113,11 +1121,12 @@ fn main() {
         pcie: match Pcie::new(Arc::clone(&pci)) {
             Ok(pcie) => Some(pcie),
             Err(error) => {
-                info!("Couldn't retrieve PCIe info, perhaps the kernel is not compiled with acpi? Using the PCI 3.0 configuration space instead. Error: {:?}", error);
+                log::debug!("Couldn't retrieve PCIe info, perhaps the kernel is not compiled with acpi? Using the PCI 3.0 configuration space instead. Error: {:?}", error);
                 None
             }
         },
         threads: Mutex::new(Vec::new()),
+        bare_commands: Mutex::new(Vec::new()),
     });
 
     let pci = state.preferred_cfg_access();
@@ -1130,13 +1139,13 @@ fn main() {
         uses_seg_groups: false,
     };
 
-    info!("PCI ENV: {:?}", env::vars().collect::<Vec<_>>());
+    log::info!("PCI ENV: {:?}", env::vars().collect::<Vec<_>>());
 
     // Open scheme socket early to prevent subdrivers from not having `pci:`.
     let schemefd = syscall::open(":pci", O_CREAT | O_EXCL | O_RDWR)
         .expect("pcid: failed to open scheme socket");
 
-    info!("PCI BS/DV/FN VEND:DEVI CL.SC.IN.RV");
+    log::info!("PCI BS/DV/FN VEND:DEVI CL.SC.IN.RV");
 
     // Enumerate the bus, filling the Device Tree with information about the devices. This only
     // happens once, although different drivers may get started by pcid at different stages (for
@@ -1172,7 +1181,7 @@ fn main() {
                     }
                     Err(PciHeaderError::UnknownHeaderType(id)) => {
                         log::warn!(
-                            "pcid: unknown header type for function {:02x}:{:02x}.{:01x}: {}",
+                            "unknown header type for function {:02x}:{:02x}.{:01x}: {}",
                             bus.num,
                             dev.num,
                             func_num,
@@ -1181,7 +1190,7 @@ fn main() {
                     }
                     Err(PciHeaderError::InvalidBars) => {
                         log::warn!(
-                            "pcid: invalid bars for function {:02x}:{:02x}.{:01x}",
+                            "invalid bars for function {:02x}:{:02x}.{:01x}",
                             bus.num,
                             dev.num,
                             func_num
@@ -1197,12 +1206,27 @@ fn main() {
     let device_tree = Arc::new(RwLock::new(device_tree));
 
     match run_scheme(schemefd, device_tree, Arc::clone(&state)) {
-        Ok(()) => info!("`pci:` scheme unmounted"),
-        Err(error) => error!("`pci:` scheme failed: \"{}\"", error),
+        Ok(()) => log::info!("`pci:` scheme unmounted"),
+        Err(error) => log::error!("`pci:` scheme failed: \"{}\"", error),
     }
 
     for thread in state.threads.lock().unwrap().drain(..) {
         thread.join().unwrap();
     }
-    info!("exited pcid");
+    for mut child in state.bare_commands.lock().unwrap().drain(..) {
+        match child.try_wait() {
+            Ok(Some(status)) => log::info!("waited for {:?}, returned status {}", child, status),
+            Ok(None) => {
+                // TODO: Timeouts, or the grim reaper. (Or just letting some other process manage
+                // subdrivers, which seems much more optimal in the long term).
+                log::debug!("child {:?} hasn't finished yet, waiting for it...", child);
+                match child.wait() {
+                    Ok(status) => log::info!("waited for {:?} after some delay, it finished with status {}", child, status),
+                    Err(err) => log::error!("failed to wait for child {:?}: {}", child, err),
+                }
+            }
+            Err(err) => log::error!("failed to check status and terminate child {:?}: {}", child, err),
+        }
+    }
+    log::info!("exited pcid");
 }
