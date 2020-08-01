@@ -43,9 +43,9 @@ pub enum CapabilityId {
     Msi     = 0x05,
     MsiX    = 0x11,
     Pcie    = 0x10,
+    Vendor  = 0x09,
 
     // function specific
-
     Sata    = 0x12, // only on AHCI functions
 }
 
@@ -112,12 +112,18 @@ pub struct MsixCapability {
     pub c: u32,
 }
 
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+pub struct VendorSpecificCapability {
+    pub data: Vec<u8>,
+}
+
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum Capability {
     Msi(MsiCapability),
     MsiX(MsixCapability),
     Pcie(PcieCapability),
     PwrMgmt(PwrMgmtCapability),
+    Vendor(VendorSpecificCapability),
     FunctionSpecific(u8, Vec<u8>), // TODO: Arrayvec
     Other(u8),
 }
@@ -175,6 +181,16 @@ impl Capability {
             b: reader.read_u32(u16::from(offset + 4)),
         })
     }
+    unsafe fn parse_vendor<R: ConfigReader>(reader: &R, offset: u8) -> Self {
+        log::info!("Vendor specific offset: {}", offset);
+        log::info!("Vendor specific next: {}", reader.read_u8((offset+1).into()));
+        let length = reader.read_u8(u16::from(offset+2));
+        log::info!("Vendor specific cap len: {}", length);
+        let mut raw_data = reader.read_range(offset.into(), length.into());
+        Self::Vendor(VendorSpecificCapability {
+            data: raw_data.drain(3..).collect(),
+        })
+    }
     unsafe fn parse_pcie<R: ConfigReader>(reader: &R, offset: u8) -> Self {
         let offset = u16::from(offset);
 
@@ -210,6 +226,8 @@ impl Capability {
             Self::parse_pcie(reader, offset)
         } else if capability_id == CapabilityId::PwrMgmt as u8{
             Self::parse_pwr(reader, offset)
+        } else if capability_id == CapabilityId::Vendor as u8 {
+            Self::parse_vendor(reader, offset)
         } else if capability_id == CapabilityId::Sata as u8 {
             Self::FunctionSpecific(capability_id, reader.read_range(offset.into(), 8))
         } else {
