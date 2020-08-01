@@ -9,6 +9,7 @@ use std::{env, io, i64, thread};
 
 use syscall::iopl;
 
+use structopt::StructOpt;
 use log::{error, info, warn, trace};
 use redox_log::{OutputBuilder, RedoxLogger};
 
@@ -21,6 +22,18 @@ mod config;
 mod driver_interface;
 mod pci;
 mod pcie;
+
+#[derive(StructOpt)]
+#[structopt(about)]
+struct Args {
+    #[structopt(short, long,
+        help="Increase logging level once for each arg.", parse(from_occurrences))]
+    verbose: u8,
+
+    #[structopt(
+        help="A path to a pcid config file or a directory that contains pcid config files.")]
+    config_path: Option<String>,
+}
 
 pub struct DriverHandler {
     config: config::DriverConfig,
@@ -473,12 +486,17 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, bus_num: u8,
     }
 }
 
-fn setup_logging() -> Option<&'static RedoxLogger> {
+fn setup_logging(verbosity: u8) -> Option<&'static RedoxLogger> {
+    let log_level = match verbosity {
+        0 => log::LevelFilter::Info,
+        1 => log::LevelFilter::Debug,
+        _ => log::LevelFilter::Trace,
+    };
     let mut logger = RedoxLogger::new()
         .with_output(
             OutputBuilder::stderr()
                 .with_ansi_escape_codes()
-                .with_filter(log::LevelFilter::Info)
+                .with_filter(log_level)
                 .flush_on_newline(true)
                 .build()
          );
@@ -513,11 +531,11 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
     }
 }
 
-fn main() {
+#[paw::main]
+fn main(args: Args) {
     let mut config = Config::default();
 
-    let mut args = env::args().skip(1);
-    if let Some(config_path) = args.next() {
+    if let Some(config_path) = args.config_path {
         if metadata(&config_path).unwrap().is_file() {
             if let Ok(mut config_file) = File::open(&config_path) {
                 let mut config_data = String::new();
@@ -538,12 +556,11 @@ fn main() {
                     }
                 }
             }
-
             config = toml::from_str(&config_data).unwrap_or(Config::default());
         }
     }
 
-    let _logger_ref = setup_logging();
+    let _logger_ref = setup_logging(args.verbose);
 
     let pci = Arc::new(Pci::new());
 
