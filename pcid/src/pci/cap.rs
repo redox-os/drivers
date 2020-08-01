@@ -197,7 +197,7 @@ impl Capability {
         })
     }
     unsafe fn parse<R: ConfigReader>(reader: &R, offset: u8) -> Self {
-        assert_eq!(offset & 0xF8, offset, "capability must be dword aligned");
+        assert_eq!(offset & 0xFC, offset, "capability must be dword aligned");
 
         let dword = reader.read_u32(u16::from(offset));
         let capability_id = (dword & 0xFF) as u8;
