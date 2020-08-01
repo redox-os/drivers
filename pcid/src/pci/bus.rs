@@ -1,4 +1,4 @@
-use super::{Pci, PciDev, CfgAccess};
+use super::{PciDev, CfgAccess};
 
 pub struct PciBus<'pci> {
     pub pci: &'pci dyn CfgAccess,

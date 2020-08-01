@@ -5,9 +5,7 @@ use std::io::prelude::*;
 use std::os::unix::io::{FromRawFd, RawFd};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
-use std::{env, io, i64, thread};
-
-use syscall::iopl;
+use std::{i64, thread};
 
 use structopt::StructOpt;
 use log::{error, info, warn, trace};
