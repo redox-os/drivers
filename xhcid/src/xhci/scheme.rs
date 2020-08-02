@@ -1500,7 +1500,7 @@ impl Scheme for Xhci {
         Ok(src_len)
     }
 
-    fn seek(&self, fd: usize, pos: usize, whence: usize) -> Result<usize> {
+    fn seek(&self, fd: usize, pos: isize, whence: usize) -> Result<isize> {
         let mut guard = self.handles.get_mut(&fd).ok_or(Error::new(EBADF))?;
 
         trace!("SEEK fd={}, handle={:?}, pos {}, whence {}", fd, guard, pos, whence);
@@ -1512,22 +1512,24 @@ impl Scheme for Xhci {
             | Handle::PortDesc(_, ref mut offset, ref buf)
             | Handle::Endpoints(_, ref mut offset, ref buf)
             | Handle::Endpoint(_, _, EndpointHandleTy::Root(ref mut offset, ref buf)) => {
+                let max = buf.len() as isize;
                 *offset = match whence {
-                    SEEK_SET => cmp::max(0, cmp::min(pos, buf.len())),
-                    SEEK_CUR => cmp::max(0, cmp::min(*offset + pos, buf.len())),
-                    SEEK_END => cmp::max(0, cmp::min(buf.len() + pos, buf.len())),
+                    SEEK_SET => cmp::max(0, cmp::min(pos, max)),
+                    SEEK_CUR => cmp::max(0, cmp::min(*offset as isize + pos, max)),
+                    SEEK_END => cmp::max(0, cmp::min(max + pos, max)),
                     _ => return Err(Error::new(EINVAL)),
-                };
-                Ok(*offset)
+                } as usize;
+                Ok(*offset as isize)
             }
             Handle::PortState(_, ref mut offset) => {
                 match whence {
-                    SEEK_SET => *offset = pos,
-                    SEEK_CUR => *offset = pos,
-                    SEEK_END => *offset = pos,
+                    //TODO: checks for invalid pos
+                    SEEK_SET => *offset = pos as usize,
+                    SEEK_CUR => *offset = pos as usize,
+                    SEEK_END => *offset = pos as usize,
                     _ => return Err(Error::new(EINVAL)),
                 };
-                Ok(*offset)
+                Ok(*offset as isize)
             }
             // Write-once configure or transfer
             Handle::Endpoint(_, _, _) | Handle::ConfigureEndpoints(_) | Handle::PortReq(_, _) => {

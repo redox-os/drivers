@@ -1,11 +1,11 @@
 #[cfg(feature="rusttype")]
 extern crate rusttype;
 
-use std::alloc::{Alloc, Global, Layout};
+use std::alloc::{AllocInit, AllocRef, Global, Layout};
 use std::{cmp, slice};
 use std::ptr::NonNull;
 
-use crate::primitive::{fast_set32, fast_set64, fast_copy};
+use crate::primitive::{fast_set32, fast_copy};
 
 #[cfg(feature="rusttype")]
 use self::rusttype::{Font, FontCollection, Scale, point};
@@ -42,8 +42,7 @@ impl Display {
     #[cfg(not(feature="rusttype"))]
     pub fn new(width: usize, height: usize, onscreen: usize) -> Display {
         let size = width * height;
-        let offscreen = unsafe { Global.alloc(Layout::from_size_align_unchecked(size * 4, 4096)).unwrap().as_ptr() };
-        unsafe { fast_set64(offscreen as *mut u64, 0, size/2) };
+        let offscreen = unsafe { Global.alloc(Layout::from_size_align_unchecked(size * 4, 4096), AllocInit::Zeroed).unwrap().ptr.as_ptr() };
         Display {
             width: width,
             height: height,
@@ -55,8 +54,7 @@ impl Display {
     #[cfg(feature="rusttype")]
     pub fn new(width: usize, height: usize, onscreen: usize) -> Display {
         let size = width * height;
-        let offscreen = unsafe { Global.alloc(Layout::from_size_align_unchecked(size * 4, 4096)).unwrap().as_ptr() };
-        unsafe { fast_set64(offscreen as *mut u64, 0, size/2) };
+        let offscreen = unsafe { Global.alloc(Layout::from_size_align_unchecked(size * 4, 4096), AllocInit::Zeroed).unwrap().ptr.as_ptr() };
         Display {
             width: width,
             height: height,
@@ -74,7 +72,7 @@ impl Display {
             println!("Resize display to {}, {}", width, height);
 
             let size = width * height;
-            let offscreen = unsafe { Global.alloc(Layout::from_size_align_unchecked(size * 4, 4096)).unwrap().as_ptr() };
+            let offscreen = unsafe { Global.alloc(Layout::from_size_align_unchecked(size * 4, 4096), AllocInit::Zeroed).unwrap().ptr.as_ptr() };
 
             {
                 let mut old_ptr = self.offscreen.as_ptr();

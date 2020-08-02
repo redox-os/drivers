@@ -1,4 +1,4 @@
-#![feature(asm)]
+#![feature(llvm_asm)]
 
 extern crate syscall;
 extern crate byteorder;

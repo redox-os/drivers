@@ -72,7 +72,7 @@ impl CfgAccess for Pci {
         let address = Self::address(bus, dev, func, offset);
 
         let value: u32;
-        asm!("mov dx, 0xCF8
+        llvm_asm!("mov dx, 0xCF8
               out dx, eax
               mov dx, 0xCFC
               in eax, dx"
@@ -91,10 +91,10 @@ impl CfgAccess for Pci {
         let offset = u8::try_from(offset).expect("offset too large for PCI 3.0 configuration space");
         let address = Self::address(bus, dev, func, offset);
 
-        asm!("mov dx, 0xCF8
+        llvm_asm!("mov dx, 0xCF8
               out dx, eax"
              : : "{eax}"(address) : "dx" : "intel", "volatile");
-        asm!("mov dx, 0xCFC
+        llvm_asm!("mov dx, 0xCFC
               out dx, eax"
              : : "{eax}"(value) : "dx" : "intel", "volatile");
     }

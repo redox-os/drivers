@@ -1,4 +1,4 @@
-#![feature(asm)]
+#![feature(llvm_asm)]
 
 use std::fs::{File, metadata, read_dir};
 use std::io::prelude::*;
