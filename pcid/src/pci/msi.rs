@@ -105,7 +105,7 @@ impl MsiCapability {
     }
     pub fn set_multi_message_enable(&mut self, log_mme: u8) {
         let mut new_message_control = self.message_control() & (!Self::MC_MULTI_MESSAGE_ENABLE_MASK);
-        new_message_control |= (u16::from(log_mme) << Self::MC_MULTI_MESSAGE_ENABLE_SHIFT);
+        new_message_control |= u16::from(log_mme) << Self::MC_MULTI_MESSAGE_ENABLE_SHIFT;
         self.set_message_control(new_message_control);
     }
 
