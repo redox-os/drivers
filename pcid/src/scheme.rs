@@ -1230,7 +1230,7 @@ impl PcidScheme {
                         PciHeader::General(ref g) => g,
                         PciHeader::PciToPci(_) => return Err(Error::new(EINVAL)),
                     };
-                    slice[..bytes_to_copy].copy_from_slice(unsafe { plain::as_bytes(&header) });
+                    slice[..bytes_to_copy].copy_from_slice(unsafe { plain::as_bytes(header) });
                 }
                 Ok(CqEntry64 {
                     user_data: sqe.user_data,
