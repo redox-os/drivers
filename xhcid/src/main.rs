@@ -10,7 +10,7 @@ use syscall::flag::{CloneFlags, O_RDWR, O_CLOEXEC, EVENT_READ};
 use syscall::io::Io;
 use syscall::io_uring::v1::Priority;
 
-use pcid_interface::{MsiSetCapabilityInfo, MsiSetCapabilityInfoFlags, MsiXSetCapabilityInfo, MsiXSetCapabilityInfoFlags, PcidServerHandle, PciFunction, SetCapabilityInfo};
+use pcid_interface::{MsiSetCapabilityInfo, MsiSetCapabilityInfoFlags, MsiXSetCapabilityInfo, MsiXSetCapabilityInfoFlags, PcidServerHandle, PciFunction, SetCapabilityInfo, PciBar};
 use pcid_interface::msi::MsixTableEntry;
 use pcid_interface::helpers::{self as pci_helpers, irq as irq_helpers};
 use pci_helpers::{AllocatedBars, Bar};
@@ -178,15 +178,13 @@ async fn get_int_method(func: &PciFunction, pcid_handle: &mut PcidServerHandle, 
 }
 
 fn main() {
-    // Daemonize
-    if unsafe { syscall::clone(CloneFlags::empty()).unwrap() } != 0 {
-        return;
-    }
     let _logger_ref = setup_logging();
 
+    let address = std::env::args().nth(1).expect("expected address of PCI device for xhcid");
+
     let main_instance = ConsumerInstanceBuilder::new()
-        .with_submission_entry_count(64)   // much smaller, only a single page
-        .with_completion_entry_count(1024) // 16384 bytes for completion entries, with 16 byte entry size
+        .with_submission_entry_count(64)   // much smaller, only a single page (4k)
+        .with_completion_entry_count(256)  // two pages (8k)
         .create_instance()
         .expect("xhcid: failed to create event queue io_uring instance")
         .map_all()
@@ -202,13 +200,13 @@ fn main() {
     let executor = redox_iou::executor::Executor::with_reactor(Arc::clone(&reactor));
 
     log::debug!("About to connect,..");
-    let mut pcid_handle = executor.run(PcidServerHandle::connect_using_iouring(reactor.handle())).expect("xhcid: failed to setup channel to pcid");
+    let mut pcid_handle = executor.run(PcidServerHandle::connect_using_iouring(reactor.handle(), &address)).expect("xhcid: failed to setup channel to pcid");
     log::debug!("Connected");
     log::debug!("Fetching config...");
     let pci_config = executor.run(pcid_handle.fetch_config(Priority::default())).expect("xhcid: failed to fetch config");
     info!("XHCI PCI CONFIG: {:?}", pci_config);
 
-    let bar = pci_config.func.bars[0];
+    let bar = PciBar::parse_00_header_bars(pci_config.func.bars).unwrap()[0];
     let irq = pci_config.func.legacy_interrupt_line;
 
     let mut name = pci_config.func.name();

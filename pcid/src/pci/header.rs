@@ -1,6 +1,6 @@
 use std::convert::TryInto;
 
-use super::bar::PciBar;
+use super::bar::{BarFromRawError, PciBar};
 use super::class::PciClass;
 use super::func::ConfigReader;
 
@@ -68,28 +68,28 @@ impl PciHeaderType {
     }
 }
 
-// TODO: It's sad that we can't implement Copy due to arrayvec.
+// TODO: Use repr(packed) to maybe speed up memory-mapped configuration, or to make things easier
+// when parsing PCIe-only capabilities. Right now it's not that convenient to use though, since the
+// "&raw x" RFC isn't ready yet.
 
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+#[repr(C)]
 pub struct PciHeaderGeneral {
     pub header_base: PciHeaderBase,
-
-    // The Base Address Registers. This header type allows up to six, but 64-bit BARs will take up
-    // two 32-bit BARs each. All bars are stored in this array based on their fixed offset, so the
-    // BAR after a 64-bit BAR will always be None.
-    pub bars: [Option<PciBar>; 6],
-
+    pub bars: [u32; 6],
     pub cardbus_cis_ptr: u32,
     pub subsystem_vendor_id: u16,
     pub subsystem_id: u16,
     pub expansion_rom_bar: u32,
     pub cap_pointer: u8,
     pub interrupt_line: u8,
-    pub interrupt_pin: Option<LegacyInterruptPin>,
+    pub interrupt_pin: u8,
     pub min_grant: u8,
     pub max_latency: u8,
 }
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+unsafe impl plain::Plain for PciHeaderGeneral {}
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+#[repr(C)]
 pub struct PciHeaderBase {
     pub vendor_id: u16,
     pub device_id: u16,
@@ -104,10 +104,12 @@ pub struct PciHeaderBase {
     pub header_type: PciHeaderType,
     pub bist: u8,
 }
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+unsafe impl plain::Plain for PciHeaderBase {}
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+#[repr(C)]
 pub struct PciHeaderBridge {
     pub header_base: PciHeaderBase,
-    pub bars: [Option<PciBar>; 2],
+    pub bars: [u32; 2],
     pub primary_bus_num: u8,
     pub secondary_bus_num: u8,
     pub subordinate_bus_num: u8,
@@ -126,9 +128,10 @@ pub struct PciHeaderBridge {
     pub cap_pointer: u8,
     pub expansion_rom: u32,
     pub interrupt_line: u8,
-    pub interrupt_pin: Option<LegacyInterruptPin>,
+    pub interrupt_pin: u8,
     pub bridge_control: u16,
 }
+unsafe impl plain::Plain for PciHeaderBridge {}
 
 fn interrupt_pin_from_raw(raw: u8) -> Option<LegacyInterruptPin> {
     match raw {
@@ -145,7 +148,7 @@ fn interrupt_pin_from_raw(raw: u8) -> Option<LegacyInterruptPin> {
     }
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum PciHeader {
     General(PciHeaderGeneral),
     PciToPci(PciHeaderBridge),
@@ -201,8 +204,14 @@ impl PciHeader {
                     // 00h
                     header_base: base,
                     // 10h
-                    bars: PciBar::parse_00_header_bars(&reader)
-                        .or(Err(PciHeaderError::InvalidBars))?,
+                    bars: [
+                        reader.read_u32(0x10),
+                        reader.read_u32(0x14),
+                        reader.read_u32(0x18),
+                        reader.read_u32(0x1C),
+                        reader.read_u32(0x20),
+                        reader.read_u32(0x24),
+                    ],
                     // 28h
                     cardbus_cis_ptr: reader.read_u32(0x28),
                     // 2Ch
@@ -214,10 +223,7 @@ impl PciHeader {
                     cap_pointer: (reader.read_u32(0x34) & 0xFF) as u8,
                     // 3Ch
                     interrupt_line: (int_dword & 0xFF) as u8,
-                    interrupt_pin: {
-                        let raw = ((int_dword >> 8) & 0xFF) as u8;
-                        interrupt_pin_from_raw(raw)
-                    },
+                    interrupt_pin: ((int_dword >> 8) & 0xFF) as u8,
                     min_grant: ((int_dword >> 16) & 0xFF) as u8,
                     max_latency: ((int_dword >> 24) & 0xFF) as u8,
                 }))
@@ -226,15 +232,17 @@ impl PciHeader {
                 let mut bytes = [0u8; 48];
                 unsafe { reader.read_range_into(16, &mut bytes) };
 
-                let bars =
-                    PciBar::parse_01_header_bars(&reader).or(Err(PciHeaderError::InvalidBars))?;
-
                 fn read_u16(slice: &[u8]) -> u16 {
                     u16::from_le_bytes(slice.try_into().unwrap())
                 }
                 fn read_u32(slice: &[u8]) -> u32 {
                     u32::from_le_bytes(slice.try_into().unwrap())
                 }
+
+                let bars = [
+                    read_u32(bytes[..4].try_into().unwrap()),
+                    read_u32(bytes[4..8].try_into().unwrap()),
+                ];
 
                 let primary_bus_num = bytes[8];
                 let secondary_bus_num = bytes[9];
@@ -277,7 +285,7 @@ impl PciHeader {
                     cap_pointer,
                     expansion_rom,
                     interrupt_line,
-                    interrupt_pin: interrupt_pin_from_raw(interrupt_pin),
+                    interrupt_pin,
                     bridge_control,
                 }))
             }
@@ -301,14 +309,19 @@ impl PciHeader {
     }
 
     /// Return the Header's Base Address Registers.
-    pub fn bars(&self) -> &[Option<PciBar>] {
-        match self {
-            PciHeader::General(PciHeaderGeneral { bars, .. }) => &*bars,
-            PciHeader::PciToPci(PciHeaderBridge { bars, .. }) => &*bars,
+    pub fn bars(&self) -> Result<[Option<PciBar>; 6], BarFromRawError> {
+        match *self {
+            PciHeader::General(PciHeaderGeneral { bars, .. }) => PciBar::parse_00_header_bars(bars),
+            PciHeader::PciToPci(PciHeaderBridge { bars, .. }) => {
+                let mut all_bars = [None; 6];
+                let bars = PciBar::parse_01_header_bars(bars)?;
+                all_bars[..2].copy_from_slice(&bars);
+                Ok(all_bars)
+            }
         }
     }
-    pub fn bar(&self, index: usize) -> Option<&PciBar> {
-        self.bars()[index].as_ref()
+    pub fn bar(&self, index: usize) -> Result<Option<PciBar>, BarFromRawError> {
+        Ok(self.bars()?[index])
     }
 
     /// Returns the "Interrupt Line", which the device doesn't use, but that is still used by the
@@ -320,9 +333,17 @@ impl PciHeader {
         }
     }
     pub fn legacy_interrupt_pin(&self) -> Option<LegacyInterruptPin> {
-        match *self {
+        let raw_pin = match *self {
             PciHeader::General(PciHeaderGeneral { interrupt_pin, .. })
             | PciHeader::PciToPci(PciHeaderBridge { interrupt_pin, .. }) => interrupt_pin,
+        };
+        match raw_pin {
+            0 => None,
+            1 => Some(LegacyInterruptPin::IntA),
+            2 => Some(LegacyInterruptPin::IntB),
+            3 => Some(LegacyInterruptPin::IntC),
+            4 => Some(LegacyInterruptPin::IntD),
+            _ => None,
         }
     }
 
@@ -391,25 +412,25 @@ mod test {
         assert_eq!(base.interface, 0);
         assert_eq!(base.class, PciClass::Network);
         assert_eq!(base.subclass, 0);
-        assert_eq!(header.bars().len(), 6);
+        assert_eq!(header.bars().unwrap().len(), 6);
         assert_eq!(
-            header.bar(0),
-            Some(&PciBar::MemorySpace32 {
+            header.bar(0).unwrap(),
+            Some(PciBar::MemorySpace32 {
                 address: 0xf7500000,
                 prefetchable: false
             })
         );
-        assert_eq!(header.bar(1), None);
-        assert_eq!(header.bar(2), Some(&PciBar::IoSpace { address: 0xb000 }));
+        assert_eq!(header.bar(1).unwrap(), None);
+        assert_eq!(header.bar(2).unwrap(), Some(PciBar::IoSpace { address: 0xb000 }));
         assert_eq!(
-            header.bar(3),
-            Some(&PciBar::MemorySpace32 {
+            header.bar(3).unwrap(),
+            Some(PciBar::MemorySpace32 {
                 address: 0xf7580000,
                 prefetchable: false
             })
         );
-        assert_eq!(header.bar(4), None);
-        assert_eq!(header.bar(5), None);
+        assert_eq!(header.bar(4).unwrap(), None);
+        assert_eq!(header.bar(5).unwrap(), None);
         assert_eq!(header.legacy_interrupt_line(), 10);
         assert_eq!(
             header.legacy_interrupt_pin(),

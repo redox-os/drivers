@@ -124,42 +124,41 @@ impl PciBar {
         }))
     }
     pub fn parse_00_header_bars(
-        reader: &impl ConfigReader,
+        raw_bars: [u32; 6],
     ) -> Result<[Option<PciBar>; 6], BarFromRawError> {
-        let range = (0x10..0x28).step_by(4);
         let mut bars = [None; 6];
-        Self::parse_header_bars(reader, range, &mut bars)?;
+        Self::parse_header_bars(&raw_bars, &mut bars)?;
         Ok(bars)
     }
     pub fn parse_01_header_bars(
-        reader: &impl ConfigReader,
+        raw_bars: [u32; 2],
     ) -> Result<[Option<PciBar>; 2], BarFromRawError> {
-        let range = (0x10..0x18).step_by(4);
         let mut bars = [None; 2];
-        Self::parse_header_bars(reader, range, &mut bars)?;
+        Self::parse_header_bars(&raw_bars, &mut bars)?;
         Ok(bars)
     }
     fn parse_header_bars(
-        reader: &impl ConfigReader,
-        mut range: impl Iterator<Item = u16>,
+        raw_bars: &[u32],
         bars: &mut [Option<PciBar>],
     ) -> Result<(), BarFromRawError> {
         let mut i = 0;
 
-        while let Some(address) = range.next() {
-            let dword_lo = unsafe { reader.read_u32(address) };
+        let mut raw_bars_iter = raw_bars.iter().copied();
+
+        while let Some(raw_bar) = raw_bars_iter.next() {
+            let dword_lo = raw_bar;
 
             match Self::from_raw_32(dword_lo) {
                 Ok(bar) => bars[i] = bar,
                 Err(BarFromRawError::InvalidSize) => {
-                    let address_above = match range.next() {
+                    let raw_bar_above = match raw_bars_iter.next() {
                         Some(a) => a,
 
                         // This condition indicates that the last BAR (i.e. at address 0x24), was
                         // 64 bits, but there was no space for an upper 32 bits of that register.
                         None => return Err(BarFromRawError::InvalidSize),
                     };
-                    let dword_hi = unsafe { reader.read_u32(address_above) };
+                    let dword_hi = raw_bar_above;
 
                     let qword = (u64::from(dword_hi) << 32) | u64::from(dword_lo);
                     bars[i] = Self::from_raw_64(qword)?;

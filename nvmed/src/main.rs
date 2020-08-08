@@ -197,7 +197,7 @@ fn main() {
         .fetch_config(Priority::default()))
         .expect("nvmed: failed to fetch config");
 
-    let bar = match pci_config.func.bars[0] {
+    let bar = match PciBar::parse_00_header_bars(pci_config.func.bars).unwrap()[0] {
         Some(PciBar::MemorySpace32 { address, .. }) => u64::from(address),
         Some(PciBar::MemorySpace64 { address, .. }) => address,
         other => panic!("received a non-memory BAR ({:?})", other),

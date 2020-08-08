@@ -8,7 +8,7 @@ pub use self::bus::{PciBus, PciBusIter};
 pub use self::class::PciClass;
 pub use self::dev::{PciDev, PciDevIter};
 pub use self::func::PciFunc;
-pub use self::header::{PciHeader, PciHeaderError, PciHeaderType};
+pub use self::header::{PciHeader, PciHeaderBase, PciHeaderBridge, PciHeaderError, PciHeaderGeneral, PciHeaderType};
 
 use log::info;
 

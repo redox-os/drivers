@@ -23,7 +23,6 @@ members = [
 [patch.crates-io]
 mio = { git = "https://gitlab.redox-os.org/redox-os/mio.git", branch = "redox-unix" }
 net2 = { git = "https://gitlab.redox-os.org/redox-os/net2-rs.git", branch = "redox-unix" }
-redox_syscall = { git = "https://gitlab.redox-os.org/4lDO2/syscall", branch = "backport" }
 
 [patch.'https://gitlab.redox-os.org/redox-os/redox-iou.git']
 redox-iou = { path = "/home/me/Projects/redox-iou" }

@@ -10,15 +10,13 @@ use std::{env, mem, process, slice, thread};
 use syscall::data::Packet;
 use syscall::error::Error;
 use syscall::error::EINTR;
-use syscall::flag::CloneFlags;
 use syscall::flag::{O_CREAT, O_EXCL, O_RDWR};
-
 use syscall::scheme::Scheme as _;
 
-use either::*;
 use redox_iou::executor::Executor;
 use redox_iou::instance::ConsumerInstanceBuilder;
-use redox_iou::reactor::ReactorBuilder;
+use redox_iou::memory::Guarded;
+use redox_iou::reactor::{ReactorBuilder, SubmissionContext};
 use redox_log::{OutputBuilder, RedoxLogger};
 
 mod config;
@@ -68,9 +66,10 @@ where
     }
 }
 
+#[derive(Debug)]
 pub struct Func {
     header: PciHeader,
-    bar_sizes: [u32; 6],
+    bar_sizes: [u64; 6],
 
     pci_capabilities: Vec<(u8, PciCapability)>,
     pcie_capabilities: Vec<(u16, PcieCapability)>,
@@ -378,7 +377,7 @@ fn process_config(config: &Config, device_tree: &DeviceTree, state: &Arc<State>)
     // TODO: Something faster than O(n^2)!
 
     for (&addr, func) in device_tree.functions.iter() {
-        find_and_spawn_subdriver(addr, func, config, state);
+        find_and_spawn_subdriver(addr, func, config, state, device_tree.uses_seg_groups);
     }
 }
 
@@ -387,6 +386,7 @@ fn find_and_spawn_subdriver(
     func_arc: &Arc<RwLock<Func>>,
     config: &Config,
     state: &Arc<State>,
+    uses_seg_groups: bool,
 ) {
     let func = func_arc.read().unwrap();
     let header = &func.header;
@@ -471,7 +471,19 @@ fn find_and_spawn_subdriver(
         );
         let mut args = args.into_iter();
 
-        let bars = header.bars();
+        let raw_bars = match header {
+            PciHeader::General(general) => general.bars,
+            PciHeader::PciToPci(bridge) => {
+                let mut bars = [0; 6];
+                bars.copy_from_slice(&bridge.bars);
+                bars
+            }
+        };
+        let bars = match header.bars() {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+
         let bar_sizes = &func.bar_sizes;
         let irq = header.legacy_interrupt_line();
 
@@ -479,11 +491,7 @@ fn find_and_spawn_subdriver(
             let mut command = process::Command::new(program);
 
             let func_if = driver_interface::PciFunction {
-                bars: {
-                    let mut bars = [None; 6];
-                    bars.copy_from_slice(header.bars());
-                    bars
-                },
+                bars: raw_bars,
                 bar_sizes: *bar_sizes,
                 bus_num: addr.bus(),
                 dev_num: addr.device(),
@@ -506,7 +514,7 @@ fn find_and_spawn_subdriver(
 
                 // The following arguments are the only ones that are not warned about, if they are
                 // passed
-                let allowed = ["$BUS", "$DEV", "$FUNC"];
+                let allowed = ["$BUS", "$DEV", "$FUNC", "$ADDRESS"];
 
                 if !allowed.contains(&arg.as_str()) {
                     uses_deprecated_args = true;
@@ -517,7 +525,9 @@ fn find_and_spawn_subdriver(
                     "$BUS" => format!("{:>02X}", addr.bus()),
                     "$DEV" => format!("{:>02X}", addr.device()),
                     "$FUNC" => format!("{:>02X}", addr.function()),
+                    "$ADDRESS" => addr.address(uses_seg_groups).to_string(),
                     "$NAME" => func_if.name(),
+                    "$SCHEME_FRIENDLY_NAME" => func_if.scheme_friendly_name(),
                     "$BAR0" => bar_str(&bars[0]),
                     "$BAR1" => bar_str(&bars[1]),
                     "$BAR2" => bar_str(&bars[2]),
@@ -665,12 +675,6 @@ fn handle_parsed_header(
         _ => (),
     }
 
-    for (i, bar) in header.bars().iter().enumerate() {
-        if let Some(bar) = bar {
-            string.push_str(&format!(" {}={}", i, bar));
-        }
-    }
-
     // TODO: Should we disable these by default, and only enable them when the drivers allow us to
     // do that?
 
@@ -702,27 +706,71 @@ fn handle_parsed_header(
 
     // Find BAR sizes
     let mut bars = [None; 6];
-    let mut bar_sizes = [0; 6];
+    let mut bar_sizes = [0u64; 6];
 
-    let bar_count = header.bars().len();
-    bars[..bar_count].copy_from_slice(header.bars());
+    {
+        let wrapped_bars = match header.bars() {
+            Ok(b) => b,
+            Err(err) => {
+                log::error!("Couldn't parse BARs for PCI device {:02x}:{:02x}.{:01x}: {}", bus_num, dev_num, func_num, err);
+                return;
+            }
+        };
+
+        let bar_count = wrapped_bars.len();
+        bars[..bar_count].copy_from_slice(&wrapped_bars);
+    }
+    for (i, bar) in bars.iter().enumerate() {
+        if let Some(bar) = bar {
+            string.push_str(&format!(" {}={}", i, bar));
+        }
+    }
+
 
     unsafe {
-        for (i, _) in header.bars().iter().enumerate() {
+        for (i, bar) in bars.iter().enumerate().filter_map(|(i, &bar)| Some((i, bar?))) {
             let offset = 0x10 + (i as u8) * 4;
 
-            let original = cfg_access.read(bus_num, dev_num, func_num, offset.into());
+            let is_64 = bar.is_64_bit();
+
+            let original_lo = cfg_access.read(bus_num, dev_num, func_num, offset.into());
             cfg_access.write(bus_num, dev_num, func_num, offset.into(), 0xFFFFFFFF);
 
-            let new = cfg_access.read(bus_num, dev_num, func_num, offset.into());
-            cfg_access.write(bus_num, dev_num, func_num, offset.into(), original);
+            let original_hi = if is_64 {
+                assert!(offset.checked_add(4).map_or(false, |off| off <= 0x28));
+
+                let original_hi = cfg_access.read(bus_num, dev_num, func_num, offset.into());
+                cfg_access.write(bus_num, dev_num, func_num, u16::from(offset) + 4, 0xFFFFFFFF);
+
+                original_hi
+            } else {
+                0
+            };
+
+            let new_lo = cfg_access.read(bus_num, dev_num, func_num, offset.into());
+
+            let new_hi = if is_64 {
+                cfg_access.read(bus_num, dev_num, func_num, u16::from(offset) + 4)
+            } else {
+                0xFFFF_FFFF
+            };
+
+            cfg_access.write(bus_num, dev_num, func_num, offset.into(), original_lo);
+
+            if is_64 {
+                cfg_access.write(bus_num, dev_num, func_num, u16::from(offset) + 4, original_hi);
+            }
+
+            let new = (u64::from(new_hi) << 32) | u64::from(new_lo);
 
             let masked = if new & 1 == 1 {
                 // I/O space
-                new & 0xFFFFFFFC
+                assert_eq!(!new_hi, 0, "I/O space BARs can only be 32 bits");
+
+                new & 0xFFFF_FFFC
             } else {
                 // Memory space
-                new & 0xFFFFFFF0
+                new & 0xFFFF_FFFF_FFFF_FFF0
             };
 
             let size = !masked + 1;
@@ -920,7 +968,7 @@ fn setup_scheme(
 
         log::info!("`pci:` scheme initialized, listening for requests");
 
-        let mut packets = [Packet::default(); SIMULTANEOUS_PACKET_COUNT];
+        let mut packets = vec! [Packet::default(); SIMULTANEOUS_PACKET_COUNT];
 
         'handle_scheme: loop {
             let bytes_read = 'retry_reading: loop {
@@ -929,7 +977,7 @@ fn setup_scheme(
                         packets.as_ptr() as *mut u8,
                         packets.len() * mem::size_of::<Packet>(),
                     );
-                    match handle.read(main_ring, schemefd, packet_buf).await {
+                    match handle.read_unchecked(main_ring, SubmissionContext::new(), schemefd, packet_buf).await {
                         Ok(count) => break 'retry_reading count,
                         Err(error) if error == Error::new(EINTR) => continue 'retry_reading,
                         Err(other) => {
@@ -970,7 +1018,7 @@ fn setup_scheme(
                         packets.as_ptr() as *const u8,
                         packets_read * mem::size_of::<Packet>(),
                     );
-                    match handle.write(main_ring, schemefd, packet_buf).await {
+                    match handle.write_unchecked(main_ring, SubmissionContext::new(), schemefd, packet_buf).await {
                         Ok(count) => break 'retry_writing count,
                         Err(error) if error == Error::new(EINTR) => continue 'retry_writing,
                         Err(other) => {
@@ -992,7 +1040,7 @@ fn setup_scheme(
 
         unsafe {
             handle.close(
-                main_ring, schemefd, // unused since a scheme socket ain't a disk
+                main_ring, SubmissionContext::new(), schemefd, // unused since a scheme socket ain't a disk
                 true,
             )
         }

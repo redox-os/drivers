@@ -45,60 +45,6 @@ fn main() {
 
     let disk_scheme_name = format!(":disk/{}-{}_scsi", scheme, port);
 
-    let mut event_queue_ioring_instance = ConsumerInstanceBuilder::new()
-        .with_submission_entry_count(64)   // much smaller, only a single page
-        .with_completion_entry_count(1024) // 16384 bytes for completion entries, with 16 byte entry size
-        .create_instance()
-        .expect("failed to create event queue io_uring instance")
-        .map_all()
-        .expect("failed to map event io_uring buffers")
-        .attach_to_kernel()
-        .expect("failed to attach event queue to kernel");
-
-    event_queue_ioring_instance.sender_mut().as_64_mut().unwrap().try_send(unsafe { io_uring::SqEntry64::new(IoUringSqeFlags::empty(), Priority::default(), 0xDA7A).open(b"event:", (syscall::O_CREAT | syscall::O_RDWR) as u64) }).expect("usbscsid: failed to send event queue creation to kernel");
-    event_queue_ioring_instance.wait(1, io_uring::IoUringEnterFlags::empty()).expect("usbscsid: failed to wait on io_uring");
-
-    // TODO: Proper async/await framework...
-    let cqe = event_queue_ioring_instance.receiver_mut().as_64_mut().unwrap().try_recv().unwrap();
-    assert_eq!(cqe.user_data, 0xDA7A);
-
-    let xhci_iouring = {
-        let mut consumer_instance = ConsumerInstanceBuilder::new()
-            .with_recommended_completion_entry_count()
-            .with_recommended_submission_entry_count()
-            .create_instance()
-            .expect("failed to create io_uring instance")
-            .map_all()
-            .expect("failed to map io_uring ring memory locations")
-            .attach(format!("{}:", scheme))
-            .expect("failed to attach io_uring to xhcid");
-
-        let mut sender = consumer_instance.sender_mut().as_64_mut().unwrap();
-
-        sender.spin_on_send(io_uring::SqEntry64 {
-            opcode: 1,
-            flags: 0,
-            priority: Priority::default(),
-            syscall_flags: 0,
-            fd: 42,
-            user_data: 1337,
-            len: 8192,
-            addr: 0xDEADBEEF,
-            offset: 16384,
-            additional1: 0,
-            additional2: 0,
-        });
-
-        event_queue_ioring_instance.sender_mut().as_64_mut().unwrap().try_send(io_uring::SqEntry64::new(io_uring::IoUringSqeFlags::empty(), Priority::default(), 0).write(0, &Event {
-            id: consumer_instance.ringfd(),
-            flags: EventFlags::EVENT_IO_URING,
-            data: 0,
-        })).expect("usbscsid: failed to send event queue submission to kernel");
-
-
-        consumer_instance
-    };
-
     // TODO: Use eventfds.
     let handle = XhciClientHandle::new(scheme, port);
 

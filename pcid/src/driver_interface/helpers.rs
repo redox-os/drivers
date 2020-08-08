@@ -264,9 +264,10 @@ pub mod irq {
             match &mut *bar_guard {
                 &mut Some(ref bar) => Ok(bar.ptr),
                 bar_to_set @ &mut None => {
-                    let bar = match function.bars[bir].unwrap() {
-                        PciBar::MemorySpace32 { address, .. } => address as usize,
-                        PciBar::MemorySpace64 { address, .. } => address as usize,
+                    let bars = PciBar::parse_00_header_bars(function.bars).unwrap();
+                    let bar = match bars[bir] {
+                        Some(PciBar::MemorySpace32 { address, .. }) => address as usize,
+                        Some(PciBar::MemorySpace64 { address, .. }) => address as usize,
                         other => panic!("Expected memory BAR, found {:?}", other),
                     };
                     let bar_size = function.bar_sizes[bir];

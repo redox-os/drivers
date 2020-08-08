@@ -5,7 +5,7 @@
 name = "AHCI storage"
 class = 1
 subclass = 6
-command = ["ahcid", "$NAME", "$BAR5", "$BARSIZE5", "$IRQ"]
+command = ["ahcid", "$SCHEME_FRIENDLY_NAME", "$BAR5", "$BARSIZE5", "$IRQ"]
 
 # bgad
 [[drivers]]
@@ -44,4 +44,4 @@ name = "XHCI"
 class = 12
 subclass = 3
 interface = 48
-command = ["xhcid", "$BUS", "$DEV", "$FUNC"]
+command = ["xhcid", "$ADDRESS"]

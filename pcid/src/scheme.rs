@@ -6,7 +6,7 @@ use std::io::Write as _;
 use std::os::unix::ffi::OsStrExt;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock, Weak};
-use std::{cmp, io, str};
+use std::{cmp, io, mem, str};
 
 use syscall::data::Stat;
 use syscall::error::{Error, Result};
@@ -19,6 +19,7 @@ use syscall::flag::{
     SEEK_CUR, SEEK_END, SEEK_SET,
 };
 use syscall::io_uring::v1::{CqEntry64, IoUringSqeFlags, Priority, SqEntry64, StandardOpcode};
+use syscall::io_uring::v1::operation::OpenFlags;
 use syscall::io_uring::IoUringRecvInfo;
 use syscall::scheme::{self, Scheme};
 
@@ -30,6 +31,8 @@ use redox_iou::{memory::pool as redox_iou_pool, reactor};
 use either::*;
 use futures::StreamExt;
 use once_cell::sync::OnceCell;
+
+use crate::pci::{PciHeader, PciHeaderGeneral};
 
 use crate::driver_interface::{PciAddress32, PcidOpcode};
 use crate::{DeviceTree, Func, ResultExt, State as PcidState};
@@ -60,6 +63,9 @@ use crate::{DeviceTree, Func, ResultExt, State as PcidState};
 /// Device numbers are represented as two hex digits, but can only be in the `[0, 1f]` range (5
 /// bits). Function numbers are hex digits, in the `[0, 7]` range (3 bits), so octal works fine
 /// there as well.
+///
+/// There is also `pci:short/ADDRESS/`, where ADDRESS represents a function address in the format
+/// `XX:YY.Z`, or `SSSS-XX:YY.Z`.
 pub struct PcidScheme {
     spawn_handle: SpawnHandle,
     reactor_handle: reactor::Handle,
@@ -88,6 +94,15 @@ pub struct DeviceNum {
 pub struct FunctionNum {
     pub dev: DeviceNum,
     pub id: u8,
+}
+impl From<FunctionNum> for PciAddress32 {
+    fn from(num: FunctionNum) -> Self {
+        Self::default()
+            .with_seg_group(num.dev.bus.seg.0)
+            .with_bus(num.dev.bus.id)
+            .with_device(num.dev.id)
+            .with_function(num.id)
+    }
 }
 
 // TODO
@@ -133,11 +148,7 @@ impl List {
             Ok(())
         }
         fn verify_func_existence(tree: &DeviceTree, func_num: FunctionNum) -> Result<()> {
-            let key = PciAddress32::default()
-                .with_seg_group(func_num.dev.bus.seg.0)
-                .with_bus(func_num.dev.bus.id)
-                .with_device(func_num.dev.id)
-                .with_function(func_num.id);
+            let key = PciAddress32::from(func_num);
 
             if !tree.functions.contains_key(&key) {
                 return Err(Error::new(ENOENT));
@@ -217,6 +228,35 @@ impl List {
 
                 from_static_str(FUNC_DIR)
             }
+            ListKind::Short => {
+                let tree_guard = scheme.tree.read().unwrap();
+
+                let capacity = tree_guard.functions.keys().fold(0, |mut cap, addr| {
+                    if tree_guard.uses_seg_groups {
+                        cap += "SSSS-BB:DD.F".len();
+                        if addr.seg_group() == 0{
+                            cap += "BB:DD.F".len();
+                        }
+                    } else {
+                        cap += "BB:DD.F".len();
+                    }
+                    cap
+                });
+
+                let mut content = String::with_capacity(capacity);
+
+                for addr in tree_guard.functions.keys() {
+                    if tree_guard.uses_seg_groups {
+                        writeln!(content, "{seg:04x}-{bus:02x}:{dev:02x}.{func:01x}", seg=addr.seg_group(), bus=addr.bus(), dev=addr.device(), func=addr.function()).unwrap();
+                        if addr.seg_group() == 0 {
+                            writeln!(content, "{bus:02x}:{dev:02x}.{func:01x}", bus=addr.bus(), dev=addr.device(), func=addr.function()).unwrap();
+                        }
+                    } else {
+                        writeln!(content, "{bus:02x}:{dev:02x}.{func:01x}", bus=addr.bus(), dev=addr.device(), func=addr.function()).unwrap();
+                    }
+                }
+                content.into_bytes().into_boxed_slice()
+            }
         })
     }
     fn try_init_busses(tree: &DeviceTree) -> Result<Box<[u8]>> {
@@ -283,6 +323,7 @@ impl List {
                     | dev(num.dev.id)
                     | func(num.id)
             }
+            ListKind::Short => LIST | kind(8),
         }
     }
 }
@@ -325,6 +366,8 @@ enum ListKind {
     Functions(DeviceNum),
     /// `pci:/bus/.../dev/../func/X`
     Function(FunctionNum),
+    /// `pci:/short/SSSS-XX:YY.Z`, or `pci:short/XX:YY.Z`.
+    Short,
 }
 #[derive(Debug)]
 enum CtlSocket {
@@ -512,6 +555,72 @@ impl PcidScheme {
             _ => return Err(Error::new(ENOENT)),
         })
     }
+    fn open_short(&self, after_short: &[&str], flags: usize) -> Result<Handle> {
+        log::info!("OPEN SHORT: `{:?}`", after_short);
+        Ok(match *after_short {
+            [] => {
+                Self::validate_is_directory(flags)?;
+                Self::validate_is_rdonly(flags)?;
+
+                Handle::list(ListKind::Short)
+            }
+            [short_str, ref after_func @ ..] => {
+                let function_num = Self::parse_short(short_str).ok_or(Error::new(ENOENT))?;
+
+                return self.open_func(function_num, after_func, flags);
+            }
+        })
+    }
+    fn parse_short(short_str: &str) -> Option<FunctionNum> {
+        // The short str takes one of the following formats:
+        //
+        // * SSSS-BB:DD.F
+        // * BB:DD.F
+
+        const LONG_LENGTH: usize = "SSSS-BB:DD.F".len();
+        const SHORT_LENGTH: usize = "BB:DD.F".len();
+
+        if short_str.len() != LONG_LENGTH && short_str.len() != SHORT_LENGTH {
+            return None;
+        }
+
+        if short_str.len() == LONG_LENGTH {
+            let seg_str = &short_str[..4];
+            let dash_str = &short_str[4..5];
+            let rest = &short_str[5..];
+
+            if dash_str != "-" {
+                return None;
+            }
+            let seg = u16::from_str_radix(seg_str, 16).ok()?;
+
+            let mut partial = Self::parse_short(rest)?;
+            partial.dev.bus.seg.0 = seg;
+            return Some(partial);
+        }
+
+        let bus_str = &short_str[..2];
+        let colon_str = &short_str[2..3];
+        let dev_str = &short_str[3..5];
+        let dot_str = &short_str[5..6];
+        let func_str = &short_str[6..7];
+
+        if colon_str != ":" || dot_str != "." {
+            return None;
+        }
+
+        let bus = u8::from_str_radix(bus_str, 16).ok()?;
+        let dev = u8::from_str_radix(dev_str, 16).ok()?;
+        let func = u8::from_str_radix(func_str, 16).ok()?;
+
+        let mut num = FunctionNum::default();
+        num.id = func;
+        num.dev.id = dev;
+        num.dev.bus.id = bus;
+        num.dev.bus.seg = Default::default();
+
+        Some(num)
+    }
     fn validate_is_directory(flags: usize) -> Result<()> {
         if flags & O_DIRECTORY != O_DIRECTORY && flags & O_STAT != O_STAT {
             return Err(Error::new(ENOTDIR));
@@ -553,6 +662,9 @@ impl Scheme for PcidScheme {
                 Self::validate_is_directory(flags).and_log_err_as_warn("EISDIR")?;
                 Self::validate_is_rdonly(flags).and_log_err_as_warn("EISDIR RDONLY")?;
                 Handle::list(ListKind::TopLevel)
+            }
+            ["short", ref after_short @ .. ] => {
+                self.open_short(after_short, flags)?
             }
             ["read_config_dir"] => {
                 if uid != 0 {
@@ -752,6 +864,7 @@ impl Scheme for PcidScheme {
                     )
                     .unwrap();
                 }
+                ListKind::Short => write!(cursor, "/short").unwrap(),
             },
             Handle::CtlSocket(ref socket) => match *socket {
                 CtlSocket::Bus(bus_num) => {
@@ -918,10 +1031,9 @@ impl Scheme for PcidScheme {
                     }
                 };
 
-                /*let cqe = */
-                if let Some(standard_opcode) = StandardOpcode::from_raw(sqe.opcode) {
-                    let cqe_res = this.handle_standard_opcode(standard_opcode, &sqe).await;
-                    let _ = Self::or_error(&sqe, cqe_res, 0);
+                let cqe = if let Some(standard_opcode) = StandardOpcode::from_raw(sqe.opcode) {
+                    let cqe_res = this.handle_standard_opcode(&ctx, &reactor_handle, ring, &mut pool, standard_opcode, &sqe).await;
+                    Self::or_error(&sqe, cqe_res, 0)
                 } else if let Some(pcid_opcode) = PcidOpcode::from_raw(sqe.opcode) {
                     let cqe_res = this
                         .handle_pcid_opcode(
@@ -933,9 +1045,8 @@ impl Scheme for PcidScheme {
                             &sqe,
                         )
                         .await;
-                    let _ = Self::or_error(&sqe, cqe_res, 0);
-                }; /* else*/
-                let cqe = {
+                    Self::or_error(&sqe, cqe_res, 0)
+                } else {
                     CqEntry64 {
                         user_data: sqe.user_data,
                         flags: 0, // TODO
@@ -943,6 +1054,7 @@ impl Scheme for PcidScheme {
                         extra: 0,
                     }
                 };
+
 
                 match reactor_handle.send_producer_cqe(ring, cqe) {
                     Ok(()) => (),
@@ -982,16 +1094,66 @@ impl Scheme for PcidScheme {
         Ok(0)
     }
 }
+async fn get_or_init_pool<'a>(pool: &'a mut Option<redox_iou::memory::BufferPool>, reactor: &reactor::Handle, ring: SecondaryRingId) -> Result<&'a mut redox_iou::memory::BufferPool> {
+    Ok(match pool {
+        Some(p) => p,
+        None => {
+            log::info!("Creating producer pool");
+            let new_pool = reactor
+                .create_producer_buffer_pool(ring, Priority::default())
+                .await?;
+            *pool = Some(new_pool);
+            pool.as_mut().unwrap()
+        }
+    })
+}
 impl PcidScheme {
     // TODO: Make it possible to get an Arc of the driver, to avoid lifetime errors with the
     // executor.
     pub async fn handle_standard_opcode(
         &self,
+        ctx: &scheme::Ctx,
+        reactor: &reactor::Handle,
+        ring: SecondaryRingId,
+        pool: &mut Option<redox_iou::memory::BufferPool>,
         opcode: StandardOpcode,
         sqe: &SqEntry64,
     ) -> Result<CqEntry64> {
-        log::warn!("TODO: handle standard opcode {:?}, sqe {:?}", opcode, sqe);
-        Ok(CqEntry64::default())
+        match opcode {
+            StandardOpcode::Open => {
+                log::info!("Handle Open");
+                let pool = get_or_init_pool(pool, reactor, ring).await?;
+                log::info!("Created pool; now doing to basic validation of args");
+
+                let flags = OpenFlags::from_bits(sqe.syscall_flags).ok_or(Error::new(EINVAL))?;
+
+                let len = u32::try_from(sqe.len)?;
+                let align = 1;
+                let offset = u32::try_from(sqe.addr)?;
+                let flags = usize::try_from(sqe.offset)?;
+
+                log::info!("Validating, acquiring a borrowed slice");
+
+                let slice = pool.acquire_borrowed_slice::<redox_buffer_pool::NoGuard>(len, align, redox_buffer_pool::AllocationStrategy::Fixed(offset)).ok_or(Error::new(ENOMEM))?;
+
+                log::info!("Acquired, at {} len {} mmap {} mmap len {} extra {:?}", slice.offset(), slice.len(), slice.mmap_offset(), slice.mmap_size(), slice.extra());
+                log::info!("Slice: LEN = {} DATA = {:?}", slice.as_slice().len(), slice.as_slice());
+                let fd = self.open(&*slice, flags, ctx.uid, ctx.gid)?;
+                let fd64 = u64::try_from(fd)?;
+                log::info!("Opened");
+
+                Ok(CqEntry64  {
+                    user_data: sqe.user_data,
+                    flags: 0, // TODO
+                    extra: 0,
+                    status: Error::mux64(Ok(fd64)),
+                })
+            },
+            _ => {
+                log::warn!("TODO: handle standard opcode {:?}, sqe {:?}", opcode, sqe);
+                return Err(Error::new(ENOSYS));
+            }
+        }
     }
     pub async fn handle_pcid_opcode(
         &self,
@@ -1002,17 +1164,8 @@ impl PcidScheme {
         opcode: PcidOpcode,
         sqe: &SqEntry64,
     ) -> Result<CqEntry64> {
-        let pool = match pool {
-            Some(p) => p,
-            None => {
-                log::info!("Creating producer pool");
-                let new_pool = reactor
-                    .create_producer_buffer_pool(ring, Priority::default())
-                    .await?;
-                *pool = Some(new_pool);
-                pool.as_mut().unwrap()
-            }
-        };
+        let pool = get_or_init_pool(pool, reactor, ring).await?;
+
         log::warn!("Buffer pool initialized; TODO");
 
         fn check_if_version(sqe: &SqEntry64) -> Result<()> {
@@ -1028,22 +1181,81 @@ impl PcidScheme {
             ))
         }
 
+
+        let function_num = {
+            let fd = usize::try_from(sqe.fd).or(Err(Error::new(EBADF)))?;
+
+            let file_handles = self.file_handles.read().or(Err(Error::new(EBADFD)))?;
+            let file_handle_lock = file_handles.get(&fd).ok_or(Error::new(EBADF))?;
+            let file_handle = file_handle_lock.lock().or(Err(Error::new(EBADFD)))?;
+
+            match *file_handle {
+                Handle::CtlSocket(CtlSocket::Function(func)) => func,
+                Handle::CtlSocket(_) => return Err(Error::new(ENOSYS)),
+                Handle::List(_) | Handle::ReadConfigDir(_, _) => return Err(Error::new(EBADF)),
+            }
+        };
+        let function_lock = {
+            let device_tree = self.tree.read().or(Err(Error::new(EBADFD)))?;
+
+            let function_lock = device_tree
+                .functions
+                .get(&PciAddress32::from(function_num))
+                .ok_or(Error::new(EBADF))?;
+
+            Arc::clone(function_lock)
+        };
+
         match opcode {
             PcidOpcode::FetchConfig => {
                 check_if_version(sqe)?;
+                let function = function_lock.read().or(Err(Error::new(EBADFD)))?;
+                log::info!("Fetching config for function {:?} at {:02x}:{:02x}.{:01x}", function, function_num.dev.bus.id, function_num.dev.id, function_num.id);
+                let len = u32::try_from(sqe.len)?;
+                let alignment = u32::try_from(mem::align_of::<PciHeaderGeneral>()).unwrap();
+                let addr = u32::try_from(sqe.addr)?;
+
+                let bytes_to_copy = mem::size_of::<PciHeaderGeneral>();
+                if usize::try_from(sqe.len).unwrap() < bytes_to_copy {
+                    return Err(Error::new(EINVAL));
+                }
+
+
+                let mut slice = pool.acquire_borrowed_slice::<redox_buffer_pool::NoGuard>(len, alignment, redox_buffer_pool::AllocationStrategy::Fixed(addr)).ok_or(Error::new(ENOMEM))?;
+
+                {
+                    let function_guard = function_lock.read().or(Err(Error::new(EBADFD)))?;
+
+                    let header = match function_guard.header {
+                        PciHeader::General(ref g) => g,
+                        PciHeader::PciToPci(_) => return Err(Error::new(EINVAL)),
+                    };
+                    slice[..bytes_to_copy].copy_from_slice(unsafe { plain::as_bytes(&header) });
+                }
+                Ok(CqEntry64 {
+                    user_data: sqe.user_data,
+                    status: Error::mux64(Ok(0)),
+                    // TODO
+                    flags: 0,
+                    extra: 0,
+                })
             }
             PcidOpcode::FetchAllCapabilities => {
+                log::warn!("TODO: FetchAllCapabilities");
                 check_if_version(sqe)?;
+                Err(Error::new(ENOSYS))
             }
             PcidOpcode::GetCapability => {
+                log::warn!("TODO: GetCapability");
                 check_if_version(sqe)?;
+                Err(Error::new(ENOSYS))
             }
             PcidOpcode::SetCapability => {
+                log::warn!("TODO: SetCapability");
                 check_if_version(sqe)?;
+                Err(Error::new(ENOSYS))
             }
         }
-
-        Ok(CqEntry64::default())
     }
     fn or_error(sqe: &SqEntry64, result: Result<CqEntry64>, extra: u64) -> CqEntry64 {
         result.unwrap_or_else(|err| CqEntry64 {
@@ -1052,5 +1264,34 @@ impl PcidScheme {
             extra,
             status: Error::mux64(Err(err)),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_short() {
+
+        macro_rules! function_num(
+            ($bus:literal : $dev:literal . $func:literal) => {{
+                function_num!(0x0000 - $bus : $dev . $func)
+            }};
+            ($seg:literal - $bus:literal : $dev:literal . $func:literal) => {{
+                let mut func = FunctionNum::default();
+                func.id = $func;
+                func.dev.id = $dev;
+                func.dev.bus.id = $bus;
+                func.dev.bus.seg.0 = $seg;
+                func
+            }};
+        );
+
+        assert_eq!(PcidScheme::parse_short("0000-01:1f.2"), Some(function_num!(0x0000 - 0x01 : 0x1f . 0x2)));
+        assert_eq!(PcidScheme::parse_short("DEAD-BE:EF.0"), Some(function_num!(0xdead - 0xbe : 0xef . 0)));
+        assert_eq!(PcidScheme::parse_short("BE:EF.0"), Some(function_num!(0x0000 - 0xbe : 0xef . 0)));
+        assert_eq!(PcidScheme::parse_short("PCI is good!"), None);
+        assert_eq!(PcidScheme::parse_short("0000 01 1f 2"), None);
     }
 }
