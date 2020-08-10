@@ -1215,13 +1215,14 @@ impl PcidScheme {
                 let alignment = u32::try_from(mem::align_of::<PciHeaderGeneral>()).unwrap();
                 let addr = u32::try_from(sqe.addr)?;
 
-                let bytes_to_copy = mem::size_of::<PciHeaderGeneral>();
+                let bytes_to_copy = mem::size_of::<pcid_interface::SubdriverArguments>();
                 if usize::try_from(sqe.len).unwrap() < bytes_to_copy {
                     return Err(Error::new(EINVAL));
                 }
 
 
                 let mut slice = pool.acquire_borrowed_slice::<redox_buffer_pool::NoGuard>(len, alignment, redox_buffer_pool::AllocationStrategy::Fixed(addr)).ok_or(Error::new(ENOMEM))?;
+                log::info!("Slice to use at {}, len {}, mmap start {}, mmap size {}, extra {:?}", slice.offset(), slice.len(), slice.mmap_offset(), slice.mmap_size(), slice.extra());
 
                 {
                     let function_guard = function_lock.read().or(Err(Error::new(EBADFD)))?;
@@ -1230,7 +1231,24 @@ impl PcidScheme {
                         PciHeader::General(ref g) => g,
                         PciHeader::PciToPci(_) => return Err(Error::new(EINVAL)),
                     };
-                    slice[..bytes_to_copy].copy_from_slice(unsafe { plain::as_bytes(header) });
+                    // TODO: Don't use this simple struct, but the actual header (maybe even as a
+                    // regular file), with some extra information not present in the configuration
+                    // space, such as the PCI address (bus-dev-func).
+                    *plain::from_mut_bytes(&mut slice[..bytes_to_copy]).unwrap() = pcid_interface::SubdriverArguments {
+                        func: pcid_interface::PciFunction {
+                            bus_num: function_num.dev.bus.id,
+                            dev_num: function_num.dev.id,
+                            func_num: function_num.id,
+
+                            bars: header.bars,
+                            bar_sizes: function_guard.bar_sizes,
+                            venid: header.header_base.vendor_id,
+                            devid: header.header_base.device_id,
+
+                            legacy_interrupt_line: header.interrupt_line,
+                            legacy_interrupt_pin: header.interrupt_pin,
+                        },
+                    };
                 }
                 Ok(CqEntry64 {
                     user_data: sqe.user_data,

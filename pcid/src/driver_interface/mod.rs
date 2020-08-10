@@ -555,6 +555,7 @@ impl PcidServerHandle {
             let mut slice = pool.acquire_borrowed_slice(len, alignment, AllocationStrategy::Optimal).ok_or(
                 IoUringTransportError(Errno::new(ENOMEM)),
             )?;
+            log::info!("pci interface slice at {}, len {}, mmap offset {}, mmap size {}, extra: {:?}", slice.offset(), slice.len(), slice.mmap_offset(), slice.mmap_size(), slice.extra());
             unsafe {
                 let fut = handle.send(
                     ring,
@@ -568,7 +569,7 @@ impl PcidServerHandle {
                         ..SqEntry64::default()
                     },
                 );
-                // Prevent data race by leaking memory if this future is forgotten using `mem::forget`.
+                // Prevent data race by leaking memory if this future is dropped.
                 fut.guard(&mut slice);
                 log::debug!("Future sent");
 

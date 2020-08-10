@@ -956,9 +956,9 @@ dependencies = [
 
 [[package]]
 name = "redox-buffer-pool"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e02531e245d7a9064b87b836aeebec82c206cc72a7b6f60aaac5b8189dc8f12a"
+checksum = "53371bbb81b0dbf8dfe780554a1c52223ac6b66e7a2ed7a2dca3eab2fba81dfb"
 dependencies = [
  "log",
  "parking_lot",
