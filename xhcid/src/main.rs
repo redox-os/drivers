@@ -204,10 +204,10 @@ fn main() {
     log::debug!("Connected");
     log::debug!("Fetching config...");
     let pci_config = executor.run(pcid_handle.fetch_config(Priority::default())).expect("xhcid: failed to fetch config");
-    info!("XHCI PCI CONFIG: {:?}", pci_config);
+    log::info!("XHCI PCI CONFIG: {:?}", pci_config);
 
     let bar = PciBar::parse_00_header_bars(pci_config.func.bars).unwrap()[0];
-    let irq = pci_config.func.legacy_interrupt_line;
+    log::info!("XHCI BAR: {}", bar.unwrap());
 
     let mut name = pci_config.func.name();
     name.push_str("_xhci");
@@ -221,8 +221,11 @@ fn main() {
         Some(pcid_interface::PciBar::MemorySpace64 { address, .. }) => address,
         other => panic!("Expected memory bar, found {:?}", other),
     };
+    let bar_size = usize::try_from(pci_config.func.bar_sizes[0]).expect("xhcid: bar size larger than usize");
 
-    let bar_wrapper = unsafe { Bar::map(bar_ptr as usize, 65536).expect("xhcid: failed to map BAR 0") };
+    log::info!("XHCI BAR ADDRESS: {:#>08x}", bar_ptr);
+
+    let bar_wrapper = unsafe { Bar::map(bar_ptr as usize, bar_size).expect("xhcid: failed to map BAR 0") };
     let address = bar_wrapper.pointer().as_ptr() as usize;
 
     *allocated_bars.0[0].lock().unwrap() = Some(bar_wrapper);

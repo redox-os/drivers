@@ -29,7 +29,7 @@ mod pcie;
 mod scheme;
 
 use crate::config::Config;
-use crate::driver_interface::PciAddress32;
+use crate::driver_interface::{PciAddress32, PcidServerResponseError, SetCapabilityInfo};
 use crate::pci::cap::{self as pcicap, Capability as PciCapability};
 use crate::pci::{
     CfgAccess, Pci, PciBar, PciBus, PciClass, PciDev, PciFunc, PciHeader, PciHeaderError,
@@ -109,6 +109,168 @@ fn with_pci_func_raw<T, F: FnOnce(&PciFunc) -> T>(
     };
     function(&func)
 }
+fn set_capability_info(func: &mut Func, info_to_set: &SetCapabilityInfo, addr: PciAddress32, cfg_access: &dyn CfgAccess) -> Result<(), PcidServerResponseError> {
+    use crate::driver_interface::*;
+
+    let mut msi_enabled = false;
+    let mut msix_enabled = false;
+
+    for cap in func.pci_capabilities.iter() {
+        match cap {
+            &(_, PciCapability::Msi(ref cap)) => msi_enabled = cap.enabled(),
+            &(_, PciCapability::MsiX(ref cap)) => msix_enabled = cap.msix_enabled(),
+            _ => (),
+        }
+    }
+
+    match *info_to_set {
+        SetCapabilityInfo::Msi(ref info_to_set) => {
+            if let Some((offset, info)) = func
+                .pci_capabilities
+                .iter_mut()
+                .find_map(|(offset, capability)| {
+                    Some((*offset, capability.as_msi_mut()?))
+                })
+            {
+                let info_to_set_flags =
+                    match MsiSetCapabilityInfoFlags::from_bits(info_to_set.flags) {
+                        Some(f) => f,
+                        None => {
+                            return Err(
+                                PcidServerResponseError::InvalidBitPattern,
+                            )
+                        }
+                    };
+
+                if info_to_set_flags.contains(MsiSetCapabilityInfoFlags::ENABLED)
+                    && info_to_set.enabled == true as u8
+                {
+                    if msix_enabled {
+                        log::error!("Client trying to enable MSI while MSI-X is already enabled.");
+                        return Err(
+                            PcidServerResponseError::InvalidBitPattern,
+                        );
+                    }
+                }
+
+                if info_to_set_flags
+                    .contains(MsiSetCapabilityInfoFlags::MULTI_MESSAGE_ENABLE)
+                {
+                    let mme = info_to_set.multi_message_enable;
+                    if info.multi_message_capable() < mme || mme > 0b101 {
+                        return Err(
+                            PcidServerResponseError::InvalidBitPattern,
+                        );
+                    }
+                    info.set_multi_message_enable(mme);
+                }
+                if info_to_set_flags
+                    .contains(MsiSetCapabilityInfoFlags::MESSAGE_ADDRESS)
+                {
+                    let message_addr = info_to_set.message_address;
+                    if message_addr & 0b11 != 0 {
+                        return Err(
+                            PcidServerResponseError::InvalidBitPattern,
+                        );
+                    }
+                    info.set_message_address(message_addr);
+                }
+                if info_to_set_flags
+                    .contains(MsiSetCapabilityInfoFlags::MESSAGE_UPPER_ADDRESS)
+                {
+                    let message_addr_upper = info_to_set.message_upper_address;
+                    info.set_message_upper_address(message_addr_upper);
+                }
+                if info_to_set_flags.contains(MsiSetCapabilityInfoFlags::MESSAGE_DATA) {
+                    let message_data = info_to_set.message_data;
+                    if message_data & ((1 << info.multi_message_enable()) - 1) != 0 {
+                        return Err(
+                            PcidServerResponseError::InvalidBitPattern,
+                        );
+                    }
+                    info.set_message_data(message_data);
+                }
+                if info_to_set_flags.contains(MsiSetCapabilityInfoFlags::MASK_BITS) {
+                    let mask_bits = info_to_set.mask_bits;
+                    info.set_mask_bits(mask_bits);
+                }
+                unsafe {
+                    with_pci_func_raw(
+                        cfg_access,
+                        addr.bus(),
+                        addr.device(),
+                        addr.function(),
+                        |func| {
+                            info.write_all(func, offset);
+                        },
+                    );
+                }
+                Ok(())
+            } else {
+                return Err(
+                    PcidServerResponseError::NonexistentCapability(CapabilityType::Msi),
+                );
+            }
+        }
+        SetCapabilityInfo::MsiX(MsiXSetCapabilityInfo {
+            function_mask,
+            enabled,
+            flags,
+        }) => {
+            if let Some((offset, info)) = func
+                .pci_capabilities
+                .iter_mut()
+                .find_map(|(offset, capability)| {
+                    Some((*offset, capability.as_msix_mut()?))
+                })
+            {
+                let mut write = false;
+
+                let flags = match MsiXSetCapabilityInfoFlags::from_bits(flags) {
+                    Some(f) => f,
+                    None => return Err(
+                        driver_interface::PcidServerResponseError::InvalidBitPattern,
+                    ),
+                };
+                if flags.contains(MsiXSetCapabilityInfoFlags::ENABLED) {
+                    if msi_enabled {
+                        log::error!("Client trying to enable MSI-X while MSI is already enabled.");
+                        return Err(
+                            PcidServerResponseError::InvalidBitPattern,
+                        );
+                    }
+                    info.set_msix_enabled(enabled == true as u8);
+                    write = true;
+                }
+                if flags.contains(MsiXSetCapabilityInfoFlags::FUNCTION_MASK) {
+                    info.set_function_mask(function_mask == true as u8);
+                    write = true;
+                }
+                if write {
+                    unsafe {
+                        with_pci_func_raw(
+                            cfg_access,
+                            addr.bus(),
+                            addr.device(),
+                            addr.function(),
+                            |func| {
+                                info.write_a(func, offset);
+                            },
+                        );
+                    }
+                }
+                log::info!("UPDATED MSI-X CONFIG TO {:?}", info);
+                Ok(())
+            } else {
+                return Err(
+                    PcidServerResponseError::NonexistentCapability(
+                        CapabilityType::MsiX,
+                    ),
+                );
+            }
+        }
+    }
+}
 impl DriverHandler {
     fn with_pci_func_raw<T, F: FnOnce(&PciFunc) -> T>(&self, function: F) -> T {
         with_pci_func_raw(
@@ -170,169 +332,14 @@ impl DriverHandler {
                     )
                 }
             }),
-            PcidClientRequest::SetCapability(info_to_set) => {
-                let mut msi_enabled = false;
-                let mut msix_enabled = false;
-
-                for cap in self.func.read().unwrap().pci_capabilities.iter() {
-                    match cap {
-                        &(_, PciCapability::Msi(ref cap)) => msi_enabled = cap.enabled(),
-                        &(_, PciCapability::MsiX(ref cap)) => msix_enabled = cap.msix_enabled(),
-                        _ => (),
-                    }
-                }
-
-                match info_to_set {
-                    SetCapabilityInfo::Msi(info_to_set) => {
-                        if let Some((offset, info)) = self
-                            .func
-                            .write()
-                            .unwrap()
-                            .pci_capabilities
-                            .iter_mut()
-                            .find_map(|(offset, capability)| {
-                                Some((*offset, capability.as_msi_mut()?))
-                            })
-                        {
-                            let info_to_set_flags =
-                                match MsiSetCapabilityInfoFlags::from_bits(info_to_set.flags) {
-                                    Some(f) => f,
-                                    None => {
-                                        return PcidClientResponse::Error(
-                                            PcidServerResponseError::InvalidBitPattern,
-                                        )
-                                    }
-                                };
-
-                            if info_to_set_flags.contains(MsiSetCapabilityInfoFlags::ENABLED)
-                                && info_to_set.enabled == true as u8
-                            {
-                                if msix_enabled {
-                                    log::error!("Client trying to enable MSI while MSI-X is already enabled.");
-                                    return PcidClientResponse::Error(
-                                        PcidServerResponseError::InvalidBitPattern,
-                                    );
-                                }
-                            }
-
-                            if info_to_set_flags
-                                .contains(MsiSetCapabilityInfoFlags::MULTI_MESSAGE_ENABLE)
-                            {
-                                let mme = info_to_set.multi_message_enable;
-                                if info.multi_message_capable() < mme || mme > 0b101 {
-                                    return PcidClientResponse::Error(
-                                        PcidServerResponseError::InvalidBitPattern,
-                                    );
-                                }
-                                info.set_multi_message_enable(mme);
-                            }
-                            if info_to_set_flags
-                                .contains(MsiSetCapabilityInfoFlags::MESSAGE_ADDRESS)
-                            {
-                                let message_addr = info_to_set.message_address;
-                                if message_addr & 0b11 != 0 {
-                                    return PcidClientResponse::Error(
-                                        PcidServerResponseError::InvalidBitPattern,
-                                    );
-                                }
-                                info.set_message_address(message_addr);
-                            }
-                            if info_to_set_flags
-                                .contains(MsiSetCapabilityInfoFlags::MESSAGE_UPPER_ADDRESS)
-                            {
-                                let message_addr_upper = info_to_set.message_upper_address;
-                                info.set_message_upper_address(message_addr_upper);
-                            }
-                            if info_to_set_flags.contains(MsiSetCapabilityInfoFlags::MESSAGE_DATA) {
-                                let message_data = info_to_set.message_data;
-                                if message_data & ((1 << info.multi_message_enable()) - 1) != 0 {
-                                    return PcidClientResponse::Error(
-                                        PcidServerResponseError::InvalidBitPattern,
-                                    );
-                                }
-                                info.set_message_data(message_data);
-                            }
-                            if info_to_set_flags.contains(MsiSetCapabilityInfoFlags::MASK_BITS) {
-                                let mask_bits = info_to_set.mask_bits;
-                                info.set_mask_bits(mask_bits);
-                            }
-                            unsafe {
-                                with_pci_func_raw(
-                                    self.state.preferred_cfg_access(),
-                                    self.bus_num,
-                                    self.dev_num,
-                                    self.func_num,
-                                    |func| {
-                                        info.write_all(func, offset);
-                                    },
-                                );
-                            }
-                            PcidClientResponse::SetCapability
-                        } else {
-                            return PcidClientResponse::Error(
-                                PcidServerResponseError::NonexistentCapability(CapabilityType::Msi),
-                            );
-                        }
-                    }
-                    SetCapabilityInfo::MsiX(MsiXSetCapabilityInfo {
-                        function_mask,
-                        enabled,
-                        flags,
-                    }) => {
-                        if let Some((offset, info)) = self
-                            .func
-                            .write()
-                            .unwrap()
-                            .pci_capabilities
-                            .iter_mut()
-                            .find_map(|(offset, capability)| {
-                                Some((*offset, capability.as_msix_mut()?))
-                            })
-                        {
-                            let mut write = false;
-
-                            let flags = match MsiXSetCapabilityInfoFlags::from_bits(flags) {
-                                Some(f) => f,
-                                None => return driver_interface::PcidClientResponse::Error(
-                                    driver_interface::PcidServerResponseError::InvalidBitPattern,
-                                ),
-                            };
-                            if flags.contains(MsiXSetCapabilityInfoFlags::ENABLED) {
-                                if msi_enabled {
-                                    log::error!("Client trying to enable MSI-X while MSI is already enabled.");
-                                    return PcidClientResponse::Error(
-                                        PcidServerResponseError::InvalidBitPattern,
-                                    );
-                                }
-                                info.set_msix_enabled(enabled == true as u8);
-                                write = true;
-                            }
-                            if flags.contains(MsiXSetCapabilityInfoFlags::FUNCTION_MASK) {
-                                info.set_function_mask(function_mask == true as u8);
-                                write = true;
-                            }
-                            if write {
-                                unsafe {
-                                    with_pci_func_raw(
-                                        self.state.preferred_cfg_access(),
-                                        self.bus_num,
-                                        self.dev_num,
-                                        self.func_num,
-                                        |func| {
-                                            info.write_a(func, offset);
-                                        },
-                                    );
-                                }
-                            }
-                            PcidClientResponse::SetCapability
-                        } else {
-                            return PcidClientResponse::Error(
-                                PcidServerResponseError::NonexistentCapability(
-                                    CapabilityType::MsiX,
-                                ),
-                            );
-                        }
-                    }
+            PcidClientRequest::SetCapability(ref info_to_set) => {
+                let addr = PciAddress32::default()
+                    .with_bus(self.bus_num)
+                    .with_device(self.dev_num)
+                    .with_function(self.func_num);
+                match set_capability_info(&mut self.func.write().unwrap(), info_to_set, addr, self.state.preferred_cfg_access()) {
+                    Ok(()) => return driver_interface::PcidClientResponse::SetCapability,
+                    Err(err) => return driver_interface::PcidClientResponse::Error(err),
                 }
             }
         }

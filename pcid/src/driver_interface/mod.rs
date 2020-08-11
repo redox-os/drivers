@@ -347,7 +347,7 @@ impl Default for MsiXSetCapabilityInfoFlags {
 /// Some flags that might be set simultaneously, but separately.
 #[derive(Clone, Copy)]
 #[repr(C)]
-struct SetCapabilityInfoRaw {
+pub struct SetCapabilityInfoRaw {
     id: u32,
     inner: SetCapabilityInfoInner,
 }
@@ -371,7 +371,7 @@ impl fmt::Debug for SetCapabilityInfoRaw {
 
 #[derive(Clone, Copy)]
 #[repr(C)]
-union SetCapabilityInfoInner {
+pub union SetCapabilityInfoInner {
     msi: MsiSetCapabilityInfo,
     msix: MsiXSetCapabilityInfo,
 }
@@ -380,6 +380,18 @@ union SetCapabilityInfoInner {
 pub enum SetCapabilityInfo {
     Msi(MsiSetCapabilityInfo),
     MsiX(MsiXSetCapabilityInfo),
+}
+
+impl SetCapabilityInfo {
+    pub fn construct(tagged: SetCapabilityInfoRaw) -> Option<Self> {
+        Some(if tagged.id == CapabilityType::Msi as u32 {
+            Self::Msi(unsafe { tagged.inner.msi })
+        } else if tagged.id == CapabilityType::MsiX as u32 {
+            Self::MsiX(unsafe { tagged.inner.msix })
+        } else {
+            return None;
+        })
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1012,7 +1024,7 @@ pub enum PcidOpcode {
     /// | syscall_flags  | the version of this API to use (currently 1)              | BOTH |
     /// | addr           | the index of the capability to modify                     | BOTH |
     /// | len            | the size of the buffer to modify the capability from      | BOTH |
-    /// | fd             | the address of the PCI function                           | BOTH |
+    /// | fd             | the file descriptor representing the function socket      | BOTH |
     /// | offset         | the offset within that buffer pool, to write into         | BOTH |
     /// | additional1    | not used                                                  | 64   |
     /// | additional2    | not used                                                  | 64   |

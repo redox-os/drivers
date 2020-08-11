@@ -11,7 +11,7 @@ use std::{cmp, io, mem, str};
 use syscall::data::Stat;
 use syscall::error::{Error, Result};
 use syscall::error::{
-    EACCES, EBADF, EBADFD, EINVAL, EISDIR, ENOENT, ENOMEM, ENOSYS, ENOTDIR, EOPNOTSUPP, EOVERFLOW,
+    EACCES, EBADF, EBADFD, EINVAL, EIO, EISDIR, ENOENT, ENOMEM, ENOSYS, ENOTDIR, EOPNOTSUPP, EOVERFLOW,
     ESPIPE, ESRCH,
 };
 use syscall::flag::{
@@ -1345,9 +1345,46 @@ impl PcidScheme {
                 Err(Error::new(ENOSYS))
             }
             PcidOpcode::SetCapability => {
-                log::warn!("TODO: SetCapability");
+                use self::pcid_interface::SetCapabilityInfoRaw;
+
                 check_if_version(sqe)?;
-                Err(Error::new(ENOSYS))
+
+                let offset = u32::try_from(sqe.offset)?;
+                let len = u32::try_from(sqe.len)?;
+
+                // TODO: Currently pcid assumes that there is only one capability for each type.
+                // However, I haven't been able to confirm that the PCI(e) spec limits that. Rather
+                // than finding the first capability with the matching type, we should instead
+                // check that the type is correct and operate on a capability based on index.
+                let _capability_index = u32::try_from(sqe.addr)?;
+
+                let struct_len = u32::try_from(mem::size_of::<SetCapabilityInfoRaw>())?;
+                let struct_align = u32::try_from(mem::align_of::<SetCapabilityInfoRaw>())?;
+
+                if len < struct_len {
+                    return Err(Error::new(EINVAL));
+                }
+
+                let slice = pool.acquire_borrowed_slice::<redox_buffer_pool::NoGuard>(struct_len, struct_align, redox_iou_pool::AllocationStrategy::Fixed(offset)).ok_or(Error::new(ENOMEM))?;
+
+                let info = plain::from_bytes::<SetCapabilityInfoRaw>(&*slice).unwrap();
+                let set_capability_info = pcid_interface::SetCapabilityInfo::construct(*info).ok_or(Error::new(EINVAL))?;
+
+                let mut func = function_lock.write().or(Err(Error::new(EBADFD)))?;
+                let result = crate::set_capability_info(&mut *func, &set_capability_info, function_num.into(), self.state.preferred_cfg_access());
+
+                match result {
+                    Ok(()) => Ok(CqEntry64 {
+                        user_data: sqe.user_data,
+                        extra: 0,
+                        // TODO
+                        flags: 0,
+                        status: Error::mux64(Ok(0)),
+                    }),
+                    Err(pcid_interface::PcidServerResponseError::InvalidBitPattern) => Err(Error::new(EINVAL)),
+                    Err(pcid_interface::PcidServerResponseError::NonexistentCapability(_)) => Err(Error::new(ENOENT)),
+                    Err(_) => Err(Error::new(EIO)),
+                }
             }
         }
     }

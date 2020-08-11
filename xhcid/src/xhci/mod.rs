@@ -304,7 +304,7 @@ impl Xhci {
             op.usb_cmd.writef(1, false);
 
             debug!("Waiting for the xHC to stop.");
-            // Wait until controller not running
+            // Wait until controller is no longer running
             while !op.usb_sts.readf(1) {
                 trace!("Waiting for the xHC to stop.");
             }
