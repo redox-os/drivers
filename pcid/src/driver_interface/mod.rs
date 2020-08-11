@@ -9,7 +9,7 @@ use syscall::error::Error as Errno;
 use syscall::error::{EBADF, ENOMEM, EOVERFLOW};
 use syscall::io_uring::v1::{Priority, SqEntry64};
 
-use redox_buffer_pool::AllocationStrategy;
+use redox_buffer_pool::{AllocationStrategy, BufferPoolOptions};
 
 use redox_iou::instance::ConsumerInstanceBuilder;
 use redox_iou::memory::{BufferPool, BufferSlice, Guarded};
@@ -484,7 +484,10 @@ impl PcidServerHandle {
         let pool = handle
             .create_buffer_pool(ring, Priority::default(), 16384, ())
             .await
-            .map_err(IoUringSetupError::BufferError)?;
+            .map_err(IoUringSetupError::BufferError)?
+            .with_options(
+                BufferPoolOptions::new().with_minimum_alignment(1)
+            );
         log::debug!("created pool");
 
         let path_name = format!("short/{}/ctl", device_addr).into_bytes();
@@ -608,9 +611,16 @@ impl PcidServerHandle {
             let size: u32 = mem::size_of::<CapabilityRawTagged>().try_into().unwrap();
             let align: u32 = mem::align_of::<CapabilityRawTagged>().try_into().unwrap();
 
+            log::info!("SIZE OF SINGLE CAP: {}, ALIGN: {}", size, align);
+
+            log::info!("POOL: {:?}", pool);
+
             let mut buffer = pool.acquire_borrowed_slice(size * 4, align, AllocationStrategy::Optimal).ok_or(
                 IoUringTransportError(Errno::new(ENOMEM)),
             )?;
+            log::info!("CAP BUFFER SLICE at {} len {} mmap_offset {} mmap_len {} extra {:?}", buffer.offset(), buffer.len(), buffer.mmap_offset(), buffer.mmap_size(), buffer.extra());
+
+            let mut total_caps_read = 0;
 
             loop {
                 let caps_read = unsafe {
@@ -623,7 +633,7 @@ impl PcidServerHandle {
                             user_data: 0, // overridden
 
                             syscall_flags: 1,
-                            addr: 0, // unused
+                            addr: total_caps_read,
                             fd: ctl_socket_fd.try_into().or(Err(IoUringTransportError(Errno::new(EBADF))))?,
                             len: (buffer.len() / size).into(),
                             offset: buffer.offset().into(),
@@ -640,10 +650,11 @@ impl PcidServerHandle {
                     Errno::demux64(cqe.status)
                         .map_err(IoUringTransportError)?
                 };
-
                 if caps_read == 0 {
                     break;
                 }
+
+                total_caps_read += caps_read;
 
                 let bytes_read = usize::try_from(caps_read * u64::from(size)).or(Err(
                     IoUringTransportError(Errno::new(EOVERFLOW)),

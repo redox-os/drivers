@@ -74,6 +74,55 @@ impl MsiCapability {
             }
         }
     }
+    pub fn raw_kind(&self) -> u8 {
+        match self {
+            Self::_32BitAddress(_) => MsiCapabilityKind::Addr32 as u8,
+            Self::_64BitAddress(_) => MsiCapabilityKind::Addr64 as u8,
+            Self::_32BitAddressWithPvm(_) => MsiCapabilityKind::Addr32Pvm as u8,
+            Self::_64BitAddressWithPvm(_) => MsiCapabilityKind::Addr64Pvm as u8,
+        }
+    }
+    pub fn to_raw(&self) -> MsiCapabilityRawTagged {
+        MsiCapabilityRawTagged {
+            kind: self.raw_kind(),
+            raw: match *self {
+                Self::_32BitAddress(ref addr32) => MsiCapabilityRaw {
+                    addr32: MsiCapability32bAddr {
+                        message_control: addr32.message_control,
+                        message_address: addr32.message_address,
+                        message_data: addr32.message_data,
+                    }
+                },
+                Self::_64BitAddress(ref addr64) => MsiCapabilityRaw {
+                    addr64: MsiCapability64bAddr {
+                        message_control: addr64.message_control,
+                        message_address_lo: addr64.message_address_lo,
+                        message_address_hi: addr64.message_address_hi,
+                        message_data: addr64.message_data,
+                    }
+                },
+                Self::_32BitAddressWithPvm(ref addr32pvm) => MsiCapabilityRaw {
+                    addr32pvm: MsiCapability32bAddrWithPvm {
+                        message_control: addr32pvm.message_control,
+                        mask_bits: addr32pvm.mask_bits,
+                        message_address: addr32pvm.message_address,
+                        message_data: addr32pvm.message_data,
+                        pending_bits: addr32pvm.pending_bits,
+                    }
+                },
+                Self::_64BitAddressWithPvm(ref addr64pvm) => MsiCapabilityRaw {
+                    addr64pvm: MsiCapability64bAddrWithPvm {
+                        message_control: addr64pvm.message_control,
+                        mask_bits: addr64pvm.mask_bits,
+                        message_address_lo: addr64pvm.message_address_lo,
+                        message_address_hi: addr64pvm.message_address_hi,
+                        message_data: addr64pvm.message_data,
+                        pending_bits: addr64pvm.pending_bits,
+                    }
+                },
+            }
+        }
+    }
 }
 #[repr(u8)]
 pub enum MsiCapabilityKind {
@@ -281,6 +330,7 @@ pub struct CapabilityRawTagged {
     pub id: u8,
     pub raw: CapabilityRaw,
 }
+unsafe impl plain::Plain for CapabilityRawTagged {}
 
 #[derive(Clone, Copy)]
 pub struct FunctionSpecific {
@@ -326,6 +376,52 @@ impl Capability {
             } else {
                 Self::Other(id)
             })
+        }
+    }
+    pub fn capability_id(&self) -> u8 {
+        match *self {
+            Self::Msi(_) => CapabilityId::Msi as u8,
+            Self::MsiX(_) => CapabilityId::MsiX as u8,
+            Self::Pcie(_) => CapabilityId::Pcie as u8,
+            Self::PwrMgmt(_) => CapabilityId::PwrMgmt as u8,
+            Self::FunctionSpecific(other, _) => other,
+            Self::Other(other) => other,
+        }
+    }
+    pub fn to_raw_untagged(&self) -> CapabilityRaw {
+        match *self {
+            Self::Msi(ref msicap) => CapabilityRaw { msi: msicap.to_raw() },
+            Self::MsiX(msixcap) => CapabilityRaw {
+                msix: msixcap,
+            },
+            Self::Pcie(pciecap) => CapabilityRaw {
+                pcie: pciecap,
+            },
+            Self::PwrMgmt(pwrmgmtcap) => CapabilityRaw {
+                pwrmgmt: pwrmgmtcap,
+            },
+            Self::FunctionSpecific(id, ref data) => CapabilityRaw {
+                func_specific: FunctionSpecific {
+                    bytes: {
+                        // TODO: Maybe copy this on the heap?
+                        let mut bytes = [0u8; 4032];
+                        let len = data.len();
+                        bytes[..len].copy_from_slice(&data);
+                        bytes
+                    },
+                    id,
+                    len: data.len() as u16,
+                }
+            },
+            Self::Other(_) => CapabilityRaw {
+                other: (),
+            },
+        }
+    }
+    pub fn to_raw(&self) -> CapabilityRawTagged {
+        CapabilityRawTagged {
+            id: self.capability_id(),
+            raw: self.to_raw_untagged(),
         }
     }
     pub fn is_pcie(&self) -> bool {

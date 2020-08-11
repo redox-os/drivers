@@ -23,6 +23,8 @@ use syscall::io_uring::v1::operation::OpenFlags;
 use syscall::io_uring::IoUringRecvInfo;
 use syscall::scheme::{self, Scheme};
 
+use redox_buffer_pool::BufferPoolOptions;
+
 use redox_iou::executor::SpawnHandle;
 use redox_iou::instance::ProducerInstance;
 use redox_iou::reactor::SecondaryRingId;
@@ -35,6 +37,7 @@ use once_cell::sync::OnceCell;
 use crate::pci::{PciHeader, PciHeaderGeneral};
 
 use crate::driver_interface::{PciAddress32, PcidOpcode};
+use crate::driver_interface as pcid_interface;
 use crate::{DeviceTree, Func, ResultExt, State as PcidState};
 
 /// The PCI scheme, `pci:`.
@@ -111,6 +114,10 @@ const BUS_DIR: &str = "ctl\ndev\n";
 const DEV_DIR: &str = "ctl\nfunc\n";
 // TODO: Add the info/ dir for key-value pairs represented as files.
 const FUNC_DIR: &str = "ctl\n";
+// TODO: *Maybe*, we should also allow the raw configuration space to be accessed as a file. The
+// PCI Local Bus specification says that reserved fields can actually be written to, in which case
+// they are no-ops to those bits. Reads to reserved fields return zero. We might consider having
+// some validation, but otherwise it'd be really cool!
 
 #[derive(Debug)]
 struct List {
@@ -1101,7 +1108,11 @@ async fn get_or_init_pool<'a>(pool: &'a mut Option<redox_iou::memory::BufferPool
             log::info!("Creating producer pool");
             let new_pool = reactor
                 .create_producer_buffer_pool(ring, Priority::default())
-                .await?;
+                .await?
+                .with_options(
+                    BufferPoolOptions::new()
+                        .with_minimum_alignment(1)
+                );
             *pool = Some(new_pool);
             pool.as_mut().unwrap()
         }
@@ -1259,9 +1270,74 @@ impl PcidScheme {
                 })
             }
             PcidOpcode::FetchAllCapabilities => {
-                log::warn!("TODO: FetchAllCapabilities");
                 check_if_version(sqe)?;
-                Err(Error::new(ENOSYS))
+
+                let function = function_lock.read().or(Err(Error::new(EBADFD)))?;
+
+                let len = u32::try_from(sqe.len)?;
+                let alignment = u32::try_from(mem::align_of::<pcid_interface::CapabilityRawTagged>())?;
+                let addr = u32::try_from(sqe.offset)?;
+
+                let index = sqe.addr;
+
+                let readable_caps = u64::try_from(function.pci_capabilities.len() + function.pcie_capabilities.len())?;
+                let cap_size = u32::try_from(mem::size_of::<pcid_interface::CapabilityRawTagged>())?;
+                let caps_to_read = usize::try_from(len)?;
+
+                if index >= readable_caps {
+                    return Ok(CqEntry64 {
+                        user_data: sqe.user_data,
+                        status: Error::mux64(Ok(0)),
+                        // TODO
+                        flags: 0,
+                        extra: 0,
+                    })
+                }
+
+                let mut caps_read = 0u32;
+
+                fn pci_to_raw(pci: pcid_interface::PciCapabilityRawTagged) -> pcid_interface::CapabilityRawTagged {
+                    pcid_interface::CapabilityRawTagged {
+                        kind: pcid_interface::CapabilityKind::Pci as u8,
+                        raw: pcid_interface::CapabilityRaw {
+                            pci,
+                        },
+                    }
+                }
+                fn pcie_to_raw(pcie: pcid_interface::PcieCapabilityRawTagged) -> pcid_interface::CapabilityRawTagged {
+                    pcid_interface::CapabilityRawTagged {
+                        kind: pcid_interface::CapabilityKind::Pcie as u8,
+                        raw: pcid_interface::CapabilityRaw {
+                            pcie,
+                        },
+                    }
+                }
+
+                log::info!("inserting capabilities with params len {} align {} addr {} start {} count {} caps readable {}", len, alignment, addr, index, caps_to_read, readable_caps);
+
+                let index = usize::try_from(index)?;
+                for capability in function.pci_capabilities.iter().map(|(_, c)| pci_to_raw(c.to_raw())).chain(function.pcie_capabilities.iter().map(|(_, c)| pcie_to_raw(c.to_raw()))).skip(index).take(caps_to_read) {
+                    log::info!("pool: {:?}", pool);
+                    let offset = addr + caps_read * cap_size;
+                    log::info!("trying to allocate {} bytes with alignment {}, at {}", cap_size, alignment, offset);
+                    let mut slice = pool.acquire_borrowed_slice::<redox_buffer_pool::NoGuard>(cap_size, alignment, redox_iou_pool::AllocationStrategy::Fixed(offset)).ok_or(Error::new(ENOMEM))?;
+                    log::info!("slice for cap at {} len {} mmap_offset {} mmap_size {} extra {:?}", slice.offset(), slice.len(), slice.mmap_offset(), slice.mmap_size(), slice.extra());
+                    *plain::from_mut_bytes::<pcid_interface::CapabilityRawTagged>(&mut *slice).unwrap() = capability;
+                    log::info!("plain good");
+                    caps_read += 1;
+                    log::info!("caps_read: {}", caps_read);
+                }
+
+                log::info!("caps read: {}", caps_read);
+                log::info!("caps left to read: {}", readable_caps - u64::from(caps_read));
+
+                Ok(CqEntry64 {
+                    user_data: sqe.user_data,
+                    status: Error::mux64(Ok(caps_read.into())),
+                    extra: readable_caps - u64::from(caps_read),
+                    // TODO
+                    flags: 0,
+                })
             }
             PcidOpcode::GetCapability => {
                 log::warn!("TODO: GetCapability");

@@ -236,14 +236,14 @@ fn main() {
         File::from_raw_fd(socket_fd as RawFd)
     });
 
-    let (interrupt_method, interrupt_sources) = futures::executor::block_on(get_int_method(&pci_config.func, &mut pcid_handle, &*allocated_bars));
+    let (interrupt_method, interrupt_sources) = executor.run(get_int_method(&pci_config.func, &mut pcid_handle, &*allocated_bars));
 
     let event_queue_fd = syscall::open("event:", O_RDWR | O_CLOEXEC).expect("xhcid: failed to create main event queue");
     let mut event_queue = unsafe { File::from_raw_fd(event_queue_fd as RawFd) };
 
     let hci = Arc::new(Xhci::new(name, address, interrupt_method, pcid_handle, event_queue.try_clone().expect("xhcid: failed to dup event queue")).expect("xhcid: failed to allocate device"));
     xhci::start_irq_reactor(&hci, interrupt_sources);
-    futures::executor::block_on(hci.probe()).expect("xhcid: failed to probe");
+    executor.run(hci.probe()).expect("xhcid: failed to probe");
 
     let (mut packet_sender, mut packet_receiver) = futures::channel::mpsc::channel(256);
 

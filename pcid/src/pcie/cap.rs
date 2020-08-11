@@ -89,6 +89,24 @@ impl Capability {
             cap_version: version,
         }
     }
+    pub fn to_raw(&self) -> CapabilityRawTagged {
+        match self.kind {
+            CapabilityKind::Aer(aercap) => CapabilityRawTagged {
+                id: CapabilityId::Aer as u16,
+                // FIXME: Version
+                version: 0,
+                raw: CapabilityRaw {
+                    aer: aercap,
+                },
+            },
+            CapabilityKind::Unknown(other) => CapabilityRawTagged {
+                // FIXME: Versions
+                id: other,
+                version: 0,
+                raw: CapabilityRaw { unknown: () }
+            },
+        }
+    }
     unsafe fn parse<R: ConfigReader>(reader: &R, offset: u16) -> Self {
         let dword = reader.read_u32(offset);
         let cap_version = ((dword & 0x000F_0000) >> 16) as u8;
