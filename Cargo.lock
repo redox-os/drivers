@@ -969,6 +969,7 @@ dependencies = [
 [[package]]
 name = "redox-iou"
 version = "0.0.0"
+source = "git+https://gitlab.redox-os.org/redox-os/redox-iou.git#b5756bb47a9e118ec8d3609cd20201df2a0691d5"
 dependencies = [
  "async-task",
  "bitflags 1.2.1",

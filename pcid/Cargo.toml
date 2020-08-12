@@ -24,7 +24,6 @@ once_cell = "1.4"
 plain = "0.2"
 redox-iou = { git = "https://gitlab.redox-os.org/redox-os/redox-iou.git" }
 redox-buffer-pool = { version = "0.2", features = ["redox"] }
-#redox-iou = { path = "/home/me/Projects/redox-iou" }
 redox-log = { git = "https://gitlab.redox-os.org/redox-os/redox-log.git", tag = "v0.1.1" }
 #redox_syscall = { git = "https://gitlab.redox-os.org/redox-os/syscall.git" }
 redox_syscall = { git = "https://gitlab.redox-os.org/4lDO2/syscall.git", branch = "io_uring" }
