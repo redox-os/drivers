@@ -628,7 +628,7 @@ fn handle_parsed_header(
     bus_num: u8,
     dev_num: u8,
     func_num: u8,
-    header: PciHeader,
+    mut header: PciHeader,
 ) {
     let cfg_access = state.preferred_cfg_access();
 
@@ -646,6 +646,7 @@ fn handle_parsed_header(
         header.base().revision,
         header.base().class,
     );
+    log::debug!("HEADER: {:?}", &header);
     match header.base().class {
         PciClass::Legacy if header.base().subclass == 1 => string.push_str("  VGA CTL"),
         PciClass::Storage => match header.base().subclass {
@@ -688,8 +689,13 @@ fn handle_parsed_header(
     // Enable bus mastering, memory space, and I/O space
     unsafe {
         let mut data = cfg_access.read(bus_num, dev_num, func_num, 0x04);
+        log::debug!("sts_cmd dword before: {:#08x}", data);
         data |= 7;
+        log::debug!("sts_cmd dword after: {:#08x}", data);
         cfg_access.write(bus_num, dev_num, func_num, 0x04, data);
+
+        header.base_mut().command = (data & 0xFFFF) as u16;
+        log::debug!("command: {:#04x}", header.base().command);
     }
 
     // TODO: Right now only the good old 8259 PIC is used, since AML is bloat and nobody has yet
@@ -710,6 +716,8 @@ fn handle_parsed_header(
         data = (data & 0xFFFFFF00) | irq as u32;
         cfg_access.write(bus_num, dev_num, func_num, 0x3C, data);
     };
+
+    header.set_legacy_interrupt_line(irq);
 
     // Find BAR sizes
     let mut bars = [None; 6];
@@ -744,10 +752,11 @@ fn handle_parsed_header(
             cfg_access.write(bus_num, dev_num, func_num, offset.into(), 0xFFFFFFFF);
 
             let original_hi = if is_64 {
-                assert!(offset.checked_add(4).map_or(false, |off| off <= 0x28));
+                let offset_hi = offset.checked_add(4).expect("expected BAR offset plus 4, not to overflow u8");
+                assert!(offset_hi <= 0x28);
 
-                let original_hi = cfg_access.read(bus_num, dev_num, func_num, offset.into());
-                cfg_access.write(bus_num, dev_num, func_num, u16::from(offset) + 4, 0xFFFFFFFF);
+                let original_hi = cfg_access.read(bus_num, dev_num, func_num, offset_hi.into());
+                cfg_access.write(bus_num, dev_num, func_num, offset_hi.into(), 0xFFFFFFFF);
 
                 original_hi
             } else {
@@ -782,6 +791,11 @@ fn handle_parsed_header(
 
             let size = !masked + 1;
             bar_sizes[i] = if size <= 1 { 0 } else { size };
+            log::debug!("Read BAR size for BAR {}: {}", i, size);
+
+        }
+        for i in 0..6u16 {
+            log::debug!("BAR {} value: {:#08x}", i, cfg_access.read(bus_num, dev_num, func_num, u16::from(0x10 + i * 4)));
         }
     }
 

@@ -288,6 +288,8 @@ impl Xhci {
             stat.f_bsize as usize
         };
 
+        log::info!("CAP_LEN: {:#0x}", unsafe { std::ptr::read_volatile::<u8>(address as *const u8) });
+
         let op_base = address + cap.len.read() as usize;
         let op = unsafe { &mut *(op_base as *mut OperationalRegs) };
         debug!("OP REGS BASE {:X}", op_base);
@@ -296,7 +298,8 @@ impl Xhci {
             debug!("Waiting for xHC becoming ready.");
             // Wait until controller is ready
             while op.usb_sts.readf(1 << 11) {
-                trace!("Waiting for the xHC to be ready.");
+                //trace!("Waiting for the xHC to be ready.");
+                core::hint::spin_loop();
             }
 
             debug!("Stopping the xHC");
@@ -306,7 +309,8 @@ impl Xhci {
             debug!("Waiting for the xHC to stop.");
             // Wait until controller is no longer running
             while !op.usb_sts.readf(1) {
-                trace!("Waiting for the xHC to stop.");
+                //trace!("Waiting for the xHC to stop.");
+                core::hint::spin_loop();
             }
 
             debug!("Resetting the xHC.");

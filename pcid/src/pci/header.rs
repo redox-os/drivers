@@ -307,6 +307,16 @@ impl PciHeader {
             }) => header_base,
         }
     }
+    pub fn base_mut(&mut self) -> &mut PciHeaderBase {
+        match *self {
+            Self::General(PciHeaderGeneral {
+                ref mut header_base, ..
+            }) => header_base,
+            Self::PciToPci(PciHeaderBridge {
+                ref mut header_base, ..
+            }) => header_base,
+        }
+    }
 
     /// Return the Header's Base Address Registers.
     pub fn bars(&self) -> Result<[Option<PciBar>; 6], BarFromRawError> {
@@ -330,6 +340,12 @@ impl PciHeader {
         match *self {
             PciHeader::General(PciHeaderGeneral { interrupt_line, .. })
             | PciHeader::PciToPci(PciHeaderBridge { interrupt_line, .. }) => interrupt_line,
+        }
+    }
+    pub fn set_legacy_interrupt_line(&mut self, line: u8) {
+        match *self {
+            PciHeader::General(PciHeaderGeneral { ref mut interrupt_line, .. })
+                | PciHeader::PciToPci(PciHeaderBridge { ref mut interrupt_line, .. }) => *interrupt_line = line,
         }
     }
     pub fn legacy_interrupt_pin(&self) -> Option<LegacyInterruptPin> {

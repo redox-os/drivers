@@ -29,7 +29,7 @@ impl MsiCapability {
         if message_control & Self::MC_PVT_CAPABLE_BIT != 0 {
             if message_control & Self::MC_64_BIT_ADDR_BIT != 0 {
                 Self::_64BitAddressWithPvm(MsiCapability64bAddrWithPvm {
-                    message_control: dword,
+                    message_control,
                     message_address_lo: reader.read_u32(u16::from(offset + 4)),
                     message_address_hi: reader.read_u32(u16::from(offset + 8)),
                     message_data: reader.read_u32(u16::from(offset + 12)),
@@ -38,7 +38,7 @@ impl MsiCapability {
                 })
             } else {
                 Self::_32BitAddressWithPvm(MsiCapability32bAddrWithPvm {
-                    message_control: dword,
+                    message_control,
                     message_address: reader.read_u32(u16::from(offset + 4)),
                     message_data: reader.read_u32(u16::from(offset + 8)),
                     mask_bits: reader.read_u32(u16::from(offset + 12)),
@@ -48,14 +48,14 @@ impl MsiCapability {
         } else {
             if message_control & Self::MC_64_BIT_ADDR_BIT != 0 {
                 Self::_64BitAddress(MsiCapability64bAddr {
-                    message_control: dword,
+                    message_control,
                     message_address_lo: reader.read_u32(u16::from(offset + 4)),
                     message_address_hi: reader.read_u32(u16::from(offset + 8)),
                     message_data: reader.read_u32(u16::from(offset + 12)) as u16,
                 })
             } else {
                 Self::_32BitAddress(MsiCapability32bAddr {
-                    message_control: dword,
+                    message_control,
                     message_address: reader.read_u32(u16::from(offset + 4)),
                     message_data: reader.read_u32(u16::from(offset + 8)) as u16,
                 })
@@ -63,7 +63,7 @@ impl MsiCapability {
         }
     }
 
-    fn message_control_raw(&self) -> u32 {
+    pub fn message_control(&self) -> u16 {
         match self {
             Self::_32BitAddress(s) => s.message_control(),
             Self::_64BitAddress(s) => s.message_control(),
@@ -71,14 +71,7 @@ impl MsiCapability {
             Self::_64BitAddressWithPvm(s) => s.message_control(),
         }
     }
-    pub fn message_control(&self) -> u16 {
-        (self.message_control_raw() >> 16) as u16
-    }
-    pub fn set_message_control(&mut self, value: u16) {
-        let mut new_message_control = self.message_control_raw();
-        new_message_control &= 0x0000_FFFF;
-        new_message_control |= u32::from(value) << 16;
-
+    pub fn set_message_control(&mut self, new_message_control: u16) {
         match self {
             Self::_32BitAddress(ref mut s) => s.message_control = new_message_control,
             Self::_64BitAddress(ref mut s) => s.message_control = new_message_control,
@@ -86,8 +79,12 @@ impl MsiCapability {
             Self::_64BitAddressWithPvm(ref mut s) => s.message_control = new_message_control,
         }
     }
-    pub unsafe fn write_message_control<W: ConfigWriter>(&self, writer: &W, offset: u8) {
-        writer.write_u32(u16::from(offset), self.message_control_raw());
+    pub unsafe fn write_message_control<W: ConfigReader + ConfigWriter>(&self, writer: &W, offset: u8) {
+        let offset = u16::from(offset);
+        let mut dword = writer.read_u32(offset);
+        dword &= 0x0000_FFFF;
+        dword |= u32::from(self.message_control()) << 16;
+        writer.write_u32(offset, dword)
     }
     pub fn is_pvt_capable(&self) -> bool {
         self.message_control() & Self::MC_PVT_CAPABLE_BIT != 0
@@ -276,7 +273,7 @@ impl MsiCapability {
         }
         Some(())
     }
-    pub unsafe fn write_all<W: ConfigWriter>(&self, writer: &W, offset: u8) {
+    pub unsafe fn write_all<W: ConfigReader + ConfigWriter>(&self, writer: &W, offset: u8) {
         self.write_message_control(writer, offset);
         self.write_message_address(writer, offset);
         self.write_message_upper_address(writer, offset);

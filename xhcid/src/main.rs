@@ -1,3 +1,5 @@
+#![feature(renamed_spin_loop)]
+
 use std::convert::TryFrom;
 use std::fs::File;
 use std::io::{self, prelude::*};
@@ -209,7 +211,7 @@ fn main() {
     let bar = PciBar::parse_00_header_bars(pci_config.func.bars).unwrap()[0];
     log::info!("XHCI BAR: {}", bar.unwrap());
 
-    let mut name = pci_config.func.name();
+    let mut name = pci_config.func.scheme_friendly_name();
     name.push_str("_xhci");
 
     let allocated_bars = Arc::new(AllocatedBars::default());
@@ -227,6 +229,11 @@ fn main() {
 
     let bar_wrapper = unsafe { Bar::map(bar_ptr as usize, bar_size).expect("xhcid: failed to map BAR 0") };
     let address = bar_wrapper.pointer().as_ptr() as usize;
+
+    log::info!("XHCI VIRT {:p} => {:p}", address as *const u8, unsafe { syscall::virttophys(address).unwrap() } as *const u8);
+    log::info!("XHCI VIRT {:p} => {:p}", (address + 4096) as *const u8, unsafe { syscall::virttophys(address + 4096).unwrap() } as *const u8);
+    log::info!("XHCI VIRT {:p} => {:p}", (address + 8192) as *const u8, unsafe { syscall::virttophys(address + 8192).unwrap() } as *const u8);
+    log::info!("XHCI VIRT {:p} => {:p}", (address + 12288) as *const u8, unsafe { syscall::virttophys(address + 12288).unwrap() } as *const u8);
 
     *allocated_bars.0[0].lock().unwrap() = Some(bar_wrapper);
 
@@ -246,7 +253,8 @@ fn main() {
 
     let hci = Arc::new(Xhci::new(name, address, interrupt_method, pcid_handle, event_queue.try_clone().expect("xhcid: failed to dup event queue")).expect("xhcid: failed to allocate device"));
     xhci::start_irq_reactor(&hci, interrupt_sources);
-    executor.run(hci.probe()).expect("xhcid: failed to probe");
+    // TODO: Use the redox-iou executor once io_uring self-notification is implemented.
+    futures::executor::block_on(hci.probe()).expect("xhcid: failed to probe");
 
     let (mut packet_sender, mut packet_receiver) = futures::channel::mpsc::channel(256);
 

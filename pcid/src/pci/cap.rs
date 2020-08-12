@@ -167,7 +167,7 @@ impl fmt::Debug for MsiCapabilityRawTagged {
 }
 
 pub trait MsiCapabilityProps {
-    fn message_control(&self) -> u32;
+    fn message_control(&self) -> u16;
     fn message_address(&self) -> u32;
     fn message_data(&self) -> u16;
 
@@ -185,7 +185,7 @@ impl MsiCapabilityProps for MsiCapability32bAddr {
     fn message_address(&self) -> u32 {
         self.message_address
     }
-    fn message_control(&self) -> u32 {
+    fn message_control(&self) -> u16 {
         self.message_control
     }
     fn message_data(&self) -> u16 {
@@ -196,7 +196,7 @@ impl MsiCapabilityProps for MsiCapability64bAddr {
     fn message_address(&self) -> u32 {
         self.message_address_lo
     }
-    fn message_control(&self) -> u32 {
+    fn message_control(&self) -> u16 {
         self.message_control
     }
     fn message_data(&self) -> u16 {
@@ -210,7 +210,7 @@ impl MsiCapabilityProps for MsiCapability32bAddrWithPvm {
     fn message_address(&self) -> u32 {
         self.message_address
     }
-    fn message_control(&self) -> u32 {
+    fn message_control(&self) -> u16 {
         self.message_control
     }
     fn message_data(&self) -> u16 {
@@ -227,7 +227,7 @@ impl MsiCapabilityProps for MsiCapability64bAddrWithPvm {
     fn message_address(&self) -> u32 {
         self.message_address_lo
     }
-    fn message_control(&self) -> u32 {
+    fn message_control(&self) -> u16 {
         self.message_control
     }
     fn message_data(&self) -> u16 {
@@ -247,14 +247,14 @@ impl MsiCapabilityProps for MsiCapability64bAddrWithPvm {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct MsiCapability32bAddr {
-    pub message_control: u32,
+    pub message_control: u16,
     pub message_address: u32,
     pub message_data: u16,
 }
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct MsiCapability64bAddr {
-    pub message_control: u32,
+    pub message_control: u16,
     pub message_address_lo: u32,
     pub message_address_hi: u32,
     pub message_data: u16,
@@ -262,7 +262,7 @@ pub struct MsiCapability64bAddr {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct MsiCapability32bAddrWithPvm {
-    pub message_control: u32,
+    pub message_control: u16,
     pub message_address: u32,
     pub message_data: u32,
     pub mask_bits: u32,
@@ -271,7 +271,7 @@ pub struct MsiCapability32bAddrWithPvm {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct MsiCapability64bAddrWithPvm {
-    pub message_control: u32,
+    pub message_control: u16,
     pub message_address_lo: u32,
     pub message_address_hi: u32,
     pub message_data: u32,
