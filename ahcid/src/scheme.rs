@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::{cmp, str};
-use std::convert::{TryFrom, TryInto};
+use std::convert::{TryFrom};
 use std::fmt::Write;
 use std::io::prelude::*;
 use std::io::SeekFrom;

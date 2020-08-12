@@ -88,26 +88,26 @@ impl<'a> SchemeMut for ScsiScheme<'a> {
         Ok(min)
     }
     fn seek(&mut self, fd: usize, pos: isize, whence: usize) -> Result<isize> {
-        let pos = pos as usize;
         match self.handles.get_mut(&fd).ok_or(Error::new(EBADF))? {
             Handle::Disk(ref mut offset) => {
-                let len = self.scsi.get_disk_size() as usize;
+                let len = self.scsi.get_disk_size() as isize;
                 *offset = match whence {
                     SEEK_SET => cmp::max(0, cmp::min(pos, len)),
-                    SEEK_CUR => cmp::max(0, cmp::min(*offset + pos, len)),
+                    SEEK_CUR => cmp::max(0, cmp::min(*offset as isize + pos, len)),
                     SEEK_END => cmp::max(0, cmp::min(len + pos, len)),
                     _ => return Err(Error::new(EINVAL)),
-                };
+                } as usize;
                 Ok(*offset as isize)
             }
             Handle::List(ref mut offset) => {
-                let len = LIST_CONTENTS.len();
+                let len = LIST_CONTENTS.len() as isize;
+
                 *offset = match whence {
                     SEEK_SET => cmp::max(0, cmp::min(pos, len)),
-                    SEEK_CUR => cmp::max(0, cmp::min(*offset + pos, len)),
+                    SEEK_CUR => cmp::max(0, cmp::min(*offset as isize + pos, len)),
                     SEEK_END => cmp::max(0, cmp::min(len + pos, len)),
                     _ => return Err(Error::new(EINVAL)),
-                };
+                } as usize;
                 Ok(*offset as isize)
             }
         }

@@ -1395,7 +1395,7 @@ impl Xhci {
             //SYS_DUP => self.dup(packet.b, unsafe { slice::from_raw_parts(packet.c as *const u8, packet.d) }),
             SYS_READ => SchemeHandleOutput::future(self.scheme_read(context, packet.b, unsafe { slice::from_raw_parts_mut(packet.c as *mut u8, packet.d) })).map_future(EitherFuture::A),
             SYS_WRITE => SchemeHandleOutput::future(self.scheme_write(context, packet.b, unsafe { slice::from_raw_parts(packet.c as *const u8, packet.d) })).map_future(EitherFuture::B),
-            SYS_LSEEK => SchemeHandleOutput::direct(self.scheme_seek(packet.b, packet.c, packet.d)),
+            SYS_LSEEK => SchemeHandleOutput::direct(self.scheme_seek(packet.b, packet.c as isize, packet.d)),
             //SYS_FCHMOD => self.fchmod(packet.b, packet.c as u16),
             //SYS_FCHOWN => self.fchown(packet.b, packet.c as u32, packet.d as u32),
             SYS_FCNTL => SchemeHandleOutput::direct(self.scheme_fcntl(packet.b, packet.c, packet.d)),
@@ -1699,11 +1699,11 @@ impl Xhci {
         Ok(src_len)
     }
 
-    fn scheme_seek(&self, fd: usize, pos: usize, whence: usize) -> Result<usize> {
+    fn scheme_seek(&self, fd: usize, pos: isize, whence: usize) -> Result<usize> {
         let handles = self.handles.read().unwrap();
         let mut guard = handles.get(&fd).ok_or(Error::new(EBADF))?.lock().unwrap();
 
-        trace!("SEEK fd={}, handle={:?}, pos {}, whence {}", fd, guard, pos, whence);
+        log::trace!("SEEK fd={}, handle={:?}, pos {}, whence {}", fd, guard, pos, whence);
 
         match &mut guard.kind {
             // Directories, or fixed files
@@ -1712,19 +1712,21 @@ impl Xhci {
             | HandleKind::PortDesc(_, ref mut offset, ref buf)
             | HandleKind::Endpoints(_, ref mut offset, ref buf)
             | HandleKind::Endpoint(_, _, EndpointHandleTy::Root(ref mut offset, ref buf)) => {
+                let max = buf.len() as isize;
                 *offset = match whence {
-                    SEEK_SET => cmp::max(0, cmp::min(pos, buf.len())),
-                    SEEK_CUR => cmp::max(0, cmp::min(*offset + pos, buf.len())),
-                    SEEK_END => cmp::max(0, cmp::min(buf.len() + pos, buf.len())),
+                    SEEK_SET => cmp::max(0, cmp::min(pos, max)),
+                    SEEK_CUR => cmp::max(0, cmp::min(*offset as isize + pos, max)),
+                    SEEK_END => cmp::max(0, cmp::min(max + pos, max)),
                     _ => return Err(Error::new(EINVAL)),
-                };
+                } as usize;
                 Ok(*offset)
             }
             HandleKind::PortState(_, ref mut offset) => {
                 match whence {
-                    SEEK_SET => *offset = pos,
-                    SEEK_CUR => *offset = pos,
-                    SEEK_END => *offset = pos,
+                    //TODO: checks for invalid pos
+                    SEEK_SET => *offset = pos as usize,
+                    SEEK_CUR => *offset = pos as usize,
+                    SEEK_END => *offset = pos as usize,
                     _ => return Err(Error::new(EINVAL)),
                 };
                 Ok(*offset)

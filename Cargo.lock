@@ -728,6 +728,7 @@ dependencies = [
  "arrayvec 0.5.1",
  "bincode",
  "bitflags 1.2.1",
+ "clap",
  "either",
  "futures",
  "libc",

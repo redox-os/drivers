@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::{cmp, mem, ptr, slice, thread};
+use std::{cmp, mem, ptr, slice};
 
 use netutils::setcfg;
 use syscall::error::{Error, Result, EACCES, EBADF, EINVAL, EWOULDBLOCK};

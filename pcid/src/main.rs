@@ -1,6 +1,7 @@
 #![feature(get_mut_unchecked, llvm_asm, try_reserve)]
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::convert::TryInto;
 use std::fs::{metadata, read_dir, File};
 use std::io::prelude::*;
 use std::os::unix::io::{FromRawFd, RawFd};
@@ -15,8 +16,8 @@ use syscall::scheme::Scheme as _;
 
 use redox_iou::executor::Executor;
 use redox_iou::instance::ConsumerInstanceBuilder;
-use redox_iou::memory::Guarded;
 use redox_iou::reactor::{ReactorBuilder, SubmissionContext};
+
 use redox_log::{OutputBuilder, RedoxLogger};
 
 mod config;
@@ -32,8 +33,7 @@ use crate::config::Config;
 use crate::driver_interface::{PciAddress32, PcidServerResponseError, SetCapabilityInfo};
 use crate::pci::cap::{self as pcicap, Capability as PciCapability};
 use crate::pci::{
-    CfgAccess, Pci, PciBar, PciBus, PciClass, PciDev, PciFunc, PciHeader, PciHeaderError,
-    PciHeaderType, PciIter,
+    CfgAccess, Pci, PciBar, PciBus, PciClass, PciDev, PciFunc, PciHeader, PciHeaderError, PciIter,
 };
 use crate::pcie::cap::{self as pciecap, Capability as PcieCapability};
 use crate::pcie::Pcie;
@@ -851,31 +851,21 @@ fn handle_parsed_header(
     tree.functions.insert(address32, Arc::clone(&func));
 }
 
-fn setup_logging() -> Option<&'static RedoxLogger> {
+fn setup_logging(verbosity: u8) -> Option<&'static RedoxLogger> {
+    let log_level = match verbosity {
+        0 => log::LevelFilter::Info,
+        1 => log::LevelFilter::Debug,
+        _ => log::LevelFilter::Trace,
+    };
     let mut logger = RedoxLogger::new()
         .with_process_name("pcid".into())
-        /*.with_output(
-           OutputBuilder::stderr()
-               .with_ansi_escape_codes()
-               .with_filter(log::LevelFilter::Info)
-               .flush_on_newline(true)
-               .build()
-        )*/
         .with_output(
-            OutputBuilder::with_endpoint(
-                std::fs::OpenOptions::new()
-                    .create_new(false)
-                    .read(false)
-                    .write(true)
-                    .open("debug:")
-                    .unwrap(),
-            )
-            .with_ansi_escape_codes()
-            //.with_filter(log::LevelFilter::Trace)
-            .with_filter(log::LevelFilter::Debug)
-            .flush_on_newline(true)
-            .build(),
-        );
+            OutputBuilder::stderr()
+                .with_ansi_escape_codes()
+                .with_filter(log_level)
+                .flush_on_newline(true)
+                .build()
+         );
 
     #[cfg(target_os = "redox")]
     match OutputBuilder::in_redox_logging_scheme("bus", "pci", "pcid.log") {
@@ -1180,15 +1170,36 @@ fn load_config_file<P: ?Sized + AsRef<std::path::Path>>(config_path: &P, config:
 }
 
 fn main() {
-    if env::args().nth(1).as_deref() == Some("--add-config-dir") {
-        // TODO: Find a better way; let some other process write to the pci: scheme from init.
+    use clap::{App, Arg};
+
+    let args = App::new("pcid")
+        .arg(
+            Arg::with_name("config")
+                .short("c")
+                .long("config")
+                .value_name("CONFIG")
+        )
+        .arg(
+            Arg::with_name("verbose")
+                .short("v")
+                .long("verbose")
+        )
+        .arg(
+            Arg::with_name("add-config-dir")
+                .long("add-config-dir")
+        )
+        .get_matches();
+
+    let mut config = Config::default();
+
+    if args.is_present("add-config-dir") {
+        // TODO: Find a better way, by letting some other process write to the pci: scheme from init.
         return only_inform_about_file_scheme();
     }
 
     let mut config = Config::default();
 
-    let mut args = env::args_os().skip(1);
-    if let Some(config_path) = args.next() {
+    if let Some(config_path) = args.value_of("config") {
         if metadata(&config_path).unwrap().is_file() {
             load_config_file(&config_path, &mut config);
         } else {
@@ -1196,7 +1207,10 @@ fn main() {
         }
     }
 
-    let _logger_ref = setup_logging();
+    let verbosity: u8 = args.occurrences_of("verbose")
+        .try_into()
+        .expect("sorry, we don't want to create a black hole from all logs");
+    let _logger_ref = setup_logging(verbosity);
 
     let pci = Arc::new(Pci::new());
 

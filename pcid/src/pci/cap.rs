@@ -40,12 +40,13 @@ where
 #[repr(u8)]
 pub enum CapabilityId {
     PwrMgmt = 0x01,
-    Msi = 0x05,
-    MsiX = 0x11,
-    Pcie = 0x10,
+    Msi     = 0x05,
+    MsiX    = 0x11,
+    Pcie    = 0x10,
+    Vendor  = 0x09,
 
     // function specific
-    Sata = 0x12, // only on AHCI functions
+    Sata    = 0x12, // only on AHCI functions
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
@@ -315,11 +316,17 @@ pub struct MsixCapability {
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+pub struct VendorSpecificCapability {
+    pub data: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub enum Capability {
     Msi(MsiCapability),
     MsiX(MsixCapability),
     Pcie(PcieCapability),
     PwrMgmt(PwrMgmtCapability),
+    Vendor(VendorSpecificCapability),
     FunctionSpecific(u8, Vec<u8>), // TODO: Arrayvec
     Other(u8),
 }
@@ -385,6 +392,7 @@ impl Capability {
             Self::Pcie(_) => CapabilityId::Pcie as u8,
             Self::PwrMgmt(_) => CapabilityId::PwrMgmt as u8,
             Self::FunctionSpecific(other, _) => other,
+            Self::Vendor(_) => CapabilityId::Vendor as u8,
             Self::Other(other) => other,
         }
     }
@@ -411,6 +419,19 @@ impl Capability {
                     },
                     id,
                     len: data.len() as u16,
+                }
+            },
+            Self::Vendor(ref data) => CapabilityRaw {
+                func_specific: FunctionSpecific {
+                    bytes: {
+                        // TODO: Maybe copy this on the heap?
+                        let mut bytes = [0u8; 4032];
+                        let len = data.data.len();
+                        bytes[..len].copy_from_slice(&data.data);
+                        bytes
+                    },
+                    id: CapabilityId::Vendor as u8,
+                    len: data.data.len() as u16,
                 }
             },
             Self::Other(_) => CapabilityRaw {
@@ -485,6 +506,16 @@ impl Capability {
             b: reader.read_u32(u16::from(offset + 4)),
         })
     }
+    unsafe fn parse_vendor<R: ConfigReader>(reader: &R, offset: u8) -> Self {
+        log::info!("Vendor specific offset: {}", offset);
+        log::info!("Vendor specific next: {}", reader.read_u8((offset+1).into()));
+        let length = reader.read_u8(u16::from(offset+2));
+        log::info!("Vendor specific cap len: {}", length);
+        let mut raw_data = reader.read_range(offset.into(), length.into());
+        Self::Vendor(VendorSpecificCapability {
+            data: raw_data.drain(3..).collect(),
+        })
+    }
     unsafe fn parse_pcie<R: ConfigReader>(reader: &R, offset: u8) -> Self {
         let offset = u16::from(offset);
 
@@ -507,7 +538,7 @@ impl Capability {
         })
     }
     unsafe fn parse<R: ConfigReader>(reader: &R, offset: u8) -> Self {
-        assert_eq!(offset & 0xF8, offset, "capability must be dword aligned");
+        assert_eq!(offset & 0xFC, offset, "capability must be dword aligned");
 
         let dword = reader.read_u32(u16::from(offset));
         let capability_id = (dword & 0xFF) as u8;
@@ -520,6 +551,8 @@ impl Capability {
             Self::parse_pcie(reader, offset)
         } else if capability_id == CapabilityId::PwrMgmt as u8 {
             Self::parse_pwr(reader, offset)
+        } else if capability_id == CapabilityId::Vendor as u8 {
+            Self::parse_vendor(reader, offset)
         } else if capability_id == CapabilityId::Sata as u8 {
             Self::FunctionSpecific(capability_id, reader.read_range(offset.into(), 8))
         } else {

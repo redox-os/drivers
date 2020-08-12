@@ -163,7 +163,7 @@ impl SchemeBlockMut for Rtl8168 {
                 self.regs.tppoll.writef(1 << 6, true); //Notify of normal priority packet
 
                 while self.regs.tppoll.readf(1 << 6) {
-                    unsafe { asm!("pause"); }
+                    unsafe { llvm_asm!("pause"); }
                 }
 
                 self.transmit_i += 1;
@@ -171,7 +171,7 @@ impl SchemeBlockMut for Rtl8168 {
                 return Ok(Some(i));
             }
 
-            unsafe { asm!("pause"); }
+            unsafe { llvm_asm!("pause"); }
         }
     }
 
@@ -293,7 +293,7 @@ impl Rtl8168 {
         println!("  - Reset");
         self.regs.cmd.writef(1 << 4, true);
         while self.regs.cmd.readf(1 << 4) {
-            asm!("pause");
+            llvm_asm!("pause");
         }
 
         // Set up rx buffers
