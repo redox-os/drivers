@@ -288,8 +288,6 @@ impl Xhci {
             stat.f_bsize as usize
         };
 
-        log::info!("CAP_LEN: {:#0x}", unsafe { std::ptr::read_volatile::<u8>(address as *const u8) });
-
         let op_base = address + cap.len.read() as usize;
         let op = unsafe { &mut *(op_base as *mut OperationalRegs) };
         debug!("OP REGS BASE {:X}", op_base);

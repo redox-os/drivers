@@ -563,7 +563,7 @@ impl PcidScheme {
         })
     }
     fn open_short(&self, after_short: &[&str], flags: usize) -> Result<Handle> {
-        log::info!("OPEN SHORT: `{:?}`", after_short);
+        log::trace!("OPEN SHORT: `{:?}`", after_short);
         Ok(match *after_short {
             [] => {
                 Self::validate_is_directory(flags)?;
@@ -696,7 +696,7 @@ impl Scheme for PcidScheme {
 
         let fd = self.next_handle.fetch_add(1, Ordering::Relaxed);
 
-        log::info!("New handle: {:?}, FD={}", handle, fd);
+        log::trace!("New handle: {:?}, FD={}", handle, fd);
 
         let prev = self
             .file_handles
@@ -792,7 +792,7 @@ impl Scheme for PcidScheme {
                 };
 
                 let data = list.data(self)?;
-                log::info!("LIST HANDLE: {:?}", list);
+                log::trace!("LIST HANDLE: {:?}", list);
 
                 let start_buf_offset = cmp::min(offset, data.len());
                 let end_buf_offset = cmp::min(
@@ -940,7 +940,7 @@ impl Scheme for PcidScheme {
             Handle::List(ref list) => {
                 let data = list.data(self).and_log_err_as_warn("list.data failed")?;
                 let size = u64::try_from(data.len())?;
-                log::info!("LIST: {:?}", list);
+                log::trace!("LIST: {:?}", list);
 
                 const BLKSZ: u32 = 4096;
 
@@ -972,7 +972,7 @@ impl Scheme for PcidScheme {
                     st_mtime: 0,      // TODO
                     st_mtime_nsec: 0, // TODO
                 };
-                log::info!("NEW STAT: {:?}", stat);
+                log::trace!("NEW STAT: {:?}", stat);
             }
             Handle::CtlSocket(ref socket) => {
                 *stat = Stat {
@@ -1025,11 +1025,11 @@ impl Scheme for PcidScheme {
         let this = self.self_arc();
 
         self.spawn_handle.spawn(async move {
-            log::info!("Spawning works");
+            log::trace!("Spawning works");
             let mut pool = None;
 
             while let Some(sqe) = stream.next().await {
-                log::info!("PCI SCHEME RECV SQE {:?}", sqe);
+                log::debug!("PCI SCHEME RECV SQE {:?}", sqe);
                 let sqe = match sqe {
                     Ok(sqe) => sqe,
                     Err(error) => {
@@ -1105,7 +1105,7 @@ async fn get_or_init_pool<'a>(pool: &'a mut Option<redox_iou::memory::BufferPool
     Ok(match pool {
         Some(p) => p,
         None => {
-            log::info!("Creating producer pool");
+            log::debug!("Creating producer pool");
             let new_pool = reactor
                 .create_producer_buffer_pool(ring, Priority::default())
                 .await?
@@ -1132,9 +1132,9 @@ impl PcidScheme {
     ) -> Result<CqEntry64> {
         match opcode {
             StandardOpcode::Open => {
-                log::info!("Handle Open");
+                log::trace!("Handle Open");
                 let pool = get_or_init_pool(pool, reactor, ring).await?;
-                log::info!("Created pool; now doing to basic validation of args");
+                log::trace!("Created pool; now doing to basic validation of args");
 
                 let flags = OpenFlags::from_bits(sqe.syscall_flags).ok_or(Error::new(EINVAL))?;
 
@@ -1143,15 +1143,15 @@ impl PcidScheme {
                 let offset = u32::try_from(sqe.addr)?;
                 let flags = usize::try_from(sqe.offset)?;
 
-                log::info!("Validating, acquiring a borrowed slice");
+                log::trace!("Validating, acquiring a borrowed slice");
 
                 let slice = pool.acquire_borrowed_slice::<redox_buffer_pool::NoGuard>(len, align, redox_buffer_pool::AllocationStrategy::Fixed(offset)).ok_or(Error::new(ENOMEM))?;
 
-                log::info!("Acquired, at {} len {} mmap {} mmap len {} extra {:?}", slice.offset(), slice.len(), slice.mmap_offset(), slice.mmap_size(), slice.extra());
-                log::info!("Slice: LEN = {} DATA = {:?}", slice.as_slice().len(), slice.as_slice());
+                log::trace!("Acquired, at {} len {} mmap {} mmap len {} extra {:?}", slice.offset(), slice.len(), slice.mmap_offset(), slice.mmap_size(), slice.extra());
+                log::trace!("Slice: LEN = {} DATA = {:?}", slice.as_slice().len(), slice.as_slice());
                 let fd = self.open(&*slice, flags, ctx.uid, ctx.gid)?;
                 let fd64 = u64::try_from(fd)?;
-                log::info!("Opened");
+                log::trace!("Opened");
 
                 Ok(CqEntry64  {
                     user_data: sqe.user_data,
@@ -1168,7 +1168,7 @@ impl PcidScheme {
     }
     pub async fn handle_pcid_opcode(
         &self,
-        ctx: &scheme::Ctx,
+        _ctx: &scheme::Ctx,
         reactor: &reactor::Handle,
         ring: SecondaryRingId,
         pool: &mut Option<redox_iou::memory::BufferPool>,
@@ -1177,8 +1177,6 @@ impl PcidScheme {
     ) -> Result<CqEntry64> {
         let pool = get_or_init_pool(pool, reactor, ring).await?;
 
-        log::warn!("Buffer pool initialized; TODO");
-
         fn check_if_version(sqe: &SqEntry64) -> Result<()> {
             let pcid_if_version = sqe.syscall_flags;
             if pcid_if_version != 1 {
@@ -1186,12 +1184,6 @@ impl PcidScheme {
             }
             Ok(())
         }
-        fn find_device(tree: &DeviceTree, addr: PciAddress32) -> Result<Arc<RwLock<Func>>> {
-            Ok(Arc::clone(
-                tree.functions.get(&addr).ok_or(Error::new(ENOENT))?,
-            ))
-        }
-
 
         let function_num = {
             let fd = usize::try_from(sqe.fd).or(Err(Error::new(EBADF)))?;
@@ -1221,7 +1213,7 @@ impl PcidScheme {
             PcidOpcode::FetchConfig => {
                 check_if_version(sqe)?;
                 let function = function_lock.read().or(Err(Error::new(EBADFD)))?;
-                log::info!("Fetching config for function {:?} at {:02x}:{:02x}.{:01x}", function, function_num.dev.bus.id, function_num.dev.id, function_num.id);
+                log::debug!("Fetching config for function {:?} at {:02x}:{:02x}.{:01x}", function, function_num.dev.bus.id, function_num.dev.id, function_num.id);
                 let len = u32::try_from(sqe.len)?;
                 let alignment = u32::try_from(mem::align_of::<PciHeaderGeneral>()).unwrap();
                 let addr = u32::try_from(sqe.addr)?;
@@ -1233,7 +1225,7 @@ impl PcidScheme {
 
 
                 let mut slice = pool.acquire_borrowed_slice::<redox_buffer_pool::NoGuard>(len, alignment, redox_buffer_pool::AllocationStrategy::Fixed(addr)).ok_or(Error::new(ENOMEM))?;
-                log::info!("Slice to use at {}, len {}, mmap start {}, mmap size {}, extra {:?}", slice.offset(), slice.len(), slice.mmap_offset(), slice.mmap_size(), slice.extra());
+                log::trace!("Slice to use at {}, len {}, mmap start {}, mmap size {}, extra {:?}", slice.offset(), slice.len(), slice.mmap_offset(), slice.mmap_size(), slice.extra());
 
                 {
                     let function_guard = function_lock.read().or(Err(Error::new(EBADFD)))?;
@@ -1313,23 +1305,23 @@ impl PcidScheme {
                     }
                 }
 
-                log::info!("inserting capabilities with params len {} align {} addr {} start {} count {} caps readable {}", len, alignment, addr, index, caps_to_read, readable_caps);
+                log::trace!("inserting capabilities with params len {} align {} addr {} start {} count {} caps readable {}", len, alignment, addr, index, caps_to_read, readable_caps);
 
                 let index = usize::try_from(index)?;
                 for capability in function.pci_capabilities.iter().map(|(_, c)| pci_to_raw(c.to_raw())).chain(function.pcie_capabilities.iter().map(|(_, c)| pcie_to_raw(c.to_raw()))).skip(index).take(caps_to_read) {
-                    log::info!("pool: {:?}", pool);
+                    log::trace!("pool: {:?}", pool);
                     let offset = addr + caps_read * cap_size;
-                    log::info!("trying to allocate {} bytes with alignment {}, at {}", cap_size, alignment, offset);
+                    log::trace!("trying to allocate {} bytes with alignment {}, at {}", cap_size, alignment, offset);
                     let mut slice = pool.acquire_borrowed_slice::<redox_buffer_pool::NoGuard>(cap_size, alignment, redox_iou_pool::AllocationStrategy::Fixed(offset)).ok_or(Error::new(ENOMEM))?;
-                    log::info!("slice for cap at {} len {} mmap_offset {} mmap_size {} extra {:?}", slice.offset(), slice.len(), slice.mmap_offset(), slice.mmap_size(), slice.extra());
+                    log::trace!("slice for cap at {} len {} mmap_offset {} mmap_size {} extra {:?}", slice.offset(), slice.len(), slice.mmap_offset(), slice.mmap_size(), slice.extra());
                     *plain::from_mut_bytes::<pcid_interface::CapabilityRawTagged>(&mut *slice).unwrap() = capability;
-                    log::info!("plain good");
+                    log::trace!("plain good");
                     caps_read += 1;
-                    log::info!("caps_read: {}", caps_read);
+                    log::trace!("caps_read: {}", caps_read);
                 }
 
-                log::info!("caps read: {}", caps_read);
-                log::info!("caps left to read: {}", readable_caps - u64::from(caps_read));
+                log::trace!("caps read: {}", caps_read);
+                log::trace!("caps left to read: {}", readable_caps - u64::from(caps_read));
 
                 Ok(CqEntry64 {
                     user_data: sqe.user_data,

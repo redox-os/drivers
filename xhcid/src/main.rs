@@ -20,7 +20,6 @@ use redox_iou::instance::ConsumerInstanceBuilder;
 
 use futures::{SinkExt, StreamExt};
 use futures::task::SpawnExt;
-use log::info;
 use redox_log::{RedoxLogger, OutputBuilder};
 
 use crate::xhci::{InterruptMethod, InterruptSources, ForceSendFuture, Xhci};
@@ -81,7 +80,7 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
 
 async fn get_int_method(func: &PciFunction, pcid_handle: &mut PcidServerHandle, allocated_bars: &AllocatedBars) -> (InterruptMethod, Option<InterruptSources>) {
     let all_pci_caps = pcid_handle.fetch_all_capabilities(Priority::default()).await.expect("xhcid: failed to fetch pci capabilities");
-    info!("XHCI PCI FEATURES: {:?}", all_pci_caps);
+    log::debug!("XHCI PCI FEATURES: {:?}", all_pci_caps);
 
     let msi_cap = all_pci_caps.iter().find_map(|cap| cap.as_pci()?.as_msi());
     let msix_cap = all_pci_caps.iter().find_map(|cap| cap.as_pci()?.as_msix());
@@ -126,7 +125,7 @@ async fn get_int_method(func: &PciFunction, pcid_handle: &mut PcidServerHandle, 
         info.capability.set_msix_enabled(true);
         info.capability.set_function_mask(false);
 
-        info!("Enabled MSI-X");
+        log::info!("Enabled MSI-X");
 
         (InterruptMethod::MsiX(Mutex::new(info)), Some(InterruptSources::MsiX(std::iter::once((0, interrupt_handle)).collect())))
     } else if let Some(capability) = msi_cap.cloned() {
@@ -154,12 +153,15 @@ async fn get_int_method(func: &PciFunction, pcid_handle: &mut PcidServerHandle, 
             mask_bits: 0, // omitted due to lack of flag
         };
         pcid_handle.set_capability(SetCapabilityInfo::Msi(set_cap_info), Priority::default()).await.expect("xhcid: failed to set capability");
-        info!("Enabled MSI");
+        log::info!("Enabled MSI");
 
         (InterruptMethod::Msi(Mutex::new(capability)), Some(InterruptSources::Msi(vec!(interrupt_handle))))
     } else if func.legacy_interrupt_pin().is_some() {
         // legacy INTx# interrupt pins.
-        (InterruptMethod::Intx, Some(InterruptSources::Intx(File::open(format!("irq:{}", func.legacy_interrupt_line)).expect("xhcid: failed to open legacy IRQ file"))))
+        let irq_file = File::open(format!("irq:{}", func.legacy_interrupt_line))
+            .expect("xhcid: failed to open legacy IRQ file");
+        log::info!("Using legacy PCI 3.0 interrupt line {}, on pin {}", func.legacy_interrupt_line, func.legacy_interrupt_pin);
+        (InterruptMethod::Intx, Some(InterruptSources::Intx(irq_file)))
     } else {
         // no interrupts at all
         (InterruptMethod::Polling, None)
@@ -193,10 +195,10 @@ fn main() {
     log::debug!("Connected");
     log::debug!("Fetching config...");
     let pci_config = executor.run(pcid_handle.fetch_config(Priority::default())).expect("xhcid: failed to fetch config");
-    log::info!("XHCI PCI CONFIG: {:?}", pci_config);
+    log::debug!("XHCI PCI CONFIG: {:?}", pci_config);
 
     let bar = PciBar::parse_00_header_bars(pci_config.func.bars).unwrap()[0];
-    log::info!("XHCI BAR: {}", bar.unwrap());
+    log::info!("XHCI device on PCI BAR: {}", bar.unwrap());
 
     let mut name = pci_config.func.scheme_friendly_name();
     name.push_str("_xhci");
@@ -212,15 +214,8 @@ fn main() {
     };
     let bar_size = usize::try_from(pci_config.func.bar_sizes[0]).expect("xhcid: bar size larger than usize");
 
-    log::info!("XHCI BAR ADDRESS: {:#>08x}", bar_ptr);
-
     let bar_wrapper = unsafe { Bar::map(bar_ptr as usize, bar_size).expect("xhcid: failed to map BAR 0") };
     let address = bar_wrapper.pointer().as_ptr() as usize;
-
-    log::info!("XHCI VIRT {:p} => {:p}", address as *const u8, unsafe { syscall::virttophys(address).unwrap() } as *const u8);
-    log::info!("XHCI VIRT {:p} => {:p}", (address + 4096) as *const u8, unsafe { syscall::virttophys(address + 4096).unwrap() } as *const u8);
-    log::info!("XHCI VIRT {:p} => {:p}", (address + 8192) as *const u8, unsafe { syscall::virttophys(address + 8192).unwrap() } as *const u8);
-    log::info!("XHCI VIRT {:p} => {:p}", (address + 12288) as *const u8, unsafe { syscall::virttophys(address + 12288).unwrap() } as *const u8);
 
     *allocated_bars.0[0].lock().unwrap() = Some(bar_wrapper);
 
