@@ -1078,12 +1078,10 @@ fn run_scheme(
     }
 }
 
-fn only_inform_about_file_scheme() {
+fn only_inform_about_file_scheme<P: ?Sized + AsRef<[u8]>>(path: &P) {
     std::fs::write(
         "pci:read_config_dir",
-        env::args()
-            .nth(2)
-            .expect("expected argument after --add-config-dir"),
+        path.as_ref()
     )
     .expect("failed to inform pci scheme that file: has appeared");
     println!("pcid inform syscall finished");
@@ -1177,25 +1175,33 @@ fn main() {
             Arg::with_name("config")
                 .short("c")
                 .long("config")
+                .takes_value(true)
                 .value_name("CONFIG")
         )
         .arg(
             Arg::with_name("verbose")
                 .short("v")
+                .takes_value(false)
+                .multiple(true)
                 .long("verbose")
         )
         .arg(
             Arg::with_name("add-config-dir")
                 .long("add-config-dir")
+                .takes_value(false)
+                .requires("config")
         )
         .get_matches();
 
-    let mut config = Config::default();
-
     if args.is_present("add-config-dir") {
         // TODO: Find a better way, by letting some other process write to the pci: scheme from init.
-        return only_inform_about_file_scheme();
+        return only_inform_about_file_scheme(args.value_of("config").unwrap());
     }
+
+    let verbosity: u8 = args.occurrences_of("verbose")
+        .try_into()
+        .expect("sorry, we don't want to create a black hole from all logs");
+    let _logger_ref = setup_logging(verbosity);
 
     let mut config = Config::default();
 
@@ -1205,12 +1211,9 @@ fn main() {
         } else {
             load_config_dir(&config_path, &mut config);
         }
+    } else {
+        log::warn!("Starting pcid with an empty config (args: {:?})", args);
     }
-
-    let verbosity: u8 = args.occurrences_of("verbose")
-        .try_into()
-        .expect("sorry, we don't want to create a black hole from all logs");
-    let _logger_ref = setup_logging(verbosity);
 
     let pci = Arc::new(Pci::new());
 
@@ -1242,7 +1245,7 @@ fn main() {
         uses_seg_groups: false,
     };
 
-    log::info!("PCI ENV: {:?}", env::vars().collect::<Vec<_>>());
+    log::info!("pcid environment: {:?}", env::vars().collect::<Vec<_>>());
 
     // Open scheme socket early to prevent subdrivers from not having `pci:`.
     let schemefd = syscall::open(":pci", O_CREAT | O_EXCL | O_RDWR)

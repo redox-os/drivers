@@ -696,7 +696,7 @@ impl Scheme for PcidScheme {
 
         let fd = self.next_handle.fetch_add(1, Ordering::Relaxed);
 
-        log::trace!("New handle: {:?}, FD={}", handle, fd);
+        log::debug!("New handle: {:?}, FD={}", handle, fd);
 
         let prev = self
             .file_handles
