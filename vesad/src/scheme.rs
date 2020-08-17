@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::{mem, slice, str};
 
 use orbclient::{Event, EventOption};
-use syscall::{Error, EventFlags, EACCES, EBADF, EINVAL, ENOENT, Map, O_NONBLOCK, Result, SchemeMut};
+use syscall::{Error, EventFlags, EACCES, EBADF, EINVAL, ENOENT, Map, OldMap, O_NONBLOCK, Result, SchemeMut};
 
 use crate::display::Display;
 use crate::screen::{Screen, GraphicScreen, TextScreen};
@@ -155,6 +155,14 @@ impl SchemeMut for DisplayScheme {
         }
 
         Err(Error::new(EBADF))
+    }
+    fn fmap_old(&mut self, id: usize, map: &syscall::OldMap) -> syscall::Result<usize> {
+        self.fmap(id, &Map {
+            offset: map.offset,
+            size: map.size,
+            flags: map.flags,
+            address: 0,
+        })
     }
 
     fn fpath(&mut self, id: usize, buf: &mut [u8]) -> Result<usize> {
