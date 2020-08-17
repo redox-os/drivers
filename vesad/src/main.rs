@@ -113,7 +113,7 @@ fn main() {
                 }
 
                 for (handle_id, handle) in scheme.handles.iter_mut() {
-                    if handle.events.contains(EVENT_READ) {
+                    if !handle.events.contains(EVENT_READ) {
                         continue;
                     }
 
