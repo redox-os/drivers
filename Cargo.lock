@@ -922,6 +922,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 [[package]]
 name = "redox_syscall"
 version = "0.2.0"
+source = "git+https://gitlab.redox-os.org/redox-os/syscall?rev=4115e0f43547449ce56f7d7749732813e9505955#4115e0f43547449ce56f7d7749732813e9505955"
+dependencies = [
+ "bitflags 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "redox_syscall"
+version = "0.2.0"
 source = "git+https://gitlab.redox-os.org/redox-os/syscall.git#a0ea09ceb3380b1d1e878bb18886e13742d34e8a"
 dependencies = [
  "bitflags 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -1286,7 +1294,7 @@ version = "0.1.0"
 dependencies = [
  "orbclient 0.3.27 (registry+https://github.com/rust-lang/crates.io-index)",
  "ransid 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
- "redox_syscall 0.1.57 (registry+https://github.com/rust-lang/crates.io-index)",
+ "redox_syscall 0.2.0 (git+https://gitlab.redox-os.org/redox-os/syscall?rev=4115e0f43547449ce56f7d7749732813e9505955)",
  "rusttype 0.2.4 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
@@ -1458,6 +1466,7 @@ dependencies = [
 "checksum redox_event 0.1.0 (git+https://gitlab.redox-os.org/redox-os/event.git)" = "<none>"
 "checksum redox_syscall 0.1.57 (registry+https://github.com/rust-lang/crates.io-index)" = "41cc0f7e4d5d4544e8861606a285bb08d3e70712ccc7d2b84d7c0ccfaf4b05ce"
 "checksum redox_syscall 0.2.0 (git+https://gitlab.redox-os.org/redox-os/syscall.git)" = "<none>"
+"checksum redox_syscall 0.2.0 (git+https://gitlab.redox-os.org/redox-os/syscall?rev=4115e0f43547449ce56f7d7749732813e9505955)" = "<none>"
 "checksum redox_termios 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)" = "7e891cfe48e9100a70a3b6eb652fef28920c117d366339687bd5576160db0f76"
 "checksum rusttype 0.2.4 (registry+https://github.com/rust-lang/crates.io-index)" = "d8d729e72445ad579171b01a9231657736b3793a2cf423078e687e20ecb8695a"
 "checksum ryu 1.0.5 (registry+https://github.com/rust-lang/crates.io-index)" = "71d301d4193d031abdd79ff7e3dd721168a9572ef3fe51a1517aba235bd8f86e"

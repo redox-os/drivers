@@ -38,7 +38,7 @@ fn main() {
     let physbaseptr;
 
     {
-        let mode_info = unsafe { &*(physmap(0x5200, 4096, 0).expect("vesad: failed to map VBE info") as *const VBEModeInfo) };
+        let mode_info = unsafe { &*(physmap(0x5200, 4096, syscall::PhysmapFlags::empty()).expect("vesad: failed to map VBE info") as *const VBEModeInfo) };
 
         width = mode_info.xresolution as usize;
         height = mode_info.yresolution as usize;
@@ -53,7 +53,7 @@ fn main() {
         syscall::pipe2(&mut pipes, 0).unwrap();
         let mut read = unsafe { File::from_raw_fd(pipes[0] as RawFd) };
         let mut write = unsafe { File::from_raw_fd(pipes[1] as RawFd) };
-        let pid = unsafe { syscall::clone(0).unwrap() };
+        let pid = unsafe { syscall::clone(syscall::CloneFlags::empty()).unwrap() };
         if pid != 0 {
             drop(write);
 
@@ -113,7 +113,7 @@ fn main() {
                 }
 
                 for (handle_id, handle) in scheme.handles.iter_mut() {
-                    if handle.events & EVENT_READ == 0 {
+                    if handle.events.contains(EVENT_READ) {
                         continue;
                     }
 
@@ -135,7 +135,7 @@ fn main() {
                                 gid: 0,
                                 a: syscall::number::SYS_FEVENT,
                                 b: *handle_id,
-                                c: EVENT_READ,
+                                c: EVENT_READ.bits(),
                                 d: count
                             };
 
