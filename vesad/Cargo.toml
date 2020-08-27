@@ -7,7 +7,7 @@ edition = "2018"
 orbclient = "0.3.27"
 ransid = "0.4"
 rusttype = { version = "0.2", optional = true }
-redox_syscall = { git = "https://gitlab.redox-os.org/redox-os/syscall", rev = "4115e0f43547449ce56f7d7749732813e9505955" }
+redox_syscall = "0.2.1"
 
 [features]
 default = []
