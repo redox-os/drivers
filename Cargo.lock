@@ -89,7 +89,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 name = "bgad"
 version = "0.1.0"
 dependencies = [
- "orbclient 0.3.28",
+ "orbclient 0.3.28 (git+https://gitlab.redox-os.org/redox-os/orbclient.git)",
  "redox_syscall 0.1.57 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
@@ -633,9 +633,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 [[package]]
 name = "orbclient"
 version = "0.3.28"
+source = "git+https://gitlab.redox-os.org/redox-os/orbclient.git#d212107f84183a1375de9e958f7e4427fb35dc72"
 dependencies = [
- "redox_syscall 0.2.0 (git+https://gitlab.redox-os.org/redox-os/syscall?rev=4115e0f43547449ce56f7d7749732813e9505955)",
+ "libc 0.2.71 (registry+https://github.com/rust-lang/crates.io-index)",
+ "raw-window-handle 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "redox_syscall 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "sdl2 0.34.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "sdl2-sys 0.34.2 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -821,7 +825,7 @@ name = "ps2d"
 version = "0.1.0"
 dependencies = [
  "bitflags 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "orbclient 0.3.28",
+ "orbclient 0.3.28 (git+https://gitlab.redox-os.org/redox-os/orbclient.git)",
  "redox_syscall 0.1.57 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
@@ -939,6 +943,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "raw-window-handle"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "libc 0.2.71 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
 name = "rdrand"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -969,14 +981,6 @@ dependencies = [
 name = "redox_syscall"
 version = "0.1.57"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-
-[[package]]
-name = "redox_syscall"
-version = "0.2.0"
-source = "git+https://gitlab.redox-os.org/redox-os/syscall?rev=4115e0f43547449ce56f7d7749732813e9505955#4115e0f43547449ce56f7d7749732813e9505955"
-dependencies = [
- "bitflags 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
-]
 
 [[package]]
 name = "redox_syscall"
@@ -1074,6 +1078,7 @@ dependencies = [
  "bitflags 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "lazy_static 1.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc 0.2.71 (registry+https://github.com/rust-lang/crates.io-index)",
+ "raw-window-handle 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "sdl2-sys 0.34.2 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
@@ -1342,7 +1347,7 @@ name = "usbhidd"
 version = "0.1.0"
 dependencies = [
  "bitflags 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "orbclient 0.3.28",
+ "orbclient 0.3.28 (git+https://gitlab.redox-os.org/redox-os/orbclient.git)",
  "ux 0.1.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "xhcid 0.1.0",
 ]
@@ -1380,7 +1385,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 name = "vboxd"
 version = "0.1.0"
 dependencies = [
- "orbclient 0.3.28",
+ "orbclient 0.3.28 (git+https://gitlab.redox-os.org/redox-os/orbclient.git)",
  "redox_event 0.1.0 (git+https://gitlab.redox-os.org/redox-os/event.git)",
  "redox_syscall 0.1.57 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -1404,7 +1409,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 name = "vesad"
 version = "0.1.0"
 dependencies = [
- "orbclient 0.3.28",
+ "orbclient 0.3.28 (git+https://gitlab.redox-os.org/redox-os/orbclient.git)",
  "ransid 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "redox_syscall 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "rusttype 0.2.4 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -1557,6 +1562,7 @@ dependencies = [
 "checksum num-traits 0.2.12 (registry+https://github.com/rust-lang/crates.io-index)" = "ac267bcc07f48ee5f8935ab0d24f316fb722d7a1292e2913f0cc196b29ffd611"
 "checksum numtoa 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)" = "b8f8bdf33df195859076e54ab11ee78a1b208382d3a26ec40d142ffc1ecc49ef"
 "checksum once_cell 1.4.0 (registry+https://github.com/rust-lang/crates.io-index)" = "0b631f7e854af39a1739f401cf34a8a013dfe09eac4fa4dba91e9768bd28168d"
+"checksum orbclient 0.3.28 (git+https://gitlab.redox-os.org/redox-os/orbclient.git)" = "<none>"
 "checksum owning_ref 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)" = "6ff55baddef9e4ad00f88b6c743a2a8062d4c6ade126c2a528644b8e444d52ce"
 "checksum parking_lot 0.10.2 (registry+https://github.com/rust-lang/crates.io-index)" = "d3a704eb390aafdc107b0e392f56a82b668e3a71366993b5340f5833fd62505e"
 "checksum parking_lot_core 0.7.2 (registry+https://github.com/rust-lang/crates.io-index)" = "d58c7c768d4ba344e3e8d72518ac13e259d7c7ade24167003b8488e10b6740a3"
@@ -1587,12 +1593,12 @@ dependencies = [
 "checksum rand_pcg 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)" = "abf9b09b01790cfe0364f52bf32995ea3c39f4d2dd011eac241d2914146d0b44"
 "checksum rand_xorshift 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)" = "cbf7e9e623549b0e21f6e97cf8ecf247c1a8fd2e8a992ae265314300b2455d5c"
 "checksum ransid 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)" = "22b9af151b0590163dfa64e1c92c0831377d61942df4c19820c704390ebc3045"
+"checksum raw-window-handle 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)" = "0a441a7a6c80ad6473bd4b74ec1c9a4c951794285bf941c2126f607c72e48211"
 "checksum rdrand 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)" = "678054eb77286b51581ba43620cc911abf02758c91f93f479767aed0f90458b2"
 "checksum redox-log 0.1.0 (git+https://gitlab.redox-os.org/redox-os/redox-log.git?tag=v0.1.0)" = "<none>"
 "checksum redox_event 0.1.0 (git+https://gitlab.redox-os.org/redox-os/event.git)" = "<none>"
 "checksum redox_syscall 0.1.57 (registry+https://github.com/rust-lang/crates.io-index)" = "41cc0f7e4d5d4544e8861606a285bb08d3e70712ccc7d2b84d7c0ccfaf4b05ce"
 "checksum redox_syscall 0.2.0 (git+https://gitlab.redox-os.org/redox-os/syscall.git)" = "<none>"
-"checksum redox_syscall 0.2.0 (git+https://gitlab.redox-os.org/redox-os/syscall?rev=4115e0f43547449ce56f7d7749732813e9505955)" = "<none>"
 "checksum redox_syscall 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)" = "48b82c2a1e8eb6e1bfde608de2bcbebd4072aa32d056ea48a986990cd5ca0f5a"
 "checksum redox_termios 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)" = "7e891cfe48e9100a70a3b6eb652fef28920c117d366339687bd5576160db0f76"
 "checksum regex 1.3.9 (registry+https://github.com/rust-lang/crates.io-index)" = "9c3780fcf44b193bc4d09f36d2a3c87b251da4a046c87795a0d35f4f927ad8e6"
