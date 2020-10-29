@@ -288,7 +288,7 @@ fn main() {
 
             event_queue.trigger_all(event::Event {
                 fd: 0,
-                flags: 0
+                flags: 0,
             }).expect("vboxd: failed to trigger events");
 
             event_queue.run().expect("vboxd: failed to run event loop");

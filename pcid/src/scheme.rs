@@ -23,11 +23,11 @@ use syscall::io_uring::v1::operation::OpenFlags;
 use syscall::io_uring::IoUringRecvInfo;
 use syscall::scheme::{self, Scheme};
 
-use redox_buffer_pool::BufferPoolOptions;
+use redox_buffer_pool::{self as pool, BufferPoolOptions};
 
 use redox_iou::executor::SpawnHandle;
-use redox_iou::instance::ProducerInstance;
-use redox_iou::reactor::SecondaryRingId;
+use redox_iou::redox::instance::ProducerInstance;
+use redox_iou::reactor::{ProducerRingId, SubmissionContext};
 use redox_iou::{memory::pool as redox_iou_pool, reactor};
 
 use either::*;
@@ -1018,7 +1018,7 @@ impl Scheme for PcidScheme {
         let reactor_handle = self.reactor_handle.clone();
         let ring = reactor_handle
             .reactor()
-            .add_producer_instance(instance, Priority::default())
+            .add_producer_instance(SubmissionContext::new(), instance)
             .and_log_err_as_warn("failed to register producer instance to reactor")?;
         let mut stream = reactor_handle.producer_sqes(ring, 64);
 
@@ -1090,9 +1090,9 @@ impl Scheme for PcidScheme {
                 let os_str = OsStr::from_bytes(&data);
                 let mut config = crate::config::Config::default();
                 crate::load_config_dir(os_str, &mut config);
-                log::debug!("beginning to process config from user request...");
+                log::info!("beginning to process config from user request...");
                 crate::process_config(&config, &*self.tree.read().unwrap(), &self.state);
-                log::debug!("finished processing config from user request");
+                log::info!("finished processing config from user request");
             }
             Handle::CtlSocket(_) => (),
             Handle::List(_) => (),
@@ -1101,7 +1101,7 @@ impl Scheme for PcidScheme {
         Ok(0)
     }
 }
-async fn get_or_init_pool<'a>(pool: &'a mut Option<redox_iou::memory::BufferPool>, reactor: &reactor::Handle, ring: SecondaryRingId) -> Result<&'a mut redox_iou::memory::BufferPool> {
+async fn get_or_init_pool<'a>(pool: &'a mut Option<redox_iou::memory::BufferPool>, reactor: &reactor::Handle, ring: ProducerRingId) -> Result<&'a mut redox_iou::memory::BufferPool> {
     Ok(match pool {
         Some(p) => p,
         None => {
@@ -1125,7 +1125,7 @@ impl PcidScheme {
         &self,
         ctx: &scheme::Ctx,
         reactor: &reactor::Handle,
-        ring: SecondaryRingId,
+        ring: ProducerRingId,
         pool: &mut Option<redox_iou::memory::BufferPool>,
         opcode: StandardOpcode,
         sqe: &SqEntry64,
@@ -1145,7 +1145,7 @@ impl PcidScheme {
 
                 log::trace!("Validating, acquiring a borrowed slice");
 
-                let slice = pool.acquire_borrowed_slice::<redox_buffer_pool::NoGuard>(len, align, redox_buffer_pool::AllocationStrategy::Fixed(offset)).ok_or(Error::new(ENOMEM))?;
+                let slice = pool.acquire_borrowed_slice::<pool::marker::NoGuard>(len, align, redox_buffer_pool::AllocationStrategy::Fixed(offset)).ok_or(Error::new(ENOMEM))?;
 
                 log::trace!("Acquired, at {} len {} mmap {} mmap len {} extra {:?}", slice.offset(), slice.len(), slice.mmap_offset(), slice.mmap_size(), slice.extra());
                 log::trace!("Slice: LEN = {} DATA = {:?}", slice.as_slice().len(), slice.as_slice());
@@ -1170,7 +1170,7 @@ impl PcidScheme {
         &self,
         _ctx: &scheme::Ctx,
         reactor: &reactor::Handle,
-        ring: SecondaryRingId,
+        ring: ProducerRingId,
         pool: &mut Option<redox_iou::memory::BufferPool>,
         opcode: PcidOpcode,
         sqe: &SqEntry64,
@@ -1224,7 +1224,7 @@ impl PcidScheme {
                 }
 
 
-                let mut slice = pool.acquire_borrowed_slice::<redox_buffer_pool::NoGuard>(len, alignment, redox_buffer_pool::AllocationStrategy::Fixed(addr)).ok_or(Error::new(ENOMEM))?;
+                let mut slice = pool.acquire_borrowed_slice::<pool::marker::NoGuard>(len, alignment, redox_buffer_pool::AllocationStrategy::Fixed(addr)).ok_or(Error::new(ENOMEM))?;
                 log::trace!("Slice to use at {}, len {}, mmap start {}, mmap size {}, extra {:?}", slice.offset(), slice.len(), slice.mmap_offset(), slice.mmap_size(), slice.extra());
 
                 {
@@ -1312,7 +1312,7 @@ impl PcidScheme {
                     log::trace!("pool: {:?}", pool);
                     let offset = addr + caps_read * cap_size;
                     log::trace!("trying to allocate {} bytes with alignment {}, at {}", cap_size, alignment, offset);
-                    let mut slice = pool.acquire_borrowed_slice::<redox_buffer_pool::NoGuard>(cap_size, alignment, redox_iou_pool::AllocationStrategy::Fixed(offset)).ok_or(Error::new(ENOMEM))?;
+                    let mut slice = pool.acquire_borrowed_slice::<pool::marker::NoGuard>(cap_size, alignment, redox_iou_pool::AllocationStrategy::Fixed(offset)).ok_or(Error::new(ENOMEM))?;
                     log::trace!("slice for cap at {} len {} mmap_offset {} mmap_size {} extra {:?}", slice.offset(), slice.len(), slice.mmap_offset(), slice.mmap_size(), slice.extra());
                     *plain::from_mut_bytes::<pcid_interface::CapabilityRawTagged>(&mut *slice).unwrap() = capability;
                     log::trace!("plain good");
@@ -1357,7 +1357,7 @@ impl PcidScheme {
                     return Err(Error::new(EINVAL));
                 }
 
-                let slice = pool.acquire_borrowed_slice::<redox_buffer_pool::NoGuard>(struct_len, struct_align, redox_iou_pool::AllocationStrategy::Fixed(offset)).ok_or(Error::new(ENOMEM))?;
+                let slice = pool.acquire_borrowed_slice::<pool::marker::NoGuard>(struct_len, struct_align, redox_iou_pool::AllocationStrategy::Fixed(offset)).ok_or(Error::new(ENOMEM))?;
 
                 let info = plain::from_bytes::<SetCapabilityInfoRaw>(&*slice).unwrap();
                 let set_capability_info = pcid_interface::SetCapabilityInfo::construct(*info).ok_or(Error::new(EINVAL))?;

@@ -1,5 +1,6 @@
 use std::convert::{TryFrom, TryInto};
 use std::fs::File;
+use std::mem::ManuallyDrop;
 use std::io::prelude::*;
 use std::os::unix::io::{FromRawFd, RawFd};
 use std::{env, fmt, io, mem};
@@ -9,11 +10,11 @@ use syscall::error::Error as Errno;
 use syscall::error::{EBADF, ENOMEM, EOVERFLOW};
 use syscall::io_uring::v1::{Priority, SqEntry64};
 
-use redox_buffer_pool::{AllocationStrategy, BufferPoolOptions};
+use redox_buffer_pool::{AllocationStrategy, BufferPoolOptions, marker::Guard};
 
-use redox_iou::instance::ConsumerInstanceBuilder;
+use redox_iou::redox::instance::ConsumerInstanceBuilder;
 use redox_iou::memory::{BufferPool, BufferSlice, Guarded};
-use redox_iou::reactor::{Handle as IoringReactorHandle, SecondaryRingId, SubmissionContext, SubmissionSync};
+use redox_iou::reactor::{Handle as IoringReactorHandle, OpenFrom, OpenInfo, SecondaryRingId, SubmissionContext, SubmissionSync, SysSqeRef};
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use thiserror::Error;
@@ -488,7 +489,7 @@ impl PcidServerHandle {
         log::debug!("adding sec instance");
         let ring = handle
             .reactor()
-            .add_secondary_instance(instance, Priority::default())
+            .add_secondary_instance(SubmissionContext::new(), instance)
             .map_err(IoUringSetupError::AddInstanceError)?;
         log::debug!("added sec instance");
 
@@ -503,12 +504,21 @@ impl PcidServerHandle {
         log::debug!("created pool");
 
         let path_name = format!("short/{}/ctl", device_addr).into_bytes();
-        let mut slice = pool.acquire_borrowed_slice(path_name.len().try_into().unwrap(), 1, AllocationStrategy::Optimal).ok_or(IoUringSetupError::BufferError(Errno::new(ENOMEM)))?;
+        let mut slice = pool.acquire_borrowed_slice::<Guard>(path_name.len().try_into().unwrap(), 1, AllocationStrategy::Optimal).ok_or(IoUringSetupError::BufferError(Errno::new(ENOMEM)))?;
         slice.copy_from_slice(&path_name);
 
         log::info!("CLIENT: about to open");
-        let (ctl_socket_fd, _) = handle.open(ring, SubmissionContext::new().with_sync(SubmissionSync::Drain), slice, (O_RDWR | O_CLOEXEC) as u64, None).await.map_err(IoUringSetupError::OpenError)?;
+        // TODO: This should work in safe code!
+        let ctl_socket_fd = unsafe { handle.open_unchecked_at(
+            ring,
+            SubmissionContext::new().with_sync(SubmissionSync::Drain),
+            &slice,
+            OpenInfo::new().with_redox_mode((O_RDWR | O_CLOEXEC) as u64),
+            OpenFrom::CurrentDirectory,
+        ).await.map_err(IoUringSetupError::OpenError)? };
         log::info!("CLIENT: opened");
+
+        drop(slice);
 
         Ok(Self {
             inner: PcidServerTransport::IoUring { pool, ring, handle, ctl_socket_fd },
@@ -549,7 +559,7 @@ impl PcidServerHandle {
             PcidServerTransport::IoUring { .. } => unreachable!(),
         }
     }
-    pub async fn fetch_config(&mut self, priority: Priority) -> Result<SubdriverArguments> {
+    pub async fn fetch_config(&mut self, ctx: SubmissionContext) -> Result<SubdriverArguments> {
         use PcidClientHandleError::IoUringTransportError;
 
         if let PcidServerTransport::IoUring {
@@ -567,39 +577,42 @@ impl PcidServerHandle {
             log::debug!("LEN {} ALIGN {}", len, alignment);
             log::debug!("ctl_socket_fd={}", ctl_socket_fd);
 
-            let mut slice = pool.acquire_borrowed_slice(len, alignment, AllocationStrategy::Optimal).ok_or(
+            let mut slice = pool.acquire_borrowed_slice::<Guard>(len, alignment, AllocationStrategy::Optimal).ok_or(
                 IoUringTransportError(Errno::new(ENOMEM)),
             )?;
             log::info!("pci interface slice at {}, len {}, mmap offset {}, mmap size {}, extra: {:?}", slice.offset(), slice.len(), slice.mmap_offset(), slice.mmap_size(), slice.extra());
-            unsafe {
-                let fut = handle.send(
+            let fd64 = ctl_socket_fd.try_into().map_err(|_| IoUringTransportError(Errno::new(EBADF)))?;
+
+            let mut slice = ManuallyDrop::new(slice);
+
+            let prepare_fn = |sqe: &mut SysSqeRef| {
+                sqe.opcode = PcidOpcode::FetchConfig as u8;
+                sqe.syscall_flags = 1; // version
+                sqe.addr = slice.offset().into();
+                sqe.len = len.into();
+                sqe.fd = fd64;
+            };
+
+            let cqe_result = unsafe {
+                handle.send_with_ctx(
                     ring,
-                    SqEntry64 {
-                        opcode: PcidOpcode::FetchConfig as u8,
-                        priority,
-                        syscall_flags: 1, // version
-                        addr: slice.offset().into(),
-                        len: len.into(),
-                        fd: ctl_socket_fd.try_into().or(Err(IoUringTransportError(Errno::new(EBADF))))?,
-                        ..SqEntry64::default()
-                    },
-                );
-                // Prevent data race by leaking memory if this future is dropped.
-                fut.guard(&mut slice);
-                log::debug!("Future sent");
+                    ctx,
+                    prepare_fn,
+                )
+            }.await;
 
-                let cqe = fut
-                    .await
-                    .map_err(IoUringTransportError)?;
+            let slice = ManuallyDrop::into_inner(slice);
 
-                let result = Errno::demux64(cqe.status)
-                    .map_err(IoUringTransportError)?;
-                if result != 0 {
-                    log::warn!("Expected zero as CQE return value when fetching config");
-                }
-                Ok(*plain::from_bytes(&*slice)
-                    .expect("buffer pool allocator gave us an insufficient alignment"))
+            let cqe = cqe_result
+                .map_err(IoUringTransportError)?;
+
+            let result = Errno::demux64(cqe.status)
+                .map_err(IoUringTransportError)?;
+            if result != 0 {
+                log::warn!("Expected zero as CQE return value when fetching config");
             }
+            Ok(*plain::from_bytes(&*slice)
+                .expect("buffer pool allocator gave us an insufficient alignment"))
         } else {
             self.send(&PcidClientRequest::RequestConfig)?;
             match self.recv()? {
@@ -608,7 +621,7 @@ impl PcidServerHandle {
             }
         }
     }
-    pub async fn fetch_all_capabilities(&mut self, priority: Priority) -> Result<Vec<Capability>> {
+    pub async fn fetch_all_capabilities(&mut self, ctx: SubmissionContext) -> Result<Vec<Capability>> {
         use PcidClientHandleError::IoUringTransportError;
 
         if let PcidServerTransport::IoUring {
@@ -622,42 +635,44 @@ impl PcidServerHandle {
 
             let size: u32 = mem::size_of::<CapabilityRawTagged>().try_into().unwrap();
             let align: u32 = mem::align_of::<CapabilityRawTagged>().try_into().unwrap();
-
+            let fd64: u64 = ctl_socket_fd.try_into().map_err(|_| IoUringTransportError(Errno::new(EBADF)))?;
             log::info!("SIZE OF SINGLE CAP: {}, ALIGN: {}", size, align);
 
             log::info!("POOL: {:?}", pool);
 
-            let mut buffer = pool.acquire_borrowed_slice(size * 4, align, AllocationStrategy::Optimal).ok_or(
+            let mut buffer = pool.acquire_borrowed_slice::<Guard>(size * 4, align, AllocationStrategy::Optimal).ok_or(
                 IoUringTransportError(Errno::new(ENOMEM)),
             )?;
+
             log::info!("CAP BUFFER SLICE at {} len {} mmap_offset {} mmap_len {} extra {:?}", buffer.offset(), buffer.len(), buffer.mmap_offset(), buffer.mmap_size(), buffer.extra());
 
             let mut total_caps_read = 0;
 
             loop {
-                let caps_read = unsafe {
-                    let fut = handle.send(
-                        ring,
-                        SqEntry64 {
-                            opcode: PcidOpcode::FetchAllCapabilities as u8,
-                            flags: 0,
-                            priority,
-                            user_data: 0, // overridden
+                let mut buf = ManuallyDrop::new(buffer);
 
-                            syscall_flags: 1,
-                            addr: total_caps_read,
-                            fd: ctl_socket_fd.try_into().or(Err(IoUringTransportError(Errno::new(EBADF))))?,
-                            len: (buffer.len() / size).into(),
-                            offset: buffer.offset().into(),
+                let prep_fn = |sqe: &mut SysSqeRef| {
+                    sqe.opcode = PcidOpcode::FetchAllCapabilities as u8;
 
-                            additional1: 0, // unused
-                            additional2: 0, // unused
-                        },
-                    );
-                    fut.guard(&mut buffer);
-                    let cqe = fut
-                        .await
-                        .map_err(IoUringTransportError)?;
+                    sqe.syscall_flags = 1;
+                    sqe.addr = total_caps_read;
+                    sqe.fd = fd64;
+                    sqe.len = (buf.len() / size).into();
+                    sqe.offset = buf.offset().into();
+
+                    sqe.additional1 = 0; // unused
+                    sqe.additional2 = 0; // unused
+                };
+                let caps_read = {
+                    let cqe_result = unsafe {
+                        handle.send_with_ctx(
+                            ring,
+                            ctx,
+                            prep_fn,
+                        ).await
+                    };
+                    buffer = ManuallyDrop::into_inner(buf);
+                    let cqe = cqe_result.map_err(IoUringTransportError)?;
 
                     Errno::demux64(cqe.status)
                         .map_err(IoUringTransportError)?
@@ -691,7 +706,7 @@ impl PcidServerHandle {
     pub async fn get_capability(
         &mut self,
         ty: CapabilityType,
-        priority: Priority,
+        ctx: SubmissionContext,
     ) -> Result<Option<Capability>> {
         use PcidClientHandleError::IoUringTransportError;
 
@@ -705,35 +720,38 @@ impl PcidServerHandle {
             let size = mem::size_of::<CapabilityRawTagged>().try_into().unwrap();
             let align = mem::align_of::<CapabilityRawTagged>().try_into().unwrap();
 
-            let mut buffer = pool.acquire_borrowed_slice(size, align, AllocationStrategy::Optimal).ok_or(
+            let buffer = pool.acquire_borrowed_slice::<Guard>(size, align, AllocationStrategy::Optimal).ok_or(
                 IoUringTransportError(Errno::new(ENOMEM)),
             )?;
+            let fd64 = u64::try_from(ctl_socket_fd).map_err(|_| IoUringTransportError(Errno::new(EBADF)))?;
 
-            unsafe {
-                let fut = handle.send(
+            let mut buffer = ManuallyDrop::new(buffer);
+
+            let prep_fn = |sqe: &mut SysSqeRef| {
+                sqe.opcode = PcidOpcode::GetCapability as u8;
+
+                sqe.syscall_flags = 1;
+                sqe.fd = fd64;
+                sqe.len = size.into();
+                sqe.addr = 0; // FIXME
+                sqe.offset = buffer.offset().into();
+
+                sqe.additional1 = 0; // unused
+                sqe.additional2 = 0; // unused
+            };
+
+            let cqe_result = unsafe {
+                handle.send_with_ctx(
                     ring,
-                    SqEntry64 {
-                        opcode: PcidOpcode::GetCapability as u8,
-                        flags: 0,
-                        priority,
-                        user_data: 0, // overridden
-
-                        syscall_flags: 1,
-                        fd: ctl_socket_fd.try_into().or(Err(IoUringTransportError(Errno::new(EBADF))))?,
-                        len: size.into(),
-                        addr: 0, // FIXME
-                        offset: buffer.offset().into(),
-
-                        additional1: 0, // unused
-                        additional2: 0, // unused
-                    },
-                );
-                fut.guard(&mut buffer);
-                let cqe = fut
-                    .await
+                    ctx,
+                    prep_fn,
+                ).await
+            };
+            let buffer = ManuallyDrop::into_inner(buffer);
+            let cqe = cqe_result
                     .map_err(IoUringTransportError)?;
-                Errno::demux64(cqe.status).map_err(IoUringTransportError)?;
-            }
+
+            Errno::demux64(cqe.status).map_err(IoUringTransportError)?;
 
             let raw_tagged = *plain::from_bytes::<CapabilityRawTagged>(&*buffer)
                 .expect("somehow redox_iou gave us an insufficient alignment");
@@ -750,7 +768,7 @@ impl PcidServerHandle {
     pub async fn set_capability(
         &mut self,
         info: SetCapabilityInfo,
-        priority: Priority,
+        ctx: SubmissionContext,
     ) -> Result<()> {
         use PcidClientHandleError::IoUringTransportError;
 
@@ -770,7 +788,7 @@ impl PcidServerHandle {
                 .or(Err(Errno::new(EOVERFLOW)))
                 .map_err(PcidClientHandleError::IoUringTransportError)?;
 
-            let mut slice = pool.acquire_borrowed_slice(size, align, AllocationStrategy::Optimal).ok_or(
+            let mut slice = pool.acquire_borrowed_slice::<Guard>(size, align, AllocationStrategy::Optimal).ok_or(
                 PcidClientHandleError::IoUringTransportError(Errno::new(ENOMEM)),
             )?;
 
@@ -788,32 +806,34 @@ impl PcidServerHandle {
                 },
             };
 
-            unsafe {
-                let fut = handle.send(
+            let slice = ManuallyDrop::new(slice);
+
+            let fd64 = u64::try_from(ctl_socket_fd).map_err(|_| IoUringTransportError(Errno::new(EBADF)))?;
+
+            let prep_fn = |sqe: &mut SysSqeRef| {
+                sqe.opcode = PcidOpcode::SetCapability as u8;
+                sqe.syscall_flags = 1;
+                sqe.addr = 0; // TODO: Remove this
+                sqe.len = size.into();
+                sqe.fd = fd64;
+                sqe.offset = slice.offset().into();
+                sqe.additional1 = 0;
+                sqe.additional2 = 0;
+            };
+
+            let cqe_result = unsafe {
+                handle.send_with_ctx(
                     ring,
-                    SqEntry64 {
-                        opcode: PcidOpcode::SetCapability as u8,
-                        flags: 0,
-                        priority,
-                        user_data: 0,
+                    ctx,
+                    prep_fn,
+                ).await
+            };
+            drop(ManuallyDrop::into_inner(slice));
 
-                        syscall_flags: 1,
-                        addr: 0, // TODO: Remove this
-                        len: size.into(),
-                        fd: ctl_socket_fd.try_into().or(Err(IoUringTransportError(Errno::new(EBADF))))?,
-                        offset: slice.offset().into(),
-
-                        additional1: 0,
-                        additional2: 0,
-                    },
-                );
-                fut.guard(&mut slice);
-                let cqe = fut
-                    .await
-                    .map_err(PcidClientHandleError::IoUringTransportError)?;
-                let _ = Errno::demux64(cqe.status)
-                    .map_err(PcidClientHandleError::IoUringTransportError)?;
-            }
+            let cqe = cqe_result
+                .map_err(PcidClientHandleError::IoUringTransportError)?;
+            let _ = Errno::demux64(cqe.status)
+                .map_err(PcidClientHandleError::IoUringTransportError)?;
             Ok(())
         } else {
             self.send(&PcidClientRequest::SetCapability(info))?;

@@ -10,13 +10,13 @@ use std::{mem, slice, thread};
 use syscall::data::Packet;
 use syscall::flag::{CloneFlags, O_RDWR, O_CLOEXEC, EVENT_READ};
 use syscall::io::Io;
-use syscall::io_uring::v1::Priority;
 
 use pcid_interface::{MsiSetCapabilityInfo, MsiSetCapabilityInfoFlags, MsiXSetCapabilityInfo, MsiXSetCapabilityInfoFlags, PcidServerHandle, PciFunction, SetCapabilityInfo, PciBar};
 use pcid_interface::msi::MsixTableEntry;
 use pcid_interface::helpers::{self as pci_helpers, irq as irq_helpers};
 use pci_helpers::{AllocatedBars, Bar};
-use redox_iou::instance::ConsumerInstanceBuilder;
+use redox_iou::redox::instance::ConsumerInstanceBuilder;
+use redox_iou::reactor::SubmissionContext;
 
 use futures::{SinkExt, StreamExt};
 use futures::task::SpawnExt;
@@ -38,7 +38,7 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
         .with_process_name("xhcid".into())
         .with_output(
             OutputBuilder::stderr()
-                .with_filter(log::LevelFilter::Info) // limit global output to important info
+                .with_filter(log::LevelFilter::Debug) // limit global output to important info
                 .with_ansi_escape_codes()
                 .flush_on_newline(true)
                 .build()
@@ -79,7 +79,7 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
 }
 
 async fn get_int_method(func: &PciFunction, pcid_handle: &mut PcidServerHandle, allocated_bars: &AllocatedBars) -> (InterruptMethod, Option<InterruptSources>) {
-    let all_pci_caps = pcid_handle.fetch_all_capabilities(Priority::default()).await.expect("xhcid: failed to fetch pci capabilities");
+    let all_pci_caps = pcid_handle.fetch_all_capabilities(SubmissionContext::new()).await.expect("xhcid: failed to fetch pci capabilities");
     log::debug!("XHCI PCI FEATURES: {:?}", all_pci_caps);
 
     let msi_cap = all_pci_caps.iter().find_map(|cap| cap.as_pci()?.as_msi());
@@ -119,7 +119,7 @@ async fn get_int_method(func: &PciFunction, pcid_handle: &mut PcidServerHandle, 
             flags: MsiXSetCapabilityInfoFlags::all().bits(),
             enabled: true.into(),
             function_mask: false.into(),
-        }), Priority::default()).await.expect("xhcid: failed to enable MSI-X");
+        }), SubmissionContext::new()).await.expect("xhcid: failed to enable MSI-X");
 
         // update our local mirror
         info.capability.set_msix_enabled(true);
@@ -152,7 +152,7 @@ async fn get_int_method(func: &PciFunction, pcid_handle: &mut PcidServerHandle, 
             message_data: msg_data as u16,
             mask_bits: 0, // omitted due to lack of flag
         };
-        pcid_handle.set_capability(SetCapabilityInfo::Msi(set_cap_info), Priority::default()).await.expect("xhcid: failed to set capability");
+        pcid_handle.set_capability(SetCapabilityInfo::Msi(set_cap_info), SubmissionContext::new()).await.expect("xhcid: failed to set capability");
         log::info!("Enabled MSI");
 
         (InterruptMethod::Msi(Mutex::new(capability)), Some(InterruptSources::Msi(vec!(interrupt_handle))))
@@ -183,10 +183,9 @@ fn main() {
         .attach_to_kernel()
         .expect("xhcid: failed to attach event queue to kernel");
 
-    let reactor = redox_iou::reactor::ReactorBuilder::new()
-        .with_primary_instance(main_instance);
-    let reactor = unsafe { reactor.assume_trusted_instance() };
-    let reactor = reactor.build();
+    let reactor = unsafe {redox_iou::reactor::ReactorBuilder::new()
+        .with_trusted_primary_instance(main_instance)
+        .build() };
 
     let executor = redox_iou::executor::Executor::with_reactor(Arc::clone(&reactor));
 
@@ -194,7 +193,7 @@ fn main() {
     let mut pcid_handle = executor.run(PcidServerHandle::connect_using_iouring(reactor.handle(), &address)).expect("xhcid: failed to setup channel to pcid");
     log::debug!("Connected");
     log::debug!("Fetching config...");
-    let pci_config = executor.run(pcid_handle.fetch_config(Priority::default())).expect("xhcid: failed to fetch config");
+    let pci_config = executor.run(pcid_handle.fetch_config(SubmissionContext::new())).expect("xhcid: failed to fetch config");
     log::debug!("XHCI PCI CONFIG: {:?}", pci_config);
 
     let bar = PciBar::parse_00_header_bars(pci_config.func.bars).unwrap()[0];

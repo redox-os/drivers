@@ -6,7 +6,7 @@ use std::{env, mem};
 use syscall::{CloneFlags, Map, MapFlags, Event, EventFlags, Packet, SchemeMut};
 use syscall::io_uring::{self, v1::{IoUringSqeFlags, Priority}};
 
-use redox_iou::instance::ConsumerInstanceBuilder;
+use redox_iou::redox::instance::ConsumerInstanceBuilder;
 use xhcid_interface::{ConfigureEndpointsReq, DeviceReqData, XhciClientHandle};
 
 pub mod protocol;

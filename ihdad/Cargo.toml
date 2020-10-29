@@ -6,6 +6,7 @@ edition = "2018"
 [dependencies]
 bitflags = "0.7"
 spin = "0.4"
-redox_event = { git = "https://gitlab.redox-os.org/redox-os/event.git" }
-redox_syscall = "0.1"
 
+# TODO: Latest crates.
+redox_event = { git = "https://gitlab.redox-os.org/redox-os/event.git", rev = "c31e3d3d" }
+redox_syscall = "0.1"

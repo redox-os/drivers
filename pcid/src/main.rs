@@ -12,10 +12,11 @@ use syscall::data::Packet;
 use syscall::error::Error;
 use syscall::error::EINTR;
 use syscall::flag::{O_CREAT, O_EXCL, O_RDWR};
+use syscall::io_uring::v1::operation::{CloseFlags, ReadFlags, WriteFlags};
 use syscall::scheme::Scheme as _;
 
 use redox_iou::executor::Executor;
-use redox_iou::instance::ConsumerInstanceBuilder;
+use redox_iou::redox::instance::ConsumerInstanceBuilder;
 use redox_iou::reactor::{ReactorBuilder, SubmissionContext};
 
 use redox_log::{OutputBuilder, RedoxLogger};
@@ -381,7 +382,7 @@ impl State {
 }
 
 fn process_config(config: &Config, device_tree: &DeviceTree, state: &Arc<State>) {
-    // TODO: Something faster than O(n^2)!
+    // TODO: Something faster than O(nm)!
 
     for (&addr, func) in device_tree.functions.iter() {
         find_and_spawn_subdriver(addr, func, config, state, device_tree.uses_seg_groups);
@@ -933,34 +934,13 @@ fn setup_scheme(
         .and_log_err_as_error("failed to map io_uring offsets")?
         .attach_to_kernel()
         .and_log_err_as_error("failed to attach io_uring to kernel")?;
-    println!(
-        "#SQ = {} #CQ = {}",
-        unsafe {
-            consumer_instance
-                .sender()
-                .as_64()
-                .unwrap()
-                .ring_header()
-                .size
-        },
-        unsafe {
-            consumer_instance
-                .receiver()
-                .as_64()
-                .unwrap()
-                .ring_header()
-                .size
-        }
-    );
 
-    let reactor = {
+    let reactor = unsafe {
         let mut reactor_builder = ReactorBuilder::new();
 
         // safe because we're attaching it to the kernel
-        reactor_builder = unsafe { reactor_builder.assume_trusted_instance() };
-
         reactor_builder
-            .with_primary_instance(consumer_instance)
+            .with_trusted_primary_instance(consumer_instance)
             .build()
     };
     let executor = Executor::with_reactor(reactor);
@@ -972,7 +952,7 @@ fn setup_scheme(
 
     const SIMULTANEOUS_PACKET_COUNT: usize = 64;
 
-    let main_ring = handle.reactor().primary_instance();
+    let main_ring = handle.reactor().primary_instances().next().unwrap();
 
     let scheme_fut = async move {
         let scheme = PcidScheme::new(spawn_handle, reactor_handle, tree, state);
@@ -988,7 +968,7 @@ fn setup_scheme(
                         packets.as_ptr() as *mut u8,
                         packets.len() * mem::size_of::<Packet>(),
                     );
-                    match handle.read_unchecked(main_ring, SubmissionContext::new(), schemefd, packet_buf).await {
+                    match handle.read_unchecked(main_ring, SubmissionContext::new(), schemefd, packet_buf, ReadFlags::empty()).await {
                         Ok(count) => break 'retry_reading count,
                         Err(error) if error == Error::new(EINTR) => continue 'retry_reading,
                         Err(other) => {
@@ -1016,7 +996,7 @@ fn setup_scheme(
                 let packets = &mut packets[..packets_read];
 
                 for mut packet in packets {
-                    // TODO: scheme.async_handle if required
+                    // TODO: scheme.async_handle if blocking were to be possible
                     log::debug!("Packet previously: {:?}", packet);
                     scheme.handle(&mut packet);
                     log::debug!("Packet after: {:?}", packet);
@@ -1029,7 +1009,7 @@ fn setup_scheme(
                         packets.as_ptr() as *const u8,
                         packets_read * mem::size_of::<Packet>(),
                     );
-                    match handle.write_unchecked(main_ring, SubmissionContext::new(), schemefd, packet_buf).await {
+                    match handle.write_unchecked(main_ring, SubmissionContext::new(), schemefd, packet_buf, WriteFlags::empty()).await {
                         Ok(count) => break 'retry_writing count,
                         Err(error) if error == Error::new(EINTR) => continue 'retry_writing,
                         Err(other) => {
@@ -1052,10 +1032,9 @@ fn setup_scheme(
         unsafe {
             handle.close(
                 main_ring, SubmissionContext::new(), schemefd, // unused since a scheme socket ain't a disk
-                true,
-            )
+                CloseFlags::empty(),
+            ).await
         }
-        .await
         .and_log_err_as_error("failed to close scheme socket")?;
 
         Ok(())

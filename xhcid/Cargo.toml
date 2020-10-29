@@ -18,10 +18,10 @@ futures = { version = "0.3", features = ["thread-pool"] }
 plain = "0.2"
 lazy_static = "1.4"
 log = "0.4"
-redox-iou = { git = "https://gitlab.redox-os.org/redox-os/redox-iou.git" }
+redox-iou = { git = "https://gitlab.redox-os.org/redox-os/redox-iou.git", branch = "linux" }
 redox-log = { git = "https://gitlab.redox-os.org/redox-os/redox-log.git", tag = "v0.1.1" }
 #redox_syscall = { git = "https://gitlab.redox-os.org/redox-os/syscall.git" }
-redox_syscall = { git = "https://gitlab.redox-os.org/4lDO2/syscall.git", branch = "io_uring" }
+redox_syscall = { git = "https://gitlab.redox-os.org/4lDO2/syscall.git", branch = "incompat-io_uring-fix", features = ["std"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 smallvec = { version = "1", features = ["serde"] }

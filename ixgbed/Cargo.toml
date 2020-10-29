@@ -5,5 +5,6 @@ version = "1.0.0"
 [dependencies]
 bitflags = "1.0"
 netutils = { git = "https://gitlab.redox-os.org/redox-os/netutils.git", branch = "redox-unix" }
-redox_event = { git = "https://gitlab.redox-os.org/redox-os/event.git" }
+# TODO: Update crates.
+redox_event = { git = "https://gitlab.redox-os.org/redox-os/event.git", rev = "c31e3d3d" }
 redox_syscall = "0.1.54"

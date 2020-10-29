@@ -5,5 +5,6 @@ edition = "2018"
 
 [dependencies]
 orbclient = "0.3.27"
-redox_event = { git = "https://gitlab.redox-os.org/redox-os/event.git" }
+# TODO: Use the latest redox_event and redox_syscall crates.
+redox_event = { git = "https://gitlab.redox-os.org/redox-os/event.git", rev = "c31e3d3d" }
 redox_syscall = "0.1"

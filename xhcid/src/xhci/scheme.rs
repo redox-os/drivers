@@ -14,10 +14,10 @@ use syscall::{
     ENODEV, ENOSYS, ENOTDIR, ENXIO, EOPNOTSUPP, EOVERFLOW, EPERM, EPROTO, ESPIPE, MODE_CHR, MODE_DIR,
     MODE_FILE, O_CREAT, O_DIRECTORY, O_RDONLY, O_RDWR, O_STAT, O_WRONLY, SEEK_CUR, SEEK_END,
     SEEK_SET, Packet, EFAULT, StatVfs,
-    SYS_OPEN, SYS_READ, SYS_RECV_IORING, SYS_WRITE, SYS_LSEEK, SYS_FPATH, SYS_FSTAT, SYS_CLOSE, EventFlags, O_NONBLOCK, F_SETFL, F_GETFL, SYS_FCNTL, SYS_FEVENT, EWOULDBLOCK,
+    SYS_OPEN, SYS_READ, SYS_IORING_RECV, SYS_WRITE, SYS_LSEEK, SYS_FPATH, SYS_FSTAT, SYS_CLOSE, EventFlags, O_NONBLOCK, F_SETFL, F_GETFL, SYS_FCNTL, SYS_FEVENT, EWOULDBLOCK,
 };
 
-use redox_iou::instance::ProducerInstance;
+use redox_iou::redox::instance::ProducerInstance;
 
 use futures::FutureExt;
 use log::{debug, error, info, warn, trace};
@@ -1425,7 +1425,7 @@ impl Xhci {
             } else {
                 Err(Error::new(EFAULT))
             },*/
-            SYS_RECV_IORING => {
+            SYS_IORING_RECV => {
                 SchemeHandleOutput::direct(self.scheme_recv_io_uring_raw(ctx, unsafe { slice::from_raw_parts(packet.b as *const u8, packet.c) }))
             }
             SYS_CLOSE => SchemeHandleOutput::direct(self.scheme_close(packet.b)),

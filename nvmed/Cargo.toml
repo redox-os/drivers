@@ -10,8 +10,9 @@ crossbeam-channel = "0.4"
 futures = "0.3"
 log = "0.4"
 redox-log = { git = "https://gitlab.redox-os.org/redox-os/redox-log.git", tag = "v0.1.0" }
+redox-iou = { git = "https://gitlab.redox-os.org/redox-os/redox-iou.git", branch = "linux" }
 #redox_syscall = { git = "https://gitlab.redox-os.org/redox-os/syscall.git" }
-redox_syscall = { git = "https://gitlab.redox-os.org/4lDO2/syscall.git", branch = "io_uring" }
+redox_syscall = { git = "https://gitlab.redox-os.org/4lDO2/syscall.git", branch = "incompat-io_uring-fix" }
 partitionlib = { git = "https://gitlab.redox-os.org/redox-os/partitionlib.git" }
 smallvec = "1"
 block-io-wrapper = { path = "../block-io-wrapper" }
