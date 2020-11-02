@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::{mem, slice, str};
 
 use orbclient::{Event, EventOption};
-use syscall::{Result, Error, EACCES, EBADF, EINVAL, ENOENT, O_NONBLOCK, Map, SchemeMut};
+use syscall::{Error, EventFlags, EACCES, EBADF, EINVAL, ENOENT, Map, OldMap, O_NONBLOCK, Result, SchemeMut};
 
 use crate::display::Display;
 use crate::screen::{Screen, GraphicScreen, TextScreen};
@@ -17,7 +17,7 @@ pub enum HandleKind {
 pub struct Handle {
     pub kind: HandleKind,
     pub flags: usize,
-    pub events: usize,
+    pub events: EventFlags,
     pub notified_read: bool
 }
 
@@ -81,7 +81,7 @@ impl SchemeMut for DisplayScheme {
                 self.handles.insert(id, Handle {
                     kind: HandleKind::Input,
                     flags: flags,
-                    events: 0,
+                    events: EventFlags::empty(),
                     notified_read: false
                 });
 
@@ -106,7 +106,7 @@ impl SchemeMut for DisplayScheme {
                 self.handles.insert(id, Handle {
                     kind: HandleKind::Screen(screen_i),
                     flags: flags,
-                    events: 0,
+                    events: EventFlags::empty(),
                     notified_read: false
                 });
 
@@ -132,14 +132,14 @@ impl SchemeMut for DisplayScheme {
         Ok(new_id)
     }
 
-    fn fevent(&mut self, id: usize, flags: usize) -> Result<usize> {
+    fn fevent(&mut self, id: usize, flags: syscall::EventFlags) -> Result<syscall::EventFlags> {
         let handle = self.handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
         handle.notified_read = false;
 
         if let HandleKind::Screen(_screen_i) = handle.kind {
             handle.events = flags;
-            Ok(0)
+            Ok(syscall::EventFlags::empty())
         } else {
             Err(Error::new(EBADF))
         }
@@ -155,6 +155,14 @@ impl SchemeMut for DisplayScheme {
         }
 
         Err(Error::new(EBADF))
+    }
+    fn fmap_old(&mut self, id: usize, map: &syscall::OldMap) -> syscall::Result<usize> {
+        self.fmap(id, &Map {
+            offset: map.offset,
+            size: map.size,
+            flags: map.flags,
+            address: 0,
+        })
     }
 
     fn fpath(&mut self, id: usize, buf: &mut [u8]) -> Result<usize> {
@@ -274,12 +282,12 @@ impl SchemeMut for DisplayScheme {
         }
     }
 
-    fn seek(&mut self, id: usize, pos: usize, whence: usize) -> Result<usize> {
+    fn seek(&mut self, id: usize, pos: isize, whence: usize) -> Result<isize> {
         let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
         if let HandleKind::Screen(screen_i) = handle.kind {
             if let Some(screen) = self.screens.get_mut(&screen_i) {
-                return screen.seek(pos, whence);
+                return screen.seek(pos, whence).map(|pos| pos as isize);
             }
         }
 

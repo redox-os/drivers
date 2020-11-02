@@ -91,13 +91,13 @@ impl Screen for GraphicScreen {
         Ok(size * 4)
     }
 
-    fn seek(&mut self, pos: usize, whence: usize) -> Result<usize> {
+    fn seek(&mut self, pos: isize, whence: usize) -> Result<usize> {
         let size = self.display.offscreen.len();
 
         self.seek = match whence {
-            SEEK_SET => cmp::min(size, pos/4),
-            SEEK_CUR => cmp::max(0, cmp::min(size as isize, self.seek as isize + (pos/4) as isize)) as usize,
-            SEEK_END => cmp::max(0, cmp::min(size as isize, size as isize + (pos/4) as isize)) as usize,
+            SEEK_SET => cmp::min(size, (pos/4) as usize),
+            SEEK_CUR => cmp::max(0, cmp::min(size as isize, self.seek as isize + (pos/4))) as usize,
+            SEEK_END => cmp::max(0, cmp::min(size as isize, size as isize + (pos/4))) as usize,
             _ => return Err(Error::new(EINVAL))
         };
 

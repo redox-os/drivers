@@ -209,7 +209,7 @@ impl Screen for TextScreen {
         Ok(buf.len())
     }
 
-    fn seek(&mut self, _pos: usize, _whence: usize) -> Result<usize> {
+    fn seek(&mut self, _pos: isize, _whence: usize) -> Result<usize> {
         Ok(0)
     }
 

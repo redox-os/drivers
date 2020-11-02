@@ -24,7 +24,7 @@ pub trait Screen {
 
     fn write(&mut self, buf: &[u8], sync: bool) -> Result<usize>;
 
-    fn seek(&mut self, pos: usize, whence: usize) -> Result<usize>;
+    fn seek(&mut self, pos: isize, whence: usize) -> Result<usize>;
 
     fn sync(&mut self);
 
