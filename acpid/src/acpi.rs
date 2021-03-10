@@ -101,7 +101,7 @@ impl Deref for PhysmapGuard {
 impl Drop for PhysmapGuard {
     fn drop(&mut self) {
         unsafe {
-            syscall::physfree(self.virt as usize, self.size);
+            let _ = syscall::physunmap(self.virt as usize);
         }
     }
 }
@@ -209,6 +209,31 @@ pub struct AcpiContext {
     pub next_ctx: RwLock<u64>,
 }
 impl AcpiContext {
+    pub fn init(rxsdt_physaddrs: impl Iterator<Item = u64>) -> Self {
+        let tables = rxsdt_physaddrs.map(|physaddr| {
+            let physaddr: usize = physaddr
+                .try_into()
+                .expect("expected ACPI addresses to be compatible with the current word size");
+
+            log::info!("TABLE AT {:#>08X}", physaddr);
+
+            Sdt::load_from_physical(physaddr)
+                .expect("failed to load physical SDT")
+        }).collect::<Vec<Sdt>>();
+
+        let mut this = Self {
+            tables,
+            dsdt: None,
+            fadt: None,
+            namespace: RwLock::new(None),
+            next_ctx: RwLock::new(0),
+        };
+
+        Fadt::init(&mut this);
+
+        this
+    }
+
     pub fn dsdt(&self) -> Option<&Dsdt> {
         self.dsdt.as_ref()
     }

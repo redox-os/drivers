@@ -4,16 +4,18 @@ use std::convert::{TryFrom, TryInto};
 use std::io::prelude::*;
 use std::fs::{File, OpenOptions};
 use std::mem;
-use std::os::unix::io::AsRawFd;
+use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::sync::Arc;
 
 use redox_log::RedoxLogger;
+use syscall::scheme::Scheme;
 
-use syscall::data::Event;
+use syscall::data::{Event, Packet};
 use syscall::flag::EventFlags;
 
 mod acpi;
 mod aml;
+mod scheme;
 
 // TODO: Perhaps use the acpi and aml crates?
 
@@ -77,6 +79,41 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
 }
 
 fn main() {
+    let mut pipes = [0; 2];
+    syscall::pipe2(&mut pipes, 0).expect("acpid: failed to create synchronization pipe");
+    let [read_part, write_part] = pipes;
+
+    let mut read_part = unsafe { File::from_raw_fd(read_part as RawFd) };
+    let mut write_part = unsafe { File::from_raw_fd(write_part as RawFd) };
+
+    let pid = unsafe { syscall::clone(syscall::CloneFlags::empty()).expect("failed to daemonize acpid") };
+
+    if pid != 0 {
+        drop(write_part);
+
+        let mut res = [0];
+        let bytes_read = read_part.read(&mut res).expect("acpid: failed to read from sync pipe");
+
+        let exit_code = if bytes_read == res.len() {
+            res[0]
+        } else {
+            1
+        };
+        drop(read_part);
+        std::process::exit(exit_code.into());
+    }
+    drop(read_part);
+
+    let mut scheme_socket = OpenOptions::new()
+        .write(true)
+        .read(true)
+        .create(true)
+        .open(":acpi")
+        .expect("acpid: failed to open scheme socket");
+
+    let _ = write_part.write(&[0]).expect("acpid: failed to write to sync pipe");
+    drop(write_part);
+
     setup_logging();
 
     let rxsdt_raw_data: Arc<[u8]> = std::fs::read("kernel/acpi:rxsdt")
@@ -109,17 +146,7 @@ fn main() {
         _ => panic!("acpid: expected [RX]SDT from kernel to be either of those"),
     };
 
-    for physaddr in physaddrs_iter {
-        let physaddr: usize = physaddr
-            .try_into()
-            .expect("expected ACPI addresses to be compatible with the current word size");
-
-        log::info!("TABLE AT {:#>08X}", physaddr);
-
-        let sdt = self::acpi::Sdt::load_from_physical(physaddr)
-            .expect("failed to load physical SDT");
-        dbg!(sdt);
-    }
+    let acpi_context = self::acpi::AcpiContext::init(physaddrs_iter);
 
     // TODO: I/O permission bitmap
     unsafe { syscall::iopl(3) }.expect("acpid: failed to set I/O privilege level to Ring 3");
@@ -136,24 +163,62 @@ fn main() {
 
     syscall::setrens(0, 0).expect("acpid: failed to enter null namespace");
 
-    event_queue.write_all(&Event {
+    let _ = event_queue.write(&Event {
         id: shutdown_pipe.as_raw_fd() as usize,
         flags: EventFlags::EVENT_READ,
         data: 0,
     }).expect("acpid: failed to register shutdown pipe for event queue");
 
+    let _ = event_queue.write(&Event {
+        id: scheme_socket.as_raw_fd() as usize,
+        flags: EventFlags::EVENT_READ,
+        data: 1,
+    }).expect("acpid: failed to register scheme socket for event queue");
+
+    let scheme = self::scheme::AcpiScheme::new(&acpi_context);
+
+    let mut event = Event::default();
+    let mut packet = Packet::default();
+
     loop {
-        let mut event = Event::default();
-        event_queue.read_exact(&mut event).expect("acpid: failed to read from event queue");
+        let _ = event_queue.read(&mut event).expect("acpid: failed to read from event queue");
 
         if event.flags.contains(EventFlags::EVENT_READ) && event.id == shutdown_pipe.as_raw_fd() as usize {
             break;
+        }
+        if !event.flags.contains(EventFlags::EVENT_NONE) || event.id != scheme_socket.as_raw_fd() as usize {
+            continue;
+        }
+
+        let bytes_read = scheme_socket.read(&mut packet).expect("acpid: failed to read from scheme socket");
+
+        if bytes_read == 0 {
+            log::info!("Terminating acpid driver, without shutting down the main system.");
+            return;
+        }
+
+        if bytes_read < mem::size_of::<Packet>() {
+            log::error!("Scheme socket read less than a single packet.");
+        }
+
+        scheme.handle(&mut packet);
+
+        let bytes_written = scheme_socket.write(&packet).expect("acpid: failed to write to scheme socket");
+
+        if bytes_written == 0 {
+            log::info!("Terminating acpid driver, without shutting down the main system.");
+            return;
+        }
+
+        if bytes_written < mem::size_of::<Packet>() {
+            log::error!("Scheme socket read less than a single packet.");
         }
     }
 
     drop(shutdown_pipe);
     drop(event_queue);
 
-    aml::set_global_s_state(todo!(), 5);
-    unreachable!();
+    aml::set_global_s_state(&acpi_context, 5);
+
+    unreachable!("System should have shut down before this is entered");
 }
