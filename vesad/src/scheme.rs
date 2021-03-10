@@ -72,8 +72,8 @@ impl DisplayScheme {
 }
 
 impl SchemeMut for DisplayScheme {
-    fn open(&mut self, path: &[u8], flags: usize, uid: u32, _gid: u32) -> Result<usize> {
-        if path == b"input" {
+    fn open(&mut self, path_str: &str, flags: usize, uid: u32, _gid: u32) -> Result<usize> {
+        if path_str == "input" {
             if uid == 0 {
                 let id = self.next_id;
                 self.next_id += 1;
@@ -90,7 +90,6 @@ impl SchemeMut for DisplayScheme {
                 Err(Error::new(EACCES))
             }
         } else {
-            let path_str = str::from_utf8(path).unwrap_or("").trim_matches('/');
             let mut parts = path_str.split('/');
             let screen_i = parts.next().unwrap_or("").parse::<usize>().unwrap_or(0);
             if self.screens.contains_key(&screen_i) {
