@@ -7,6 +7,7 @@ dependencies = [
  "log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "parking_lot 0.11.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "plain 0.2.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "redox-log 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "redox_syscall 0.2.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "thiserror 1.0.20 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -1025,6 +1026,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "redox-log"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "chrono 0.4.11 (registry+https://github.com/rust-lang/crates.io-index)",
+ "log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
+ "smallvec 1.6.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "termion 1.5.5 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
 name = "redox_event"
 version = "0.1.0"
 source = "git+https://gitlab.redox-os.org/redox-os/event.git#c31e3d3d5f44d60ff9fec2b1ee58b982e72c0d77"
@@ -1656,6 +1668,7 @@ dependencies = [
 "checksum raw-window-handle 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)" = "0a441a7a6c80ad6473bd4b74ec1c9a4c951794285bf941c2126f607c72e48211"
 "checksum rdrand 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)" = "678054eb77286b51581ba43620cc911abf02758c91f93f479767aed0f90458b2"
 "checksum redox-log 0.1.0 (git+https://gitlab.redox-os.org/redox-os/redox-log.git?tag=v0.1.0)" = "<none>"
+"checksum redox-log 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)" = "cbf6d33a003a5c0b94ec11f10c7c797303f236592964ddb1bfb93e1b438a1557"
 "checksum redox_event 0.1.0 (git+https://gitlab.redox-os.org/redox-os/event.git)" = "<none>"
 "checksum redox_syscall 0.1.57 (registry+https://github.com/rust-lang/crates.io-index)" = "41cc0f7e4d5d4544e8861606a285bb08d3e70712ccc7d2b84d7c0ccfaf4b05ce"
 "checksum redox_syscall 0.2.0 (git+https://gitlab.redox-os.org/redox-os/syscall.git)" = "<none>"

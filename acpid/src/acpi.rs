@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::convert::{TryFrom, TryInto};
-use std::mem;
 use std::ops::Deref;
 use std::sync::Arc;
+use std::{fmt, mem};
 
 use syscall::flag::PhysmapFlags;
 
@@ -142,7 +142,7 @@ impl Sdt {
         assert!(pages.len() >= mem::size_of::<SdtHeader>());
         let sdt_mem = &pages[physaddr_page_offset..];
 
-        let sdt = plain::from_bytes::<SdtHeader>(&pages[mem::size_of::<SdtHeader>()..])
+        let sdt = plain::from_bytes::<SdtHeader>(&sdt_mem[..mem::size_of::<SdtHeader>()])
             .expect("either alignment is wrong, or the length is too short, both of which are already checked for");
 
         let total_length = sdt.length();
@@ -156,18 +156,19 @@ impl Sdt {
 
         let mut left = extended_length;
         let mut offset = physaddr_start_page + page_table_count * PAGE_SIZE;
+
         let length_per_iteration = PAGE_SIZE * SIMULTANEOUS_PAGE_COUNT;
 
         while left > 0 {
             let to_copy = std::cmp::min(left, length_per_iteration);
-            let pages = PhysmapGuard::map(offset, length_per_iteration)?;
+            let additional_pages = PhysmapGuard::map(offset, length_per_iteration)?;
 
-            loaded.extend(&pages[..to_copy]);
+            loaded.extend(&additional_pages[..to_copy]);
 
             left -= to_copy;
             offset += to_copy;
         }
-        assert_eq!(offset, loaded.len());
+        assert_eq!(left, 0);
 
         Self::new(loaded.into()).map_err(Into::into)
     }
@@ -185,6 +186,15 @@ impl Deref for Sdt {
 impl Sdt {
     pub fn data(&self) -> &[u8] {
         &self.0[mem::size_of::<SdtHeader>()..]
+    }
+}
+
+impl fmt::Debug for Sdt {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Sdt")
+            .field("header", &*self as &SdtHeader)
+            .field("extra_len", &self.data().len())
+            .finish()
     }
 }
 

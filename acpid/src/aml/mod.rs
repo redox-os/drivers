@@ -94,7 +94,7 @@ fn init_namespace(context: &AcpiContext) -> HashMap<String, AmlValue> {
 
 pub fn set_global_s_state(context: &AcpiContext, state: u8) {
     if state != 5 {
-        return
+        return;
     }
     let fadt = match context.fadt() {
         Some(fadt) => fadt,
@@ -140,4 +140,8 @@ pub fn set_global_s_state(context: &AcpiContext, state: u8) {
 
     log::info!("Shutdown with ACPI outw(0x{:X}, 0x{:X})", port, val);
     Pio::<u16>::new(port).write(val);
+
+    loop {
+        core::hint::spin_loop();
+    }
 }
