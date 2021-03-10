@@ -180,7 +180,7 @@ pub fn parse_def_var_package(data: &[u8],
     let mut elements = parse_package_elements_list(&data[1 + pkg_length_len + num_elements.len ..
                                                          1 + pkg_length], ctx)?.val.get_as_package()?;
 
-    let numelements = num_elements.val.get_as_integer()? as usize;
+    let numelements = num_elements.val.get_as_integer(ctx.acpi_context())? as usize;
 
     if elements.len() > numelements {
         elements = elements[0 .. numelements].to_vec();
@@ -215,7 +215,7 @@ fn parse_package_elements_list(data: &[u8],
         } else {
             let d = parse_name_string(&data[current_offset..], ctx)?;
             AmlParseType {
-                val: AmlValue::ObjectReference(ObjectReference::Object(d.val.get_as_string()?)),
+                val: AmlValue::ObjectReference(ObjectReference::Object(d.val.get_as_string(ctx.acpi_context())?)),
                 len: d.len
             }
         };
@@ -246,7 +246,7 @@ pub fn parse_def_buffer(data: &[u8],
     let buffer_size = parse_term_arg(&data[1 + pkg_length_len..], ctx)?;
     let mut byte_list = data[1 + pkg_length_len + buffer_size.len .. 1 + pkg_length].to_vec().clone();
 
-    byte_list.truncate(buffer_size.val.get_as_integer()? as usize);
+    byte_list.truncate(buffer_size.val.get_as_integer(ctx.acpi_context())? as usize);
 
     Ok(AmlParseType {
         val: AmlValue::Buffer(byte_list),
@@ -269,7 +269,7 @@ fn parse_def_ref_of(data: &[u8],
     let obj = parse_super_name(&data[1..], ctx)?;
     let res = match obj.val {
         AmlValue::String(ref s) => {
-            match ctx.get(AmlValue::String(s.clone()))? {
+            match ctx.get(ctx.acpi_context(), AmlValue::String(s.clone()))? {
                 AmlValue::None => return Err(AmlError::AmlValueError),
                 _ => ObjectReference::Object(s.clone())
             }
@@ -297,7 +297,7 @@ fn parse_def_deref_of(data: &[u8],
     parser_opcode!(data, 0x83);
 
     let obj = parse_term_arg(&data[1..], ctx)?;
-    let res = ctx.get(obj.val)?;
+    let res = ctx.get(ctx.acpi_context(), obj.val)?;
 
     match res {
         AmlValue::None => Err(AmlError::AmlValueError),
@@ -327,7 +327,7 @@ fn parse_def_acquire(data: &[u8],
     let starting_time_ns = nanoseconds + (seconds * 1_000_000_000);
 
     loop {
-        match ctx.acquire_mutex(obj.val.clone()) {
+        match ctx.acquire_mutex(ctx.acpi_context(), obj.val.clone()) {
             Err(e) => return Err(e),
             Ok(b) => if b {
                 return Ok(AmlParseType {
@@ -366,9 +366,9 @@ fn parse_def_increment(data: &[u8],
 
     let obj = parse_super_name(&data[1..], ctx)?;
 
-    let _namespace = ctx.prelock();
-    let value = AmlValue::Integer(ctx.get(obj.val.clone())?.get_as_integer()? + 1);
-    let _ = ctx.modify(obj.val, value.clone());
+    let _namespace = ctx.prelock(ctx.acpi_context());
+    let value = AmlValue::Integer(ctx.get(ctx.acpi_context(), obj.val.clone())?.get_as_integer(ctx.acpi_context())? + 1);
+    let _ = ctx.modify(ctx.acpi_context(), obj.val, value.clone());
 
     Ok(AmlParseType {
         val: value,
@@ -393,7 +393,7 @@ fn parse_def_index(data: &[u8],
     let target = parse_target(&data[1 + obj.len + idx.len..], ctx)?;
 
     let reference = AmlValue::ObjectReference(ObjectReference::Index(Box::new(obj.val), Box::new(idx.val)));
-    let _ = ctx.modify(target.val, reference.clone());
+    let _ = ctx.modify(ctx.acpi_context(), target.val, reference.clone());
 
     Ok(AmlParseType {
         val: reference,
@@ -416,7 +416,7 @@ fn parse_def_land(data: &[u8],
     let lhs = parse_term_arg(&data[1..], ctx)?;
     let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
 
-    let result = if lhs.val.get_as_integer()? > 0 && rhs.val.get_as_integer()? > 0 { 1 } else { 0 };
+    let result = if lhs.val.get_as_integer(ctx.acpi_context())? > 0 && rhs.val.get_as_integer(ctx.acpi_context())? > 0 { 1 } else { 0 };
 
     Ok(AmlParseType {
         val: AmlValue::IntegerConstant(result),
@@ -439,7 +439,7 @@ fn parse_def_lequal(data: &[u8],
     let lhs = parse_term_arg(&data[1..], ctx)?;
     let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
 
-    let result = if lhs.val.get_as_integer()? == rhs.val.get_as_integer()? { 1 } else { 0 };
+    let result = if lhs.val.get_as_integer(ctx.acpi_context())? == rhs.val.get_as_integer(ctx.acpi_context())? { 1 } else { 0 };
 
     Ok(AmlParseType {
         val: AmlValue::IntegerConstant(result),
@@ -462,7 +462,7 @@ fn parse_def_lgreater(data: &[u8],
     let lhs = parse_term_arg(&data[1..], ctx)?;
     let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
 
-    let result = if lhs.val.get_as_integer()? > rhs.val.get_as_integer()? { 1 } else { 0 };
+    let result = if lhs.val.get_as_integer(ctx.acpi_context())? > rhs.val.get_as_integer(ctx.acpi_context())? { 1 } else { 0 };
 
     Ok(AmlParseType {
         val: AmlValue::IntegerConstant(result),
@@ -485,7 +485,7 @@ fn parse_def_lless(data: &[u8],
     let lhs = parse_term_arg(&data[1..], ctx)?;
     let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
 
-    let result = if lhs.val.get_as_integer()? < rhs.val.get_as_integer()? { 1 } else { 0 };
+    let result = if lhs.val.get_as_integer(ctx.acpi_context())? < rhs.val.get_as_integer(ctx.acpi_context())? { 1 } else { 0 };
 
     Ok(AmlParseType {
         val: AmlValue::IntegerConstant(result),
@@ -506,7 +506,7 @@ fn parse_def_lnot(data: &[u8],
     parser_opcode!(data, 0x92);
 
     let operand = parse_term_arg(&data[1..], ctx)?;
-    let result = if operand.val.get_as_integer()? == 0 { 1 } else { 0 };
+    let result = if operand.val.get_as_integer(ctx.acpi_context())? == 0 { 1 } else { 0 };
 
     Ok(AmlParseType {
         val: AmlValue::IntegerConstant(result),
@@ -529,7 +529,7 @@ fn parse_def_lor(data: &[u8],
     let lhs = parse_term_arg(&data[1..], ctx)?;
     let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
 
-    let result = if lhs.val.get_as_integer()? > 0 || rhs.val.get_as_integer()? > 0 { 1 } else { 0 };
+    let result = if lhs.val.get_as_integer(ctx.acpi_context())? > 0 || rhs.val.get_as_integer(ctx.acpi_context())? > 0 { 1 } else { 0 };
 
     Ok(AmlParseType {
         val: AmlValue::IntegerConstant(result),
@@ -554,14 +554,14 @@ fn parse_def_to_hex_string(data: &[u8],
 
     let res = match operand.val {
         AmlValue::Integer(_) => {
-            let result: String = format!("{:X}", operand.val.get_as_integer()?);
+            let result: String = format!("{:X}", operand.val.get_as_integer(ctx.acpi_context())?);
             AmlValue::String(result)
         },
         AmlValue::String(s) => AmlValue::String(s),
         AmlValue::Buffer(_) => {
             let mut string: String = String::new();
 
-            for b in operand.val.get_as_buffer()? {
+            for b in operand.val.get_as_buffer(ctx.acpi_context())? {
                 string.push_str(&format!("{:X}", b));
             }
 
@@ -570,7 +570,7 @@ fn parse_def_to_hex_string(data: &[u8],
         _ => return Err(AmlError::AmlValueError)
     };
 
-    let _ = ctx.modify(target.val, res.clone());
+    let _ = ctx.modify(ctx.acpi_context(), target.val, res.clone());
 
     Ok(AmlParseType {
         val: res,
@@ -593,8 +593,8 @@ fn parse_def_to_buffer(data: &[u8],
     let operand = parse_term_arg(&data[2..], ctx)?;
     let target = parse_target(&data[2 + operand.len..], ctx)?;
 
-    let res = AmlValue::Buffer(operand.val.get_as_buffer()?);
-    let _ = ctx.modify(target.val, res.clone());
+    let res = AmlValue::Buffer(operand.val.get_as_buffer(ctx.acpi_context())?);
+    let _ = ctx.modify(ctx.acpi_context(), target.val, res.clone());
 
     Ok(AmlParseType {
         val: res,
@@ -617,7 +617,7 @@ fn parse_def_to_bcd(data: &[u8],
     let operand = parse_term_arg(&data[2..], ctx)?;
     let target = parse_target(&data[2 + operand.len..], ctx)?;
 
-    let mut i = operand.val.get_as_integer()?;
+    let mut i = operand.val.get_as_integer(ctx.acpi_context())?;
     let mut result = 0;
 
     while i != 0 {
@@ -627,7 +627,7 @@ fn parse_def_to_bcd(data: &[u8],
     }
 
     let result = AmlValue::Integer(result);
-    let _ = ctx.modify(target.val, result.clone());
+    let _ = ctx.modify(ctx.acpi_context(), target.val, result.clone());
 
     Ok(AmlParseType {
         val: result,
@@ -651,14 +651,14 @@ fn parse_def_to_decimal_string(data: &[u8],
     let target = parse_target(&data[2 + operand.len..], ctx)?;
     let res = match operand.val {
         AmlValue::Integer(_) => {
-            let result: String = format!("{}", operand.val.get_as_integer()?);
+            let result: String = format!("{}", operand.val.get_as_integer(ctx.acpi_context())?);
             AmlValue::String(result)
         },
         AmlValue::String(s) => AmlValue::String(s),
         AmlValue::Buffer(_) => {
             let mut string: String = String::new();
 
-            for b in operand.val.get_as_buffer()? {
+            for b in operand.val.get_as_buffer(ctx.acpi_context())? {
                 string.push_str(&format!("{}", b));
             }
 
@@ -667,7 +667,7 @@ fn parse_def_to_decimal_string(data: &[u8],
         _ => return Err(AmlError::AmlValueError)
     };
 
-    let _ = ctx.modify(target.val, res.clone());
+    let _ = ctx.modify(ctx.acpi_context(), target.val, res.clone());
 
     Ok(AmlParseType {
         val: res,
@@ -690,9 +690,9 @@ fn parse_def_to_integer(data: &[u8],
     let operand = parse_term_arg(&data[2..], ctx)?;
     let target = parse_target(&data[2 + operand.len..], ctx)?;
 
-    let res = AmlValue::Integer(operand.val.get_as_integer()?);
+    let res = AmlValue::Integer(operand.val.get_as_integer(ctx.acpi_context())?);
 
-    let _ = ctx.modify(target.val, res.clone());
+    let _ = ctx.modify(ctx.acpi_context(), target.val, res.clone());
 
     Ok(AmlParseType {
         val: res,
@@ -716,16 +716,16 @@ fn parse_def_to_string(data: &[u8],
     let length = parse_term_arg(&data[1 + operand.len..], ctx)?;
     let target = parse_target(&data[1 + operand.len + length.len..], ctx)?;
 
-    let buf = operand.val.get_as_buffer()?;
+    let buf = operand.val.get_as_buffer(ctx.acpi_context())?;
     let mut string = match String::from_utf8(buf) {
         Ok(s) => s,
         Err(_) => return Err(AmlError::AmlValueError)
     };
 
-    string.truncate(length.val.get_as_integer()? as usize);
+    string.truncate(length.val.get_as_integer(ctx.acpi_context())? as usize);
     let res = AmlValue::String(string);
 
-    let _ = ctx.modify(target.val, res.clone());
+    let _ = ctx.modify(ctx.acpi_context(), target.val, res.clone());
 
     Ok(AmlParseType {
         val: res,
@@ -749,9 +749,9 @@ fn parse_def_subtract(data: &[u8],
     let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
     let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
 
-    let result = AmlValue::Integer(lhs.val.get_as_integer()? - rhs.val.get_as_integer()?);
+    let result = AmlValue::Integer(lhs.val.get_as_integer(ctx.acpi_context())? - rhs.val.get_as_integer(ctx.acpi_context())?);
 
-    let _ = ctx.modify(target.val, result.clone());
+    let _ = ctx.modify(ctx.acpi_context(), target.val, result.clone());
 
     Ok(AmlParseType {
         val: result,
@@ -772,7 +772,7 @@ fn parse_def_size_of(data: &[u8],
     parser_opcode!(data, 0x87);
 
     let name = parse_super_name(&data[1..], ctx)?;
-    let obj = ctx.get(name.val)?;
+    let obj = ctx.get(ctx.acpi_context(), name.val)?;
 
     let res = match obj {
         AmlValue::Buffer(ref v) => v.len(),
@@ -802,7 +802,7 @@ fn parse_def_store(data: &[u8],
     let operand = parse_term_arg(&data[1..], ctx)?;
     let target = parse_super_name(&data[1 + operand.len..], ctx)?;
 
-    let _ = ctx.modify(target.val.clone(), operand.val);
+    let _ = ctx.modify(ctx.acpi_context(), target.val.clone(), operand.val);
 
     Ok(AmlParseType {
         val: target.val,
@@ -826,9 +826,9 @@ fn parse_def_or(data: &[u8],
     let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
     let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
 
-    let result = AmlValue::Integer(lhs.val.get_as_integer()? | rhs.val.get_as_integer()?);
+    let result = AmlValue::Integer(lhs.val.get_as_integer(ctx.acpi_context())? | rhs.val.get_as_integer(ctx.acpi_context())?);
 
-    let _ = ctx.modify(target.val, result.clone());
+    let _ = ctx.modify(ctx.acpi_context(), target.val, result.clone());
 
     Ok(AmlParseType {
         val: result,
@@ -852,9 +852,9 @@ fn parse_def_shift_left(data: &[u8],
     let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
     let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
 
-    let result = AmlValue::Integer(lhs.val.get_as_integer()? >> rhs.val.get_as_integer()?);
+    let result = AmlValue::Integer(lhs.val.get_as_integer(ctx.acpi_context())? >> rhs.val.get_as_integer(ctx.acpi_context())?);
 
-    let _ = ctx.modify(target.val, result.clone());
+    let _ = ctx.modify(ctx.acpi_context(), target.val, result.clone());
 
     Ok(AmlParseType {
         val: result,
@@ -878,9 +878,9 @@ fn parse_def_shift_right(data: &[u8],
     let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
     let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
 
-    let result = AmlValue::Integer(lhs.val.get_as_integer()? << rhs.val.get_as_integer()?);
+    let result = AmlValue::Integer(lhs.val.get_as_integer(ctx.acpi_context())? << rhs.val.get_as_integer(ctx.acpi_context())?);
 
-    let _ = ctx.modify(target.val, result.clone());
+    let _ = ctx.modify(ctx.acpi_context(), target.val, result.clone());
 
     Ok(AmlParseType {
         val: result,
@@ -904,9 +904,9 @@ fn parse_def_add(data: &[u8],
     let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
     let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
 
-    let result = AmlValue::Integer(lhs.val.get_as_integer()? + rhs.val.get_as_integer()?);
+    let result = AmlValue::Integer(lhs.val.get_as_integer(ctx.acpi_context())? + rhs.val.get_as_integer(ctx.acpi_context())?);
 
-    let _ = ctx.modify(target.val, result.clone());
+    let _ = ctx.modify(ctx.acpi_context(), target.val, result.clone());
 
     Ok(AmlParseType {
         val: result,
@@ -930,9 +930,9 @@ fn parse_def_and(data: &[u8],
     let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
     let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
 
-    let result = AmlValue::Integer(lhs.val.get_as_integer()? & rhs.val.get_as_integer()?);
+    let result = AmlValue::Integer(lhs.val.get_as_integer(ctx.acpi_context())? & rhs.val.get_as_integer(ctx.acpi_context())?);
 
-    let _ = ctx.modify(target.val, result.clone());
+    let _ = ctx.modify(ctx.acpi_context(), target.val, result.clone());
 
     Ok(AmlParseType {
         val: result,
@@ -956,9 +956,9 @@ fn parse_def_xor(data: &[u8],
     let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
     let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
 
-    let result = AmlValue::Integer(lhs.val.get_as_integer()? ^ rhs.val.get_as_integer()?);
+    let result = AmlValue::Integer(lhs.val.get_as_integer(ctx.acpi_context())? ^ rhs.val.get_as_integer(ctx.acpi_context())?);
 
-    let _ = ctx.modify(target.val, result.clone());
+    let _ = ctx.modify(ctx.acpi_context(), target.val, result.clone());
 
     Ok(AmlParseType {
         val: result,
@@ -982,8 +982,8 @@ fn parse_def_concat_res(data: &[u8],
     let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
     let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
 
-    let mut buf1 = lhs.val.get_as_buffer()?.clone();
-    let mut buf2 = rhs.val.get_as_buffer()?.clone();
+    let mut buf1 = lhs.val.get_as_buffer(ctx.acpi_context())?.clone();
+    let mut buf2 = rhs.val.get_as_buffer(ctx.acpi_context())?.clone();
 
     if buf1.len() == 1 || buf2.len() == 1 {
         return Err(AmlError::AmlValueError);
@@ -1010,7 +1010,7 @@ fn parse_def_concat_res(data: &[u8],
     buf1.push(checksum);
 
     let res = AmlValue::Buffer(buf1);
-    ctx.modify(target.val, res.clone())?;
+    ctx.modify(ctx.acpi_context(), target.val, res.clone())?;
 
     Ok(AmlParseType {
         val: res,
@@ -1033,13 +1033,13 @@ fn parse_def_wait(data: &[u8],
     let obj = parse_super_name(&data[2..], ctx)?;
     let timeout_obj = parse_term_arg(&data[2 + obj.len..], ctx)?;
 
-    let timeout = timeout_obj.val.get_as_integer()?;
+    let timeout = timeout_obj.val.get_as_integer(ctx.acpi_context())?;
 
     let (seconds, nanoseconds) = monotonic();
     let starting_time_ns = nanoseconds + (seconds * 1_000_000_000);
 
     loop {
-        match ctx.wait_for_event(obj.val.clone()) {
+        match ctx.wait_for_event(ctx.acpi_context(), obj.val.clone()) {
             Err(e) => return Err(e),
             Ok(b) => if b {
                 return Ok(AmlParseType {
@@ -1080,7 +1080,7 @@ fn parse_def_cond_ref_of(data: &[u8],
 
     let res = match obj.val {
         AmlValue::String(ref s) => {
-            match ctx.get(AmlValue::String(s.clone()))? {
+            match ctx.get(ctx.acpi_context(), AmlValue::String(s.clone()))? {
                 AmlValue::None => return Ok(AmlParseType {
                     val: AmlValue::Integer(0),
                     len: 1 + obj.len + target.len
@@ -1092,7 +1092,7 @@ fn parse_def_cond_ref_of(data: &[u8],
         _ => return Err(AmlError::AmlValueError)
     };
 
-    let _ = ctx.modify(target.val, AmlValue::ObjectReference(res));
+    let _ = ctx.modify(ctx.acpi_context(), target.val, AmlValue::ObjectReference(res));
 
     Ok(AmlParseType {
         val: AmlValue::Integer(1),
@@ -1117,7 +1117,7 @@ fn parse_def_copy_object(data: &[u8],
     let source = parse_term_arg(&data[1..], ctx)?;
     let destination = parse_simple_name(&data[1 + source.len..], ctx)?;
 
-    ctx.copy(destination.val, source.val.clone())?;
+    ctx.copy(ctx.acpi_context(), destination.val, source.val.clone())?;
 
     Ok(AmlParseType {
         val: source.val,
@@ -1143,17 +1143,17 @@ fn parse_def_concat(data: &[u8],
 
     let result = match lhs.val {
         AmlValue::Integer(_i) => {
-            let j = AmlValue::Integer(rhs.val.get_as_integer()?);
+            let j = AmlValue::Integer(rhs.val.get_as_integer(ctx.acpi_context())?);
 
-            let mut first = lhs.val.get_as_buffer()?.clone();
-            let mut second = j.get_as_buffer()?.clone();
+            let mut first = lhs.val.get_as_buffer(ctx.acpi_context())?.clone();
+            let mut second = j.get_as_buffer(ctx.acpi_context())?.clone();
 
             first.append(&mut second);
 
             AmlValue::Buffer(first)
         },
         AmlValue::String(s) => {
-            let t = if let Ok(t) = rhs.val.get_as_string() {
+            let t = if let Ok(t) = rhs.val.get_as_string(ctx.acpi_context()) {
                 t
             } else {
                 rhs.val.get_type_string()
@@ -1163,10 +1163,10 @@ fn parse_def_concat(data: &[u8],
         },
         AmlValue::Buffer(b) => {
             let mut b = b.clone();
-            let mut c = if let Ok(c) = rhs.val.get_as_buffer() {
+            let mut c = if let Ok(c) = rhs.val.get_as_buffer(ctx.acpi_context()) {
                 c.clone()
             } else {
-                AmlValue::String(rhs.val.get_type_string()).get_as_buffer()?.clone()
+                AmlValue::String(rhs.val.get_type_string()).get_as_buffer(ctx.acpi_context())?.clone()
             };
 
             b.append(&mut c);
@@ -1175,7 +1175,7 @@ fn parse_def_concat(data: &[u8],
         },
         _ => {
             let first = lhs.val.get_type_string();
-            let second = if let Ok(second) = rhs.val.get_as_string() {
+            let second = if let Ok(second) = rhs.val.get_as_string(ctx.acpi_context()) {
                 second
             } else {
                 rhs.val.get_type_string()
@@ -1185,7 +1185,7 @@ fn parse_def_concat(data: &[u8],
         }
     };
 
-    ctx.modify(target.val, result.clone())?;
+    ctx.modify(ctx.acpi_context(), target.val, result.clone())?;
 
     Ok(AmlParseType {
         val: result,
@@ -1207,9 +1207,9 @@ fn parse_def_decrement(data: &[u8],
 
     let obj = parse_super_name(&data[1..], ctx)?;
 
-    let _namespace = ctx.prelock();
-    let value = AmlValue::Integer(ctx.get(obj.val.clone())?.get_as_integer()? - 1);
-    let _ = ctx.modify(obj.val, value.clone());
+    let _namespace = ctx.prelock(ctx.acpi_context());
+    let value = AmlValue::Integer(ctx.get(ctx.acpi_context(), obj.val.clone())?.get_as_integer(ctx.acpi_context())? - 1);
+    let _ = ctx.modify(ctx.acpi_context(), obj.val, value.clone());
 
     Ok(AmlParseType {
         val: value,
@@ -1234,14 +1234,14 @@ fn parse_def_divide(data: &[u8],
     let target_remainder = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
     let target_quotient = parse_target(&data[1 + lhs.len + rhs.len + target_remainder.len..], ctx)?;
 
-    let numerator = lhs.val.get_as_integer()?;
-    let denominator = rhs.val.get_as_integer()?;
+    let numerator = lhs.val.get_as_integer(ctx.acpi_context())?;
+    let denominator = rhs.val.get_as_integer(ctx.acpi_context())?;
 
     let remainder = numerator % denominator;
     let quotient = (numerator - remainder) / denominator;
 
-    let _ = ctx.modify(target_remainder.val, AmlValue::Integer(remainder));
-    let _ = ctx.modify(target_quotient.val, AmlValue::Integer(quotient));
+    let _ = ctx.modify(ctx.acpi_context(), target_remainder.val, AmlValue::Integer(remainder));
+    let _ = ctx.modify(ctx.acpi_context(), target_quotient.val, AmlValue::Integer(quotient));
 
     Ok(AmlParseType {
         val: AmlValue::Integer(quotient),
@@ -1265,7 +1265,7 @@ fn parse_def_find_set_left_bit(data: &[u8],
     let target = parse_target(&data[2 + operand.len..], ctx)?;
 
     let mut first_bit = 32;
-    let mut test = operand.val.get_as_integer()?;
+    let mut test = operand.val.get_as_integer(ctx.acpi_context())?;
 
     while first_bit > 0{
         if test & 0x8000_0000_0000_0000 > 0 {
@@ -1277,7 +1277,7 @@ fn parse_def_find_set_left_bit(data: &[u8],
     }
 
     let result = AmlValue::Integer(first_bit);
-    let _ = ctx.modify(target.val, result.clone());
+    let _ = ctx.modify(ctx.acpi_context(), target.val, result.clone());
 
     Ok(AmlParseType {
         val: result,
@@ -1301,7 +1301,7 @@ fn parse_def_find_set_right_bit(data: &[u8],
     let target = parse_target(&data[2 + operand.len..], ctx)?;
 
     let mut first_bit = 1;
-    let mut test = operand.val.get_as_integer()?;
+    let mut test = operand.val.get_as_integer(ctx.acpi_context())?;
 
     while first_bit <= 32 {
         if test & 1 > 0 {
@@ -1317,7 +1317,7 @@ fn parse_def_find_set_right_bit(data: &[u8],
     }
 
     let result = AmlValue::Integer(first_bit);
-    let _ = ctx.modify(target.val, result.clone());
+    let _ = ctx.modify(ctx.acpi_context(), target.val, result.clone());
 
     Ok(AmlParseType {
         val: result,
@@ -1346,15 +1346,15 @@ fn parse_def_load_table(data: &[u8],
     let parameter_data = parse_term_arg(&data[2 + signature.len + oem_id.len + oem_table_id.len + root_path.len + parameter_path.len..], ctx)?;
 
     let signature = {
-        <[u8; 4]>::try_from(&*signature.val.get_as_buffer()?)
+        <[u8; 4]>::try_from(&*signature.val.get_as_buffer(ctx.acpi_context())?)
             .expect("expected 'load table' def to have a signature that is 4 bytes long")
     };
     let oem_id = {
-        <[u8; 6]>::try_from(&*oem_id.val.get_as_buffer()?)
+        <[u8; 6]>::try_from(&*oem_id.val.get_as_buffer(ctx.acpi_context())?)
             .expect("expected 'load table' def to have an OEM ID that is 6 bytes long")
     };
     let oem_table_id = {
-        <[u8; 8]>::try_from(&*oem_table_id.val.get_as_buffer()?)
+        <[u8; 8]>::try_from(&*oem_table_id.val.get_as_buffer(ctx.acpi_context())?)
             .expect("expected 'load table' def to have an OEM table ID that is 8 bytes long")
     };
 
@@ -1369,8 +1369,8 @@ fn parse_def_load_table(data: &[u8],
     let sdt = ctx.acpi_context().sdt_from_signature(&sdt_signature);
 
     Ok(if let Some(sdt) = sdt.and_then(|sdt| PossibleAmlTables::try_new(sdt.clone())) {
-        let hdl = parse_aml_with_scope(sdt, root_path.val.get_as_string()?)?;
-        let _ = ctx.modify(parameter_path.val, parameter_data.val);
+        let hdl = parse_aml_with_scope(ctx.acpi_context(), sdt, root_path.val.get_as_string(ctx.acpi_context())?)?;
+        let _ = ctx.modify(ctx.acpi_context(), parameter_path.val, parameter_data.val);
 
         AmlParseType {
             val: AmlValue::DDBHandle((hdl, sdt_signature)),
@@ -1423,14 +1423,14 @@ fn parse_def_match(data: &[u8],
     let start_index = parse_term_arg(&data[3 + search_pkg.len + first_operand.len + second_operand.len..], ctx)?;
 
     let pkg = search_pkg.val.get_as_package()?;
-    let mut idx = start_index.val.get_as_integer()? as usize;
+    let mut idx = start_index.val.get_as_integer(ctx.acpi_context())? as usize;
 
     match first_operand.val {
         AmlValue::Integer(i) => {
-            let j = second_operand.val.get_as_integer()?;
+            let j = second_operand.val.get_as_integer(ctx.acpi_context())?;
 
             while idx < pkg.len() {
-                let val = if let Ok(v) = pkg[idx].get_as_integer() { v } else { idx += 1; continue; };
+                let val = if let Ok(v) = pkg[idx].get_as_integer(ctx.acpi_context()) { v } else { idx += 1; continue; };
                 idx += 1;
 
                 match first_operation {
@@ -1458,10 +1458,10 @@ fn parse_def_match(data: &[u8],
             }
         },
         AmlValue::String(i) => {
-            let j = second_operand.val.get_as_string()?;
+            let j = second_operand.val.get_as_string(ctx.acpi_context())?;
 
             while idx < pkg.len() {
-                let val = if let Ok(v) = pkg[idx].get_as_string() { v } else { idx += 1; continue; };
+                let val = if let Ok(v) = pkg[idx].get_as_string(ctx.acpi_context()) { v } else { idx += 1; continue; };
                 idx += 1;
 
                 match first_operation {
@@ -1489,11 +1489,11 @@ fn parse_def_match(data: &[u8],
             }
         },
         _ => {
-            let i = first_operand.val.get_as_buffer()?;
-            let j = second_operand.val.get_as_buffer()?;
+            let i = first_operand.val.get_as_buffer(ctx.acpi_context())?;
+            let j = second_operand.val.get_as_buffer(ctx.acpi_context())?;
 
             while idx < pkg.len() {
-                let val = if let Ok(v) = pkg[idx].get_as_buffer() { v } else { idx += 1; continue; };
+                let val = if let Ok(v) = pkg[idx].get_as_buffer(ctx.acpi_context()) { v } else { idx += 1; continue; };
                 idx += 1;
 
                 match first_operation {
@@ -1543,7 +1543,7 @@ fn parse_def_from_bcd(data: &[u8],
     let operand = parse_term_arg(&data[2..], ctx)?;
     let target = parse_target(&data[2 + operand.len..], ctx)?;
 
-    let mut i = operand.val.get_as_integer()?;
+    let mut i = operand.val.get_as_integer(ctx.acpi_context())?;
     let mut result = 0;
 
     while i != 0 {
@@ -1558,7 +1558,7 @@ fn parse_def_from_bcd(data: &[u8],
 
     let result = AmlValue::Integer(result);
 
-    let _ = ctx.modify(target.val, result.clone());
+    let _ = ctx.modify(ctx.acpi_context(), target.val, result.clone());
 
     Ok(AmlParseType {
         val: result,
@@ -1583,8 +1583,8 @@ fn parse_def_mid(data: &[u8],
     let length = parse_term_arg(&data[1 + source.len + index.len..], ctx)?;
     let target = parse_target(&data[1 + source.len + index.len + length.len..], ctx)?;
 
-    let idx = index.val.get_as_integer()? as usize;
-    let mut len = length.val.get_as_integer()? as usize;
+    let idx = index.val.get_as_integer(ctx.acpi_context())? as usize;
+    let mut len = length.val.get_as_integer(ctx.acpi_context())? as usize;
 
     let result = match source.val {
         AmlValue::String(s) => {
@@ -1606,7 +1606,7 @@ fn parse_def_mid(data: &[u8],
             // implicitly.
             // Additionally, any type that can be converted to a buffer can also be converted to a
             // string, so no information is lost
-            let b = source.val.get_as_buffer()?;
+            let b = source.val.get_as_buffer(ctx.acpi_context())?;
 
             if idx > b.len() {
                 AmlValue::Buffer(vec!())
@@ -1620,7 +1620,7 @@ fn parse_def_mid(data: &[u8],
         }
     };
 
-    let _ = ctx.modify(target.val, result.clone());
+    let _ = ctx.modify(ctx.acpi_context(), target.val, result.clone());
 
     Ok(AmlParseType {
         val: result,
@@ -1644,13 +1644,13 @@ fn parse_def_mod(data: &[u8],
     let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
     let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
 
-    if rhs.val.get_as_integer()? == 0 {
+    if rhs.val.get_as_integer(ctx.acpi_context())? == 0 {
         return Err(AmlError::AmlValueError);
     }
 
-    let result = AmlValue::Integer(lhs.val.get_as_integer()? % rhs.val.get_as_integer()?);
+    let result = AmlValue::Integer(lhs.val.get_as_integer(ctx.acpi_context())? % rhs.val.get_as_integer(ctx.acpi_context())?);
 
-    let _ = ctx.modify(target.val, result.clone());
+    let _ = ctx.modify(ctx.acpi_context(), target.val, result.clone());
 
     Ok(AmlParseType {
         val: result,
@@ -1675,9 +1675,9 @@ fn parse_def_multiply(data: &[u8],
     let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
     let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
 
-    let result = AmlValue::Integer(lhs.val.get_as_integer()? * rhs.val.get_as_integer()?);
+    let result = AmlValue::Integer(lhs.val.get_as_integer(ctx.acpi_context())? * rhs.val.get_as_integer(ctx.acpi_context())?);
 
-    let _ = ctx.modify(target.val, result.clone());
+    let _ = ctx.modify(ctx.acpi_context(), target.val, result.clone());
 
     Ok(AmlParseType {
         val: result,
@@ -1701,9 +1701,9 @@ fn parse_def_nand(data: &[u8],
     let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
     let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
 
-    let result = AmlValue::Integer(!(lhs.val.get_as_integer()? & rhs.val.get_as_integer()?));
+    let result = AmlValue::Integer(!(lhs.val.get_as_integer(ctx.acpi_context())? & rhs.val.get_as_integer(ctx.acpi_context())?));
 
-    let _ = ctx.modify(target.val, result.clone());
+    let _ = ctx.modify(ctx.acpi_context(), target.val, result.clone());
 
     Ok(AmlParseType {
         val: result,
@@ -1727,9 +1727,9 @@ fn parse_def_nor(data: &[u8],
     let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
     let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
 
-    let result = AmlValue::Integer(!(lhs.val.get_as_integer()? | rhs.val.get_as_integer()?));
+    let result = AmlValue::Integer(!(lhs.val.get_as_integer(ctx.acpi_context())? | rhs.val.get_as_integer(ctx.acpi_context())?));
 
-    let _ = ctx.modify(target.val, result.clone());
+    let _ = ctx.modify(ctx.acpi_context(), target.val, result.clone());
 
     Ok(AmlParseType {
         val: result,
@@ -1752,9 +1752,9 @@ fn parse_def_not(data: &[u8],
     let operand = parse_term_arg(&data[1..], ctx)?;
     let target = parse_target(&data[1 + operand.len..], ctx)?;
 
-    let result = AmlValue::Integer(!operand.val.get_as_integer()?);
+    let result = AmlValue::Integer(!operand.val.get_as_integer(ctx.acpi_context())?);
 
-    let _ = ctx.modify(target.val, result.clone());
+    let _ = ctx.modify(ctx.acpi_context(), target.val, result.clone());
 
     Ok(AmlParseType {
         val: result,

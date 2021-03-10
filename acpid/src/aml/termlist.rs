@@ -123,7 +123,7 @@ pub fn parse_method_invocation(data: &[u8],
     }
 
     let name = parse_name_string(data, ctx)?;
-    let method = ctx.get(name.val.clone())?;
+    let method = ctx.get(ctx.acpi_context(), name.val.clone())?;
 
     let method = match method {
         AmlValue::None => return Err(AmlError::AmlDeferredLoad),
@@ -145,7 +145,7 @@ pub fn parse_method_invocation(data: &[u8],
     }
 
     Ok(AmlParseType {
-        val: method.execute(get_namespace_string(ctx.scope.clone(), name.val)?, params),
+        val: method.execute(ctx.acpi_context(), get_namespace_string(ctx.acpi_context(), ctx.scope.clone(), name.val)?, params),
         len: current_offset
     })
 }

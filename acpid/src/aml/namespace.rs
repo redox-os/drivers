@@ -157,7 +157,7 @@ impl AmlValue {
         }
     }
 
-    pub fn get_as_type(&self, t: AmlValue) -> Result<AmlValue, AmlError> {
+    pub fn get_as_type(&self, ctx: &AcpiContext, t: AmlValue) -> Result<AmlValue, AmlError> {
         match t {
             AmlValue::None => Ok(AmlValue::None),
             AmlValue::Uninitialized => Ok(self.clone()),
@@ -165,9 +165,9 @@ impl AmlValue {
                 AmlValue::Alias(_) => Ok(self.clone()),
                 _ => Err(AmlError::AmlValueError)
             },
-            AmlValue::Buffer(_) => Ok(AmlValue::Buffer(self.get_as_buffer()?)),
-            AmlValue::BufferField(_) => Ok(AmlValue::BufferField(self.get_as_buffer_field()?)),
-            AmlValue::DDBHandle(_) => Ok(AmlValue::DDBHandle(self.get_as_ddb_handle()?)),
+            AmlValue::Buffer(_) => Ok(AmlValue::Buffer(self.get_as_buffer(ctx)?)),
+            AmlValue::BufferField(_) => Ok(AmlValue::BufferField(self.get_as_buffer_field(ctx)?)),
+            AmlValue::DDBHandle(_) => Ok(AmlValue::DDBHandle(self.get_as_ddb_handle(ctx)?)),
             AmlValue::DebugObject => match *self {
                 AmlValue::DebugObject => Ok(self.clone()),
                 _ => Err(AmlError::AmlValueError)
@@ -175,7 +175,7 @@ impl AmlValue {
             AmlValue::Device(_) => Ok(AmlValue::Device(self.get_as_device()?)),
             AmlValue::Event(_) => Ok(AmlValue::Event(self.get_as_event()?)),
             AmlValue::FieldUnit(_) => Ok(AmlValue::FieldUnit(self.get_as_field_unit()?)),
-            AmlValue::Integer(_) => Ok(AmlValue::Integer(self.get_as_integer()?)),
+            AmlValue::Integer(_) => Ok(AmlValue::Integer(self.get_as_integer(ctx)?)),
             AmlValue::IntegerConstant(_) => Ok(AmlValue::IntegerConstant(self.get_as_integer_constant()?)),
             AmlValue::Method(_) => Ok(AmlValue::Method(self.get_as_method()?)),
             AmlValue::Mutex(_) => Ok(AmlValue::Mutex(self.get_as_mutex()?)),
@@ -185,7 +185,7 @@ impl AmlValue {
                 _ => Err(AmlError::AmlValueError)
             },
             AmlValue::Package(_) => Ok(AmlValue::Package(self.get_as_package()?)),
-            AmlValue::String(_) => Ok(AmlValue::String(self.get_as_string()?)),
+            AmlValue::String(_) => Ok(AmlValue::String(self.get_as_string(ctx)?)),
             AmlValue::PowerResource(_) => Ok(AmlValue::PowerResource(self.get_as_power_resource()?)),
             AmlValue::Processor(_) => Ok(AmlValue::Processor(self.get_as_processor()?)),
             AmlValue::RawDataBuffer(_) => Ok(AmlValue::RawDataBuffer(self.get_as_raw_data_buffer()?)),
@@ -193,7 +193,7 @@ impl AmlValue {
         }
     }
 
-    pub fn get_as_buffer(&self) -> Result<Vec<u8>, AmlError> {
+    pub fn get_as_buffer(&self, ctx: &AcpiContext) -> Result<Vec<u8>, AmlError> {
         match *self {
             AmlValue::Buffer(ref b) => Ok(b.clone()),
             AmlValue::Integer(ref i) => {
@@ -215,9 +215,9 @@ impl AmlValue {
                 Ok(s.clone().into_bytes())
             },
             AmlValue::BufferField(ref b) => {
-                let buf = b.source_buf.get_as_buffer()?;
-                let idx = b.index.get_as_integer()? as usize;
-                let len = b.length.get_as_integer()? as usize;
+                let buf = b.source_buf.get_as_buffer(ctx)?;
+                let idx = b.index.get_as_integer(ctx)? as usize;
+                let len = b.length.get_as_integer(ctx)? as usize;
 
                 if idx + len > buf.len() {
                     return Err(AmlError::AmlValueError);
@@ -229,11 +229,11 @@ impl AmlValue {
         }
     }
 
-    pub fn get_as_buffer_field(&self) -> Result<BufferField, AmlError> {
+    pub fn get_as_buffer_field(&self, acpi_ctx: &AcpiContext) -> Result<BufferField, AmlError> {
         match *self {
             AmlValue::BufferField(ref b) => Ok(b.clone()),
             _ => {
-                let raw_buf = self.get_as_buffer()?;
+                let raw_buf = self.get_as_buffer(acpi_ctx)?;
                 let buf = Box::new(AmlValue::Buffer(raw_buf.clone()));
                 let idx = Box::new(AmlValue::IntegerConstant(0));
                 let len = Box::new(AmlValue::Integer(raw_buf.len() as u64));
@@ -300,7 +300,7 @@ impl AmlValue {
                 Ok(i)
             },
             AmlValue::BufferField(_) => {
-                let mut b = self.get_as_buffer()?;
+                let mut b = self.get_as_buffer(acpi_ctx)?;
                 if b.len() > 8 {
                     return Err(AmlError::AmlValueError);
                 }
@@ -382,14 +382,14 @@ impl AmlValue {
         }
     }
 
-    pub fn get_as_string(&self) -> Result<String, AmlError> {
+    pub fn get_as_string(&self, ctx: &AcpiContext) -> Result<String, AmlError> {
         match *self {
             AmlValue::String(ref s) => Ok(s.clone()),
             AmlValue::Integer(ref i) => Ok(format!("{:X}", i)),
             AmlValue::IntegerConstant(ref i) => Ok(format!("{:X}", i)),
             AmlValue::Buffer(ref b) => Ok(String::from_utf8(b.clone()).expect("Invalid UTF-8")),
             AmlValue::BufferField(_) => {
-                let b = self.get_as_buffer()?;
+                let b = self.get_as_buffer(ctx)?;
                 Ok(String::from_utf8(b).expect("Invalid UTF-8"))
             },
             _ => Err(AmlError::AmlValueError)
@@ -426,12 +426,12 @@ impl AmlValue {
 }
 
 impl Method {
-    pub fn execute(&self, scope: String, parameters: Vec<AmlValue>) -> AmlValue {
-        let mut ctx = AmlExecutionContext::new(scope);
+    pub fn execute(&self, acpi_ctx: &AcpiContext, scope: String, parameters: Vec<AmlValue>) -> AmlValue {
+        let mut ctx = AmlExecutionContext::new(acpi_ctx, scope);
         ctx.init_arg_vars(parameters);
 
         let _ = parse_term_list(&self.term_list[..], &mut ctx);
-        ctx.clean_namespace();
+        ctx.clean_namespace(acpi_ctx);
 
         match ctx.state {
             ExecutionState::RETURN(v) => v,
@@ -440,8 +440,8 @@ impl Method {
     }
 }
 
-pub fn get_namespace_string(current: String, modifier_v: AmlValue) -> Result<String, AmlError> {
-    let mut modifier = modifier_v.get_as_string()?;
+pub fn get_namespace_string(ctx: &AcpiContext, current: String, modifier_v: AmlValue) -> Result<String, AmlError> {
+    let mut modifier = modifier_v.get_as_string(ctx)?;
 
     if current.len() == 0 {
         return Ok(modifier);

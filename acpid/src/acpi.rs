@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use syscall::flag::PhysmapFlags;
 
+use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use thiserror::Error;
 
 use super::aml::AmlValue;
@@ -194,7 +195,8 @@ pub struct AcpiContext {
     tables: Vec<Sdt>,
     dsdt: Option<Dsdt>,
     fadt: Option<Fadt>,
-    namespace: Option<HashMap<String, AmlValue>>,
+    namespace: RwLock<Option<HashMap<String, AmlValue>>>,
+    pub next_ctx: RwLock<u64>,
 }
 impl AcpiContext {
     pub fn dsdt(&self) -> Option<&Dsdt> {
@@ -221,8 +223,11 @@ impl AcpiContext {
     pub fn take_single_sdt(&mut self, signature: [u8; 4]) -> Option<Sdt> {
         self.find_single_sdt_pos(signature).map(|pos| self.tables[pos].clone())
     }
-    pub fn namespace(&self) -> Option<&HashMap<String, AmlValue>> {
-        self.namespace.as_ref()
+    pub fn namespace(&self) -> RwLockReadGuard<'_, Option<HashMap<String, AmlValue>>> {
+        self.namespace.read()
+    }
+    pub fn namespace_mut(&self) -> RwLockWriteGuard<'_, Option<HashMap<String, AmlValue>>> {
+        self.namespace.write()
     }
     pub fn fadt(&self) -> Option<&Fadt> {
         self.fadt.as_ref()

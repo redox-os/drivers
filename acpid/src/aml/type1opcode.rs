@@ -153,7 +153,7 @@ fn parse_def_load(data: &[u8],
     let name = parse_name_string(&data[2..], ctx)?;
     let ddb_handle_object = parse_super_name(&data[2 + name.len..], ctx)?;
 
-    let tbl = ctx.get(name.val)?.get_as_buffer()?;
+    let tbl = ctx.get(ctx.acpi_context(), name.val)?.get_as_buffer(ctx.acpi_context())?;
     // TODO
     let sdt = plain::from_bytes::<SdtHeader>(&tbl[..mem::size_of::<SdtHeader>()]).unwrap();
 
@@ -163,8 +163,8 @@ fn parse_def_load(data: &[u8],
     };
 
     if let Some(aml_sdt) = PossibleAmlTables::try_new(table.clone()) {
-        let delta = parse_aml_table(aml_sdt)?;
-        let _ = ctx.modify(ddb_handle_object.val, AmlValue::DDBHandle((delta, sdt.signature())));
+        let delta = parse_aml_table(ctx.acpi_context(), aml_sdt)?;
+        let _ = ctx.modify(ctx.acpi_context(), ddb_handle_object.val, AmlValue::DDBHandle((delta, sdt.signature())));
 
         Ok(AmlParseType {
             val: AmlValue::None,
@@ -190,9 +190,9 @@ fn parse_def_notify(data: &[u8],
     let object = parse_super_name(&data[1..], ctx)?;
     let value = parse_term_arg(&data[1 + object.len..], ctx)?;
 
-    let number = value.val.get_as_integer()? as u8;
+    let number = value.val.get_as_integer(ctx.acpi_context())? as u8;
 
-    match ctx.get(object.val)? {
+    match ctx.get(ctx.acpi_context(), object.val)? {
         AmlValue::Device(d) => {
             if let Some(methods) = d.notify_methods.get(&number) {
                 for method in methods {
@@ -236,7 +236,7 @@ fn parse_def_release(data: &[u8],
     parser_opcode_extended!(data, 0x27);
 
     let obj = parse_super_name(&data[2..], ctx)?;
-    let _ = ctx.release_mutex(obj.val);
+    let _ = ctx.release_mutex(ctx.acpi_context(), obj.val);
 
     Ok(AmlParseType {
         val: AmlValue::None,
@@ -257,9 +257,9 @@ fn parse_def_reset(data: &[u8],
     parser_opcode_extended!(data, 0x26);
 
     let object = parse_super_name(&data[2..], ctx)?;
-    ctx.get(object.val.clone())?.get_as_event()?;
+    ctx.get(ctx.acpi_context(), object.val.clone())?.get_as_event()?;
 
-    let _ = ctx.modify(object.val.clone(), AmlValue::Event(0));
+    let _ = ctx.modify(ctx.acpi_context(), object.val.clone(), AmlValue::Event(0));
 
     Ok(AmlParseType {
         val: AmlValue::None,
@@ -280,7 +280,7 @@ fn parse_def_signal(data: &[u8],
     parser_opcode_extended!(data, 0x24);
     let object = parse_super_name(&data[2..], ctx)?;
 
-    ctx.signal_event(object.val)?;
+    ctx.signal_event(ctx.acpi_context(), object.val)?;
     Ok(AmlParseType {
         val: AmlValue::None,
         len: 2 + object.len
@@ -300,7 +300,7 @@ fn parse_def_sleep(data: &[u8],
     parser_opcode_extended!(data, 0x22);
 
     let time = parse_term_arg(&data[2..], ctx)?;
-    let timeout = time.val.get_as_integer()?;
+    let timeout = time.val.get_as_integer(ctx.acpi_context())?;
 
     let (seconds, nanoseconds) = monotonic();
     let starting_time_ns = nanoseconds + (seconds * 1_000_000_000);
@@ -333,7 +333,7 @@ fn parse_def_stall(data: &[u8],
     parser_opcode_extended!(data, 0x21);
 
     let time = parse_term_arg(&data[2..], ctx)?;
-    let timeout = time.val.get_as_integer()?;
+    let timeout = time.val.get_as_integer(ctx.acpi_context())?;
 
     let (seconds, nanoseconds) = monotonic();
     let starting_time_ns = nanoseconds + (seconds * 1_000_000_000);
@@ -367,8 +367,8 @@ fn parse_def_unload(data: &[u8],
 
     let object = parse_super_name(&data[2..], ctx)?;
 
-    let delta = ctx.get(object.val)?.get_as_ddb_handle()?;
-    let mut namespace = ctx.prelock();
+    let delta = ctx.get(ctx.acpi_context(), object.val)?.get_as_ddb_handle(ctx.acpi_context())?;
+    let mut namespace = ctx.prelock(ctx.acpi_context());
 
     if let Some(ref mut ns) = *namespace {
         for o in delta.0 {
@@ -403,7 +403,7 @@ fn parse_def_if_else(data: &[u8],
         (0 as usize, 0 as usize)
     };
 
-    if if_condition.val.get_as_integer()? > 0 {
+    if if_condition.val.get_as_integer(ctx.acpi_context())? > 0 {
         parse_term_list(&data[1 + pkg_length_len + if_condition.len .. 1 + pkg_length], ctx)?;
     } else if else_length > 0 {
         parse_term_list(&data[2 + pkg_length + else_length_len .. 2 + pkg_length + else_length], ctx)?;
@@ -431,7 +431,7 @@ fn parse_def_while(data: &[u8],
 
     loop {
         let predicate = parse_term_arg(&data[1 + pkg_length_len..], ctx)?;
-        if predicate.val.get_as_integer()? == 0 {
+        if predicate.val.get_as_integer(ctx.acpi_context())? == 0 {
             break;
         }
 
