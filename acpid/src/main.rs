@@ -1,4 +1,4 @@
-#![feature(renamed_spin_loop)]
+#![feature(renamed_spin_loop, seek_convenience)]
 
 use std::convert::{TryFrom, TryInto};
 use std::io::prelude::*;
@@ -8,7 +8,7 @@ use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::sync::Arc;
 
 use redox_log::RedoxLogger;
-use syscall::scheme::Scheme;
+use syscall::scheme::SchemeMut;
 
 use syscall::data::{Event, Packet};
 use syscall::flag::EventFlags;
@@ -97,6 +97,7 @@ fn main() {
         let exit_code = if bytes_read == res.len() {
             res[0]
         } else {
+            eprintln!("acpid: daemon pipe EOF");
             1
         };
         drop(read_part);
@@ -175,7 +176,7 @@ fn main() {
         data: 1,
     }).expect("acpid: failed to register scheme socket for event queue");
 
-    let scheme = self::scheme::AcpiScheme::new(&acpi_context);
+    let mut scheme = self::scheme::AcpiScheme::new(&acpi_context);
 
     let mut event = Event::default();
     let mut packet = Packet::default();
@@ -186,7 +187,7 @@ fn main() {
         if event.flags.contains(EventFlags::EVENT_READ) && event.id == shutdown_pipe.as_raw_fd() as usize {
             break;
         }
-        if !event.flags.contains(EventFlags::EVENT_NONE) || event.id != scheme_socket.as_raw_fd() as usize {
+        if !event.flags.contains(EventFlags::EVENT_READ) || event.id != scheme_socket.as_raw_fd() as usize {
             continue;
         }
 

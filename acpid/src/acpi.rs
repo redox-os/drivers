@@ -38,7 +38,7 @@ impl SdtHeader {
             oem_table_id: self.oem_table_id,
         }
     }
-    fn length(&self) -> usize {
+    pub fn length(&self) -> usize {
         self
             .length
             .try_into()
@@ -172,6 +172,9 @@ impl Sdt {
 
         Self::new(loaded.into()).map_err(Into::into)
     }
+    pub fn as_slice(&self) -> &[u8] {
+        &self.0
+    }
 }
 
 impl Deref for Sdt {
@@ -275,6 +278,9 @@ impl AcpiContext {
     }
     pub fn get_index_from_signature(&self, signature: &SdtSignature) -> Option<usize> {
         todo!()
+    }
+    pub fn tables(&self) -> &[Sdt] {
+        &self.tables
     }
 }
 
