@@ -1,9 +1,10 @@
 #![feature(renamed_spin_loop, seek_convenience)]
 
-use std::convert::{TryFrom, TryInto};
-use std::io::prelude::*;
+use std::convert::TryFrom;
+use std::io::{self, prelude::*};
 use std::fs::{File, OpenOptions};
 use std::mem;
+use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::sync::Arc;
 
@@ -11,7 +12,7 @@ use redox_log::RedoxLogger;
 use syscall::scheme::SchemeMut;
 
 use syscall::data::{Event, Packet};
-use syscall::flag::EventFlags;
+use syscall::flag::{EventFlags, O_NONBLOCK};
 
 mod acpi;
 mod aml;
@@ -109,6 +110,7 @@ fn main() {
         .write(true)
         .read(true)
         .create(true)
+        .custom_flags(O_NONBLOCK as i32)
         .open(":acpi")
         .expect("acpid: failed to open scheme socket");
 
@@ -181,38 +183,58 @@ fn main() {
     let mut event = Event::default();
     let mut packet = Packet::default();
 
-    loop {
+    'events: loop {
+        'packets: loop {
+            let bytes_read = 'eintr1: loop {
+                match scheme_socket.read(&mut packet) {
+                    Ok(0) => {
+                        log::info!("Terminating acpid driver, without shutting down the main system.");
+                        return;
+                    }
+                    Ok(n) => break 'eintr1 n,
+                    Err(error) if error.kind() == io::ErrorKind::Interrupted => continue 'eintr1,
+                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => break 'packets,
+                    Err(other) => {
+                        log::error!("failed to read from scheme socket: {}", other);
+                        return;
+                    }
+                }
+            };
+
+            if bytes_read < mem::size_of::<Packet>() {
+                log::error!("Scheme socket read less than a single packet.");
+            }
+
+            scheme.handle(&mut packet);
+
+            let bytes_written = 'eintr2: loop {
+                match scheme_socket.write(&packet) {
+                    Ok(0) => {
+                        log::info!("Terminating acpid driver, without shutting down the main system.");
+                        return;
+                    }
+                    Ok(n) => break 'eintr2 n,
+                    Err(error) if error.kind() == io::ErrorKind::Interrupted => continue 'eintr2,
+                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => break 'packets,
+                    Err(other) => {
+                        log::error!("failed to read from scheme socket: {}", other);
+                        return;
+                    }
+                }
+            };
+
+            if bytes_written < mem::size_of::<Packet>() {
+                log::error!("Scheme socket read less than a single packet.");
+            }
+        }
+
         let _ = event_queue.read(&mut event).expect("acpid: failed to read from event queue");
 
         if event.flags.contains(EventFlags::EVENT_READ) && event.id == shutdown_pipe.as_raw_fd() as usize {
-            break;
+            break 'events;
         }
         if !event.flags.contains(EventFlags::EVENT_READ) || event.id != scheme_socket.as_raw_fd() as usize {
-            continue;
-        }
-
-        let bytes_read = scheme_socket.read(&mut packet).expect("acpid: failed to read from scheme socket");
-
-        if bytes_read == 0 {
-            log::info!("Terminating acpid driver, without shutting down the main system.");
-            return;
-        }
-
-        if bytes_read < mem::size_of::<Packet>() {
-            log::error!("Scheme socket read less than a single packet.");
-        }
-
-        scheme.handle(&mut packet);
-
-        let bytes_written = scheme_socket.write(&packet).expect("acpid: failed to write to scheme socket");
-
-        if bytes_written == 0 {
-            log::info!("Terminating acpid driver, without shutting down the main system.");
-            return;
-        }
-
-        if bytes_written < mem::size_of::<Packet>() {
-            log::error!("Scheme socket read less than a single packet.");
+            continue 'events;
         }
     }
 
