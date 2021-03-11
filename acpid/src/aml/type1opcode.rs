@@ -1,5 +1,3 @@
-use std::mem;
-
 use super::AmlError;
 use super::parser::{AmlParseType, ParseResult, AmlExecutionContext, ExecutionState};
 use super::namespace::AmlValue;
@@ -9,8 +7,8 @@ use super::namestring::{parse_name_string, parse_super_name};
 
 use crate::monotonic;
 
-use crate::acpi::{PossibleAmlTables, SdtHeader};
-use super::{parse_aml_table, is_aml_table};
+use crate::acpi::PossibleAmlTables;
+use super::parse_aml_table;
 
 pub fn parse_type1_opcode(data: &[u8],
                           ctx: &mut AmlExecutionContext) -> ParseResult {
@@ -154,23 +152,23 @@ fn parse_def_load(data: &[u8],
     let ddb_handle_object = parse_super_name(&data[2 + name.len..], ctx)?;
 
     let tbl = ctx.get(ctx.acpi_context(), name.val)?.get_as_buffer(ctx.acpi_context())?;
-    // TODO
-    let sdt = plain::from_bytes::<SdtHeader>(&tbl[..mem::size_of::<SdtHeader>()]).unwrap();
 
-    let table = match ctx.acpi_context().sdt_from_signature(&sdt.signature()) {
-        Some(table) => table,
-        None => return Err(AmlError::AmlValueError),
-    };
+    let table = crate::acpi::Sdt::new(tbl.into()).map_err(|error| {
+        log::error!("Failed to parse def_load ACPI table: {}", error);
+        AmlError::AmlValueError
+    })?;
 
     if let Some(aml_sdt) = PossibleAmlTables::try_new(table.clone()) {
+        ctx.acpi_context().new_index(&table.signature());
         let delta = parse_aml_table(ctx.acpi_context(), aml_sdt)?;
-        let _ = ctx.modify(ctx.acpi_context(), ddb_handle_object.val, AmlValue::DDBHandle((delta, sdt.signature())));
+        let _ = ctx.modify(ctx.acpi_context(), ddb_handle_object.val, AmlValue::DDBHandle((delta, table.signature())));
 
         Ok(AmlParseType {
             val: AmlValue::None,
             len: 2 + name.len + ddb_handle_object.len
         })
     } else {
+        log::error!("Loaded table is not for AML");
         Err(AmlError::AmlValueError)
     }
 }

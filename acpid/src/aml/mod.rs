@@ -49,34 +49,24 @@ pub fn parse_aml_with_scope(acpi_ctx: &AcpiContext, sdt: impl AmlContainingTable
     Ok(ctx.namespace_delta)
 }
 
-pub fn is_aml_table(sdt: &SdtHeader) -> bool {
-    if &sdt.signature == b"DSDT" || &sdt.signature == b"SSDT" {
-        true
-    } else {
-        false
-    }
-}
-
 fn init_aml_table(acpi_ctx: &AcpiContext, sdt: impl AmlContainingTable) {
-    match parse_aml_table(acpi_ctx, sdt) {
-        Ok(_) => println!(": Parsed"),
-        Err(AmlError::AmlParseError(e)) => println!(": {}", e),
-        Err(AmlError::AmlInvalidOpCode) => println!(": Invalid opcode"),
-        Err(AmlError::AmlValueError) => println!(": Type constraints or value bounds not met"),
-        Err(AmlError::AmlDeferredLoad) => println!(": Deferred load reached top level"),
-        Err(AmlError::AmlFatalError(_, _, _)) => {
-            println!(": Fatal error occurred");
-            // TODO
+    match parse_aml_table(acpi_ctx, &sdt) {
+        Ok(_) => log::info!("Table {} parsed successfully", sdt.header().signature()),
+        Err(AmlError::AmlParseError(e)) => log::error!("Table {} got parse error: {}", sdt.header().signature(), e),
+        Err(AmlError::AmlInvalidOpCode) => log::error!("Table {} got invalid opcode", sdt.header().signature()),
+        Err(AmlError::AmlValueError) => log::error!("For table {}: type constraints or value bounds not met", sdt.header().signature()),
+        Err(AmlError::AmlDeferredLoad) => log::error!("For table {}: deferred load reached top level", sdt.header().signature()),
+        Err(AmlError::AmlFatalError(ty, code, val)) => {
+            log::error!("Fatal error occurred for table {}: type={}, code={}, val={:?}", sdt.header().signature(), ty, code, val);
             return;
         },
         Err(AmlError::AmlHardFatal) => {
-            println!(": Fatal error occurred");
-            // TODO
+            log::error!("Hard fatal error occurred for table {}", sdt.header().signature());
             return;
         }
     }
 }
-fn init_namespace(context: &AcpiContext) -> HashMap<String, AmlValue> {
+pub fn init_namespace(context: &AcpiContext) {
     let dsdt = context.dsdt().expect("could not find any DSDT");
 
     log::info!("Found DSDT.");
@@ -88,8 +78,6 @@ fn init_namespace(context: &AcpiContext) -> HashMap<String, AmlValue> {
         print!("Found SSDT.");
         init_aml_table(context, ssdt);
     }
-
-    todo!()
 }
 
 pub fn set_global_s_state(context: &AcpiContext, state: u8) {

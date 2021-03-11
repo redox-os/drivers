@@ -10,6 +10,7 @@ use crate::acpi::AcpiContext;
 pub type ParseResult = Result<AmlParseType, AmlError>;
 pub type AmlParseType = AmlParseTypeGeneric<AmlValue>;
 
+#[derive(Debug)]
 pub struct AmlParseTypeGeneric<T> {
     pub val: T,
     pub len: usize

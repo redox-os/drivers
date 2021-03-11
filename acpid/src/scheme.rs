@@ -62,7 +62,7 @@ fn parse_hex_digit(hex: u8) -> Option<u8> {
     let hex = hex.to_ascii_lowercase();
 
     if hex >= b'a' && hex <= b'f' {
-        Some(hex - b'a')
+        Some(hex - b'a' + 10)
     } else if hex >= b'0' && hex <= b'9' {
         Some(hex - b'0')
     } else {
@@ -71,7 +71,7 @@ fn parse_hex_digit(hex: u8) -> Option<u8> {
 }
 
 fn parse_hex_2digit(hex: &[u8]) -> Option<u8> {
-    parse_hex_digit(hex[0]).and_then(|least_significant| Some(least_significant | (parse_hex_digit(hex[1])? << 4)))
+    parse_hex_digit(hex[0]).and_then(|most_significant| Some((most_significant << 4) | parse_hex_digit(hex[1])?))
 }
 
 fn parse_oem_id(hex: [u8; 12]) -> Option<[u8; 6]> {
@@ -99,7 +99,7 @@ fn parse_oem_table_id(hex: [u8; 16]) -> Option<[u8; 8]> {
 
 fn parse_table(table: &[u8]) -> Option<SdtSignature> {
     let signature_part = table.get(..4)?;
-    let first_hyphen = table.get(5)?;
+    let first_hyphen = table.get(4)?;
     let oem_id_part = table.get(5..17)?;
     let second_hyphen = table.get(17)?;
     let oem_table_part = table.get(18..34)?;
@@ -111,7 +111,7 @@ fn parse_table(table: &[u8]) -> Option<SdtSignature> {
         return None;
     }
 
-    if table.len() > 20 {
+    if table.len() > 34 {
         return None;
     }
 
@@ -139,7 +139,7 @@ impl SchemeMut for AcpiScheme<'_> {
         let components = path.split('/').collect::<Vec<_>>();
 
         let kind = match &*components {
-            [] => HandleKind::TopLevel,
+            [""] => HandleKind::TopLevel,
             ["tables"] => HandleKind::Tables,
 
             ["tables", table] => {
@@ -152,7 +152,7 @@ impl SchemeMut for AcpiScheme<'_> {
 
         if kind.is_dir() && !flag_dir && !flag_stat {
             return Err(Error::new(EISDIR));
-        } else if flag_dir && !flag_stat {
+        } else if !kind.is_dir() && flag_dir && !flag_stat {
             return Err(Error::new(ENOTDIR));
         }
 
@@ -191,6 +191,10 @@ impl SchemeMut for AcpiScheme<'_> {
     fn seek(&mut self, id: usize, pos: isize, whence: usize) -> Result<isize> {
         let handle = self.handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
+        if handle.stat {
+            return Err(Error::new(EBADF));
+        }
+
         let file_len = handle.kind.len(self.ctx)?;
 
         let new_offset = match whence {
@@ -215,6 +219,10 @@ impl SchemeMut for AcpiScheme<'_> {
     fn read(&mut self, id: usize, buf: &mut [u8]) -> Result<usize> {
         let handle = self.handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
+        if handle.stat {
+            return Err(Error::new(EBADF));
+        }
+
         let src_buf = match handle.kind {
             HandleKind::TopLevel => TOPLEVEL_CONTENTS,
             HandleKind::Table(ref signature) => self.ctx.sdt_from_signature(signature).ok_or(Error::new(EBADFD))?.as_slice(),
@@ -223,14 +231,14 @@ impl SchemeMut for AcpiScheme<'_> {
                 use std::io::prelude::*;
 
                 let tables_to_skip = handle.offset / TABLE_DENTRY_LENGTH;
-                let tables_to_fill = (buf.len() + TABLE_DENTRY_LENGTH - 1) / TABLE_DENTRY_LENGTH;
+                let max_tables_to_fill = (buf.len() + TABLE_DENTRY_LENGTH - 1) / TABLE_DENTRY_LENGTH;
 
-                let bytes_to_skip = handle.offset % TABLE_DENTRY_LENGTH;
+                let mut bytes_to_skip = handle.offset % TABLE_DENTRY_LENGTH;
 
                 let mut src_buf = [0_u8; TABLE_DENTRY_LENGTH];
                 let mut bytes_written = 0;
 
-                for table in self.ctx.tables().iter().skip(tables_to_skip).take(tables_to_fill) {
+                for table in self.ctx.tables().iter().skip(tables_to_skip).take(max_tables_to_fill) {
                     let mut cursor = std::io::Cursor::new(&mut src_buf[..]);
                     cursor.write_all(&table.signature).unwrap();
                     cursor.write_all(&[b'-']).unwrap();
@@ -242,12 +250,14 @@ impl SchemeMut for AcpiScheme<'_> {
                     for byte in table.oem_table_id.iter() {
                         write!(cursor, "{:>02X}", byte).unwrap();
                     }
+                    cursor.write_all(&[b'\n']).unwrap();
 
                     let src_buf = &src_buf[bytes_to_skip..];
                     let dst_buf = &mut buf[bytes_written..];
                     let to_copy = std::cmp::min(src_buf.len(), dst_buf.len());
                     dst_buf[..to_copy].copy_from_slice(&src_buf[..to_copy]);
                     bytes_written += to_copy;
+                    bytes_to_skip = 0;
                 }
 
                 handle.offset = handle.offset.checked_add(bytes_written).ok_or(Error::new(EOVERFLOW))?;

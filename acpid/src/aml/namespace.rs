@@ -253,9 +253,10 @@ impl AmlValue {
             AmlValue::Integer(i) => if let Some(sig) = acpi_ctx.get_signature_from_index(i as usize) {
                 Ok((vec!(), sig))
             } else {
+                log::error!("AmlValueError in get_as_ddb_handle integer");
                 Err(AmlError::AmlValueError)
             },
-            _ => Err(AmlError::AmlValueError)
+            _ => { log::error!("AmlValueError in get_as_ddb_handle other"); Err(AmlError::AmlValueError) }
         }
     }
 

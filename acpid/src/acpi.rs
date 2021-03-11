@@ -1,7 +1,7 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::convert::{TryFrom, TryInto};
 use std::ops::Deref;
-use std::sync::Arc;
+use std::sync::{Arc, atomic::{self, AtomicUsize}};
 use std::{fmt, mem};
 
 use syscall::flag::PhysmapFlags;
@@ -46,11 +46,17 @@ impl SdtHeader {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct SdtSignature {
     pub signature: [u8; 4],
     pub oem_id: [u8; 6],
     pub oem_table_id: [u8; 8],
+}
+
+impl fmt::Display for SdtSignature {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}-{}-{}", String::from_utf8_lossy(&self.signature), String::from_utf8_lossy(&self.oem_id), String::from_utf8_lossy(&self.oem_table_id))
+    }
 }
 
 #[derive(Debug, Error)]
@@ -208,7 +214,17 @@ pub struct AcpiContext {
     tables: Vec<Sdt>,
     dsdt: Option<Dsdt>,
     fadt: Option<Fadt>,
+
+    // TODO: Remove Option. This is not kernel code, and not static, but we still need to replace
+    // every match where namespace{,_mut}() are used.
     namespace: RwLock<Option<HashMap<String, AmlValue>>>,
+
+    // TODO: The kernel ACPI code seemed to use load_table quite ubiquitously, however ACPI 5.1
+    // states that DDBHandles can only be obtained when loading XSDT-pointed tables. So, we'll
+    // generate an index only for those.
+
+    sdt_order: RwLock<Vec<Option<SdtSignature>>>,
+
     pub next_ctx: RwLock<u64>,
 }
 impl AcpiContext {
@@ -228,11 +244,19 @@ impl AcpiContext {
             tables,
             dsdt: None,
             fadt: None,
-            namespace: RwLock::new(None),
+            namespace: RwLock::new(Some(HashMap::new())),
             next_ctx: RwLock::new(0),
+
+            sdt_order: RwLock::new(Vec::new()),
         };
 
+        for table in &this.tables {
+            this.new_index(&table.signature());
+        }
+
         Fadt::init(&mut this);
+
+        crate::aml::init_namespace(&this);
 
         this
     }
@@ -251,9 +275,6 @@ impl AcpiContext {
         }
 
         self.tables.iter().position(|sdt| sdt.signature == signature)
-    }
-    pub fn find_single_sdt(&self, signature: [u8; 4]) -> Option<&Sdt> {
-        self.find_single_sdt_pos(signature).map(|pos| &self.tables[pos])
     }
     pub fn find_multiple_sdts<'a>(&'a self, signature: [u8; 4]) -> impl Iterator<Item = &'a Sdt> {
         self.tables.iter().filter(move |sdt| sdt.signature == signature)
@@ -274,13 +295,16 @@ impl AcpiContext {
         self.tables.iter().find(|sdt| sdt.signature == signature.signature && sdt.oem_id == signature.oem_id && sdt.oem_table_id == signature.oem_table_id)
     }
     pub fn get_signature_from_index(&self, index: usize) -> Option<SdtSignature> {
-        todo!()
+        self.sdt_order.read().get(index).copied().flatten()
     }
     pub fn get_index_from_signature(&self, signature: &SdtSignature) -> Option<usize> {
-        todo!()
+        self.sdt_order.read().iter().rposition(|sig| sig.map_or(false, |sig| &sig == signature))
     }
     pub fn tables(&self) -> &[Sdt] {
         &self.tables
+    }
+    pub fn new_index(&self, signature: &SdtSignature) {
+        self.sdt_order.write().push(Some(*signature));
     }
 }
 
@@ -393,7 +417,7 @@ impl Deref for Fadt {
 }
 
 impl Fadt {
-    pub fn new(context: &AcpiContext, sdt: Sdt) -> Option<Fadt> {
+    pub fn new(sdt: Sdt) -> Option<Fadt> {
         if sdt.signature != *b"FACP" || sdt.length() < mem::size_of::<Fadt>() {
             return None;
         }
@@ -405,7 +429,7 @@ impl Fadt {
             .take_single_sdt(*b"FACP")
             .expect("expected ACPI to always have a FADT");
 
-        let fadt = match Fadt::new(context, fadt_sdt) {
+        let fadt = match Fadt::new(fadt_sdt) {
             Some(fadt) => fadt,
             None => {
                 log::error!("Failed to find FADT");
@@ -432,13 +456,9 @@ impl Fadt {
             }
         };
 
-        context.dsdt = Some(Dsdt(dsdt_sdt));
+        context.dsdt = Some(Dsdt(dsdt_sdt.clone()));
 
-        /*
-        let signature = get_sdt_signature(dsdt_sdt);
-        if let Some(ref mut ptrs) = *(SDT_POINTERS.write()) {
-            ptrs.insert(signature, dsdt_sdt);
-        }*/
+        context.tables.push(dsdt_sdt);
     }
 }
 
@@ -462,10 +482,17 @@ impl AmlContainingTable for PossibleAmlTables {
             Self::Ssdt(ssdt) => ssdt.aml(),
         }
     }
+    fn header(&self) -> &SdtHeader {
+        match self {
+            Self::Dsdt(dsdt) => dsdt.header(),
+            Self::Ssdt(ssdt) => ssdt.header(),
+        }
+    }
 }
 
 pub trait AmlContainingTable {
     fn aml(&self) -> &[u8];
+    fn header(&self) -> &SdtHeader;
 }
 
 impl<T> AmlContainingTable for &T
@@ -475,15 +502,24 @@ where
     fn aml(&self) -> &[u8] {
         T::aml(*self)
     }
+    fn header(&self) -> &SdtHeader {
+        T::header(*self)
+    }
 }
 
 impl AmlContainingTable for Dsdt {
     fn aml(&self) -> &[u8] {
         self.0.data()
     }
+    fn header(&self) -> &SdtHeader {
+        &*self.0
+    }
 }
 impl AmlContainingTable for Ssdt {
     fn aml(&self) -> &[u8] {
         self.0.data()
+    }
+    fn header(&self) -> &SdtHeader {
+        &*self.0
     }
 }

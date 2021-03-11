@@ -1346,15 +1346,15 @@ fn parse_def_load_table(data: &[u8],
     let parameter_data = parse_term_arg(&data[2 + signature.len + oem_id.len + oem_table_id.len + root_path.len + parameter_path.len..], ctx)?;
 
     let signature = {
-        <[u8; 4]>::try_from(&*signature.val.get_as_buffer(ctx.acpi_context())?)
+        <[u8; 4]>::try_from(&*signature.val.get_as_string(ctx.acpi_context())?.as_bytes())
             .expect("expected 'load table' def to have a signature that is 4 bytes long")
     };
     let oem_id = {
-        <[u8; 6]>::try_from(&*oem_id.val.get_as_buffer(ctx.acpi_context())?)
+        <[u8; 6]>::try_from(&*oem_id.val.get_as_string(ctx.acpi_context())?.as_bytes())
             .expect("expected 'load table' def to have an OEM ID that is 6 bytes long")
     };
     let oem_table_id = {
-        <[u8; 8]>::try_from(&*oem_table_id.val.get_as_buffer(ctx.acpi_context())?)
+        <[u8; 8]>::try_from(&*oem_table_id.val.get_as_string(ctx.acpi_context())?.as_bytes())
             .expect("expected 'load table' def to have an OEM table ID that is 8 bytes long")
     };
 
@@ -1594,7 +1594,7 @@ fn parse_def_mid(data: &[u8],
                 let mut res = s.clone().split_off(idx);
 
                 if len < res.len() {
-                    res.split_off(len);
+                    res.truncate(len);
                 }
 
                 AmlValue::String(res)
