@@ -36,6 +36,7 @@ fn monotonic() -> (u64, u64) {
 fn setup_logging() -> Option<&'static RedoxLogger> {
     use redox_log::OutputBuilder;
 
+    #[allow(unused_mut)]
     let mut logger = RedoxLogger::new()
         .with_output(
             OutputBuilder::stderr()
@@ -44,6 +45,12 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
                 .flush_on_newline(true)
                 .build()
         );
+
+    #[cfg(target_os = "redox")]
+    match File::open("debug:") {
+        Ok(d) => logger = logger.with_output(OutputBuilder::with_endpoint(d).flush_on_newline(true).with_filter(log::LevelFilter::Info).build()),
+        Err(error) => eprintln!("Failed to open `debug:` scheme: {}", error),
+    }
 
     #[cfg(target_os = "redox")]
     match OutputBuilder::in_redox_logging_scheme("misc", "acpi", "acpid.log") {
@@ -231,6 +238,7 @@ fn main() {
         let _ = event_queue.read(&mut event).expect("acpid: failed to read from event queue");
 
         if event.flags.contains(EventFlags::EVENT_READ) && event.id == shutdown_pipe.as_raw_fd() as usize {
+            log::info!("Received shutdown request from kernel.");
             break 'events;
         }
         if !event.flags.contains(EventFlags::EVENT_READ) || event.id != scheme_socket.as_raw_fd() as usize {

@@ -393,6 +393,7 @@ pub struct FadtAcpi2Struct {
 }
 unsafe impl plain::Plain for FadtAcpi2Struct {}
 
+#[derive(Clone)]
 pub struct Fadt(Sdt);
 
 impl Fadt {
@@ -456,6 +457,7 @@ impl Fadt {
             }
         };
 
+        context.fadt = Some(fadt.clone());
         context.dsdt = Some(Dsdt(dsdt_sdt.clone()));
 
         context.tables.push(dsdt_sdt);

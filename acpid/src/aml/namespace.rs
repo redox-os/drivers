@@ -129,7 +129,10 @@ pub enum AmlValue {
     String(String),
     PowerResource(PowerResource),
     Processor(Processor),
+
+    #[allow(dead_code)]
     RawDataBuffer(Vec<u8>),
+
     ThermalZone(ThermalZone)
 }
 
