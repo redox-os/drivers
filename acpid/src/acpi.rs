@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::convert::{TryFrom, TryInto};
 use std::ops::Deref;
 use std::sync::{Arc, atomic::{self, AtomicUsize}};
@@ -217,7 +217,7 @@ pub struct AcpiContext {
 
     // TODO: Remove Option. This is not kernel code, and not static, but we still need to replace
     // every match where namespace{,_mut}() are used.
-    namespace: RwLock<Option<HashMap<String, AmlValue>>>,
+    namespace: RwLock<Option<BTreeMap<String, AmlValue>>>,
 
     // TODO: The kernel ACPI code seemed to use load_table quite ubiquitously, however ACPI 5.1
     // states that DDBHandles can only be obtained when loading XSDT-pointed tables. So, we'll
@@ -234,7 +234,7 @@ impl AcpiContext {
                 .try_into()
                 .expect("expected ACPI addresses to be compatible with the current word size");
 
-            log::info!("TABLE AT {:#>08X}", physaddr);
+            log::debug!("TABLE AT {:#>08X}", physaddr);
 
             Sdt::load_from_physical(physaddr)
                 .expect("failed to load physical SDT")
@@ -244,7 +244,7 @@ impl AcpiContext {
             tables,
             dsdt: None,
             fadt: None,
-            namespace: RwLock::new(Some(HashMap::new())),
+            namespace: RwLock::new(Some(BTreeMap::new())),
             next_ctx: RwLock::new(0),
 
             sdt_order: RwLock::new(Vec::new()),
@@ -257,6 +257,10 @@ impl AcpiContext {
         Fadt::init(&mut this);
 
         crate::aml::init_namespace(&this);
+
+        for (path, _) in this.namespace.get_mut().as_mut().unwrap().iter() {
+            log::trace!("ACPI NS: {}", path);
+        }
 
         this
     }
@@ -282,10 +286,10 @@ impl AcpiContext {
     pub fn take_single_sdt(&mut self, signature: [u8; 4]) -> Option<Sdt> {
         self.find_single_sdt_pos(signature).map(|pos| self.tables[pos].clone())
     }
-    pub fn namespace(&self) -> RwLockReadGuard<'_, Option<HashMap<String, AmlValue>>> {
+    pub fn namespace(&self) -> RwLockReadGuard<'_, Option<BTreeMap<String, AmlValue>>> {
         self.namespace.read()
     }
-    pub fn namespace_mut(&self) -> RwLockWriteGuard<'_, Option<HashMap<String, AmlValue>>> {
+    pub fn namespace_mut(&self) -> RwLockWriteGuard<'_, Option<BTreeMap<String, AmlValue>>> {
         self.namespace.write()
     }
     pub fn fadt(&self) -> Option<&Fadt> {

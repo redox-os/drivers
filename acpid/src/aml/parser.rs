@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use parking_lot::RwLockWriteGuard;
 
@@ -292,7 +292,7 @@ impl<'a> AmlExecutionContext<'a> {
         }
     }
 
-    pub fn prelock<'ctx>(&mut self, ctx: &'ctx AcpiContext) -> RwLockWriteGuard<'ctx, Option<HashMap<String, AmlValue>>> {
+    pub fn prelock<'ctx>(&mut self, ctx: &'ctx AcpiContext) -> RwLockWriteGuard<'ctx, Option<BTreeMap<String, AmlValue>>> {
         ctx.namespace_mut()
     }
 

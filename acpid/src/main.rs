@@ -40,7 +40,7 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
     let mut logger = RedoxLogger::new()
         .with_output(
             OutputBuilder::stderr()
-                .with_filter(log::LevelFilter::Trace) // limit global output to important info
+                .with_filter(log::LevelFilter::Info) // limit global output to important info
                 .with_ansi_escape_codes()
                 .flush_on_newline(true)
                 .build()
@@ -48,7 +48,7 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
 
     #[cfg(target_os = "redox")]
     match File::open("debug:") {
-        Ok(d) => logger = logger.with_output(OutputBuilder::with_endpoint(d).flush_on_newline(true).with_filter(log::LevelFilter::Info).build()),
+        Ok(d) => logger = logger.with_output(OutputBuilder::with_endpoint(d).flush_on_newline(true).with_ansi_escape_codes().with_filter(log::LevelFilter::Info).build()),
         Err(error) => eprintln!("Failed to open `debug:` scheme: {}", error),
     }
 
@@ -58,6 +58,7 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
             // TODO: Add a configuration file for this
             b.with_filter(log::LevelFilter::Trace)
                 .flush_on_newline(true)
+                .with_ansi_escape_codes()
                 .build()
         ),
         Err(error) => eprintln!("Failed to create xhci.log: {}", error),
