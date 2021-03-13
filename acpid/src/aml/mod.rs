@@ -51,7 +51,7 @@ pub fn parse_aml_with_scope(acpi_ctx: &AcpiContext, sdt: impl AmlContainingTable
 
 fn init_aml_table(acpi_ctx: &AcpiContext, sdt: impl AmlContainingTable) {
     match parse_aml_table(acpi_ctx, &sdt) {
-        Ok(_) => log::info!("Table {} parsed successfully", sdt.header().signature()),
+        Ok(_) => log::debug!("Table {} parsed successfully", sdt.header().signature()),
         Err(AmlError::AmlParseError(e)) => log::error!("Table {} got parse error: {}", sdt.header().signature(), e),
         Err(AmlError::AmlInvalidOpCode) => log::error!("Table {} got invalid opcode", sdt.header().signature()),
         Err(AmlError::AmlValueError) => log::error!("For table {}: type constraints or value bounds not met", sdt.header().signature()),
@@ -69,7 +69,7 @@ fn init_aml_table(acpi_ctx: &AcpiContext, sdt: impl AmlContainingTable) {
 pub fn init_namespace(context: &AcpiContext) {
     let dsdt = context.dsdt().expect("could not find any DSDT");
 
-    log::info!("Found DSDT.");
+    log::debug!("Found DSDT.");
     init_aml_table(context, dsdt);
 
     let ssdts = context.ssdts();

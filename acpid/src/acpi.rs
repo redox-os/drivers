@@ -455,7 +455,7 @@ impl Fadt {
                 .expect("expected any given u32 to fit within usize")
         };
 
-        log::info!("  FACP: {:X}", {dsdt_ptr});
+        log::debug!("FACP at {:X}", {dsdt_ptr});
 
         let dsdt_sdt = match Sdt::load_from_physical(fadt.dsdt as usize) {
             Ok(dsdt) => dsdt,
