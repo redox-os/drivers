@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::convert::{TryFrom, TryInto};
 use std::ops::Deref;
-use std::sync::{Arc, atomic::{self, AtomicUsize}};
+use std::sync::Arc;
 use std::{fmt, mem};
 
 use syscall::flag::PhysmapFlags;
@@ -10,6 +10,9 @@ use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use thiserror::Error;
 
 use super::aml::AmlValue;
+
+pub mod dmar;
+use self::dmar::Dmar;
 
 #[cfg(target_arch = "x86_64")]
 pub const PAGE_SIZE: usize = 4096;
@@ -255,6 +258,7 @@ impl AcpiContext {
         }
 
         Fadt::init(&mut this);
+        Dmar::init(&this);
 
         crate::aml::init_namespace(&this);
 
@@ -283,7 +287,7 @@ impl AcpiContext {
     pub fn find_multiple_sdts<'a>(&'a self, signature: [u8; 4]) -> impl Iterator<Item = &'a Sdt> {
         self.tables.iter().filter(move |sdt| sdt.signature == signature)
     }
-    pub fn take_single_sdt(&mut self, signature: [u8; 4]) -> Option<Sdt> {
+    pub fn take_single_sdt(&self, signature: [u8; 4]) -> Option<Sdt> {
         self.find_single_sdt_pos(signature).map(|pos| self.tables[pos].clone())
     }
     pub fn namespace(&self) -> RwLockReadGuard<'_, Option<BTreeMap<String, AmlValue>>> {
