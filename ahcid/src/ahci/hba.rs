@@ -1,3 +1,4 @@
+use log::{error, info, trace};
 use std::mem::size_of;
 use std::ops::DerefMut;
 use std::{ptr, u32};
@@ -127,7 +128,7 @@ impl HbaPort {
         // Power on and spin up device
         self.cmd.writef(1 << 2 | 1 << 1, true);
 
-        print!("{}", format!("   - AHCI init {:X}\n", self.cmd.read()));
+        info!("   - AHCI init {:X}", self.cmd.read());
     }
 
     pub unsafe fn identify(&mut self, clb: &mut Dma<[HbaCmdHeader; 32]>, ctbas: &mut [Dma<HbaCmdTable>; 32]) -> Option<u64> {
@@ -208,8 +209,8 @@ impl HbaPort {
                 48
             };
 
-            print!("{}", format!("   + Serial: {} Firmware: {} Model: {} {}-bit LBA Size: {} MB\n",
-                        serial.trim(), firmware.trim(), model.trim(), lba_bits, sectors / 2048));
+            info!("   + Serial: {} Firmware: {} Model: {} {}-bit LBA Size: {} MB",
+                  serial.trim(), firmware.trim(), model.trim(), lba_bits, sectors / 2048);
 
             Some(sectors * 512)
         } else {
@@ -218,7 +219,7 @@ impl HbaPort {
     }
 
     pub fn ata_dma(&mut self, block: u64, sectors: usize, write: bool, clb: &mut Dma<[HbaCmdHeader; 32]>, ctbas: &mut [Dma<HbaCmdTable>; 32], buf: &mut Dma<[u8; 256 * 512]>) -> Option<u32> {
-        // print!("{}", format!("AHCI {:X} DMA BLOCK: {:X} SECTORS: {} WRITE: {}\n", (self as *mut HbaPort) as usize, block, sectors, write));
+        trace!("AHCI {:X} DMA BLOCK: {:X} SECTORS: {} WRITE: {}", (self as *mut HbaPort) as usize, block, sectors, write);
 
         assert!(sectors > 0 && sectors < 256);
 
@@ -331,10 +332,10 @@ impl HbaPort {
         self.stop();
 
         if self.is.read() & HBA_PORT_IS_ERR != 0 {
-            print!("{}", format!("ERROR IS {:X} IE {:X} CMD {:X} TFD {:X}\nSSTS {:X} SCTL {:X} SERR {:X} SACT {:X}\nCI {:X} SNTF {:X} FBS {:X}\n",
+            error!("ERROR IS {:X} IE {:X} CMD {:X} TFD {:X}\nSSTS {:X} SCTL {:X} SERR {:X} SACT {:X}\nCI {:X} SNTF {:X} FBS {:X}",
                     self.is.read(), self.ie.read(), self.cmd.read(), self.tfd.read(),
                     self.ssts.read(), self.sctl.read(), self.serr.read(), self.sact.read(),
-                    self.ci.read(), self.sntf.read(), self.fbs.read()));
+                    self.ci.read(), self.sntf.read(), self.fbs.read());
             self.is.write(u32::MAX);
             Err(Error::new(EIO))
         } else {
@@ -371,9 +372,9 @@ impl HbaMem {
         */
         self.ghc.write(1 << 31 | 1 << 1);
 
-        print!("{}", format!("   - AHCI CAP {:X} GHC {:X} IS {:X} PI {:X} VS {:X} CAP2 {:X} BOHC {:X}",
+        info!("   - AHCI CAP {:X} GHC {:X} IS {:X} PI {:X} VS {:X} CAP2 {:X} BOHC {:X}",
             self.cap.read(), self.ghc.read(), self.is.read(), self.pi.read(),
-            self.vs.read(), self.cap2.read(), self.bohc.read()));
+            self.vs.read(), self.cap2.read(), self.bohc.read());
     }
 }
 

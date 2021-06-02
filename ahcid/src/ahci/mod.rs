@@ -1,3 +1,4 @@
+use log::{error, info};
 use syscall::io::Io;
 use syscall::error::Result;
 
@@ -27,14 +28,14 @@ pub fn disks(base: usize, name: &str) -> (&'static mut HbaMem, Vec<Box<dyn Disk>
           .filter_map(|i| {
               let port = unsafe { &mut *hba_mem.ports.as_mut_ptr().add(i) };
               let port_type = port.probe();
-              print!("{}", format!("{}-{}: {:?}\n", name, i, port_type));
+              info!("{}-{}: {:?}", name, i, port_type);
 
               let disk: Option<Box<dyn Disk>> = match port_type {
                   HbaPortType::SATA => {
                       match DiskATA::new(i, port) {
                           Ok(disk) => Some(Box::new(disk)),
                           Err(err) => {
-                              print!("{}", format!("{}: {}\n", i, err));
+                              error!("{}: {}", i, err);
                               None
                           }
                       }
@@ -43,7 +44,7 @@ pub fn disks(base: usize, name: &str) -> (&'static mut HbaMem, Vec<Box<dyn Disk>
                       match DiskATAPI::new(i, port) {
                           Ok(disk) => Some(Box::new(disk)),
                           Err(err) => {
-                              print!("{}", format!("{}: {}\n", i, err));
+                              error!("{}: {}", i, err);
                               None
                           }
                       }
