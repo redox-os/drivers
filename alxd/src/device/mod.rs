@@ -1,8 +1,9 @@
 use std::{ptr, thread, time};
+use std::convert::TryInto;
 
 use netutils::setcfg;
 use syscall::error::{Error, EACCES, EINVAL, EIO, EWOULDBLOCK, Result};
-use syscall::flag::O_NONBLOCK;
+use syscall::flag::{EventFlags, O_NONBLOCK};
 use syscall::io::{Dma, Io, Mmio};
 use syscall::scheme;
 
@@ -275,6 +276,14 @@ pub struct Alx {
     tpd_ring: [Dma<[Tpd; 16]>; 4],
 }
 
+fn dma_array<T, const N: usize>() -> Result<[Dma<T>; N]> {
+    Ok((0..N)
+        .map(|_| Dma::zeroed().map(|dma| unsafe { dma.assume_init() }))
+        .collect::<Result<Vec<_>>>()?
+        .try_into()
+        .unwrap_or_else(|_| unreachable!()))
+}
+
 impl Alx {
     pub unsafe fn new(base: usize) -> Result<Self> {
         let mut module = Alx {
@@ -325,21 +334,11 @@ impl Alx {
             hib_patch: false,
             is_fpga: false,
 
-            rfd_buffer: [
-                Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-                Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-                Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-                Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?
-            ],
-            rfd_ring: Dma::zeroed()?,
-            rrd_ring: Dma::zeroed()?,
-            tpd_buffer: [
-                Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-                Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-                Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-                Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?
-            ],
-            tpd_ring: [Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?]
+            rfd_buffer: dma_array()?,
+            rfd_ring: Dma::zeroed()?.assume_init(),
+            rrd_ring: Dma::zeroed()?.assume_init(),
+            tpd_buffer: dma_array()?,
+            tpd_ring: dma_array()?,
         };
 
         module.init()?;
@@ -1789,7 +1788,7 @@ impl Alx {
 }
 
 impl scheme::SchemeMut for Alx {
-    fn open(&mut self, _path: &[u8], flags: usize, uid: u32, _gid: u32) -> Result<usize> {
+    fn open(&mut self, _path: &str, flags: usize, uid: u32, _gid: u32) -> Result<usize> {
         if uid == 0 {
             Ok(flags)
         } else {
@@ -1886,8 +1885,8 @@ impl scheme::SchemeMut for Alx {
         Ok(0)
     }
 
-    fn fevent(&mut self, _id: usize, _flags: usize) -> Result<usize> {
-        Ok(0)
+    fn fevent(&mut self, _id: usize, _flags: EventFlags) -> Result<EventFlags> {
+        Ok(EventFlags::empty())
     }
 
     fn fsync(&mut self, _id: usize) -> Result<usize> {

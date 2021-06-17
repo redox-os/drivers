@@ -1252,13 +1252,12 @@ impl Xhci {
 }
 
 impl Scheme for Xhci {
-    fn open(&self, path: &[u8], flags: usize, uid: u32, _gid: u32) -> Result<usize> {
+    fn open(&self, path_str: &str, flags: usize, uid: u32, _gid: u32) -> Result<usize> {
         if uid != 0 {
             return Err(Error::new(EACCES));
         }
 
-        let path_str = str::from_utf8(path)
-            .or(Err(Error::new(ENOENT)))?
+        let path_str = path_str
             .trim_start_matches('/');
 
         let components = path::Path::new(path_str)

@@ -1,9 +1,11 @@
 use std::collections::BTreeMap;
+use std::convert::TryInto;
 use std::{cmp, mem, ptr, slice};
 
 use netutils::setcfg;
+
 use syscall::error::{Error, Result, EACCES, EBADF, EINVAL, EWOULDBLOCK};
-use syscall::flag::O_NONBLOCK;
+use syscall::flag::{EventFlags, O_NONBLOCK};
 use syscall::io::Dma;
 use syscall::scheme::SchemeBlockMut;
 
@@ -113,7 +115,7 @@ fn wrap_ring(index: usize, ring_size: usize) -> usize {
 }
 
 impl SchemeBlockMut for Intel8254x {
-    fn open(&mut self, _path: &[u8], flags: usize, uid: u32, _gid: u32) -> Result<Option<usize>> {
+    fn open(&mut self, _path: &str, flags: usize, uid: u32, _gid: u32) -> Result<Option<usize>> {
         if uid == 0 {
             self.next_id += 1;
             self.handles.insert(self.next_id, flags);
@@ -218,9 +220,9 @@ impl SchemeBlockMut for Intel8254x {
         Ok(Some(i))
     }
 
-    fn fevent(&mut self, id: usize, _flags: usize) -> Result<Option<usize>> {
+    fn fevent(&mut self, id: usize, _flags: EventFlags) -> Result<Option<EventFlags>> {
         let _flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
-        Ok(Some(0))
+        Ok(Some(EventFlags::empty()))
     }
 
     fn fpath(&mut self, id: usize, buf: &mut [u8]) -> Result<Option<usize>> {
@@ -246,26 +248,23 @@ impl SchemeBlockMut for Intel8254x {
     }
 }
 
+fn dma_array<T, const N: usize>() -> Result<[Dma<T>; N]> {
+    Ok((0..N)
+        .map(|_| Dma::zeroed().map(|dma| unsafe { dma.assume_init() }))
+        .collect::<Result<Vec<_>>>()?
+        .try_into()
+        .unwrap_or_else(|_| unreachable!()))
+}
 impl Intel8254x {
     pub unsafe fn new(base: usize) -> Result<Self> {
         #[rustfmt::skip]
         let mut module = Intel8254x {
             base: base,
-            receive_buffer: [
-                Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-                Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-                Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-                Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-            ],
-            receive_ring: Dma::zeroed()?,
-            transmit_buffer: [
-                Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-                Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-                Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-                Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-            ],
+            receive_buffer: dma_array()?,
+            receive_ring: Dma::zeroed()?.assume_init(),
+            transmit_buffer: dma_array()?,
             receive_index: 0,
-            transmit_ring: Dma::zeroed()?,
+            transmit_ring: Dma::zeroed()?.assume_init(),
             transmit_ring_free: 16,
             transmit_index: 0,
             transmit_clean_index: 0,

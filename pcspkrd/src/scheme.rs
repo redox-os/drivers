@@ -12,7 +12,7 @@ pub struct PcspkrScheme {
 }
 
 impl SchemeMut for PcspkrScheme {
-    fn open(&mut self, _path: &[u8], flags: usize, _uid: u32, _gid: u32) -> Result<usize> {
+    fn open(&mut self, _path: &str, flags: usize, _uid: u32, _gid: u32) -> Result<usize> {
         if (flags & O_ACCMODE == 0) && (flags & O_STAT == O_STAT) {
             Ok(0)
         } else if flags & O_ACCMODE == O_WRONLY {

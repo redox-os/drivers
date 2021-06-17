@@ -20,7 +20,7 @@ use log::info;
 use redox_log::{RedoxLogger, OutputBuilder};
 use syscall::data::Packet;
 use syscall::error::EWOULDBLOCK;
-use syscall::flag::{CloneFlags, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
+use syscall::flag::{CloneFlags, EventFlags, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
 use syscall::scheme::Scheme;
 use syscall::io::Io;
 
@@ -278,7 +278,7 @@ fn main() {
         .expect("xhcid: failed to catch events on scheme file");
 
     event_queue
-        .trigger_all(Event { fd: 0, flags: 0 })
+        .trigger_all(Event { fd: 0, flags: EventFlags::empty() })
         .expect("xhcid: failed to trigger events");
 
     event_queue.run().expect("xhcid: failed to handle events");

@@ -11,7 +11,8 @@ use std::io::{Read, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::io::AsRawFd;
 
-use syscall::iopl;
+use syscall::call::iopl;
+use syscall::flag::CloneFlags;
 
 use crate::state::Ps2d;
 
@@ -113,7 +114,7 @@ fn main() {
     match OpenOptions::new().write(true).open("display:input") {
         Ok(input) => {
             // Daemonize
-            if unsafe { syscall::clone(0).unwrap() } == 0 {
+            if unsafe { syscall::clone(CloneFlags::empty()).unwrap() } == 0 {
                 daemon(input);
             }
         },

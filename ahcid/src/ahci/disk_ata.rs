@@ -1,3 +1,4 @@
+use std::convert::TryInto;
 use std::ptr;
 
 use syscall::io::Dma;
@@ -31,19 +32,16 @@ pub struct DiskATA {
 
 impl DiskATA {
     pub fn new(id: usize, port: &'static mut HbaPort) -> Result<Self> {
-        let mut clb = Dma::zeroed()?;
-        let mut ctbas = [
-            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-        ];
-        let mut fb = Dma::zeroed()?;
-        let buf = Dma::zeroed()?;
+        let mut clb = unsafe { Dma::zeroed()?.assume_init() };
+
+        let mut ctbas: [_; 32] = (0..32)
+            .map(|_| Dma::zeroed().map(|dma| unsafe { dma.assume_init() }))
+            .collect::<Result<Vec<_>>>()?
+            .try_into()
+            .unwrap_or_else(|_| unreachable!());
+
+        let mut fb = unsafe { Dma::zeroed()?.assume_init() };
+        let buf = unsafe { Dma::zeroed()?.assume_init() };
 
         port.init(&mut clb, &mut ctbas, &mut fb);
 
@@ -55,7 +53,7 @@ impl DiskATA {
             size: size,
             request_opt: None,
             clb: clb,
-            ctbas: ctbas,
+            ctbas,
             _fb: fb,
             buf: buf
         })

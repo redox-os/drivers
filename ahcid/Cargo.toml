@@ -8,6 +8,6 @@ bitflags = "1.2"
 byteorder = "1.2"
 log = "0.4"
 partitionlib = { git = "https://gitlab.redox-os.org/redox-os/partitionlib.git" }
-redox-log = { git = "https://gitlab.redox-os.org/redox-os/redox-log.git", tag = "v0.1.0" }
-redox_syscall = "0.1"
+redox-log = "0.1"
+redox_syscall = "0.2.9"
 block-io-wrapper = { path = "../block-io-wrapper" }

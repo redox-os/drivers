@@ -1,23 +1,23 @@
-use orbclient::{KeyEvent, MouseEvent, MouseRelativeEvent, ButtonEvent, ScrollEvent};
 use std::fs::File;
 use std::io::Write;
 use std::os::unix::io::AsRawFd;
 use std::str;
-use syscall;
+
+use orbclient::{KeyEvent, MouseEvent, MouseRelativeEvent, ButtonEvent, ScrollEvent};
 
 use crate::controller::Ps2;
 use crate::vm;
 
 bitflags! {
-    flags MousePacketFlags: u8 {
-        const LEFT_BUTTON = 1,
-        const RIGHT_BUTTON = 1 << 1,
-        const MIDDLE_BUTTON = 1 << 2,
-        const ALWAYS_ON = 1 << 3,
-        const X_SIGN = 1 << 4,
-        const Y_SIGN = 1 << 5,
-        const X_OVERFLOW = 1 << 6,
-        const Y_OVERFLOW = 1 << 7
+    pub struct MousePacketFlags: u8 {
+        const LEFT_BUTTON = 1;
+        const RIGHT_BUTTON = 1 << 1;
+        const MIDDLE_BUTTON = 1 << 2;
+        const ALWAYS_ON = 1 << 3;
+        const X_SIGN = 1 << 4;
+        const Y_SIGN = 1 << 5;
+        const X_OVERFLOW = 1 << 6;
+        const Y_OVERFLOW = 1 << 7;
     }
 }
 
@@ -176,20 +176,20 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
             self.packet_i += 1;
 
             let flags = MousePacketFlags::from_bits_truncate(self.packets[0]);
-            if ! flags.contains(ALWAYS_ON) {
+            if ! flags.contains(MousePacketFlags::ALWAYS_ON) {
                 println!("ps2d: mouse misalign {:X}", self.packets[0]);
 
                 self.packets = [0; 4];
                 self.packet_i = 0;
             } else if self.packet_i >= self.packets.len() || (!self.extra_packet && self.packet_i >= 3) {
-                if ! flags.contains(X_OVERFLOW) && ! flags.contains(Y_OVERFLOW) {
+                if ! flags.contains(MousePacketFlags::X_OVERFLOW) && ! flags.contains(MousePacketFlags::Y_OVERFLOW) {
                     let mut dx = self.packets[1] as i32;
-                    if flags.contains(X_SIGN) {
+                    if flags.contains(MousePacketFlags::X_SIGN) {
                         dx -= 0x100;
                     }
 
                     let mut dy = -(self.packets[2] as i32);
-                    if flags.contains(Y_SIGN) {
+                    if flags.contains(MousePacketFlags::Y_SIGN) {
                         dy += 0x100;
                     }
 
@@ -216,9 +216,9 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
                         }.to_event()).expect("ps2d: failed to write scroll event");
                     }
 
-                    let left = flags.contains(LEFT_BUTTON);
-                    let middle = flags.contains(MIDDLE_BUTTON);
-                    let right = flags.contains(RIGHT_BUTTON);
+                    let left = flags.contains(MousePacketFlags::LEFT_BUTTON);
+                    let middle = flags.contains(MousePacketFlags::MIDDLE_BUTTON);
+                    let right = flags.contains(MousePacketFlags::RIGHT_BUTTON);
                     if left != self.mouse_left || middle != self.mouse_middle || right != self.mouse_right {
                         self.mouse_left = left;
                         self.mouse_middle = middle;

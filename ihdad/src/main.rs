@@ -10,7 +10,7 @@ use std::{env, usize};
 use std::fs::File;
 use std::io::{ErrorKind, Read, Write, Result};
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
-use syscall::{PHYSMAP_NO_CACHE, PHYSMAP_WRITE, Packet, SchemeBlockMut};
+use syscall::{CloneFlags, PHYSMAP_NO_CACHE, PHYSMAP_WRITE, Packet, SchemeBlockMut, EventFlags};
 use std::cell::RefCell;
 use std::sync::Arc;
 
@@ -49,7 +49,7 @@ fn main() {
 	print!("{}", format!(" + ihda {} on: {:X} size: {} IRQ: {}\n", name, bar, bar_size, irq));
 
 	// Daemonize
-	if unsafe { syscall::clone(0).unwrap() } == 0 {
+	if unsafe { syscall::clone(CloneFlags::empty()).unwrap() } == 0 {
 		let address = unsafe {
 			syscall::physmap(bar, bar_size, PHYSMAP_WRITE | PHYSMAP_NO_CACHE)
 				.expect("ihdad: failed to map address")
@@ -136,7 +136,7 @@ fn main() {
 
 			for event_count in event_queue.trigger_all(event::Event {
 				fd: 0,
-				flags: 0,
+				flags: EventFlags::empty(),
 			}).expect("IHDA: failed to trigger events") {
 				socket.borrow_mut().write(&Packet {
 					id: 0,
@@ -145,7 +145,7 @@ fn main() {
 					gid: 0,
 					a: syscall::number::SYS_FEVENT,
 					b: 0,
-					c: syscall::flag::EVENT_READ,
+					c: syscall::flag::EVENT_READ.bits(),
 					d: event_count
 				}).expect("IHDA: failed to write event");
 			}
@@ -167,7 +167,7 @@ fn main() {
 					gid: 0,
 					a: syscall::number::SYS_FEVENT,
 					b: 0,
-					c: syscall::flag::EVENT_READ,
+					c: syscall::flag::EVENT_READ.bits(),
 					d: event_count
 				}).expect("IHDA: failed to write event");
 			}

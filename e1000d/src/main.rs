@@ -12,7 +12,7 @@ use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::sync::Arc;
 
 use event::EventQueue;
-use syscall::{Packet, SchemeBlockMut, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
+use syscall::{CloneFlags, EventFlags, Packet, SchemeBlockMut, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
 
 pub mod device;
 
@@ -81,7 +81,7 @@ fn main() {
     syscall::pipe2(&mut pipes, 0).unwrap();
     let mut read = unsafe { File::from_raw_fd(pipes[0] as RawFd) };
     let mut write = unsafe { File::from_raw_fd(pipes[1] as RawFd) };
-    let pid = unsafe { syscall::clone(0).unwrap() };
+    let pid = unsafe { syscall::clone(CloneFlags::empty()).unwrap() };
     if pid != 0 {
         drop(write);
 
@@ -191,7 +191,7 @@ fn main() {
                             gid: 0,
                             a: syscall::number::SYS_FEVENT,
                             b: *handle_id,
-                            c: syscall::flag::EVENT_READ,
+                            c: syscall::flag::EVENT_READ.bits(),
                             d: event_count,
                         })
                         .expect("e1000d: failed to write event");
@@ -199,7 +199,7 @@ fn main() {
             };
 
             for event_count in event_queue
-                .trigger_all(event::Event { fd: 0, flags: 0 })
+                .trigger_all(event::Event { fd: 0, flags: EventFlags::empty() })
                 .expect("e1000d: failed to trigger events")
             {
                 send_events(event_count);

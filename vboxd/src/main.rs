@@ -9,9 +9,10 @@ use std::{env, mem};
 use std::os::unix::io::AsRawFd;
 use std::fs::File;
 use std::io::{Result, Read, Write};
-use syscall::flag::{PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
+
+use syscall::call::iopl;
+use syscall::flag::{CloneFlags, EventFlags, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
 use syscall::io::{Dma, Io, Mmio, Pio};
-use syscall::iopl;
 
 use crate::bga::Bga;
 
@@ -60,7 +61,7 @@ impl VboxGetMouse {
     fn request() -> u32 { 1 }
 
     fn new() -> syscall::Result<Dma<Self>> {
-        let mut packet = Dma::<Self>::zeroed()?;
+        let mut packet = unsafe { Dma::<Self>::zeroed()?.assume_init() };
 
         packet.header.size.write(mem::size_of::<Self>() as u32);
         packet.header.version.write(VBOX_REQUEST_HEADER_VERSION);
@@ -83,7 +84,7 @@ impl VboxSetMouse {
     fn request() -> u32 { 2 }
 
     fn new() -> syscall::Result<Dma<Self>> {
-        let mut packet = Dma::<Self>::zeroed()?;
+        let mut packet = unsafe { Dma::<Self>::zeroed()?.assume_init() };
 
         packet.header.size.write(mem::size_of::<Self>() as u32);
         packet.header.version.write(VBOX_REQUEST_HEADER_VERSION);
@@ -104,7 +105,7 @@ impl VboxAckEvents {
     fn request() -> u32 { 41 }
 
     fn new() -> syscall::Result<Dma<Self>> {
-        let mut packet = Dma::<Self>::zeroed()?;
+        let mut packet = unsafe { Dma::<Self>::zeroed()?.assume_init() };
 
         packet.header.size.write(mem::size_of::<Self>() as u32);
         packet.header.version.write(VBOX_REQUEST_HEADER_VERSION);
@@ -125,7 +126,7 @@ impl VboxGuestCaps {
     fn request() -> u32 { 55 }
 
     fn new() -> syscall::Result<Dma<Self>> {
-        let mut packet = Dma::<Self>::zeroed()?;
+        let mut packet = unsafe { Dma::<Self>::zeroed()?.assume_init() };
 
         packet.header.size.write(mem::size_of::<Self>() as u32);
         packet.header.version.write(VBOX_REQUEST_HEADER_VERSION);
@@ -148,7 +149,7 @@ impl VboxDisplayChange {
     fn request() -> u32 { 51 }
 
     fn new() -> syscall::Result<Dma<Self>> {
-        let mut packet = Dma::<Self>::zeroed()?;
+        let mut packet = unsafe { Dma::<Self>::zeroed()?.assume_init() };
 
         packet.header.size.write(mem::size_of::<Self>() as u32);
         packet.header.version.write(VBOX_REQUEST_HEADER_VERSION);
@@ -170,7 +171,7 @@ impl VboxGuestInfo {
     fn request() -> u32 { 50 }
 
     fn new() -> syscall::Result<Dma<Self>> {
-        let mut packet = Dma::<Self>::zeroed()?;
+        let mut packet = unsafe { Dma::<Self>::zeroed()?.assume_init() };
 
         packet.header.size.write(mem::size_of::<Self>() as u32);
         packet.header.version.write(VBOX_REQUEST_HEADER_VERSION);
@@ -198,7 +199,7 @@ fn main() {
     print!("{}", format!(" + VirtualBox {} on: {:X}, {:X}, IRQ {}\n", name, bar0, bar1, irq));
 
     // Daemonize
-    if unsafe { syscall::clone(0).unwrap() } == 0 {
+    if unsafe { syscall::clone(CloneFlags::empty()).unwrap() } == 0 {
         unsafe { iopl(3).expect("vboxd: failed to get I/O permission"); };
 
         let mut width = 0;
@@ -288,7 +289,7 @@ fn main() {
 
             event_queue.trigger_all(event::Event {
                 fd: 0,
-                flags: 0
+                flags: EventFlags::empty()
             }).expect("vboxd: failed to trigger events");
 
             event_queue.run().expect("vboxd: failed to run event loop");

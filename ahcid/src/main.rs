@@ -3,13 +3,18 @@
 extern crate syscall;
 extern crate byteorder;
 
-use log::{error, info};
-use redox_log::{OutputBuilder, RedoxLogger};
 use std::{env, usize};
 use std::fs::File;
 use std::io::{ErrorKind, Read, Write};
 use std::os::unix::io::{FromRawFd, RawFd};
-use syscall::{ENODEV, EVENT_READ, PHYSMAP_NO_CACHE, PHYSMAP_WRITE, Error, Event, Packet, SchemeBlockMut};
+
+use syscall::error::{Error, ENODEV};
+use syscall::data::{Event, Packet};
+use syscall::flag::{CloneFlags, EVENT_READ, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
+use syscall::scheme::SchemeBlockMut;
+
+use log::{error, info};
+use redox_log::{OutputBuilder, RedoxLogger};
 
 use crate::scheme::DiskScheme;
 
@@ -76,7 +81,7 @@ fn main() {
     let irq = irq_str.parse::<u8>().expect("ahcid: failed to parse irq");
 
     // Daemonize
-    if unsafe { syscall::clone(0).unwrap() } != 0 {
+    if unsafe { syscall::clone(CloneFlags::empty()).unwrap() } != 0 {
         return;
     }
 

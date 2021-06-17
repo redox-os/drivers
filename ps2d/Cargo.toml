@@ -4,6 +4,6 @@ version = "0.1.0"
 edition = "2018"
 
 [dependencies]
-bitflags = "0.7"
+bitflags = "1"
 orbclient = "0.3.27"
-redox_syscall = "0.1"
+redox_syscall = "0.2.9"

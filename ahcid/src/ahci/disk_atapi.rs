@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use std::convert::TryInto;
 use std::ptr;
 
 use byteorder::{ByteOrder, BigEndian};
@@ -27,32 +28,29 @@ pub struct DiskATAPI {
 
 impl DiskATAPI {
     pub fn new(id: usize, port: &'static mut HbaPort) -> Result<Self> {
-        let mut clb = Dma::zeroed()?;
-        let mut ctbas = [
-            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-        ];
-        let mut fb = Dma::zeroed()?;
-        let buf = Dma::zeroed()?;
+        let mut clb = unsafe { Dma::zeroed()?.assume_init() };
+
+        let mut ctbas: [_; 32] = (0..32)
+            .map(|_| Dma::zeroed().map(|dma| unsafe { dma.assume_init() }))
+            .collect::<Result<Vec<_>>>()?
+            .try_into()
+            .unwrap_or_else(|_| unreachable!());
+
+        let mut fb = unsafe { Dma::zeroed()?.assume_init() };
+        let buf = unsafe { Dma::zeroed()?.assume_init() };
 
         port.init(&mut clb, &mut ctbas, &mut fb);
 
         let size = unsafe { port.identify_packet(&mut clb, &mut ctbas).unwrap_or(0) };
 
         Ok(DiskATAPI {
-            id: id,
-            port: port,
-            size: size,
-            clb: clb,
-            ctbas: ctbas,
+            id,
+            port,
+            size,
+            clb,
+            ctbas,
             _fb: fb,
-            buf: buf
+            buf,
         })
     }
 

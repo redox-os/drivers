@@ -1,5 +1,3 @@
-#![feature(renamed_spin_loop, seek_convenience)]
-
 use std::convert::TryFrom;
 use std::io::{self, prelude::*};
 use std::fs::{File, OpenOptions};

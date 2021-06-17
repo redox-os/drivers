@@ -1,32 +1,32 @@
 use syscall::io::{Io, Pio, ReadOnly, WriteOnly};
 
 bitflags! {
-    flags StatusFlags: u8 {
-        const OUTPUT_FULL = 1,
-        const INPUT_FULL = 1 << 1,
-        const SYSTEM = 1 << 2,
-        const COMMAND = 1 << 3,
+    pub struct StatusFlags: u8 {
+        const OUTPUT_FULL = 1;
+        const INPUT_FULL = 1 << 1;
+        const SYSTEM = 1 << 2;
+        const COMMAND = 1 << 3;
         // Chipset specific
-        const KEYBOARD_LOCK = 1 << 4,
+        const KEYBOARD_LOCK = 1 << 4;
         // Chipset specific
-        const SECOND_OUTPUT_FULL = 1 << 5,
-        const TIME_OUT = 1 << 6,
-        const PARITY = 1 << 7
+        const SECOND_OUTPUT_FULL = 1 << 5;
+        const TIME_OUT = 1 << 6;
+        const PARITY = 1 << 7;
     }
 }
 
 bitflags! {
-    flags ConfigFlags: u8 {
-        const FIRST_INTERRUPT = 1,
-        const SECOND_INTERRUPT = 1 << 1,
-        const POST_PASSED = 1 << 2,
+    pub struct ConfigFlags: u8 {
+        const FIRST_INTERRUPT = 1;
+        const SECOND_INTERRUPT = 1 << 1;
+        const POST_PASSED = 1 << 2;
         // 1 << 3 should be zero
-        const CONFIG_RESERVED_3 = 1 << 3,
-        const FIRST_DISABLED = 1 << 4,
-        const SECOND_DISABLED = 1 << 5,
-        const FIRST_TRANSLATE = 1 << 6,
+        const CONFIG_RESERVED_3 = 1 << 3;
+        const FIRST_DISABLED = 1 << 4;
+        const SECOND_DISABLED = 1 << 5;
+        const FIRST_TRANSLATE = 1 << 6;
         // 1 << 7 should be zero
-        const CONFIG_RESERVED_7 = 1 << 7,
+        const CONFIG_RESERVED_7 = 1 << 7;
     }
 }
 
@@ -95,15 +95,15 @@ impl Ps2 {
     }
 
     fn wait_write(&mut self) {
-        while self.status().contains(INPUT_FULL) {}
+        while self.status().contains(StatusFlags::INPUT_FULL) {}
     }
 
     fn wait_read(&mut self) {
-        while ! self.status().contains(OUTPUT_FULL) {}
+        while ! self.status().contains(StatusFlags::OUTPUT_FULL) {}
     }
 
     fn flush_read(&mut self, message: &str) {
-        while self.status().contains(OUTPUT_FULL) {
+        while self.status().contains(StatusFlags::OUTPUT_FULL) {
             print!("ps2d: flush {}: {:X}\n", message, self.data.read());
         }
     }
@@ -191,9 +191,9 @@ impl Ps2 {
 
     pub fn next(&mut self) -> Option<(bool, u8)> {
         let status = self.status();
-        if status.contains(OUTPUT_FULL) {
+        if status.contains(StatusFlags::OUTPUT_FULL) {
             let data = self.data.read();
-            Some((! status.contains(SECOND_OUTPUT_FULL), data))
+            Some((! status.contains(StatusFlags::SECOND_OUTPUT_FULL), data))
         } else {
             None
         }
@@ -215,11 +215,11 @@ impl Ps2 {
         // Disable clocks, disable interrupts, and disable translate
         {
             let mut config = self.config();
-            config.insert(FIRST_DISABLED);
-            config.insert(SECOND_DISABLED);
-            config.remove(FIRST_TRANSLATE);
-            config.remove(FIRST_INTERRUPT);
-            config.remove(SECOND_INTERRUPT);
+            config.insert(ConfigFlags::FIRST_DISABLED);
+            config.insert(ConfigFlags::SECOND_DISABLED);
+            config.remove(ConfigFlags::FIRST_TRANSLATE);
+            config.remove(ConfigFlags::FIRST_INTERRUPT);
+            config.remove(ConfigFlags::SECOND_INTERRUPT);
             self.set_config(config);
         }
 
@@ -312,11 +312,11 @@ impl Ps2 {
         // Enable clocks and interrupts
         {
             let mut config = self.config();
-            config.remove(FIRST_DISABLED);
-            config.remove(SECOND_DISABLED);
-            config.insert(FIRST_TRANSLATE);
-            config.insert(FIRST_INTERRUPT);
-            config.insert(SECOND_INTERRUPT);
+            config.remove(ConfigFlags::FIRST_DISABLED);
+            config.remove(ConfigFlags::SECOND_DISABLED);
+            config.insert(ConfigFlags::FIRST_TRANSLATE);
+            config.insert(ConfigFlags::FIRST_INTERRUPT);
+            config.insert(ConfigFlags::SECOND_INTERRUPT);
             self.set_config(config);
         }
 

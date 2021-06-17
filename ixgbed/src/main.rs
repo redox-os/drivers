@@ -11,7 +11,7 @@ use std::{env, thread};
 
 use event::EventQueue;
 use std::time::Duration;
-use syscall::{Packet, SchemeBlockMut, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
+use syscall::{CloneFlags, EventFlags, Packet, SchemeBlockMut, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
 
 pub mod device;
 #[rustfmt::skip]
@@ -77,7 +77,7 @@ fn main() {
     println!(" + IXGBE {} on: {:X} IRQ: {}", name, bar, irq);
 
     // Daemonize
-    if unsafe { syscall::clone(0).unwrap() } == 0 {
+    if unsafe { syscall::clone(CloneFlags::empty()).unwrap() } == 0 {
         let socket_fd = syscall::open(
             ":network",
             syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK,
@@ -170,7 +170,7 @@ fn main() {
                             gid: 0,
                             a: syscall::number::SYS_FEVENT,
                             b: *handle_id,
-                            c: syscall::flag::EVENT_READ,
+                            c: syscall::flag::EVENT_READ.bits(),
                             d: event_count,
                         })
                         .expect("ixgbed: failed to write event");
@@ -178,7 +178,7 @@ fn main() {
             };
 
             for event_count in event_queue
-                .trigger_all(event::Event { fd: 0, flags: 0 })
+                .trigger_all(event::Event { fd: 0, flags: EventFlags::empty() })
                 .expect("ixgbed: failed to trigger events")
             {
                 send_events(event_count);

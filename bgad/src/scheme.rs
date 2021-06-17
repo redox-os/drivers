@@ -12,7 +12,7 @@ pub struct BgaScheme {
 }
 
 impl SchemeMut for BgaScheme {
-    fn open(&mut self, _path: &[u8], _flags: usize, uid: u32, _gid: u32) -> Result<usize> {
+    fn open(&mut self, _path: &str, _flags: usize, uid: u32, _gid: u32) -> Result<usize> {
         if uid == 0 {
             Ok(0)
         } else {
