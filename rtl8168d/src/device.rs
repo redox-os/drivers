@@ -2,11 +2,12 @@
 // See https://people.freebsd.org/~wpaul/RealTek/rtl8169spec-121.pdf
 
 use std::mem;
+use std::convert::TryInto;
 use std::collections::BTreeMap;
 
 use netutils::setcfg;
 use syscall::error::{Error, EACCES, EBADF, EINVAL, EWOULDBLOCK, Result};
-use syscall::flag::O_NONBLOCK;
+use syscall::flag::{EventFlags, O_NONBLOCK};
 use syscall::io::{Dma, Mmio, Io, ReadOnly};
 use syscall::scheme::SchemeBlockMut;
 
@@ -83,7 +84,7 @@ pub struct Rtl8168 {
 }
 
 impl SchemeBlockMut for Rtl8168 {
-    fn open(&mut self, _path: &[u8], flags: usize, uid: u32, _gid: u32) -> Result<Option<usize>> {
+    fn open(&mut self, _path: &str, flags: usize, uid: u32, _gid: u32) -> Result<Option<usize>> {
         if uid == 0 {
             self.next_id += 1;
             self.handles.insert(self.next_id, flags);
@@ -163,7 +164,7 @@ impl SchemeBlockMut for Rtl8168 {
                 self.regs.tppoll.writef(1 << 6, true); //Notify of normal priority packet
 
                 while self.regs.tppoll.readf(1 << 6) {
-                    unsafe { llvm_asm!("pause"); }
+                    std::hint::spin_loop();
                 }
 
                 self.transmit_i += 1;
@@ -171,13 +172,13 @@ impl SchemeBlockMut for Rtl8168 {
                 return Ok(Some(i));
             }
 
-            unsafe { llvm_asm!("pause"); }
+            std::hint::spin_loop();
         }
     }
 
-    fn fevent(&mut self, id: usize, _flags: usize) -> Result<Option<usize>> {
+    fn fevent(&mut self, id: usize, _flags: EventFlags) -> Result<Option<EventFlags>> {
         let _flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
-        Ok(Some(0))
+        Ok(Some(EventFlags::empty()))
     }
 
     fn fpath(&mut self, id: usize, buf: &mut [u8]) -> Result<Option<usize>> {
@@ -220,34 +221,25 @@ impl Rtl8168 {
 
         let mut module = Rtl8168 {
             regs: regs,
-            receive_buffer: [Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-                            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-                            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-                            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-                            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-                            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-                            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-                            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-                            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-                            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-                            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-                            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-                            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-                            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-                            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-                            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?],
-            receive_ring: Dma::zeroed()?,
+            receive_buffer: (0..64)
+                .map(|_| Dma::zeroed().map(|dma| dma.assume_init()))
+                .collect::<Result<Vec<_>>>()?
+                .try_into()
+                .unwrap_or_else(|_| unreachable!()),
+
+            receive_ring: Dma::zeroed()?.assume_init(),
             receive_i: 0,
-            transmit_buffer: [Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-                            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-                            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?,
-                            Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?, Dma::zeroed()?],
-            transmit_ring: Dma::zeroed()?,
+            transmit_buffer: (0..16)
+                .map(|_| Dma::zeroed().map(|dma| dma.assume_init()))
+                .collect::<Result<Vec<_>>>()?
+                .try_into()
+                .unwrap_or_else(|_| unreachable!()),
+            transmit_ring: Dma::zeroed()?.assume_init(),
             transmit_i: 0,
-            transmit_buffer_h: [Dma::zeroed()?],
-            transmit_ring_h: Dma::zeroed()?,
+            transmit_buffer_h: [Dma::zeroed()?.assume_init()],
+            transmit_ring_h: Dma::zeroed()?.assume_init(),
             next_id: 0,
-            handles: BTreeMap::new()
+            handles: BTreeMap::new(),
         };
 
         module.init();

@@ -6,8 +6,10 @@ extern crate syscall;
 use std::env;
 use std::fs::File;
 use std::io::{Read, Write};
-use syscall::iopl;
+
+use syscall::call::iopl;
 use syscall::data::Packet;
+use syscall::flag::CloneFlags;
 use syscall::scheme::SchemeMut;
 
 use crate::bga::Bga;
@@ -28,7 +30,7 @@ fn main() {
     print!("{}", format!(" + BGA {} on: {:X}\n", name, bar));
 
     // Daemonize
-    if unsafe { syscall::clone(0).unwrap() } == 0 {
+    if unsafe { syscall::clone(CloneFlags::empty()).unwrap() } == 0 {
         unsafe { iopl(3).unwrap() };
 
         let mut socket = File::create(":bga").expect("bgad: failed to create bga scheme");

@@ -160,10 +160,9 @@ impl DiskScheme {
 }
 
 impl SchemeBlockMut for DiskScheme {
-    fn open(&mut self, path: &[u8], flags: usize, uid: u32, _gid: u32) -> Result<Option<usize>> {
+    fn open(&mut self, path_str: &str, flags: usize, uid: u32, _gid: u32) -> Result<Option<usize>> {
         if uid == 0 {
-            let path_str = str::from_utf8(path)
-                .or(Err(Error::new(ENOENT)))?
+            let path_str = path_str
                 .trim_matches('/');
             if path_str.is_empty() {
                 if flags & O_DIRECTORY == O_DIRECTORY || flags & O_STAT == O_STAT {

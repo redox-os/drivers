@@ -5,12 +5,12 @@ edition = "2018"
 
 [dependencies]
 arrayvec = "0.5"
-bitflags = "0.7"
+bitflags = "1"
 crossbeam-channel = "0.4"
 futures = "0.3"
 log = "0.4"
-redox-log = { git = "https://gitlab.redox-os.org/redox-os/redox-log.git", tag = "v0.1.0" }
-redox_syscall = { git = "https://gitlab.redox-os.org/redox-os/syscall.git" }
+redox-log = "0.1"
+redox_syscall = "0.2.9"
 partitionlib = { git = "https://gitlab.redox-os.org/redox-os/partitionlib.git" }
 smallvec = "1"
 block-io-wrapper = { path = "../block-io-wrapper" }

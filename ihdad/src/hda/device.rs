@@ -866,7 +866,7 @@ impl Drop for IntelHDA {
 }
 
 impl SchemeBlockMut for IntelHDA {
-	fn open(&mut self, _path: &[u8], _flags: usize, uid: u32, _gid: u32) -> Result<Option<usize>> {
+	fn open(&mut self, _path: &str, _flags: usize, uid: u32, _gid: u32) -> Result<Option<usize>> {
 		//let path: Vec<&str>;
 		/*
 		match str::from_utf8(_path) {
@@ -901,7 +901,8 @@ impl SchemeBlockMut for IntelHDA {
 		self.write_to_output(index, buf)
 	}
 
-	fn seek(&mut self, id: usize, pos: usize, whence: usize) -> Result<Option<usize>> {
+	fn seek(&mut self, id: usize, pos: isize, whence: usize) -> Result<Option<isize>> {
+    let pos = pos as usize;
 		let mut handles = self.handles.lock();
 		match *handles.get_mut(&id).ok_or(Error::new(EBADF))? {
 			Handle::StrBuf(ref mut strbuf, ref mut size) => {
@@ -912,7 +913,7 @@ impl SchemeBlockMut for IntelHDA {
 					SEEK_END => cmp::max(0, cmp::min(len as isize,   len as isize + pos as isize)) as usize,
 					_ => return Err(Error::new(EINVAL))
 				};
-				Ok(Some(*size))
+				Ok(Some(*size as isize))
 			},
 
 			_ => Err(Error::new(EINVAL)),

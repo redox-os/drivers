@@ -7,7 +7,7 @@ edition = "2018"
 orbclient = "0.3.27"
 ransid = "0.4"
 rusttype = { version = "0.2", optional = true }
-redox_syscall = "0.2.1"
+redox_syscall = "0.2.9"
 
 [features]
 default = []

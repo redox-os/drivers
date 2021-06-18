@@ -148,9 +148,9 @@ impl DiskScheme {
 }
 
 impl SchemeBlockMut for DiskScheme {
-    fn open(&mut self, path: &[u8], flags: usize, uid: u32, _gid: u32) -> Result<Option<usize>> {
+    fn open(&mut self, path: &str, flags: usize, uid: u32, _gid: u32) -> Result<Option<usize>> {
         if uid == 0 {
-            let path_str = str::from_utf8(path).or(Err(Error::new(ENOENT)))?.trim_matches('/');
+            let path_str = path.trim_matches('/');
             if path_str.is_empty() {
                 if flags & O_DIRECTORY == O_DIRECTORY || flags & O_STAT == O_STAT {
                     let mut list = String::new();
@@ -390,7 +390,9 @@ impl SchemeBlockMut for DiskScheme {
         }
     }
 
-    fn seek(&mut self, id: usize, pos: usize, whence: usize) -> Result<Option<usize>> {
+    fn seek(&mut self, id: usize, pos: isize, whence: usize) -> Result<Option<isize>> {
+        let pos = pos as usize;
+
         match *self.handles.get_mut(&id).ok_or(Error::new(EBADF))? {
             Handle::List(ref mut handle, ref mut size) => {
                 let len = handle.len() as usize;
@@ -401,7 +403,7 @@ impl SchemeBlockMut for DiskScheme {
                     _ => return Err(Error::new(EINVAL))
                 };
 
-                Ok(Some(*size))
+                Ok(Some(*size as isize))
             },
             Handle::Disk(number, ref mut size) => {
                 let disk = self.disks.get_mut(number).ok_or(Error::new(EBADF))?;
@@ -413,7 +415,7 @@ impl SchemeBlockMut for DiskScheme {
                     _ => return Err(Error::new(EINVAL))
                 };
 
-                Ok(Some(*size))
+                Ok(Some(*size as isize))
             }
             Handle::Partition(disk_num, part_num, ref mut position) => {
                 let disk = self.disks.get_mut(disk_num).ok_or(Error::new(EBADF))?;
@@ -426,7 +428,7 @@ impl SchemeBlockMut for DiskScheme {
                     SEEK_END => cmp::max(0, cmp::min(len as isize, len as isize + pos as isize)) as usize,
                     _ => return Err(Error::new(EINVAL)),
                 };
-                Ok(Some(*position as usize))
+                Ok(Some(*position as isize))
             }
         }
     }

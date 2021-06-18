@@ -1,7 +1,7 @@
 #[cfg(feature="rusttype")]
 extern crate rusttype;
 
-use std::alloc::{AllocInit, AllocRef, Global, Layout};
+use std::alloc::{Allocator, Global, Layout};
 use std::{cmp, slice};
 use std::ptr::NonNull;
 
@@ -42,7 +42,13 @@ impl Display {
     #[cfg(not(feature="rusttype"))]
     pub fn new(width: usize, height: usize, onscreen: usize) -> Display {
         let size = width * height;
-        let offscreen = unsafe { Global.alloc(Layout::from_size_align_unchecked(size * 4, 4096), AllocInit::Zeroed).unwrap().ptr.as_ptr() };
+
+        let offscreen = unsafe {
+            Global
+                .allocate_zeroed(Layout::from_size_align_unchecked(size * 4, 4096))
+                .expect("failed to allocate offscreen memory")
+                .as_ptr()
+        };
         Display {
             width: width,
             height: height,
@@ -54,7 +60,12 @@ impl Display {
     #[cfg(feature="rusttype")]
     pub fn new(width: usize, height: usize, onscreen: usize) -> Display {
         let size = width * height;
-        let offscreen = unsafe { Global.alloc(Layout::from_size_align_unchecked(size * 4, 4096), AllocInit::Zeroed).unwrap().ptr.as_ptr() };
+        let offscreen = unsafe {
+            Global
+                .allocate_zeroed(Layout::from_size_align_unchecked(size * 4, 4096))
+                .expect("failed to allocate offscreen memory")
+                .as_ptr()
+        };
         Display {
             width: width,
             height: height,
@@ -72,7 +83,12 @@ impl Display {
             println!("Resize display to {}, {}", width, height);
 
             let size = width * height;
-            let offscreen = unsafe { Global.alloc(Layout::from_size_align_unchecked(size * 4, 4096), AllocInit::Zeroed).unwrap().ptr.as_ptr() };
+            let offscreen = unsafe {
+                Global
+                    .allocate_zeroed(Layout::from_size_align_unchecked(size * 4, 4096))
+                    .expect("failed to allocate offscreen memory when resizing")
+                    .as_ptr()
+            };
 
             {
                 let mut old_ptr = self.offscreen.as_ptr();
@@ -105,7 +121,7 @@ impl Display {
             let onscreen = self.onscreen.as_mut_ptr();
             self.onscreen = unsafe { slice::from_raw_parts_mut(onscreen, size) };
 
-            unsafe { Global.dealloc(NonNull::new_unchecked(self.offscreen.as_mut_ptr() as *mut u8), Layout::from_size_align_unchecked(self.offscreen.len() * 4, 4096)) };
+            unsafe { Global.deallocate(NonNull::new_unchecked(self.offscreen.as_mut_ptr() as *mut u8), Layout::from_size_align_unchecked(self.offscreen.len() * 4, 4096)) };
             self.offscreen = unsafe { slice::from_raw_parts_mut(offscreen as *mut u32, size) };
         } else {
             println!("Display is already {}, {}", width, height);
@@ -273,7 +289,17 @@ impl Display {
 }
 
 impl Drop for Display {
+    #[cold]
     fn drop(&mut self) {
-        unsafe { Global.dealloc(NonNull::new_unchecked(self.offscreen.as_mut_ptr() as *mut u8), Layout::from_size_align_unchecked(self.offscreen.len() * 4, 4096)) };
+        unsafe {
+            let offscreen = std::mem::replace(&mut self.offscreen, &mut []);
+
+            let layout = Layout::from_size_align(offscreen.len() * 4, 4096).unwrap();
+
+            Global.deallocate(
+                NonNull::from(offscreen).cast::<u8>(),
+                layout,
+            );
+        }
     }
 }

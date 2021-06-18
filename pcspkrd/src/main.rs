@@ -3,8 +3,10 @@ mod scheme;
 
 use std::fs::File;
 use std::io::{Read, Write};
+
+use syscall::call::iopl;
 use syscall::data::Packet;
-use syscall::iopl;
+use syscall::flag::CloneFlags;
 use syscall::scheme::SchemeMut;
 
 use self::pcspkr::Pcspkr;
@@ -12,7 +14,7 @@ use self::scheme::PcspkrScheme;
 
 fn main() {
     // Daemonize
-    if unsafe { syscall::clone(0).unwrap() } == 0 {
+    if unsafe { syscall::clone(CloneFlags::empty()).unwrap() } == 0 {
         unsafe { iopl(3).unwrap() };
 
         let mut socket = File::create(":pcspkr").expect("pcspkrd: failed to create pcspkr scheme");

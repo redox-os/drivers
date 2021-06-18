@@ -16,7 +16,7 @@ use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::sync::Arc;
 
 use event::EventQueue;
-use syscall::{Packet, SchemeMut, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
+use syscall::{CloneFlags, EventFlags, Packet, SchemeMut, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
 use syscall::error::EWOULDBLOCK;
 
 pub mod device;
@@ -36,7 +36,7 @@ fn main() {
     print!("{}", format!(" + ALX {} on: {:X}, IRQ: {}\n", name, bar, irq));
 
     // Daemonize
-    if unsafe { syscall::clone(0).unwrap() } == 0
+    if unsafe { syscall::clone(CloneFlags::empty()).unwrap() } == 0
     {
         let socket_fd = syscall::open(":network", syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK).expect("alxd: failed to create network scheme");
         let socket = Arc::new(RefCell::new(unsafe { File::from_raw_fd(socket_fd as RawFd) }));
@@ -112,7 +112,7 @@ fn main() {
 
             for event_count in event_queue.trigger_all(event::Event {
                 fd: 0,
-                flags: 0,
+                flags: EventFlags::empty(),
             }).expect("alxd: failed to trigger events") {
                 socket.borrow_mut().write(&Packet {
                     id: 0,
@@ -121,7 +121,7 @@ fn main() {
                     gid: 0,
                     a: syscall::number::SYS_FEVENT,
                     b: 0,
-                    c: syscall::flag::EVENT_READ,
+                    c: syscall::flag::EVENT_READ.bits(),
                     d: event_count
                 }).expect("alxd: failed to write event");
             }
@@ -136,7 +136,7 @@ fn main() {
                     gid: 0,
                     a: syscall::number::SYS_FEVENT,
                     b: 0,
-                    c: syscall::flag::EVENT_READ,
+                    c: syscall::flag::EVENT_READ.bits(),
                     d: event_count
                 }).expect("alxd: failed to write event");
             }
