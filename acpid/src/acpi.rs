@@ -258,7 +258,7 @@ impl AcpiContext {
         }
 
         Fadt::init(&mut this);
-        Dmar::init(&this);
+        //TODO (hangs on real hardware): Dmar::init(&this);
 
         crate::aml::init_namespace(&this);
 
