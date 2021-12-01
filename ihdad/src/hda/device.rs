@@ -161,7 +161,7 @@ impl IntelHDA {
 			syscall::physmap(buff_desc_phys, 0x1000, PHYSMAP_WRITE | PHYSMAP_NO_CACHE)
 				.expect("ihdad: failed to map address for buffer descriptor list.");
 
-		print!("Virt: {:016X}, Phys: {:016X}\n", buff_desc_virt, buff_desc_phys);
+		log::info!("Virt: {:016X}, Phys: {:016X}", buff_desc_virt, buff_desc_phys);
 
 		let buff_desc = &mut *(buff_desc_virt as *mut [BufferDescriptorListEntry;256]);
 
@@ -171,7 +171,7 @@ impl IntelHDA {
 
 		let cmd_buff_virt = syscall::physmap(cmd_buff_address, 0x1000, PHYSMAP_WRITE | PHYSMAP_NO_CACHE).expect("ihdad: failed to map address for CORB/RIRB buff");
 
-		print!("Virt: {:016X}, Phys: {:016X}\n", cmd_buff_virt, cmd_buff_address);
+		log::info!("Virt: {:016X}, Phys: {:016X}", cmd_buff_virt, cmd_buff_address);
 		let mut module = IntelHDA {
 			vend_prod: vend_prod,
 			base: base,
@@ -209,7 +209,7 @@ impl IntelHDA {
 		module.enumerate();
 
 		module.configure();
-		print!("IHDA: Initialization finished.\n");
+		log::info!("IHDA: Initialization finished.");
 		Ok(module)
 
 	}
@@ -345,7 +345,7 @@ impl IntelHDA {
 
 		let root = self.read_node((codec,0));
 
-		// print!("{}\n", root);
+		// log::info!("{}", root);
 
 		let root_count = root.subnode_count;
 		let root_start = root.subnode_start;
@@ -353,7 +353,7 @@ impl IntelHDA {
 		//FIXME: So basically the way this is set up is to only support one codec and hopes the first one is an audio
 		for i in 0..root_count {
 			let afg = self.read_node((codec, root_start + i));
-			// print!("{}\n", afg);
+			// log::info!("{}", afg);
 			let afg_count = afg.subnode_count;
 			let afg_start = afg.subnode_start;
 
@@ -373,13 +373,13 @@ impl IntelHDA {
 							self.input_pins.push(widget.addr);
 						}
 
-						print!("{:02X}{:02X} {}\n", widget.addr().0, widget.addr().1, config);
+						log::info!("{:02X}{:02X} {}", widget.addr().0, widget.addr().1, config);
 
 					},
 					_ => {},
 				}
 
-				print!("{}\n", widget);
+				log::info!("{}", widget);
 				self.widget_map.insert(widget.addr(), widget);
 			}
 		}
@@ -473,14 +473,14 @@ impl IntelHDA {
 	pub fn configure(&mut self) {
 		let outpin = self.find_best_output_pin().expect("IHDA: No output pins?!");
 
-		//print!("Best pin: {:01X}:{:02X}\n", outpin.0, outpin.1);
+		//log::info!("Best pin: {:01X}:{:02X}", outpin.0, outpin.1);
 
 		let path = self.find_path_to_dac(outpin).unwrap();
 
 		let dac = *path.last().unwrap();
 		let pin = *path.first().unwrap();
 
-		//print!("Path to DAC: {:?}\n", path);
+		//log::info!("Path to DAC: {:?}", path);
 
 		// Pin enable
 		self.cmd.cmd12(pin, 0x707, 0x40);
@@ -492,8 +492,8 @@ impl IntelHDA {
 
 		self.update_sound_buffers();
 
-		//print!("Supported Formats: {:08X}\n", self.get_supported_formats((0,0x1)));
-		//print!("Capabilities: {:08X}\n", self.get_capabilities(path[0]));
+		//log::info!("Supported Formats: {:08X}", self.get_supported_formats((0,0x1)));
+		//log::info!("Capabilities: {:08X}", self.get_capabilities(path[0]));
 
 		let output = self.get_output_stream_descriptor(0).unwrap();
 
@@ -525,10 +525,10 @@ impl IntelHDA {
 
 		let outpin = self.find_best_output_pin().expect("IHDA: No output pins?!");
 
-		print!("Best pin: {:01X}:{:02X}\n", outpin.0, outpin.1);
+		log::info!("Best pin: {:01X}:{:02X}", outpin.0, outpin.1);
 
 		let path = self.find_path_to_dac(outpin).unwrap();
-		print!("Path to DAC: {:?}\n", path);
+		log::info!("Path to DAC: {:?}", path);
 
 		// Pin enable
 		self.cmd.cmd12((0,0xC), 0x707, 0x40);
@@ -542,8 +542,8 @@ impl IntelHDA {
 		self.update_sound_buffers();
 
 
-		print!("Supported Formats: {:08X}\n", self.get_supported_formats((0,0x1)));
-		print!("Capabilities: {:08X}\n", self.get_capabilities((0,0x1)));
+		log::info!("Supported Formats: {:08X}", self.get_supported_formats((0,0x1)));
+		log::info!("Capabilities: {:08X}", self.get_capabilities((0,0x1)));
 
 		let output = self.get_output_stream_descriptor(0).unwrap();
 
@@ -616,7 +616,7 @@ impl IntelHDA {
 		}
 
 		let statests = self.regs.statests.read();
-		print!("Statests: {:04X}\n", statests);
+		log::info!("Statests: {:04X}", statests);
 
 		for i in 0..15 {
 			if (statests >> i) & 0x1 == 1 {
@@ -648,12 +648,12 @@ impl IntelHDA {
 	}
 
 	pub fn info(&self) {
-		print!("Intel HD Audio Version {}.{}\n", self.regs.vmaj.read(), self.regs.vmin.read());
-		print!("IHDA: Input Streams: {}\n", self.num_input_streams());
-		print!("IHDA: Output Streams: {}\n", self.num_output_streams());
-		print!("IHDA: Bidirectional Streams: {}\n", self.num_bidirectional_streams());
-		print!("IHDA: Serial Data Outputs: {}\n", self.num_serial_data_out());
-		print!("IHDA: 64-Bit: {}\n", self.regs.gcap.read() & 1 == 1);
+		log::info!("Intel HD Audio Version {}.{}", self.regs.vmaj.read(), self.regs.vmin.read());
+		log::info!("IHDA: Input Streams: {}", self.num_input_streams());
+		log::info!("IHDA: Output Streams: {}", self.num_output_streams());
+		log::info!("IHDA: Bidirectional Streams: {}", self.num_bidirectional_streams());
+		log::info!("IHDA: Serial Data Outputs: {}", self.num_serial_data_out());
+		log::info!("IHDA: 64-Bit: {}", self.regs.gcap.read() & 1 == 1);
 	}
 
 	fn get_input_stream_descriptor(&self, index: usize) -> Option<&'static mut StreamDescriptorRegs> {
@@ -750,7 +750,7 @@ impl IntelHDA {
 			open_block = open_block - 1;
 		}
 
-		//print!("Status: {:02X} Pos: {:08X} Output CTL: {:06X}\n", output.status(), output.link_position(), output.control());
+		//log::info!("Status: {:02X} Pos: {:08X} Output CTL: {:06X}", output.status(), output.link_position(), output.control());
 
 		if open_block == os.current_block() {
 			Ok(None)
@@ -806,13 +806,13 @@ impl IntelHDA {
 	}
 
 	fn validate_path(&mut self, path: &Vec<&str>) -> bool {
-		print!("Path: {:?}\n", path);
+		log::info!("Path: {:?}", path);
 		let mut it = path.iter();
 		match it.next() {
 			Some(card_str) if (*card_str).starts_with("card") => {
 				match usize::from_str_radix(&(*card_str)[4..], 10) {
 					Ok(card_num) => {
-						print!("Card# {}\n", card_num);
+						log::info!("Card# {}", card_num);
 						match it.next() {
 							Some(codec_str) if (*codec_str).starts_with("codec#") => {
 								match usize::from_str_radix(&(*codec_str)[6..], 10) {
@@ -828,7 +828,7 @@ impl IntelHDA {
 							Some(pcmout_str) if (*pcmout_str).starts_with("pcmout") => {
 								match usize::from_str_radix(&(*pcmout_str)[6..], 10) {
 									Ok(pcmout_num) => {
-										print!("pcmout {}\n", pcmout_num);
+										log::info!("pcmout {}", pcmout_num);
 										true
 									},
 									_ => false,
@@ -837,7 +837,7 @@ impl IntelHDA {
 							Some(pcmin_str) if (*pcmin_str).starts_with("pcmin") => {
 								match usize::from_str_radix(&(*pcmin_str)[6..], 10) {
 									Ok(pcmin_num) => {
-										print!("pcmin {}\n", pcmin_num);
+										log::info!("pcmin {}", pcmin_num);
 										true
 									},
 									_ => false,
@@ -860,7 +860,7 @@ impl IntelHDA {
 
 impl Drop for IntelHDA {
 	fn drop(&mut self) {
-		print!("IHDA: Deallocating IHDA driver.\n");
+		log::info!("IHDA: Deallocating IHDA driver.");
 
 	}
 }
@@ -896,7 +896,7 @@ impl SchemeBlockMut for IntelHDA {
 			0
 		};
 
-		//print!("Int count: {}\n", self.int_counter);
+		//log::info!("Int count: {}", self.int_counter);
 
 		self.write_to_output(index, buf)
 	}

@@ -15,6 +15,7 @@ use std::cell::RefCell;
 use std::sync::Arc;
 
 use event::EventQueue;
+use redox_log::{OutputBuilder, RedoxLogger};
 
 pub mod hda;
 
@@ -24,6 +25,50 @@ pub mod hda;
     QEMU ICH9    8086:293E
     82801H ICH8  8086:284B
 */
+
+fn setup_logging() -> Option<&'static RedoxLogger> {
+    let mut logger = RedoxLogger::new()
+        .with_output(
+            OutputBuilder::stderr()
+                .with_filter(log::LevelFilter::Info) // limit global output to important info
+                .with_ansi_escape_codes()
+                .flush_on_newline(true)
+                .build()
+        );
+
+    #[cfg(target_os = "redox")]
+    match OutputBuilder::in_redox_logging_scheme("audio", "pcie", "ihda.log") {
+        Ok(b) => logger = logger.with_output(
+            // TODO: Add a configuration file for this
+            b.with_filter(log::LevelFilter::Info)
+                .flush_on_newline(true)
+                .build()
+        ),
+        Err(error) => eprintln!("ihdad: failed to create ihda.log: {}", error),
+    }
+
+    #[cfg(target_os = "redox")]
+    match OutputBuilder::in_redox_logging_scheme("audio", "pcie", "ihda.ansi.log") {
+        Ok(b) => logger = logger.with_output(
+            b.with_filter(log::LevelFilter::Info)
+                .with_ansi_escape_codes()
+                .flush_on_newline(true)
+                .build()
+        ),
+        Err(error) => eprintln!("ihdad: failed to create ihda.ansi.log: {}", error),
+    }
+
+    match logger.enable() {
+        Ok(logger_ref) => {
+            eprintln!("ihdad: enabled logger");
+            Some(logger_ref)
+        }
+        Err(error) => {
+            eprintln!("ihdad: failed to set default logger: {}", error);
+            None
+        }
+    }
+}
 
 fn main() {
 	let mut args = env::args().skip(1);
@@ -50,6 +95,8 @@ fn main() {
 
 	// Daemonize
 	if unsafe { syscall::clone(CloneFlags::empty()).unwrap() } == 0 {
+	    let _logger_ref = setup_logging();
+
 		let address = unsafe {
 			syscall::physmap(bar, bar_size, PHYSMAP_WRITE | PHYSMAP_NO_CACHE)
 				.expect("ihdad: failed to map address")
