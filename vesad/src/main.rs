@@ -10,12 +10,10 @@ use std::io::{Read, Write};
 use std::os::unix::io::{RawFd, FromRawFd};
 use syscall::{physmap, physunmap, Packet, SchemeMut, EVENT_READ, PHYSMAP_WRITE, PHYSMAP_WRITE_COMBINE};
 
-use crate::mode_info::VBEModeInfo;
 use crate::primitive::fast_set64;
 use crate::scheme::{DisplayScheme, HandleKind};
 
 pub mod display;
-pub mod mode_info;
 pub mod primitive;
 pub mod scheme;
 pub mod screen;
@@ -33,19 +31,23 @@ fn main() {
         }
     }
 
-    let width;
-    let height;
-    let physbaseptr;
+    let width = usize::from_str_radix(
+            &env::var("FRAMEBUFFER_WIDTH")
+                .expect("FRAMEBUFFER_WIDTH not set"),
+            16
+        ).expect("failed to parse FRAMEBUFFER_WIDTH");
+    let height = usize::from_str_radix(
+            &env::var("FRAMEBUFFER_HEIGHT")
+                .expect("FRAMEBUFFER_HEIGHT not set"),
+            16
+        ).expect("failed to parse FRAMEBUFFER_HEIGHT");
+    let physbaseptr = usize::from_str_radix(
+            &env::var("FRAMEBUFFER_ADDR")
+                .expect("FRAMEBUFFER_ADDR not set"),
+            16
+        ).expect("failed to parse FRAMEBUFFER_ADDR");
 
-    {
-        let mode_info = unsafe { &*(physmap(0x5200, 4096, syscall::PhysmapFlags::empty()).expect("vesad: failed to map VBE info") as *const VBEModeInfo) };
-
-        width = mode_info.xresolution as usize;
-        height = mode_info.yresolution as usize;
-        physbaseptr = mode_info.physbaseptr as usize;
-
-        unsafe { let _ = physunmap(mode_info as *const _ as usize); }
-    }
+    println!("vesad: {}x{} at 0x{:X}", width, height, physbaseptr);
 
     if physbaseptr > 0 {
         // Daemonize
