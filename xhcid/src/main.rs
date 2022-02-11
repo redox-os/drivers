@@ -102,7 +102,7 @@ fn main() {
 
     let bar_ptr = match bar {
         pcid_interface::PciBar::Memory(ptr) => match ptr {
-            0 => panic!("BAR is mapped to address 0"),
+            0 => panic!("BAR 0 is mapped to address 0"),
             _ => ptr,
         },
         other => panic!("Expected memory bar, found {}", other),

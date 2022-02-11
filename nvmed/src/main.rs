@@ -85,7 +85,10 @@ fn get_int_method(
                 &mut Some(ref bar) => Ok(bar.ptr),
                 bar_to_set @ &mut None => {
                     let bar = match function.bars[bir] {
-                        PciBar::Memory(addr) => addr,
+                        PciBar::Memory(addr) => match addr {
+                            0 => panic!("BAR {} is mapped to address 0", bir),
+                            _ => addr,
+                        },
                         other => panic!("Expected memory BAR, found {:?}", other),
                     };
                     let bar_size = function.bar_sizes[bir];
@@ -271,7 +274,7 @@ fn main() {
 
     let bar = match pci_config.func.bars[0] {
         PciBar::Memory(mem) => match mem {
-            0 => panic!("BAR is mapped to address 0"),
+            0 => panic!("BAR 0 is mapped to address 0"),
             _ => mem,
         },
         other => panic!("received a non-memory BAR ({:?})", other),
