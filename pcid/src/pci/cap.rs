@@ -186,9 +186,15 @@ impl Capability {
         log::info!("Vendor specific next: {}", reader.read_u8((offset+1).into()));
         let length = reader.read_u8(u16::from(offset+2));
         log::info!("Vendor specific cap len: {}", length);
-        let mut raw_data = reader.read_range(offset.into(), length.into());
+        let data = if length > 0 {
+            let mut raw_data = reader.read_range(offset.into(), length.into());
+            raw_data.drain(3..).collect()
+        } else {
+            log::warn!("Vendor specific capability is invalid");
+            Vec::new()
+        };
         Self::Vendor(VendorSpecificCapability {
-            data: raw_data.drain(3..).collect(),
+            data
         })
     }
     unsafe fn parse_pcie<R: ConfigReader>(reader: &R, offset: u8) -> Self {
