@@ -400,11 +400,20 @@ impl Nvme {
         self.set_vectors_masked(std::iter::once((vector, masked)))
     }
 
-    pub async fn submit_and_complete_admin_command<F: FnOnce(CmdId) -> NvmeCmd>(&self, cmd_init: F) -> NvmeComp {
-        self.submit_and_complete_command(0, cmd_init).await
+    pub fn submit_and_complete_command<F: FnOnce(CmdId) -> NvmeCmd>(&self, sq_id: SqId, cmd_init: F) -> NvmeComp {
+        use crate::nvme::cq_reactor::{CompletionFuture, CompletionFutureState};
+        futures::executor::block_on(
+            CompletionFuture {
+                state: CompletionFutureState::PendingSubmission { cmd_init, nvme: &self, sq_id },
+            }
+        )
     }
 
-    pub async fn create_io_completion_queue(&self, io_cq_id: CqId, vector: Option<u16>) {
+    pub fn submit_and_complete_admin_command<F: FnOnce(CmdId) -> NvmeCmd>(&self, cmd_init: F) -> NvmeComp {
+        self.submit_and_complete_command(0, cmd_init)
+    }
+
+    pub fn create_io_completion_queue(&self, io_cq_id: CqId, vector: Option<u16>) {
         let (ptr, len) = {
             let mut completion_queues_guard = self.completion_queues.write().unwrap();
 
@@ -432,8 +441,7 @@ impl Nvme {
         let comp = self
             .submit_and_complete_admin_command(|cid| {
                 NvmeCmd::create_io_completion_queue(cid, io_cq_id, ptr, raw_len, vector)
-            })
-            .await;
+            });
 
         if let Some(vector) = vector {
             self.cqs_for_ivs
@@ -444,7 +452,7 @@ impl Nvme {
                 .push(io_cq_id);
         }
     }
-    pub async fn create_io_submission_queue(&self, io_sq_id: SqId, io_cq_id: CqId) {
+    pub fn create_io_submission_queue(&self, io_sq_id: SqId, io_cq_id: CqId) {
         let (ptr, len) = {
             let mut submission_queues_guard = self.submission_queues.write().unwrap();
 
@@ -470,30 +478,31 @@ impl Nvme {
         let comp = self
             .submit_and_complete_admin_command(|cid| {
                 NvmeCmd::create_io_submission_queue(cid, io_sq_id, ptr, raw_len, io_cq_id)
-            })
-            .await;
+            });
     }
 
-    pub async fn init_with_queues(&self) -> BTreeMap<u32, NvmeNamespace> {
+    pub fn init_with_queues(&self) -> BTreeMap<u32, NvmeNamespace> {
         log::trace!("preinit");
-        let ((), nsids) =
-            futures::join!(self.identify_controller(), self.identify_namespace_list(0));
+
+        self.identify_controller();
+        let nsids = self.identify_namespace_list(0);
+
         log::debug!("first commands");
 
         let mut namespaces = BTreeMap::new();
 
         for nsid in nsids.iter().copied() {
-            namespaces.insert(nsid, self.identify_namespace(nsid).await);
+            namespaces.insert(nsid, self.identify_namespace(nsid));
         }
 
         // TODO: Multiple queues
-        self.create_io_completion_queue(1, Some(0)).await;
-        self.create_io_submission_queue(1, 1).await;
+        self.create_io_completion_queue(1, Some(0));
+        self.create_io_submission_queue(1, 1);
 
         namespaces
     }
 
-    async fn namespace_rw(
+    fn namespace_rw(
         &self,
         namespace: &NvmeNamespace,
         nsid: u32,
@@ -520,13 +529,13 @@ impl Nvme {
             } else {
                 NvmeCmd::io_read(cid, nsid, lba, blocks_1, ptr0, ptr1)
             }
-        }).await;
+        });
         // TODO: Handle errors
 
         Ok(())
     }
 
-    pub async fn namespace_read(
+    pub fn namespace_read(
         &self,
         namespace: &NvmeNamespace,
         nsid: u32,
@@ -543,7 +552,7 @@ impl Nvme {
             assert!(blocks > 0);
             assert!(blocks <= 0x1_0000);
 
-            self.namespace_rw(namespace, nsid, lba, (blocks - 1) as u16, false).await?;
+            self.namespace_rw(namespace, nsid, lba, (blocks - 1) as u16, false)?;
 
             chunk.copy_from_slice(&buffer_guard[..chunk.len()]);
 
@@ -553,7 +562,7 @@ impl Nvme {
         Ok(Some(buf.len()))
     }
 
-    pub async fn namespace_write(
+    pub fn namespace_write(
         &self,
         namespace: &NvmeNamespace,
         nsid: u32,
@@ -572,7 +581,7 @@ impl Nvme {
 
             buffer_guard[..chunk.len()].copy_from_slice(chunk);
 
-            self.namespace_rw(namespace, nsid, lba, (blocks - 1) as u16, true).await?;
+            self.namespace_rw(namespace, nsid, lba, (blocks - 1) as u16, true)?;
 
             lba += blocks as u64;
         }

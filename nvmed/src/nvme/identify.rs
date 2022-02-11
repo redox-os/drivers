@@ -148,14 +148,13 @@ impl LbaFormat {
 
 impl Nvme {
     /// Returns the serial number, model, and firmware, in that order.
-    pub async fn identify_controller(&self) {
+    pub fn identify_controller(&self) {
         // TODO: Use same buffer
         let data: Dma<IdentifyControllerData> = unsafe { Dma::zeroed().unwrap().assume_init() };
 
         // println!("  - Attempting to identify controller");
         let comp = self
-            .submit_and_complete_admin_command(|cid| NvmeCmd::identify_controller(cid, data.physical()))
-            .await;
+            .submit_and_complete_admin_command(|cid| NvmeCmd::identify_controller(cid, data.physical()));
         log::trace!("Completion: {:?}", comp);
 
         // println!("  - Dumping identify controller");
@@ -173,7 +172,7 @@ impl Nvme {
             model, serial, firmware,
         );
     }
-    pub async fn identify_namespace_list(&self, base: u32) -> Vec<u32> {
+    pub fn identify_namespace_list(&self, base: u32) -> Vec<u32> {
         // TODO: Use buffer
         let data: Dma<[u32; 1024]> = unsafe { Dma::zeroed().unwrap().assume_init() };
 
@@ -181,22 +180,20 @@ impl Nvme {
         let comp = self
             .submit_and_complete_admin_command(|cid| {
                 NvmeCmd::identify_namespace_list(cid, data.physical(), base)
-            })
-            .await;
+            });
 
         log::trace!("Completion2: {:?}", comp);
 
         // println!("  - Dumping namespace ID list");
         data.iter().copied().take_while(|&nsid| nsid != 0).collect()
     }
-    pub async fn identify_namespace(&self, nsid: u32) -> NvmeNamespace {
+    pub fn identify_namespace(&self, nsid: u32) -> NvmeNamespace {
         //TODO: Use buffer
         let data: Dma<IdentifyNamespaceData> = unsafe { Dma::zeroed().unwrap().assume_init() };
 
         // println!("  - Attempting to identify namespace {}", nsid);
         let comp = self
-            .submit_and_complete_admin_command(|cid| NvmeCmd::identify_namespace(cid, data.physical(), nsid))
-            .await;
+            .submit_and_complete_admin_command(|cid| NvmeCmd::identify_namespace(cid, data.physical(), nsid));
 
         // println!("  - Dumping identify namespace");
 

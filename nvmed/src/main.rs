@@ -335,7 +335,7 @@ fn main() {
     log::debug!("Finished base initialization");
     let nvme = Arc::new(nvme);
     let reactor_thread = nvme::cq_reactor::start_cq_reactor_thread(Arc::clone(&nvme), interrupt_sources, reactor_receiver);
-    let namespaces = futures::executor::block_on(nvme.init_with_queues());
+    let namespaces = nvme.init_with_queues();
 
     syscall::setrens(0, 0).expect("nvmed: failed to enter null namespace");
 

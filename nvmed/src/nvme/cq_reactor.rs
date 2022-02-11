@@ -283,7 +283,7 @@ pub struct CompletionMessage {
     cq_entry: NvmeComp,
 }
 
-enum CompletionFutureState<'a, F> {
+pub enum CompletionFutureState<'a, F> {
     // the future is in its initial state: the command has not been submitted yet, and no interest
     // has been registered. this state will repeat until a free submission queue entry appears to
     // it, which it probably will since queues aren't supposed to be nearly always be full.
@@ -303,7 +303,7 @@ enum CompletionFutureState<'a, F> {
     Placeholder,
 }
 pub struct CompletionFuture<'a, F> {
-    state: CompletionFutureState<'a, F>,
+    pub state: CompletionFutureState<'a, F>,
 }
 
 // enum not self-referential
@@ -373,14 +373,6 @@ where
                 panic!("calling poll() on an already finished CompletionFuture")
             }
             CompletionFutureState::Placeholder => unreachable!(),
-        }
-    }
-}
-
-impl Nvme {
-    pub fn submit_and_complete_command<F: FnOnce(CmdId) -> NvmeCmd>(&self, sq_id: SqId, cmd_init: F) -> CompletionFuture<F> {
-        CompletionFuture {
-            state: CompletionFutureState::PendingSubmission { cmd_init, nvme: &self, sq_id },
         }
     }
 }
