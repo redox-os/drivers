@@ -270,7 +270,10 @@ fn main() {
         .expect("nvmed: failed to fetch config");
 
     let bar = match pci_config.func.bars[0] {
-        PciBar::Memory(mem) => mem,
+        PciBar::Memory(mem) => match mem {
+            0 => panic!("BAR is mapped to address 0"),
+            _ => mem,
+        },
         other => panic!("received a non-memory BAR ({:?})", other),
     };
     let bar_size = pci_config.func.bar_sizes[0];

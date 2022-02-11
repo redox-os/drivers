@@ -77,6 +77,7 @@ impl NvmeCompQueue {
 
     /// Get a new CQ entry, busy waiting until an entry appears.
     fn complete_spin(&mut self) -> (u16, NvmeComp) {
+        log::debug!("Waiting for new CQ entry");
         loop {
             if let Some(some) = self.complete() {
                 return some;

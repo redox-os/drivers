@@ -27,7 +27,7 @@ command = ["bgad", "$NAME", "$BAR0"]
 name = "NVME storage"
 class = 1
 subclass = 8
-command = ["nvmed", "$NAME", "$BAR0", "$BARSIZE0", "$IRQ"]
+command = ["nvmed"]
 use_channel = true
 
 # vboxd
