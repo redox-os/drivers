@@ -221,7 +221,7 @@ fn main() {
         let report_ty = ReportTy::Input;
         let report_id = 0;
 
-        let orbital_socket = File::open("display:input").expect("Failed to open orbital input socket");
+        //TODO let orbital_socket = File::open("display:input").expect("Failed to open orbital input socket");
 
         let mut pressed_keys = Vec::<u8>::new();
         let mut last_pressed_keys = pressed_keys.clone();
