@@ -524,11 +524,10 @@ impl Xhci {
                     self.update_default_control_pipe(&mut *input, slot, dev_desc).await?;
                 }
 
-                /*match self.spawn_drivers(i, &mut port_state) {
+                match self.spawn_drivers(i) {
                     Ok(()) => (),
                     Err(err) => error!("Failed to spawn driver for port {}: `{}`", i, err),
-                }*/
-
+                }
             }
         }
 
@@ -712,15 +711,17 @@ impl Xhci {
         }
 
     }
-    fn spawn_drivers(&self, port: usize, ps: &mut PortState) -> Result<()> {
+    fn spawn_drivers(&self, port: usize) -> Result<()> {
         // TODO: There should probably be a way to select alternate interfaces, and not just the
         // first one.
         // TODO: Now that there are some good error crates, I don't think errno.h error codes are
         // suitable here.
 
+        let ps = self.port_states.get(&port).unwrap();
+
         let ifdesc = &ps
             .dev_desc
-            .as_ref().unwrap()
+            .as_ref().ok_or(Error::new(EBADF))?
             .config_descs
             .first()
             .ok_or(Error::new(EBADF))?
@@ -737,7 +738,7 @@ impl Xhci {
                     .map(|subclass| subclass == ifdesc.sub_class)
                     .unwrap_or(true)
         }) {
-            info!("Loading subdriver\"{}\"", driver.name);
+            info!("Loading subdriver \"{}\"", driver.name);
             let (command, args) = driver.command.split_first().ok_or(Error::new(EBADMSG))?;
 
             let if_proto = ifdesc.protocol;

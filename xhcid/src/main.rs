@@ -231,8 +231,9 @@ fn main() {
         format!(" + XHCI {} on: {} IRQ: {}\n", name, bar, irq)
     );
 
+    let scheme_name = format!("usb/{}", name);
     let socket_fd = syscall::open(
-        format!(":usb/{}", name),
+        format!(":{}", scheme_name),
         syscall::O_RDWR | syscall::O_CREAT,
     )
     .expect("xhcid: failed to create usb scheme");
@@ -240,7 +241,7 @@ fn main() {
         File::from_raw_fd(socket_fd as RawFd)
     }));
 
-    let hci = Arc::new(Xhci::new(name, address, interrupt_method, pcid_handle).expect("xhcid: failed to allocate device"));
+    let hci = Arc::new(Xhci::new(scheme_name, address, interrupt_method, pcid_handle).expect("xhcid: failed to allocate device"));
     xhci::start_irq_reactor(&hci, irq_file);
     futures::executor::block_on(hci.probe()).expect("xhcid: failed to probe");
 
