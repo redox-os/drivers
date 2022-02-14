@@ -3,6 +3,7 @@ use std::fs::File;
 
 use bitflags::bitflags;
 use orbclient::KeyEvent as OrbKeyEvent;
+use redox_log::{OutputBuilder, RedoxLogger};
 use xhcid_interface::{ConfigureEndpointsReq, DevDesc, PortReqRecipient, XhciClientHandle};
 
 mod report_desc;
@@ -60,7 +61,53 @@ impl<'a> BinaryView<'a> {
     }
 }
 
+fn setup_logging() -> Option<&'static RedoxLogger> {
+    let mut logger = RedoxLogger::new()
+        .with_output(
+            OutputBuilder::stderr()
+                .with_filter(log::LevelFilter::Info) // limit global output to important info
+                .with_ansi_escape_codes()
+                .flush_on_newline(true)
+                .build()
+        );
+
+    #[cfg(target_os = "redox")]
+    match OutputBuilder::in_redox_logging_scheme("usb", "device", "hid.log") {
+        Ok(b) => logger = logger.with_output(
+            // TODO: Add a configuration file for this
+            b.with_filter(log::LevelFilter::Trace)
+                .flush_on_newline(true)
+                .build()
+        ),
+        Err(error) => eprintln!("Failed to create hid.log: {}", error),
+    }
+
+    #[cfg(target_os = "redox")]
+    match OutputBuilder::in_redox_logging_scheme("usb", "device", "hid.ansi.log") {
+        Ok(b) => logger = logger.with_output(
+            b.with_filter(log::LevelFilter::Trace)
+                .with_ansi_escape_codes()
+                .flush_on_newline(true)
+                .build()
+        ),
+        Err(error) => eprintln!("Failed to create hid.ansi.log: {}", error),
+    }
+
+    match logger.enable() {
+        Ok(logger_ref) => {
+            eprintln!("usbhidd: enabled logger");
+            Some(logger_ref)
+        }
+        Err(error) => {
+            eprintln!("usbhidd: failed to set default logger: {}", error);
+            None
+        }
+    }
+}
+
 fn main() {
+    let _logger_ref = setup_logging();
+
     let mut args = env::args().skip(1);
 
     const USAGE: &'static str = "usbhidd <scheme> <port> <protocol>";
@@ -73,7 +120,7 @@ fn main() {
         .expect("Expected integer as input of port");
     let protocol = args.next().expect(USAGE);
 
-    println!(
+    log::info!(
         "USB HID driver spawned with scheme `{}`, port {}, protocol {}",
         scheme, port, protocol
     );
@@ -104,14 +151,14 @@ fn main() {
     let report_desc = ReportIter::new(ReportFlatIter::new(&report_desc_bytes)).collect::<Vec<_>>();
 
     for item in &report_desc {
-        println!("{:?}", item);
+        log::info!("{:?}", item);
     }
 
     handle.configure_endpoints(&ConfigureEndpointsReq { config_desc: 0, interface_desc: None, alternate_setting: None }).expect("Failed to configure endpoints");
 
     let (mut global_state, mut local_state, mut stack) = (GlobalItemsState::default(), LocalItemsState::default(), Vec::new());
 
-    let (_, application_collection, application_global_state, application_local_state) = report_desc.iter().filter_map(|item: &ReportIterItem| 
+    let (_, application_collection, application_global_state, application_local_state) = report_desc.iter().filter_map(|item: &ReportIterItem|
         match item {
             &ReportIterItem::Item(ref item) => {
                 report_desc::update_global_state(&mut global_state, &mut stack, item).unwrap();
@@ -250,7 +297,7 @@ mod tests {
     #[test]
     fn binary_view() {
         // 0000 1000 1100 0111
-        //  E             S   
+        //  E             S
         let view = super::BinaryView::new(&[0xC7, 0x08], 3, 11);
         assert_eq!(view.get(0), Some(false));
         assert_eq!(view.get(2), Some(false));

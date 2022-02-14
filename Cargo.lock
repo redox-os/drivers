@@ -1567,7 +1567,9 @@ name = "usbhidd"
 version = "0.1.0"
 dependencies = [
  "bitflags",
+ "log",
  "orbclient",
+ "redox-log",
  "ux",
  "xhcid",
 ]
