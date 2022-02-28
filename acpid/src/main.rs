@@ -45,12 +45,6 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
         );
 
     #[cfg(target_os = "redox")]
-    match File::open("debug:") {
-        Ok(d) => logger = logger.with_output(OutputBuilder::with_endpoint(d).flush_on_newline(true).with_ansi_escape_codes().with_filter(log::LevelFilter::Info).build()),
-        Err(error) => eprintln!("Failed to open `debug:` scheme: {}", error),
-    }
-
-    #[cfg(target_os = "redox")]
     match OutputBuilder::in_redox_logging_scheme("misc", "acpi", "acpid.log") {
         Ok(b) => logger = logger.with_output(
             // TODO: Add a configuration file for this
