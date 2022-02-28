@@ -38,11 +38,12 @@ vendor = 33006
 device = 51966
 command = ["vboxd", "$NAME", "$BAR0", "$BAR1", "$IRQ"]
 
-# xhcid
-[[drivers]]
-name = "XHCI"
-class = 12
-subclass = 3
-interface = 48
-command = ["xhcid"]
-use_channel = true
+# Disabled until issues are fixed
+# # xhcid
+# [[drivers]]
+# name = "XHCI"
+# class = 12
+# subclass = 3
+# interface = 48
+# command = ["xhcid"]
+# use_channel = true
