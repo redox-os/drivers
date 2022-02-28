@@ -7,21 +7,6 @@ class = 1
 subclass = 6
 command = ["ahcid", "$NAME", "$BAR5", "$BARSIZE5", "$IRQ"]
 
-# bgad
-[[drivers]]
-name = "QEMU Graphics Array"
-class = 3
-vendor = 4660
-device = 4369
-command = ["bgad", "$NAME", "$BAR0"]
-
-[[drivers]]
-name = "VirtualBox Graphics Array"
-class = 3
-vendor = 33006
-device = 48879
-command = ["bgad", "$NAME", "$BAR0"]
-
 # nvmed
 [[drivers]]
 name = "NVME storage"
@@ -29,14 +14,6 @@ class = 1
 subclass = 8
 command = ["nvmed"]
 use_channel = true
-
-# vboxd
-[[drivers]]
-name = "VirtualBox Guest Device"
-class = 8
-vendor = 33006
-device = 51966
-command = ["vboxd", "$NAME", "$BAR0", "$BAR1", "$IRQ"]
 
 # Disabled until issues are fixed
 # # xhcid

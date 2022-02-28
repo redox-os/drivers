@@ -1,0 +1,6 @@
+[[drivers]]
+name = "VirtualBox Guest Device"
+class = 8
+vendor = 33006
+device = 51966
+command = ["vboxd", "$NAME", "$BAR0", "$BAR1", "$IRQ"]
