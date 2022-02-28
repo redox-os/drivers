@@ -85,44 +85,7 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
     }
 }
 
-fn main() {
-    let mut pipes = [0; 2];
-    syscall::pipe2(&mut pipes, 0).expect("acpid: failed to create synchronization pipe");
-    let [read_part, write_part] = pipes;
-
-    let mut read_part = unsafe { File::from_raw_fd(read_part as RawFd) };
-    let mut write_part = unsafe { File::from_raw_fd(write_part as RawFd) };
-
-    let pid = unsafe { syscall::clone(syscall::CloneFlags::empty()).expect("failed to daemonize acpid") };
-
-    if pid != 0 {
-        drop(write_part);
-
-        let mut res = [0];
-        let bytes_read = read_part.read(&mut res).expect("acpid: failed to read from sync pipe");
-
-        let exit_code = if bytes_read == res.len() {
-            res[0]
-        } else {
-            eprintln!("acpid: daemon pipe EOF");
-            1
-        };
-        drop(read_part);
-        std::process::exit(exit_code.into());
-    }
-    drop(read_part);
-
-    let mut scheme_socket = OpenOptions::new()
-        .write(true)
-        .read(true)
-        .create(true)
-        .custom_flags(O_NONBLOCK as i32)
-        .open(":acpi")
-        .expect("acpid: failed to open scheme socket");
-
-    let _ = write_part.write(&[0]).expect("acpid: failed to write to sync pipe");
-    drop(write_part);
-
+fn daemon(mut write_part: File) {
     setup_logging();
 
     let rxsdt_raw_data: Arc<[u8]> = std::fs::read("kernel/acpi:rxsdt")
@@ -169,6 +132,17 @@ fn main() {
         .create(false)
         .open("event:")
         .expect("acpid: failed to open event queue");
+
+    let mut scheme_socket = OpenOptions::new()
+        .write(true)
+        .read(true)
+        .create(true)
+        .custom_flags(O_NONBLOCK as i32)
+        .open(":acpi")
+        .expect("acpid: failed to open scheme socket");
+
+    write_part.write_all(&[0]).expect("acpid: failed to write to sync pipe");
+    drop(write_part);
 
     syscall::setrens(0, 0).expect("acpid: failed to enter null namespace");
 
@@ -251,4 +225,24 @@ fn main() {
     aml::set_global_s_state(&acpi_context, 5);
 
     unreachable!("System should have shut down before this is entered");
+}
+
+fn main() {
+    let mut pipes = [0; 2];
+    syscall::pipe2(&mut pipes, 0).expect("acpid: failed to create synchronization pipe");
+
+    let mut read_part = unsafe { File::from_raw_fd(pipes[0] as RawFd) };
+    let mut write_part = unsafe { File::from_raw_fd(pipes[1] as RawFd) };
+
+    if unsafe { syscall::clone(syscall::CloneFlags::empty()).expect("failed to daemonize acpid") } == 0 {
+        drop(read_part);
+        daemon(write_part);
+    } else {
+        drop(write_part);
+
+        let mut res = [0];
+        let bytes_read = read_part.read_exact(&mut res).expect("acpid: failed to read from sync pipe");
+
+        std::process::exit(res[0].into());
+    }
 }
