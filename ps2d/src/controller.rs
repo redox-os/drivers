@@ -1,6 +1,6 @@
 use syscall::io::{Io, Pio, ReadOnly, WriteOnly};
 
-use std::{thread, time};
+use std::thread;
 
 #[derive(Debug)]
 pub enum Error {
@@ -103,34 +103,32 @@ impl Ps2 {
     }
 
     fn wait_write(&mut self) -> Result<(), Error> {
-        let mut timeout = 100;
-        while self.status().contains(StatusFlags::INPUT_FULL) && timeout > 0 {
-            thread::sleep(time::Duration::from_millis(1));
+        let mut timeout = 10_000;
+        while self.status().contains(StatusFlags::INPUT_FULL) {
+            if timeout <= 0 {
+                return Err(Error::WriteTimeout);
+            }
             timeout -= 1;
+            thread::yield_now();
         }
-        if timeout > 0 {
-            Ok(())
-        } else {
-            Err(Error::WriteTimeout)
-        }
+        Ok(())
     }
 
     fn wait_read(&mut self) -> Result<(), Error> {
-        let mut timeout = 100;
-        while ! self.status().contains(StatusFlags::OUTPUT_FULL) && timeout > 0 {
-            thread::sleep(time::Duration::from_millis(1));
+        let mut timeout = 10_000;
+        while ! self.status().contains(StatusFlags::OUTPUT_FULL) {
+            if timeout <= 0 {
+                return Err(Error::ReadTimeout);
+            }
             timeout -= 1;
+            thread::yield_now();
         }
-        if timeout > 0 {
-            Ok(())
-        } else {
-            Err(Error::ReadTimeout)
-        }
+        Ok(())
     }
 
     fn flush_read(&mut self, message: &str) {
         while self.status().contains(StatusFlags::OUTPUT_FULL) {
-            print!("ps2d: flush {}: {:X}\n", message, self.data.read());
+            eprintln!("ps2d: flush {}: {:X}", message, self.data.read());
         }
     }
 
@@ -227,7 +225,67 @@ impl Ps2 {
         }
     }
 
-    pub fn init(&mut self) -> Result<(), Error> {
+    pub fn init_mouse(&mut self) -> Result<bool, Error> {
+        let mut b = 0;
+
+        // Clear remaining data
+        self.flush_read("init mouse start");
+
+        // Reset mouse and set up scroll
+        b = self.mouse_command(MouseCommand::Reset)?;
+        if b == 0xFA {
+            b = self.read()?;
+            if b != 0xAA {
+                eprintln!("ps2d: mouse failed self test 1: {:02X}", b);
+            }
+
+            b = self.read()?;
+            if b != 0x00 {
+                eprintln!("ps2d: mouse failed self test 2: {:02X}", b);
+            }
+        } else {
+            eprintln!("ps2d: mouse failed to reset: {:02X}", b);
+        }
+
+        // Clear remaining data
+        self.flush_read("mouse defaults");
+
+        // Enable extra packet on mouse
+        //TODO: show error return values
+        if self.mouse_command_data(MouseCommandData::SetSampleRate, 200)? != 0xFA
+        || self.mouse_command_data(MouseCommandData::SetSampleRate, 100)? != 0xFA
+        || self.mouse_command_data(MouseCommandData::SetSampleRate, 80)? != 0xFA {
+            eprintln!("ps2d: mouse failed to enable extra packet");
+        }
+
+        b = self.mouse_command(MouseCommand::GetDeviceId)?;
+        let mouse_extra = if b == 0xFA {
+            self.read()? == 3
+        } else {
+            eprintln!("ps2d: mouse failed to get device id: {:02X}", b);
+            false
+        };
+
+        // Set sample rate to maximum
+        let sample_rate = 200;
+        b = self.mouse_command_data(MouseCommandData::SetSampleRate, sample_rate)?;
+        if b != 0xFA {
+            eprintln!("ps2d: mouse failed to set sample rate to {}: {:02X}", sample_rate, b);
+        }
+
+        // Enable data reporting
+        b = self.mouse_command(MouseCommand::EnableReporting)?;
+        if b != 0xFA {
+            eprintln!("ps2d: mouse failed to enable reporting: {:02X}", b);
+        }
+
+        // Clear remaining data
+        self.flush_read("init mouse finish");
+
+        Ok(mouse_extra)
+    }
+
+    pub fn init(&mut self) -> Result<bool, Error> {
         let mut b = 0;
 
         // Clear remaining data
@@ -289,65 +347,13 @@ impl Ps2 {
             eprintln!("ps2d: keyboard failed to enable reporting: {:02X}", b);
         }
 
-        // Clear remaining data
-        self.flush_read("init finish");
-
-        Ok(())
-    }
-
-    pub fn init_mouse(&mut self) -> Result<bool, Error> {
-        let mut b = 0;
-
-        // Clear remaining data
-        self.flush_read("mouse init start");
-
-        // Reset mouse and set up scroll
-        b = self.mouse_command(MouseCommand::Reset)?;
-        if b == 0xFA {
-            b = self.read()?;
-            if b != 0xAA {
-                eprintln!("ps2d: mouse failed self test 1: {:02X}", b);
+        let mouse_extra = match self.init_mouse() {
+            Ok(ok) => ok,
+            Err(err) => {
+                eprintln!("p2sd: failed to initialize mouse: {:?}", err);
+                false
             }
-
-            b = self.read()?;
-            if b != 0x00 {
-                eprintln!("ps2d: mouse failed self test 2: {:02X}", b);
-            }
-        } else {
-            eprintln!("ps2d: mouse failed to reset: {:02X}", b);
-        }
-
-        // Clear remaining data
-        self.flush_read("mouse defaults");
-
-        // Enable extra packet on mouse
-        //TODO: show error return values
-        if self.mouse_command_data(MouseCommandData::SetSampleRate, 200)? != 0xFA
-        || self.mouse_command_data(MouseCommandData::SetSampleRate, 100)? != 0xFA
-        || self.mouse_command_data(MouseCommandData::SetSampleRate, 80)? != 0xFA {
-            eprintln!("ps2d: mouse failed to enable extra packet");
-        }
-
-        b = self.mouse_command(MouseCommand::GetDeviceId)?;
-        let mouse_extra = if b == 0xFA {
-            self.read()? == 3
-        } else {
-            eprintln!("ps2d: mouse failed to get device id: {:02X}", b);
-            false
         };
-
-        // Set sample rate to maximum
-        let sample_rate = 200;
-        b = self.mouse_command_data(MouseCommandData::SetSampleRate, sample_rate)?;
-        if b != 0xFA {
-            eprintln!("ps2d: mouse failed to set sample rate to {}: {:02X}", sample_rate, b);
-        }
-
-        // Enable data reporting
-        b = self.mouse_command(MouseCommand::EnableReporting)?;
-        if b != 0xFA {
-            eprintln!("ps2d: mouse failed to enable reporting: {:02X}", b);
-        }
 
         // Enable clocks and interrupts
         {
@@ -361,7 +367,7 @@ impl Ps2 {
         }
 
         // Clear remaining data
-        self.flush_read("mouse init finish");
+        self.flush_read("init finish");
 
         Ok(mouse_extra)
     }

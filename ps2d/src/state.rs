@@ -45,14 +45,7 @@ pub struct Ps2d<F: Fn(u8,bool) -> char>  {
 impl<F: Fn(u8,bool) -> char> Ps2d<F> {
     pub fn new(input: File, keymap: F) -> Self {
         let mut ps2 = Ps2::new();
-        ps2.init().expect("ps2d: failed to initialize");
-        let extra_packet = match ps2.init_mouse() {
-            Ok(ok) => ok,
-            Err(err) => {
-                eprintln!("p2sd: failed to initialize mouse: {:?}", err);
-                false
-            }
-        };
+        let extra_packet = ps2.init().expect("ps2d: failed to initialize");
 
         let vmmouse_relative = true;
         let vmmouse = false; //vm::enable(vmmouse_relative);
