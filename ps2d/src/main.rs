@@ -12,7 +12,6 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::io::AsRawFd;
 
 use syscall::call::iopl;
-use syscall::flag::CloneFlags;
 
 use crate::state::Ps2d;
 
@@ -21,7 +20,7 @@ mod keymap;
 mod state;
 mod vm;
 
-fn daemon(input: File) {
+fn daemon(daemon: syscall::Daemon) -> ! {
     unsafe {
         iopl(3).expect("ps2d: failed to get I/O permission");
     }
@@ -38,6 +37,11 @@ fn daemon(input: File) {
         },
         None => (keymap::us::get_char)
     };
+
+    let input = OpenOptions::new()
+        .write(true)
+        .open("display:input")
+        .expect("p2sd: failed to open display:input");
 
     let mut event_file = OpenOptions::new()
         .read(true)
@@ -71,9 +75,11 @@ fn daemon(input: File) {
         data: 1
     }).expect("ps2d: failed to event irq:12");
 
-    let mut ps2d = Ps2d::new(input, keymap);
-
     syscall::setrens(0, 0).expect("ps2d: failed to enter null namespace");
+
+    daemon.ready().expect("p2sd: failed to mark daemon as ready");
+
+    let mut ps2d = Ps2d::new(input, keymap);
 
     let mut data = [0; 256];
     loop {
@@ -108,19 +114,10 @@ fn daemon(input: File) {
             }
         }
     }
+
+    process::exit(0);
 }
 
 fn main() {
-    match OpenOptions::new().write(true).open("display:input") {
-        Ok(input) => {
-            // Daemonize
-            if unsafe { syscall::clone(CloneFlags::empty()).unwrap() } == 0 {
-                daemon(input);
-            }
-        },
-        Err(err) => {
-            println!("ps2d: failed to open display: {}", err);
-            process::exit(1);
-        }
-    }
+    syscall::Daemon::new(daemon).expect("p2sd: failed to create daemon");
 }
