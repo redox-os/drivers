@@ -347,11 +347,11 @@ impl Ps2 {
             eprintln!("ps2d: keyboard failed to enable reporting: {:02X}", b);
         }
 
-        let mouse_extra = match self.init_mouse() {
-            Ok(ok) => ok,
+        let (mouse_found, mouse_extra) = match self.init_mouse() {
+            Ok(ok) => (true, ok),
             Err(err) => {
                 eprintln!("p2sd: failed to initialize mouse: {:?}", err);
-                false
+                (false, false)
             }
         };
 
@@ -359,10 +359,15 @@ impl Ps2 {
         {
             let mut config = self.config()?;
             config.remove(ConfigFlags::FIRST_DISABLED);
-            config.remove(ConfigFlags::SECOND_DISABLED);
             config.insert(ConfigFlags::FIRST_TRANSLATE);
             config.insert(ConfigFlags::FIRST_INTERRUPT);
-            config.insert(ConfigFlags::SECOND_INTERRUPT);
+            if mouse_found {
+                config.remove(ConfigFlags::SECOND_DISABLED);
+                config.insert(ConfigFlags::SECOND_INTERRUPT);
+            } else {
+                config.insert(ConfigFlags::SECOND_DISABLED);
+                config.remove(ConfigFlags::SECOND_INTERRUPT);
+            }
             self.set_config(config)?;
         }
 
