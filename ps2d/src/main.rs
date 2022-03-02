@@ -25,18 +25,23 @@ fn daemon(daemon: syscall::Daemon) -> ! {
         iopl(3).expect("ps2d: failed to get I/O permission");
     }
 
-    let keymap = match env::args().skip(1).next() {
+    let (keymap, keymap_name): (
+        fn(u8, bool) -> char,
+        &str
+    ) = match env::args().skip(1).next() {
         Some(k) => match k.to_lowercase().as_ref() {
-            "dvorak" => (keymap::dvorak::get_char),
-            "us" => (keymap::us::get_char),
-            "gb" => (keymap::gb::get_char),
-            "azerty" => (keymap::azerty::get_char),
-            "bepo" => (keymap::bepo::get_char),
-            "it" => (keymap::it::get_char),
-            &_ => (keymap::us::get_char)
+            "dvorak" => (keymap::dvorak::get_char, "dvorak"),
+            "us" => (keymap::us::get_char, "us"),
+            "gb" => (keymap::gb::get_char, "gb"),
+            "azerty" => (keymap::azerty::get_char, "azerty"),
+            "bepo" => (keymap::bepo::get_char, "bepo"),
+            "it" => (keymap::it::get_char, "it"),
+            &_ => (keymap::us::get_char, "us"),
         },
-        None => (keymap::us::get_char)
+        None => (keymap::us::get_char, "us"),
     };
+
+    eprintln!("p2sd: using keymap '{}'", keymap_name);
 
     let input = OpenOptions::new()
         .write(true)
