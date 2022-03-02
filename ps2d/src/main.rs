@@ -82,9 +82,9 @@ fn daemon(daemon: syscall::Daemon) -> ! {
 
     syscall::setrens(0, 0).expect("ps2d: failed to enter null namespace");
 
-    daemon.ready().expect("p2sd: failed to mark daemon as ready");
-
     let mut ps2d = Ps2d::new(input, keymap);
+
+    daemon.ready().expect("p2sd: failed to mark daemon as ready");
 
     let mut data = [0; 256];
     loop {
