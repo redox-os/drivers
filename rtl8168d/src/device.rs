@@ -285,7 +285,7 @@ impl Rtl8168 {
         println!("  - Reset");
         self.regs.cmd.writef(1 << 4, true);
         while self.regs.cmd.readf(1 << 4) {
-            llvm_asm!("pause");
+            core::hint::spin_loop();
         }
 
         // Set up rx buffers

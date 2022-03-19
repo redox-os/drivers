@@ -1,5 +1,3 @@
-#![feature(llvm_asm)]
-
 extern crate event;
 extern crate netutils;
 extern crate syscall;
@@ -200,5 +198,5 @@ fn main() {
             let _ = syscall::physunmap(address);
         }
         process::exit(0);
-    }).expect("rtl8168d: failed to create daemon")
+    }).expect("rtl8168d: failed to create daemon");
 }

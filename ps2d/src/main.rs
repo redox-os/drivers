@@ -1,4 +1,4 @@
-#![feature(llvm_asm)]
+#![feature(asm_const)]
 
 #[macro_use]
 extern crate bitflags;
@@ -20,7 +20,7 @@ mod keymap;
 mod state;
 mod vm;
 
-fn daemon(daemon: syscall::Daemon) -> ! {
+fn daemon(daemon: syscall::Daemon) -> core::convert::Infallible {
     unsafe {
         iopl(3).expect("ps2d: failed to get I/O permission");
     }

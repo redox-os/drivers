@@ -25,3 +25,4 @@ members = [
 mio = { git = "https://gitlab.redox-os.org/redox-os/mio.git", branch = "redox-unix" }
 net2 = { git = "https://gitlab.redox-os.org/redox-os/net2-rs.git", branch = "master" }
 orbclient = { git = "https://gitlab.redox-os.org/redox-os/orbclient.git", version = "0.3.28" }
+redox_syscall = { git = "https://gitlab.redox-os.org/4lDO2/syscall.git", branch = "update-toolchain-2022" }

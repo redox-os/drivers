@@ -1,47 +1,38 @@
+use core::arch::asm;
+
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
-#[cold]
 pub unsafe fn fast_copy(dst: *mut u8, src: *const u8, len: usize) {
-    llvm_asm!("cld
-        rep movsb"
-        :
-        : "{rdi}"(dst as usize), "{rsi}"(src as usize), "{rcx}"(len)
-        : "cc", "memory", "rdi", "rsi", "rcx"
-        : "intel", "volatile");
+    // direction flag must always be cleared, as per the System V ABI
+    asm!("rep movsb",
+        inout("rdi") dst as usize => _, inout("rsi") src as usize => _, inout("rcx") len => _,
+        options(nostack, preserves_flags),
+    );
 }
 
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
-#[cold]
 pub unsafe fn fast_copy64(dst: *mut u64, src: *const u64, len: usize) {
-    llvm_asm!("cld
-        rep movsq"
-        :
-        : "{rdi}"(dst as usize), "{rsi}"(src as usize), "{rcx}"(len)
-        : "cc", "memory", "rdi", "rsi", "rcx"
-        : "intel", "volatile");
+    asm!("rep movsq",
+        inout("rdi") dst as usize => _, inout("rsi") src as usize => _, inout("rcx") len => _,
+        options(nostack, preserves_flags),
+    );
 }
 
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
-#[cold]
 pub unsafe fn fast_set32(dst: *mut u32, src: u32, len: usize) {
-    llvm_asm!("cld
-        rep stosd"
-        :
-        : "{rdi}"(dst as usize), "{eax}"(src), "{rcx}"(len)
-        : "cc", "memory", "rdi", "rcx"
-        : "intel", "volatile");
+    asm!("rep stosd",
+        inout("rdi") dst as usize => _, in("eax") src, inout("rcx") len => _,
+        options(nostack, preserves_flags),
+    );
 }
 
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
-#[cold]
 pub unsafe fn fast_set64(dst: *mut u64, src: u64, len: usize) {
-    llvm_asm!("cld
-        rep stosq"
-        :
-        : "{rdi}"(dst as usize), "{rax}"(src), "{rcx}"(len)
-        : "cc", "memory", "rdi", "rcx"
-        : "intel", "volatile");
+    asm!("rep stosq",
+        inout("rdi") dst as usize => _, in("rax") src, inout("rcx") len => _,
+        options(nostack, preserves_flags),
+    );
 }

@@ -4,6 +4,8 @@
 // As well as the Linux implementation here:
 // http://elixir.free-electrons.com/linux/v4.1/source/drivers/input/mouse/vmmouse.c
 
+use core::arch::global_asm;
+
 const MAGIC: u32 = 0x564D5868;
 const PORT: u16 = 0x5658;
 
@@ -24,36 +26,46 @@ pub const LEFT_BUTTON: u32 = 0x20;
 pub const RIGHT_BUTTON: u32 = 0x10;
 pub const MIDDLE_BUTTON: u32 = 0x08;
 
+global_asm!("
+    .globl cmd_inner
+cmd_inner:
+    mov r8, rdi
+
+    // 2nd argument `cmd` as per sysv64.
+    mov ecx, esi
+    // 3rd argument `arg` as per sysv64.
+    mov ebx, edx
+
+    mov eax, {MAGIC}
+    mov dx, {PORT}
+
+    in eax, dx
+
+    xchg rdi, r8
+
+    mov DWORD PTR [rdi + 0x00], eax
+    mov DWORD PTR [rdi + 0x04], ebx
+    mov DWORD PTR [rdi + 0x08], ecx
+    mov DWORD PTR [rdi + 0x0C], edx
+    mov DWORD PTR [rdi + 0x10], esi
+    mov DWORD PTR [rdi + 0x14], r8d
+",
+    MAGIC = const MAGIC,
+    PORT = const PORT,
+);
+
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 pub unsafe fn cmd(cmd: u32, arg: u32) -> (u32, u32, u32, u32, u32, u32) {
-    let a: u32;
-    let b: u32;
-    let c: u32;
-    let d: u32;
-    let si: u32;
-    let di: u32;
+    extern "sysv64" {
+        fn cmd_inner(array_ptr: *mut u32, cmd: u32, arg: u32);
+    }
 
-    llvm_asm!(
-        "in eax, dx"
-        :
-        "={eax}"(a),
-        "={ebx}"(b),
-        "={ecx}"(c),
-        "={edx}"(d),
-        "={esi}"(si),
-        "={edi}"(di)
-        :
-        "{eax}"(MAGIC),
-        "{ebx}"(arg),
-        "{ecx}"(cmd),
-        "{dx}"(PORT)
-        :
-        "memory"
-        :
-        "intel", "volatile"
-    );
+    let mut array = [0_u32; 6];
 
-    (a, b, c, d, si, di)
+    cmd_inner(array.as_mut_ptr(), cmd, arg);
+
+    let [a, b, c, d, e, f] = array;
+    (a, b, c, d, e, f)
 }
 
 pub fn enable(relative: bool) -> bool {
