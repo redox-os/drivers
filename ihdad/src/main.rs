@@ -1,5 +1,4 @@
 //#![deny(warnings)]
-#![feature(llvm_asm)]
 
 extern crate bitflags;
 extern crate spin;

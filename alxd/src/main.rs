@@ -1,7 +1,6 @@
 #![allow(dead_code)]
 #![allow(non_upper_case_globals)]
 #![allow(unused_parens)]
-#![feature(llvm_asm)]
 #![feature(concat_idents)]
 
 extern crate event;

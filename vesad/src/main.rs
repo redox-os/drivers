@@ -1,5 +1,4 @@
 #![feature(allocator_api)]
-#![feature(llvm_asm)]
 
 extern crate orbclient;
 extern crate syscall;

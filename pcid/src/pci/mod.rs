@@ -1,6 +1,8 @@
 use std::convert::TryFrom;
 use std::sync::{Mutex, Once};
 
+use syscall::io::{Io as _, Pio};
+
 pub use self::bar::PciBar;
 pub use self::bus::{PciBus, PciBusIter};
 pub use self::class::PciClass;
@@ -71,13 +73,8 @@ impl CfgAccess for Pci {
         let offset = u8::try_from(offset).expect("offset too large for PCI 3.0 configuration space");
         let address = Self::address(bus, dev, func, offset);
 
-        let value: u32;
-        llvm_asm!("mov dx, 0xCF8
-              out dx, eax
-              mov dx, 0xCFC
-              in eax, dx"
-             : "={eax}"(value) : "{eax}"(address) : "dx" : "intel", "volatile");
-        value
+        Pio::<u32>::new(0xCF8).write(address);
+        Pio::<u32>::new(0xCFC).read()
     }
 
     unsafe fn read(&self, bus: u8, dev: u8, func: u8, offset: u16) -> u32 {
@@ -91,12 +88,8 @@ impl CfgAccess for Pci {
         let offset = u8::try_from(offset).expect("offset too large for PCI 3.0 configuration space");
         let address = Self::address(bus, dev, func, offset);
 
-        llvm_asm!("mov dx, 0xCF8
-              out dx, eax"
-             : : "{eax}"(address) : "dx" : "intel", "volatile");
-        llvm_asm!("mov dx, 0xCFC
-              out dx, eax"
-             : : "{eax}"(value) : "dx" : "intel", "volatile");
+        Pio::<u32>::new(0xCF8).write(address);
+        Pio::<u32>::new(0xCFC).write(value);
     }
     unsafe fn write(&self, bus: u8, dev: u8, func: u8, offset: u16, value: u32) {
         let _guard = self.lock.lock().unwrap();
