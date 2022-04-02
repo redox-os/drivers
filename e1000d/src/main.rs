@@ -72,27 +72,9 @@ fn main() {
     let irq_str = args.next().expect("e1000d: no irq provided");
     let irq = irq_str.parse::<u8>().expect("e1000d: failed to parse irq");
 
-    println!(" + E1000 {} on: {:X} size: {} IRQ: {}", name, bar, bar_size, irq);
+    eprintln!(" + E1000 {} on: {:X} size: {} IRQ: {}", name, bar, bar_size, irq);
 
-    // Daemonize
-    let mut pipes = [0; 2];
-    syscall::pipe2(&mut pipes, 0).unwrap();
-    let mut read = unsafe { File::from_raw_fd(pipes[0] as RawFd) };
-    let mut write = unsafe { File::from_raw_fd(pipes[1] as RawFd) };
-    let pid = unsafe { syscall::clone(CloneFlags::empty()).unwrap() };
-    if pid != 0 {
-        drop(write);
-
-        let mut res = [0];
-        if read.read(&mut res).unwrap() == res.len() {
-            process::exit(res[0] as i32);
-        } else {
-            eprintln!("e1000d: daemon pipe EOF");
-            process::exit(1);
-        }
-    } else {
-        drop(read);
-
+    syscall::Daemon::new(move |daemon| {
         let socket_fd = syscall::open(
             ":network",
             syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK,
@@ -122,8 +104,7 @@ fn main() {
 
             syscall::setrens(0, 0).expect("e1000d: failed to enter null namespace");
 
-            write.write(&[0]).unwrap();
-            drop(write);
+            daemon.ready().expect("e1000d: failed to mark daemon as ready");
 
             let todo = Arc::new(RefCell::new(Vec::<Packet>::new()));
 
@@ -215,5 +196,6 @@ fn main() {
         unsafe {
             let _ = syscall::physunmap(address);
         }
-    }
+        process::exit(0);
+    }).expect("e1000d: failed to create daemon");
 }
