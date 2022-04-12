@@ -1,5 +1,6 @@
 use std::env;
 use std::fs::File;
+use std::io::Write;
 
 use bitflags::bitflags;
 use orbclient::KeyEvent as OrbKeyEvent;
@@ -106,7 +107,7 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
     }
 }
 
-fn send_key_event(usage_page: u32, usage: u8, pressed: bool, shift_opt: Option<bool>) {
+fn send_key_event(orbital_socket: &mut File, usage_page: u32, usage: u8, pressed: bool, shift_opt: Option<bool>) {
     let scancode = match usage_page {
         0x07 => match usage {
             0x04 => orbclient::K_A,
@@ -237,11 +238,18 @@ fn send_key_event(usage_page: u32, usage: u8, pressed: bool, shift_opt: Option<b
         '\0'
     };
 
-    println!("{:#x?}", OrbKeyEvent {
+    let key_event = OrbKeyEvent {
         character,
         scancode,
         pressed,
-    });
+    };
+
+    match orbital_socket.write(&key_event.to_event()) {
+        Ok(_) => (),
+        Err(err) => {
+            println!("failed to send key event to orbital: {}", err);
+        }
+    }
 }
 
 fn main() {
@@ -361,7 +369,7 @@ fn main() {
         let report_ty = ReportTy::Input;
         let report_id = 0;
 
-        //TODO let orbital_socket = File::open("display:input").expect("Failed to open orbital input socket");
+        let mut orbital_socket = File::open("display:input").expect("Failed to open orbital input socket");
 
         let mut pressed_keys = Vec::<u8>::new();
         let mut last_pressed_keys = pressed_keys.clone();
@@ -425,14 +433,14 @@ fn main() {
             for usage in last_pressed_keys.iter() {
                 if ! pressed_keys.contains(usage) {
                     println!("Released {:#x}", usage);
-                    send_key_event(global_state.usage_page.unwrap_or(0), *usage, false, None);
+                    send_key_event(&mut orbital_socket, global_state.usage_page.unwrap_or(0), *usage, false, None);
                 }
             }
 
             for usage in pressed_keys.iter() {
                 if ! last_pressed_keys.contains(usage) {
                     println!("Pressed {:#x}", usage);
-                    send_key_event(global_state.usage_page.unwrap_or(0), *usage, true, Some(
+                    send_key_event(&mut orbital_socket, global_state.usage_page.unwrap_or(0), *usage, true, Some(
                         pressed_keys.contains(&0xE1) || pressed_keys.contains(&0xE5)
                     ));
                 }
