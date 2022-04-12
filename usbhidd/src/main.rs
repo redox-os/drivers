@@ -6,6 +6,7 @@ use orbclient::KeyEvent as OrbKeyEvent;
 use redox_log::{OutputBuilder, RedoxLogger};
 use xhcid_interface::{ConfigureEndpointsReq, DevDesc, PortReqRecipient, XhciClientHandle};
 
+mod keymap;
 mod report_desc;
 mod reqs;
 mod usage_tables;
@@ -105,6 +106,144 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
     }
 }
 
+fn send_key_event(usage_page: u32, usage: u8, pressed: bool, shift_opt: Option<bool>) {
+    let scancode = match usage_page {
+        0x07 => match usage {
+            0x04 => orbclient::K_A,
+            0x05 => orbclient::K_B,
+            0x06 => orbclient::K_C,
+            0x07 => orbclient::K_D,
+            0x08 => orbclient::K_E,
+            0x09 => orbclient::K_F,
+            0x0A => orbclient::K_G,
+            0x0B => orbclient::K_H,
+            0x0C => orbclient::K_I,
+            0x0D => orbclient::K_J,
+            0x0E => orbclient::K_K,
+            0x0F => orbclient::K_L,
+            0x10 => orbclient::K_M,
+            0x11 => orbclient::K_N,
+            0x12 => orbclient::K_O,
+            0x13 => orbclient::K_P,
+            0x14 => orbclient::K_Q,
+            0x15 => orbclient::K_R,
+            0x16 => orbclient::K_S,
+            0x17 => orbclient::K_T,
+            0x18 => orbclient::K_U,
+            0x19 => orbclient::K_V,
+            0x1A => orbclient::K_W,
+            0x1B => orbclient::K_X,
+            0x1C => orbclient::K_Y,
+            0x1D => orbclient::K_Z,
+            0x1E => orbclient::K_1,
+            0x1F => orbclient::K_2,
+            0x20 => orbclient::K_3,
+            0x21 => orbclient::K_4,
+            0x22 => orbclient::K_5,
+            0x23 => orbclient::K_6,
+            0x24 => orbclient::K_7,
+            0x25 => orbclient::K_8,
+            0x26 => orbclient::K_9,
+            0x27 => orbclient::K_0,
+            0x28 => orbclient::K_ENTER,
+            0x29 => orbclient::K_ESC,
+            0x2A => orbclient::K_BKSP,
+            0x2B => orbclient::K_TAB,
+            0x2C => orbclient::K_SPACE,
+            0x2D => orbclient::K_MINUS,
+            0x2E => orbclient::K_EQUALS,
+            0x2F => orbclient::K_BRACE_OPEN,
+            0x30 => orbclient::K_BRACE_CLOSE,
+            0x31 => orbclient::K_BACKSLASH,
+            // 0x32 non-us # and ~
+            0x33 => orbclient::K_SEMICOLON,
+            0x34 => orbclient::K_QUOTE,
+            0x35 => orbclient::K_TICK,
+            0x36 => orbclient::K_COMMA,
+            0x37 => orbclient::K_PERIOD,
+            0x38 => orbclient::K_SLASH,
+            0x39 => orbclient::K_CAPS,
+            0x3A => orbclient::K_F1,
+            0x3B => orbclient::K_F2,
+            0x3C => orbclient::K_F3,
+            0x3D => orbclient::K_F4,
+            0x3E => orbclient::K_F5,
+            0x3F => orbclient::K_F6,
+            0x40 => orbclient::K_F7,
+            0x41 => orbclient::K_F8,
+            0x42 => orbclient::K_F9,
+            0x43 => orbclient::K_F10,
+            0x44 => orbclient::K_F11,
+            0x45 => orbclient::K_F12,
+            // 0x46 print screen
+            // 0x47 scroll lock
+            // 0x48 pause
+            // 0x49 insert
+            0x4A => orbclient::K_HOME,
+            0x4B => orbclient::K_PGUP,
+            0x4C => orbclient::K_DEL,
+            0x4D => orbclient::K_END,
+            0x4E => orbclient::K_PGDN,
+            0x4F => orbclient::K_RIGHT,
+            0x50 => orbclient::K_LEFT,
+            0x51 => orbclient::K_DOWN,
+            0x52 => orbclient::K_UP,
+            // 0x53 num lock
+            // 0x54 num /
+            // 0x55 num *
+            // 0x56 num -
+            // 0x57 num +
+            // 0x58 num enter
+            0x59 => orbclient::K_NUM_1,
+            0x5A => orbclient::K_NUM_2,
+            0x5B => orbclient::K_NUM_3,
+            0x5C => orbclient::K_NUM_4,
+            0x5D => orbclient::K_NUM_5,
+            0x5E => orbclient::K_NUM_6,
+            0x5F => orbclient::K_NUM_7,
+            0x60 => orbclient::K_NUM_8,
+            0x61 => orbclient::K_NUM_9,
+            0x62 => orbclient::K_NUM_0,
+            // 0x62 num .
+            // 0x64 non-us \ and |
+            // 0x64 app
+            // 0x66 power
+            // 0x67 num =
+            // unmapped values
+            0xE0 => orbclient::K_CTRL, // TODO: left control
+            0xE1 => orbclient::K_LEFT_SHIFT,
+            0xE2 => orbclient::K_ALT,
+            // 0xE3 left super
+            0xE4 => orbclient::K_CTRL, // TODO: right control
+            0xE5 => orbclient::K_RIGHT_SHIFT,
+            0xE6 => orbclient::K_ALT_GR,
+            // 0xE7 right super
+            // reserved values
+            _ => {
+                println!("unknown usage_page {:#x} usage {:#x}", usage_page, usage);
+                return;
+            },
+        },
+        _ => {
+            println!("unknown usage_page {:#x}", usage_page);
+            return;
+        },
+    };
+
+    //TODO: other keymaps
+    let character = if let Some(shift) = shift_opt {
+        keymap::us::get_char(scancode, shift)
+    } else {
+        '\0'
+    };
+
+    println!("{:#x?}", OrbKeyEvent {
+        character,
+        scancode,
+        pressed,
+    });
+}
+
 fn main() {
     let _logger_ref = setup_logging();
 
@@ -199,6 +338,7 @@ fn main() {
                 None => return None,
             };
             if global_state.usage_page != Some(0x7) {
+                println!("Unsupported usage page: {:#x?}", global_state.usage_page);
                 return None;
             }
             let bit_length = report_size * report_count;
@@ -249,23 +389,24 @@ fn main() {
                     // The usages are selectors.
                 }
 
-                for report_index in 0..report_count {
-                }
-
-                /*if input.contains(MainItemFlags::VARIABLE) {
+                if input.contains(MainItemFlags::VARIABLE) {
                     // The item is a variable.
 
                     let binary_view = BinaryView::new(&report_buffer, bit_offset as usize, bit_length as usize);
 
                     if report_count == 8 && report_size == 1 && local_state.usage_min == Some(224) && local_state.usage_max == Some(231) && global_state.logical_min == Some(0)  && global_state.logical_max == Some(1) {
+                        let bits = binary_view.read_u8(0).expect("Failed to read array item");
+                        for bit in 0..8 {
+                            if bits & (1 << bit) > 0 {
+                                pressed_keys.push(0xE0 + bit);
+                            }
+                        }
+                        println!("Report variable {:#x?}", bits);
                     } else {
                         println!("unknown report variable item");
                     }
                 } else {
                     // The item is an array.
-
-                    std::mem::swap(&mut pressed_keys, &mut last_pressed_keys);
-                    pressed_keys.clear();
 
                     println!("INPUT FLAGS: {:?}", input);
                     assert_eq!(report_size, 8);
@@ -275,19 +416,30 @@ fn main() {
                         if usage != 0 {
                             pressed_keys.push(usage);
                         }
-                        println!("Report index array {}: {}", report_index, usage);
+                        println!("Report index array {}: {:#x}", report_index, usage);
                     }
-                }*/
-            }
-            for (current, last) in pressed_keys.iter().copied().zip(last_pressed_keys.iter().copied()) {
-                if current == last { continue }
-                if current != 0 {
-                    // Keycode current changed state to "pressed".
-                } else {
-                    // Keycode current changed state to "released".
                 }
             }
-            println!();
+
+
+            for usage in last_pressed_keys.iter() {
+                if ! pressed_keys.contains(usage) {
+                    println!("Released {:#x}", usage);
+                    send_key_event(global_state.usage_page.unwrap_or(0), *usage, false, None);
+                }
+            }
+
+            for usage in pressed_keys.iter() {
+                if ! last_pressed_keys.contains(usage) {
+                    println!("Pressed {:#x}", usage);
+                    send_key_event(global_state.usage_page.unwrap_or(0), *usage, true, Some(
+                        pressed_keys.contains(&0xE1) || pressed_keys.contains(&0xE5)
+                    ));
+                }
+            }
+
+            std::mem::swap(&mut pressed_keys, &mut last_pressed_keys);
+            pressed_keys.clear();
         }
     }
 }
