@@ -52,7 +52,7 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
     match OutputBuilder::in_redox_logging_scheme("usb", "host", "xhci.log") {
         Ok(b) => logger = logger.with_output(
             // TODO: Add a configuration file for this
-            b.with_filter(log::LevelFilter::Trace)
+            b.with_filter(log::LevelFilter::Info)
                 .flush_on_newline(true)
                 .build()
         ),
@@ -62,7 +62,7 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
     #[cfg(target_os = "redox")]
     match OutputBuilder::in_redox_logging_scheme("usb", "host", "xhci.ansi.log") {
         Ok(b) => logger = logger.with_output(
-            b.with_filter(log::LevelFilter::Trace)
+            b.with_filter(log::LevelFilter::Info)
                 .with_ansi_escape_codes()
                 .flush_on_newline(true)
                 .build()
