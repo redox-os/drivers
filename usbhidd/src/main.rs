@@ -77,7 +77,7 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
     match OutputBuilder::in_redox_logging_scheme("usb", "device", "hid.log") {
         Ok(b) => logger = logger.with_output(
             // TODO: Add a configuration file for this
-            b.with_filter(log::LevelFilter::Trace)
+            b.with_filter(log::LevelFilter::Info)
                 .flush_on_newline(true)
                 .build()
         ),
@@ -87,7 +87,7 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
     #[cfg(target_os = "redox")]
     match OutputBuilder::in_redox_logging_scheme("usb", "device", "hid.ansi.log") {
         Ok(b) => logger = logger.with_output(
-            b.with_filter(log::LevelFilter::Trace)
+            b.with_filter(log::LevelFilter::Info)
                 .with_ansi_escape_codes()
                 .flush_on_newline(true)
                 .build()
@@ -221,12 +221,12 @@ fn send_key_event(orbital_socket: &mut File, usage_page: u32, usage: u8, pressed
             // 0xE7 right super
             // reserved values
             _ => {
-                println!("unknown usage_page {:#x} usage {:#x}", usage_page, usage);
+                log::warn!("unknown usage_page {:#x} usage {:#x}", usage_page, usage);
                 return;
             },
         },
         _ => {
-            println!("unknown usage_page {:#x}", usage_page);
+            log::warn!("unknown usage_page {:#x}", usage_page);
             return;
         },
     };
@@ -247,7 +247,7 @@ fn send_key_event(orbital_socket: &mut File, usage_page: u32, usage: u8, pressed
     match orbital_socket.write(&key_event.to_event()) {
         Ok(_) => (),
         Err(err) => {
-            println!("failed to send key event to orbital: {}", err);
+            log::warn!("failed to send key event to orbital: {}", err);
         }
     }
 }
@@ -346,7 +346,7 @@ fn main() {
                 None => return None,
             };
             if global_state.usage_page != Some(0x7) {
-                println!("Unsupported usage page: {:#x?}", global_state.usage_page);
+                log::warn!("Unsupported usage page: {:#x?}", global_state.usage_page);
                 return None;
             }
             let bit_length = report_size * report_count;
@@ -409,14 +409,14 @@ fn main() {
                                 pressed_keys.push(0xE0 + bit);
                             }
                         }
-                        println!("Report variable {:#x?}", bits);
+                        log::trace!("Report variable {:#x?}", bits);
                     } else {
-                        println!("unknown report variable item");
+                        log::warn!("unknown report variable item");
                     }
                 } else {
                     // The item is an array.
 
-                    println!("INPUT FLAGS: {:?}", input);
+                    log::trace!("INPUT FLAGS: {:?}", input);
                     assert_eq!(report_size, 8);
                     for report_index in 0..report_count as usize {
                         let binary_view = BinaryView::new(&report_buffer, bit_offset as usize + report_index * report_size as usize, report_size as usize);
@@ -424,7 +424,7 @@ fn main() {
                         if usage != 0 {
                             pressed_keys.push(usage);
                         }
-                        println!("Report index array {}: {:#x}", report_index, usage);
+                        log::trace!("Report index array {}: {:#x}", report_index, usage);
                     }
                 }
             }
@@ -432,14 +432,14 @@ fn main() {
 
             for usage in last_pressed_keys.iter() {
                 if ! pressed_keys.contains(usage) {
-                    println!("Released {:#x}", usage);
+                    log::debug!("Released {:#x}", usage);
                     send_key_event(&mut orbital_socket, global_state.usage_page.unwrap_or(0), *usage, false, None);
                 }
             }
 
             for usage in pressed_keys.iter() {
                 if ! last_pressed_keys.contains(usage) {
-                    println!("Pressed {:#x}", usage);
+                    log::debug!("Pressed {:#x}", usage);
                     send_key_event(&mut orbital_socket, global_state.usage_page.unwrap_or(0), *usage, true, Some(
                         pressed_keys.contains(&0xE1) || pressed_keys.contains(&0xE5)
                     ));

@@ -14,13 +14,3 @@ class = 1
 subclass = 8
 command = ["nvmed"]
 use_channel = true
-
-# Disabled until issues are fixed
-# # xhcid
-# [[drivers]]
-# name = "XHCI"
-# class = 12
-# subclass = 3
-# interface = 48
-# command = ["xhcid"]
-# use_channel = true
