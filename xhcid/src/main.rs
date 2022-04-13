@@ -95,6 +95,7 @@ fn main() {
     info!("XHCI PCI CONFIG: {:?}", pci_config);
 
     let bar = pci_config.func.bars[0];
+    let bar_size = pci_config.func.bar_sizes[0];
     let irq = pci_config.func.legacy_interrupt_line;
 
     let mut name = pci_config.func.name();
@@ -109,7 +110,7 @@ fn main() {
     };
 
     let address = unsafe {
-        syscall::physmap(bar_ptr as usize, 65536, PHYSMAP_WRITE | PHYSMAP_NO_CACHE)
+        syscall::physmap(bar_ptr as usize, bar_size as usize, PHYSMAP_WRITE | PHYSMAP_NO_CACHE)
             .expect("xhcid: failed to map address")
     };
 
@@ -170,11 +171,12 @@ fn main() {
 
         let pba_base = capability.pba_base_pointer(pci_config.func.bars);
 
-        if !(bar_ptr..bar_ptr + 65536).contains(&(table_base as u32 + table_min_length as u32)) {
-            todo!()
+        if !(bar_ptr..bar_ptr + bar_size).contains(&(table_base as u32 + table_min_length as u32)) {
+            panic!("Table {:#x}{:#x} outside of BAR {:#x}:{:#x}", table_base, table_base + table_min_length as usize, bar_ptr, bar_ptr + bar_size);
         }
-        if !(bar_ptr..bar_ptr + 65536).contains(&(pba_base as u32 + pba_min_length as u32)) {
-            todo!()
+
+        if !(bar_ptr..bar_ptr + bar_size).contains(&(pba_base as u32 + pba_min_length as u32)) {
+            panic!("PBA {:#x}{:#x} outside of BAR {:#x}:{:#X}", pba_base, pba_base + pba_min_length as usize, bar_ptr, bar_ptr + bar_size);
         }
 
         let virt_table_base = ((table_base - bar_ptr as usize) + address) as *mut MsixTableEntry;
