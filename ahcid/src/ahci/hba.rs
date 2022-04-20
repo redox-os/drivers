@@ -332,10 +332,20 @@ impl HbaPort {
         self.stop();
 
         if self.is.read() & HBA_PORT_IS_ERR != 0 {
-            error!("ERROR IS {:X} IE {:X} CMD {:X} TFD {:X}\nSSTS {:X} SCTL {:X} SERR {:X} SACT {:X}\nCI {:X} SNTF {:X} FBS {:X}",
-                    self.is.read(), self.ie.read(), self.cmd.read(), self.tfd.read(),
-                    self.ssts.read(), self.sctl.read(), self.serr.read(), self.sact.read(),
-                    self.ci.read(), self.sntf.read(), self.fbs.read());
+            let (
+                is, ie, cmd, tfd,
+                ssts, sctl, serr, sact,
+                ci, sntf, fbs
+            ) = (
+                self.is.read(), self.ie.read(), self.cmd.read(), self.tfd.read(),
+                self.ssts.read(), self.sctl.read(), self.serr.read(), self.sact.read(),
+                self.ci.read(), self.sntf.read(), self.fbs.read()
+            );
+
+            error!("IS {:X} IE {:X} CMD {:X} TFD {:X}", is, ie, cmd, tfd);
+            error!("SSTS {:X} SCTL {:X} SERR {:X} SACT {:X}", ssts, sctl, serr, sact);
+            error!("CI {:X} SNTF {:X} FBS {:X}", ci, sntf, fbs);
+
             self.is.write(u32::MAX);
             Err(Error::new(EIO))
         } else {
