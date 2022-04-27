@@ -1,9 +1,11 @@
 use syscall::io::{Io, Pio, ReadOnly, WriteOnly};
 
-use std::thread;
+use std::{fmt, thread};
 
 #[derive(Debug)]
 pub enum Error {
+    CommandRetry,
+    NoMoreTries,
     ReadTimeout,
     WriteTimeout,
 }
@@ -38,6 +40,7 @@ bitflags! {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
 #[repr(u8)]
 #[allow(dead_code)]
 enum Command {
@@ -54,6 +57,7 @@ enum Command {
     WriteSecond = 0xD4
 }
 
+#[derive(Clone, Copy, Debug)]
 #[repr(u8)]
 #[allow(dead_code)]
 enum KeyboardCommand {
@@ -63,11 +67,13 @@ enum KeyboardCommand {
     Reset = 0xFF
 }
 
+#[derive(Clone, Copy, Debug)]
 #[repr(u8)]
 enum KeyboardCommandData {
     ScancodeSet = 0xF0
 }
 
+#[derive(Clone, Copy, Debug)]
 #[repr(u8)]
 #[allow(dead_code)]
 enum MouseCommand {
@@ -78,6 +84,7 @@ enum MouseCommand {
     Reset = 0xFF
 }
 
+#[derive(Clone, Copy, Debug)]
 #[repr(u8)]
 enum MouseCommandData {
     SetSampleRate = 0xF3,
@@ -159,60 +166,86 @@ impl Ps2 {
         self.write(config.bits())
     }
 
-    fn keyboard_command_inner(&mut self, command: u8) -> Result<u8, Error> {
-        let mut ret = 0xFE;
-        for i in 0..4 {
-            self.write(command as u8)?;
-            ret = self.read()?;
-            if ret == 0xFE {
-                eprintln!("ps2d: retry keyboard command {:X}: {}", command, i);
-            } else {
-                break;
+    fn retry<F: Fn(&mut Self) -> Result<u8, Error>>(&mut self, name: fmt::Arguments, retries: usize, f: F) -> Result<u8, Error> {
+        let mut res = Err(Error::NoMoreTries);
+        for retry in 0..retries {
+            res = f(self);
+            match res {
+                Ok(ok) => {
+                    return Ok(ok);
+                },
+                Err(ref err) => {
+                    eprintln!("ps2d: {}: retry {}/{}: {:?}", name, retry + 1, retries, err);
+                }
             }
         }
-        Ok(ret)
+        res
+    }
+
+    fn keyboard_command_inner(&mut self, command: u8) -> Result<u8, Error> {
+        self.write(command as u8)?;
+        match self.read()? {
+            0xFE => Err(Error::CommandRetry),
+            value => Ok(value),
+        }
     }
 
     fn keyboard_command(&mut self, command: KeyboardCommand) -> Result<u8, Error> {
-        self.keyboard_command_inner(command as u8)
+        self.retry(
+            format_args!("{:?}", command),
+            4,
+            |x| x.keyboard_command_inner(command as u8)
+        )
     }
 
     fn keyboard_command_data(&mut self, command: KeyboardCommandData, data: u8) -> Result<u8, Error> {
-        let res = self.keyboard_command_inner(command as u8)?;
-        if res != 0xFA {
-            return Ok(res);
-        }
-        self.write(data as u8);
-        self.read()
+        self.retry(
+            format_args!("{:?} {:#x}", command, data),
+            4,
+            |x| {
+                let res = x.keyboard_command_inner(command as u8)?;
+                if res != 0xFA {
+                    //TODO: error?
+                    return Ok(res);
+                }
+                x.write(data);
+                x.read()
+            }
+        )
     }
 
     fn mouse_command_inner(&mut self, command: u8) -> Result<u8, Error> {
-        let mut ret = 0xFE;
-        for i in 0..4 {
-            self.command(Command::WriteSecond)?;
-            self.write(command as u8)?;
-            ret = self.read()?;
-            if ret == 0xFE {
-                eprintln!("ps2d: retry mouse command {:X}: {}", command, i);
-            } else {
-                break;
-            }
+        self.command(Command::WriteSecond)?;
+        self.write(command as u8)?;
+        match self.read()? {
+            0xFE => Err(Error::CommandRetry),
+            value => Ok(value),
         }
-        Ok(ret)
     }
 
     fn mouse_command(&mut self, command: MouseCommand) -> Result<u8, Error> {
-        self.mouse_command_inner(command as u8)
+        self.retry(
+            format_args!("{:?}", command),
+            4,
+            |x| x.mouse_command_inner(command as u8)
+        )
     }
 
     fn mouse_command_data(&mut self, command: MouseCommandData, data: u8) -> Result<u8, Error> {
-        let res = self.mouse_command_inner(command as u8)?;
-        if res != 0xFA {
-            return Ok(res);
-        }
-        self.command(Command::WriteSecond)?;
-        self.write(data as u8)?;
-        self.read()
+        self.retry(
+            format_args!("{:?} {:#x}", command, data),
+            4,
+            |x| {
+                let res = x.mouse_command_inner(command as u8)?;
+                if res != 0xFA {
+                    //TODO: error?
+                    return Ok(res);
+                }
+                x.command(Command::WriteSecond)?;
+                x.write(data as u8)?;
+                x.read()
+            }
+        )
     }
 
     pub fn next(&mut self) -> Option<(bool, u8)> {
@@ -226,10 +259,21 @@ impl Ps2 {
     }
 
     pub fn init_mouse(&mut self) -> Result<bool, Error> {
-        let mut b = 0;
+        let mut b;
 
         // Clear remaining data
         self.flush_read("init mouse start");
+
+        // Wake up mouse by reading device ID
+        b = self.mouse_command(MouseCommand::GetDeviceId)?;
+        if b == 0xFA {
+            b = self.read()?;
+        } else {
+            eprintln!("ps2d: failed to get mouse device id: {:02X}", b);
+        }
+
+        // Clear remaining data
+        self.flush_read("mouse device id");
 
         // Reset mouse and set up scroll
         b = self.mouse_command(MouseCommand::Reset)?;
@@ -245,6 +289,15 @@ impl Ps2 {
             }
         } else {
             eprintln!("ps2d: mouse failed to reset: {:02X}", b);
+        }
+
+        // Clear remaining data
+        self.flush_read("mouse reset");
+
+        // Set defaults
+        b = self.mouse_command(MouseCommand::SetDefaults)?;
+        if b != 0xFA {
+            eprintln!("ps2d: mouse failed to set defaults: {:02X}", b);
         }
 
         // Clear remaining data
@@ -286,7 +339,7 @@ impl Ps2 {
     }
 
     pub fn init(&mut self) -> Result<bool, Error> {
-        let mut b = 0;
+        let mut b;
 
         // Clear remaining data
         self.flush_read("init start");
@@ -313,12 +366,15 @@ impl Ps2 {
         self.command(Command::TestController)?;
         assert_eq!(self.read()?, 0x55);
 
+        // Clear remaining data
+        self.flush_read("test controller");
+
         // Enable devices
         self.command(Command::EnableFirst)?;
         self.command(Command::EnableSecond)?;
 
         // Clear remaining data
-        self.flush_read("enable");
+        self.flush_read("init keyboard start");
 
         // Reset keyboard
         b = self.keyboard_command(KeyboardCommand::Reset)?;
@@ -346,6 +402,9 @@ impl Ps2 {
         if b != 0xFA {
             eprintln!("ps2d: keyboard failed to enable reporting: {:02X}", b);
         }
+
+        // Clear remaining data
+        self.flush_read("init keyboard finish");
 
         let (mouse_found, mouse_extra) = match self.init_mouse() {
             Ok(ok) => (true, ok),
