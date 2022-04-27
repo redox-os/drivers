@@ -409,7 +409,7 @@ impl Ps2 {
         let (mouse_found, mouse_extra) = match self.init_mouse() {
             Ok(ok) => (true, ok),
             Err(err) => {
-                eprintln!("p2sd: failed to initialize mouse: {:?}", err);
+                eprintln!("ps2d: failed to initialize mouse: {:?}", err);
                 (false, false)
             }
         };

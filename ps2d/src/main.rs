@@ -41,12 +41,12 @@ fn daemon(daemon: syscall::Daemon) -> core::convert::Infallible {
         None => (keymap::us::get_char, "us"),
     };
 
-    eprintln!("p2sd: using keymap '{}'", keymap_name);
+    eprintln!("ps2d: using keymap '{}'", keymap_name);
 
     let input = OpenOptions::new()
         .write(true)
         .open("display:input")
-        .expect("p2sd: failed to open display:input");
+        .expect("ps2d: failed to open display:input");
 
     let mut event_file = OpenOptions::new()
         .read(true)
@@ -84,7 +84,7 @@ fn daemon(daemon: syscall::Daemon) -> core::convert::Infallible {
 
     let mut ps2d = Ps2d::new(input, keymap);
 
-    daemon.ready().expect("p2sd: failed to mark daemon as ready");
+    daemon.ready().expect("ps2d: failed to mark daemon as ready");
 
     let mut data = [0; 256];
     loop {
@@ -124,5 +124,5 @@ fn daemon(daemon: syscall::Daemon) -> core::convert::Infallible {
 }
 
 fn main() {
-    syscall::Daemon::new(daemon).expect("p2sd: failed to create daemon");
+    syscall::Daemon::new(daemon).expect("ps2d: failed to create daemon");
 }
