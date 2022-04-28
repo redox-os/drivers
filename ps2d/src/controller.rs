@@ -1,6 +1,6 @@
 use syscall::io::{Io, Pio, ReadOnly, WriteOnly};
 
-use std::{fmt, thread, time};
+use std::fmt;
 
 #[derive(Debug)]
 pub enum Error {
@@ -110,25 +110,23 @@ impl Ps2 {
     }
 
     fn wait_write(&mut self) -> Result<(), Error> {
-        let mut timeout = 100;
+        let mut timeout = 100_000;
         while self.status().contains(StatusFlags::INPUT_FULL) {
             if timeout <= 0 {
                 return Err(Error::WriteTimeout);
             }
             timeout -= 1;
-            thread::sleep(time::Duration::from_millis(1));
         }
         Ok(())
     }
 
     fn wait_read(&mut self) -> Result<(), Error> {
-        let mut timeout = 100;
+        let mut timeout = 100_000;
         while ! self.status().contains(StatusFlags::OUTPUT_FULL) {
             if timeout <= 0 {
                 return Err(Error::ReadTimeout);
             }
             timeout -= 1;
-            thread::sleep(time::Duration::from_millis(1));
         }
         Ok(())
     }
@@ -156,16 +154,6 @@ impl Ps2 {
         Ok(())
     }
 
-    fn config(&mut self) -> Result<ConfigFlags, Error> {
-        self.command(Command::ReadConfig)?;
-        self.read().map(ConfigFlags::from_bits_truncate)
-    }
-
-    fn set_config(&mut self, config: ConfigFlags) -> Result<(), Error> {
-        self.command(Command::WriteConfig)?;
-        self.write(config.bits())
-    }
-
     fn retry<F: Fn(&mut Self) -> Result<u8, Error>>(&mut self, name: fmt::Arguments, retries: usize, f: F) -> Result<u8, Error> {
         eprintln!("ps2d: {}", name);
         let mut res = Err(Error::NoMoreTries);
@@ -181,6 +169,30 @@ impl Ps2 {
             }
         }
         res
+    }
+
+    fn config(&mut self) -> Result<ConfigFlags, Error> {
+        self.retry(
+            format_args!("read config"),
+            4,
+            |x| {
+                x.command(Command::ReadConfig)?;
+                x.read()
+            }
+        ).map(ConfigFlags::from_bits_truncate)
+    }
+
+    fn set_config(&mut self, config: ConfigFlags) -> Result<(), Error> {
+        self.retry(
+            format_args!("write config"),
+            4,
+            |x| {
+                x.command(Command::WriteConfig)?;
+                x.write(config.bits())?;
+                Ok(0)
+            }
+        )?;
+        Ok(())
     }
 
     fn keyboard_command_inner(&mut self, command: u8) -> Result<u8, Error> {
