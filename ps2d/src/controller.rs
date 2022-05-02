@@ -418,13 +418,11 @@ impl Ps2 {
 
         // Disable clocks, disable interrupts, and disable translate
         {
-            let mut config = self.config()?;
-            eprintln!("ps2d: config get {:?}", config);
-            config.insert(ConfigFlags::FIRST_DISABLED);
-            config.insert(ConfigFlags::SECOND_DISABLED);
-            config.remove(ConfigFlags::FIRST_TRANSLATE);
-            config.remove(ConfigFlags::FIRST_INTERRUPT);
-            config.remove(ConfigFlags::SECOND_INTERRUPT);
+            // Since the default config may have interrupts enabled, and the kernel may eat up
+            // our data in that case, we will write a config without reading the current one
+            let mut config = ConfigFlags::POST_PASSED |
+                ConfigFlags::FIRST_DISABLED |
+                ConfigFlags::SECOND_DISABLED;
             eprintln!("ps2d: config set {:?}", config);
             self.set_config(config)?;
 
