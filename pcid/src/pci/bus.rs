@@ -1,4 +1,5 @@
 use super::{PciDev, CfgAccess};
+use crate::PciAddr;
 
 pub struct PciBus<'pci> {
     pub pci: &'pci dyn CfgAccess,
@@ -11,10 +12,11 @@ impl<'pci> PciBus<'pci> {
     }
 
     pub unsafe fn read(&self, dev: u8, func: u8, offset: u16) -> u32 {
-        self.pci.read(self.num, dev, func, offset)
+        // TODO: segments
+        self.pci.read(PciAddr { seg: 0, bus: self.num, dev, func }, offset)
     }
     pub unsafe fn write(&self, dev: u8, func: u8, offset: u16, value: u32) {
-        self.pci.write(self.num, dev, func, offset, value)
+        self.pci.write(PciAddr { seg: 0, bus: self.num, dev, func }, offset, value)
     }
 }
 
