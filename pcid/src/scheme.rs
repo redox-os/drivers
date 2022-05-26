@@ -234,8 +234,11 @@ impl PciScheme {
                 let request = bincode::deserialize_from(data.as_slice()).map_err(|_| Error::new(EINVAL))?;
                 let response = crate::handle_channel_request(pci_state, tree, addr, request);
 
-                let output = bincode::serialize(&response).map_err(|_| Error::new(EIO))?;
-                *state = ChannelState::AwaitingResponseRead(output.into());
+                let mut output_bytes = vec! [0_u8; 8];
+                bincode::serialize_into(&mut output_bytes, &response).map_err(|_| Error::new(EIO))?;
+                let len = output_bytes.len() - 8;
+                output_bytes[..8].copy_from_slice(&u64::to_le_bytes(len as u64));
+                *state = ChannelState::AwaitingResponseRead(output_bytes.into());
 
                 Ok(byte_count)
             }

@@ -169,7 +169,7 @@ fn spawn_driver(addr: pcid_lib::PciAddr, header: &Header, driver: &DriverConfig,
     log::info!("PCID_SPAWNER SPAWN {:?}", command);
 
     let envs = if driver.use_channel.unwrap_or(false) {
-        let channel_fd = syscall::open(&format!("pci:tree/{}/channel", addr), syscall::O_RDWR | syscall::O_CLOEXEC).map_err(|err| anyhow!("failed to open pcid channel: {}", err))?;
+        let channel_fd = syscall::open(&format!("pci:tree/{}/channel", addr), syscall::O_RDWR).map_err(|err| anyhow!("failed to open pcid channel: {}", err))?;
         vec! [("PCID_CLIENT_CHANNEL", format!("{}", channel_fd))]
     } else {
         vec! []
