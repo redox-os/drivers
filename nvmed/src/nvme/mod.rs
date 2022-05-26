@@ -19,8 +19,8 @@ pub mod queues;
 use self::cq_reactor::NotifReq;
 pub use self::queues::{NvmeCmd, NvmeCmdQueue, NvmeComp, NvmeCompQueue};
 
-use pcid_interface::msi::{MsiCapability, MsixCapability, MsixTableEntry};
-use pcid_interface::PcidServerHandle;
+use pcid_lib::driver_interface::msi::{MsiCapability, MsixCapability, MsixTableEntry};
+use pcid_lib::driver_interface::PcidServerHandle;
 
 /// Used in conjunction with `InterruptMethod`, primarily by the CQ reactor.
 #[derive(Debug)]

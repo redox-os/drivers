@@ -9,6 +9,8 @@ use structopt::StructOpt;
 use log::{error, info, warn, trace};
 use redox_log::{OutputBuilder, RedoxLogger};
 
+pub use pcid_lib::{pci, pcie};
+
 use crate::config::Config;
 use crate::pci::{CfgAccess, Pci, PciIter, PciBar, PciBus, PciClass, PciDev, PciFunc, PciHeader, PciHeaderError, PciHeaderType};
 use crate::pci::cap::Capability as PciCapability;
@@ -16,8 +18,6 @@ use crate::pcie::Pcie;
 
 mod config;
 mod driver_interface;
-mod pci;
-mod pcie;
 
 #[derive(StructOpt)]
 #[structopt(about)]
@@ -497,6 +497,7 @@ fn setup_logging(verbosity: u8) -> Option<&'static RedoxLogger> {
                 .build()
          );
 
+    #[cfg(target_os = "redox")]
     match OutputBuilder::in_redox_logging_scheme("bus", "pci", "pcid.log") {
         Ok(b) => logger = logger.with_output(
             b.with_filter(log::LevelFilter::Trace)
@@ -505,6 +506,7 @@ fn setup_logging(verbosity: u8) -> Option<&'static RedoxLogger> {
         ),
         Err(error) => eprintln!("pcid: failed to open pcid.log"),
     }
+    #[cfg(target_os = "redox")]
     match OutputBuilder::in_redox_logging_scheme("bus", "pci", "pcid.ansi.log") {
         Ok(b) => logger = logger.with_output(
             b.with_filter(log::LevelFilter::Trace)

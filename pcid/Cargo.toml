@@ -5,11 +5,9 @@ edition = "2018"
 
 [[bin]]
 name = "pcid"
-path = "src/main.rs"
 
 [lib]
-name = "pcid_interface"
-path = "src/lib.rs"
+name = "pcid_lib"
 
 [dependencies]
 bincode = "1.2"
