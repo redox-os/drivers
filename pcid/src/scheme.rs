@@ -1,12 +1,14 @@
 use std::collections::{BTreeMap, VecDeque};
+use std::fmt::Write;
 
 use syscall::error::{Error, Result, EBADF, EINVAL, EIO, ENOENT, ESPIPE};
+use syscall::flag::{MODE_CHR, MODE_DIR, MODE_FILE};
 use syscall::scheme::SchemeMut;
 
 use crate::{CfgAccess, PciAddr, State};
 use crate::pci::{ConfigReader, ConfigWriter, PciFunc, PciDev, PciBus};
 
-struct PciScheme {
+pub struct PciScheme {
     handles: BTreeMap<usize, Handle>,
     next_id: usize,
     state: State,
@@ -18,6 +20,7 @@ enum Handle {
     Device { offset: usize },
     CfgSpace { offset: usize, addr: PciAddr },
     Channel { addr: PciAddr, st: ChannelState },
+    DeviceProperty { offset: usize, property: String },
 }
 
 enum ChannelState {
@@ -26,31 +29,38 @@ enum ChannelState {
     AwaitingResponseRead(VecDeque<u8>),
 }
 
-fn parse_pci_addr(addr: &str) -> Option<PciAddr> {
-    let mut numbers = addr.split('.');
-
-    Some(PciAddr {
-        func: numbers.next_back().and_then(|n| n.parse::<u8>().ok())?,
-        dev: numbers.next_back().and_then(|n| n.parse::<u8>().ok())?,
-        bus: numbers.next_back().and_then(|n| n.parse::<u8>().ok())?,
-        seg: numbers.next_back().unwrap_or("0").parse::<u16>().ok()?,
-    })
-}
-
 const ROOT_CONTENTS: &[u8] = b"tree\n";
 const DEVICE_CONTENTS: &[u8] = b"cfg-space\nchannel\n";
 
 impl SchemeMut for PciScheme {
     fn open(&mut self, path: &str, flags: usize, uid: u32, gid: u32) -> Result<usize> {
+        log::trace!("OPEN `{}` flags {}", path, flags);
+
+        // TODO: Check flags are correct
         let expects_dir = path.ends_with('/');
+
         let path = path.trim_matches('/');
 
         let handle = if path.is_empty() {
             Handle::TopLevel { offset: 0 }
         } else if path.starts_with("tree") {
             let path = &path[4..];
-            let index = path.find('/');
-            Handle::Tree { offset: 0, bytes: Vec::new() }
+
+            if path.chars().next().map_or(false, |c| c != '/') {
+                return Err(Error::new(ENOENT));
+            }
+
+            if path.is_empty() {
+                Handle::Tree { offset: 0, bytes: self.tree.iter().flat_map(|(addr, _)| format!("{}\n", addr).into_bytes()).collect::<Vec<_>>() }
+            } else {
+                let path = &path[1..];
+
+                let idx = path.find('/').unwrap_or(path.len());
+                let (addr_str, after) = path.split_at(idx);
+                let addr = addr_str.parse::<PciAddr>().map_err(|_| Error::new(ENOENT))?;
+
+                self.parse_after_pci_addr(addr, after).ok_or(Error::new(ENOENT))?
+            }
         } else {
             return Err(Error::new(ENOENT))?;
         };
@@ -61,6 +71,16 @@ impl SchemeMut for PciScheme {
         self.handles.insert(id, handle);
         Ok(id)
     }
+    fn fstat(&mut self, id: usize, stat: &mut syscall::Stat) -> Result<usize> {
+        let handle = self.handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+
+        stat.st_mode = match handle {
+            Handle::TopLevel { .. } | Handle::Tree { .. } | Handle::Device { .. } => MODE_DIR,
+            Handle::CfgSpace { .. } | Handle::Channel { .. } => MODE_CHR,
+            Handle::DeviceProperty { .. } => MODE_FILE,
+        };
+        Ok(0)
+    }
     fn read(&mut self, id: usize, buf: &mut [u8]) -> Result<usize> {
         let handle = self.handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
@@ -70,10 +90,11 @@ impl SchemeMut for PciScheme {
             Handle::Tree { ref mut offset, ref bytes } => (offset, bytes.as_slice()),
             Handle::Device { ref mut offset } => (offset, DEVICE_CONTENTS),
             Handle::Channel { addr, ref mut st } => return Self::read_channel(addr, st, buf),
+            Handle::DeviceProperty { ref mut offset, ref property } =>  (offset, property.as_bytes()),
         };
 
-        let byte_count = core::cmp::min(DEVICE_CONTENTS.len().saturating_sub(*offset), buf.len());
-        buf[..byte_count].copy_from_slice(&DEVICE_CONTENTS[*offset..]);
+        let byte_count = core::cmp::min(bytes.len().saturating_sub(*offset), buf.len());
+        buf[..byte_count].copy_from_slice(&bytes[*offset..*offset + byte_count]);
         *offset += byte_count;
 
         Ok(byte_count)
@@ -97,6 +118,7 @@ impl SchemeMut for PciScheme {
             Handle::Device { offset } => (offset, DEVICE_CONTENTS.len()),
             Handle::CfgSpace { offset, .. } => (offset, Self::cfg_space_len(&self.state)),
             Handle::Channel { .. } => return Err(Error::new(ESPIPE)),
+            Handle::DeviceProperty { offset, property } => (offset, property.len()),
         };
 
         *offset = syscall::calc_seek_offset_usize(*offset, pos, whence, len)? as usize;
@@ -109,6 +131,56 @@ impl SchemeMut for PciScheme {
 }
 
 impl PciScheme {
+    pub fn new(state: State, tree: BTreeMap<PciAddr, crate::Func>) -> Self {
+        Self {
+            handles: BTreeMap::new(),
+            next_id: 0,
+            state,
+            tree,
+        }
+    }
+    fn parse_after_pci_addr(&self, addr: PciAddr, after: &str) -> Option<Handle> {
+        if after.chars().next().map_or(false, |c| c != '/') {
+            return None;
+        }
+        let func = self.tree.get(&addr)?;
+
+        Some(if after.is_empty() {
+            Handle::Device { offset: 0 }
+        } else {
+            let path = &after[1..];
+
+            let p = |property| Handle::DeviceProperty { offset: 0, property };
+
+            match path {
+                "cfg-space" => Handle::CfgSpace { offset: 0, addr },
+                "channel" => Handle::Channel { addr, st: ChannelState::AwaitingLenBytes(arrayvec::ArrayVec::new()) },
+                // TODO: Hex or dec?
+                "vendor-id" => p(format!("{:>04X}", func.header.vendor_id())),
+                "device-id" => p(format!("{:>04X}", func.header.device_id())),
+                "class" => p(u8::from(func.header.class()).to_string()),
+                "subclass" => p(func.header.subclass().to_string()),
+                "interface" => p(func.header.interface().to_string()),
+                "irq" => p(func.header.interrupt_line().to_string()),
+                "revision" => p(func.header.revision().to_string()),
+                "bars" => p({
+                    let mut s = String::new();
+                    for (bar, _) in func.bars {
+                        writeln!(s, "{}", bar).unwrap();
+                    }
+                    s
+                }),
+                "bar-sizes" => p({
+                    let mut s = String::new();
+                    for (_, bar_size) in func.bars {
+                        writeln!(s, "{:>08X}", bar_size).unwrap();
+                    }
+                    s
+                }),
+                _ => return None,
+            }
+        })
+    }
     fn cfg_space_len(state: &State) -> usize {
         if state.pcie.is_some() { 4096 } else { 256 }
     }

@@ -7,7 +7,7 @@ use std::os::unix::io::{FromRawFd, RawFd};
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use thiserror::Error;
 
-pub use crate::pci::PciBar;
+pub use crate::pci::{PciBar, PciClass};
 pub use crate::pci::msi;
 
 pub mod irq_helpers;

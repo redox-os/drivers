@@ -1,12 +1,14 @@
 #![feature(array_zip)]
 
 use std::collections::BTreeMap;
-use std::fs::{File, metadata, read_dir};
-use std::io::prelude::*;
-use std::process::Command;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use log::{error, info, warn, trace};
+use syscall::data::Packet;
+use syscall::error::EINTR;
+use syscall::flag::{O_RDWR, O_CREAT, O_CLOEXEC};
+use syscall::scheme::SchemeMut;
+
+use log::{info, warn, trace};
 use redox_log::{OutputBuilder, RedoxLogger};
 
 pub use pcid_lib::{pci, pcie};
@@ -381,4 +383,36 @@ fn main() {
             }
         }
     }
+    info!("Enumeration complete, now starting `pci:` scheme");
+
+    syscall::daemon::Daemon::new(move |daemon: syscall::daemon::Daemon| -> std::convert::Infallible {
+        let mut scheme = self::scheme::PciScheme::new(state, tree);
+        let scheme_socket = syscall::open(":pci", O_RDWR | O_CREAT | O_CLOEXEC).expect("failed to open pci scheme socket");
+        let mut packet = Packet::default();
+
+        let _ = daemon.ready();
+
+        'main_loop: loop {
+            'eintr_read_loop: loop {
+                match syscall::read(scheme_socket, &mut packet) {
+                    Ok(0) => break 'main_loop,
+                    Ok(_) => break 'eintr_read_loop,
+                    Err(error) if error.errno == EINTR => continue 'eintr_read_loop,
+                    Err(error) => panic!("failed to read from scheme socket: {}", error),
+                }
+            }
+            scheme.handle(&mut packet);
+
+            'eintr_write_loop: loop {
+                match syscall::write(scheme_socket, &packet) {
+                    Ok(0) => break 'main_loop,
+                    Ok(_) => break 'eintr_write_loop,
+                    Err(error) if error.errno == EINTR => continue 'eintr_write_loop,
+                    Err(error) => panic!("failed to write to scheme socket: {}", error),
+                }
+            }
+        }
+        let _ = syscall::exit(0);
+        unreachable!();
+    }).expect("failed to fork pcid");
 }

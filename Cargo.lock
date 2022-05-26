@@ -49,6 +49,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "anyhow"
+version = "1.0.57"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08f9b8508dccb7687a1d6c4ce66b2b0ecef467c94667de27d8d7fe1f8d2a9cdc"
+
+[[package]]
 name = "arg_parser"
 version = "0.1.0"
 source = "git+https://gitlab.redox-os.org/redox-os/arg-parser.git#1c434b55f3e1a0375ebcca85b3e88db7378e82fa"
@@ -811,9 +817,12 @@ dependencies = [
 name = "pcid-spawner"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "log",
+ "pcid",
  "pico-args",
  "redox-log",
+ "redox_syscall",
  "serde",
  "toml",
 ]
