@@ -1,4 +1,4 @@
-#![feature(array_zip)]
+#![feature(array_chunks, array_zip)]
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

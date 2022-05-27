@@ -131,7 +131,7 @@ impl SchemeMut for PciScheme {
             Handle::DeviceProperty { ref mut offset, ref property } =>  (offset, property.as_bytes()),
         };
 
-        let byte_count = core::cmp::min(bytes.len().saturating_sub(*offset), buf.len());
+        let byte_count = std::cmp::min(bytes.len().saturating_sub(*offset), buf.len());
         buf[..byte_count].copy_from_slice(&bytes[*offset..*offset + byte_count]);
         *offset += byte_count;
 
@@ -226,22 +226,76 @@ impl PciScheme {
     fn cfg_space_len(state: &State) -> usize {
         if state.pcie.is_some() { 4096 } else { 256 }
     }
-    fn with_func<T>(addr: PciAddr, pci: &dyn CfgAccess, f: impl FnOnce(PciFunc) -> T) -> T {
-        f(PciFunc { dev: &PciDev { bus: &PciBus { pci, num: addr.bus }, num: addr.dev }, num: addr.func })
-    }
+    // TODO: I have tested these manually, but write an automated test just in case.
     fn read_cfgspace(state: &State, file_offset: &mut usize, addr: PciAddr, buf: &mut [u8]) -> Result<usize> {
-        // TODO
-        Err(Error::new(EIO))
+        let mut offset = *file_offset;
+        let byte_count = std::cmp::min(Self::cfg_space_len(state).saturating_sub(offset), buf.len());
+        let buf = &mut buf[..byte_count];
+
+        let displacement = offset % 4;
+
+        let buf = if displacement != 0 {
+            let dw_bytes = u32::to_le_bytes(unsafe { state.preferred_cfg_access().read(addr, ((offset / 4) * 4) as u16) });
+            let count = std::cmp::min(buf.len(), 4 - displacement);
+            buf[..count].copy_from_slice(&dw_bytes[displacement..displacement + count]);
+            offset += count;
+            &mut buf[count..]
+        } else { buf };
+
+        for dst_dw_bytes in buf.array_chunks_mut::<4>() {
+            *dst_dw_bytes = u32::to_le_bytes(unsafe { state.preferred_cfg_access().read(addr, offset as u16) });
+            offset += 4;
+        }
+
+        let tail_byte_count = buf.len() % 4;
+        if tail_byte_count != 0 {
+            let dw_bytes = u32::to_le_bytes(unsafe { state.preferred_cfg_access().read(addr, offset as u16) });
+            buf[byte_count - tail_byte_count..].copy_from_slice(&dw_bytes[..tail_byte_count]);
+            offset += tail_byte_count;
+        }
+
+        *file_offset = offset;
+        Ok(byte_count)
     }
     fn write_cfgspace(state: &State, file_offset: &mut usize, addr: PciAddr, buf: &[u8]) -> Result<usize> {
-        // TODO
-        Err(Error::new(EIO))
+        let mut offset = *file_offset;
+        let byte_count = std::cmp::min(Self::cfg_space_len(state).saturating_sub(offset), buf.len());
+        let buf = &buf[..byte_count];
+
+        let displacement = offset % 4;
+
+        let buf = if displacement != 0 {
+            let (bytes_before, bytes) = if buf.len() >= 4 - displacement { buf.split_at(4 - displacement) } else { (buf, [].as_slice()) };
+            let mut dw_bytes = [0_u8; 4];
+            let count = std::cmp::min(bytes_before.len(), 4 - displacement);
+            dw_bytes[displacement..displacement + count].copy_from_slice(&bytes_before[..count]);
+            unsafe { state.preferred_cfg_access().write(addr, ((offset / 4) * 4) as u16, u32::from_le_bytes(dw_bytes)); }
+
+            offset += count;
+
+            bytes
+        } else { buf };
+
+        for dword in buf.array_chunks::<4>().copied().map(u32::from_le_bytes) {
+            unsafe { state.preferred_cfg_access().write(addr, offset as u16, dword); }
+            offset += 4;
+        }
+
+        if buf.len() % 4 != 0 {
+            let mut dw_bytes = [0_u8; 4];
+            dw_bytes[..buf.len() % 4].copy_from_slice(&buf[(buf.len() / 4) * 4..]);
+            unsafe { state.preferred_cfg_access().write(addr, offset as u16, u32::from_le_bytes(dw_bytes)) }
+
+            offset += buf.len() % 4;
+        }
+        *file_offset = offset;
+        Ok(byte_count)
     }
 
     fn read_channel(addr: PciAddr, state: &mut ChannelState, buf: &mut [u8]) -> Result<usize> {
         match *state {
             ChannelState::AwaitingResponseRead(ref mut queue) => {
-                let byte_count = core::cmp::min(queue.len(), buf.len());
+                let byte_count = std::cmp::min(queue.len(), buf.len());
                 // XXX: Why can't VecDeque support dequeueing into slices?
                 for (idx, byte) in queue.drain(..byte_count).enumerate() {
                     buf[idx] = byte;
@@ -258,7 +312,7 @@ impl PciScheme {
         match *state {
             ChannelState::AwaitingResponseRead(_) => return Err(Error::new(EINVAL)),
             ChannelState::AwaitingLenBytes(ref mut len_bytes) => {
-                let byte_count = core::cmp::min(len_bytes.capacity() - len_bytes.len(), buf.len());
+                let byte_count = std::cmp::min(len_bytes.capacity() - len_bytes.len(), buf.len());
                 len_bytes.try_extend_from_slice(&buf[..byte_count]).unwrap();
 
                 if let Ok(len_bytes) = len_bytes.clone().into_inner() {
@@ -270,7 +324,7 @@ impl PciScheme {
                 Ok(byte_count)
             }
             ChannelState::AwaitingData(len, ref mut data) => {
-                let byte_count = core::cmp::min(len - data.len(), buf.len());
+                let byte_count = std::cmp::min(len - data.len(), buf.len());
                 data.extend(&buf[..byte_count]);
 
                 let request = bincode::deserialize_from(data.as_slice()).map_err(|_| Error::new(EINVAL))?;
