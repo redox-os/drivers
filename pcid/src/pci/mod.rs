@@ -3,11 +3,12 @@ use std::sync::{Mutex, Once};
 
 use syscall::io::{Io as _, Pio};
 
+use crate::PciAddr;
 pub use self::bar::PciBar;
 pub use self::bus::{PciBus, PciBusIter};
 pub use self::class::PciClass;
 pub use self::dev::{PciDev, PciDevIter};
-pub use self::func::PciFunc;
+pub use self::func::{ConfigReader, ConfigWriter, PciFunc};
 pub use self::header::{PciHeader, PciHeaderError, PciHeaderType};
 
 use log::info;
@@ -22,11 +23,11 @@ pub mod header;
 pub mod msi;
 
 pub trait CfgAccess {
-    unsafe fn read_nolock(&self, bus: u8, dev: u8, func: u8, offset: u16) -> u32;
-    unsafe fn read(&self, bus: u8, dev: u8, func: u8, offset: u16) -> u32;
+    unsafe fn read_nolock(&self, addr: PciAddr, offset: u16) -> u32;
+    unsafe fn read(&self, addr: PciAddr, offset: u16) -> u32;
 
-    unsafe fn write_nolock(&self, bus: u8, dev: u8, func: u8, offset: u16, value: u32);
-    unsafe fn write(&self, bus: u8, dev: u8, func: u8, offset: u16, value: u32);
+    unsafe fn write_nolock(&self, addr: PciAddr, offset: u16, value: u32);
+    unsafe fn write(&self, addr: PciAddr, offset: u16, value: u32);
 }
 
 pub struct Pci {
@@ -52,13 +53,14 @@ impl Pci {
         info!("PCI: couldn't find or access PCIe extended configuration, and thus falling back to PCI 3.0 io ports");
         unsafe { syscall::iopl(3).expect("pcid: failed to set iopl to 3"); }
     }
-    fn address(bus: u8, dev: u8, func: u8, offset: u8) -> u32 {
+    fn address(PciAddr { seg, bus, dev, func }: PciAddr, offset: u8) -> u32 {
         // TODO: Find the part of pcid that uses an unaligned offset!
         //
         // assert_eq!(offset & 0xFC, offset, "pci offset is not aligned");
         //
         let offset = offset & 0xFC;
 
+        assert_eq!(seg, 0, "segments not supported with I/O port cfg space");
         assert_eq!(dev & 0x1F, dev, "pci device larger than 5 bits");
         assert_eq!(func & 0x7, func, "pci func larger than 3 bits");
 
@@ -67,33 +69,33 @@ impl Pci {
 }
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 impl CfgAccess for Pci {
-    unsafe fn read_nolock(&self, bus: u8, dev: u8, func: u8, offset: u16) -> u32 {
+    unsafe fn read_nolock(&self, addr: PciAddr, offset: u16) -> u32 {
         self.iopl_once.call_once(Self::set_iopl);
 
         let offset = u8::try_from(offset).expect("offset too large for PCI 3.0 configuration space");
-        let address = Self::address(bus, dev, func, offset);
+        let address = Self::address(addr, offset);
 
         Pio::<u32>::new(0xCF8).write(address);
         Pio::<u32>::new(0xCFC).read()
     }
 
-    unsafe fn read(&self, bus: u8, dev: u8, func: u8, offset: u16) -> u32 {
+    unsafe fn read(&self, addr: PciAddr, offset: u16) -> u32 {
         let _guard = self.lock.lock().unwrap();
-        self.read_nolock(bus, dev, func, offset)
+        self.read_nolock(addr, offset)
     }
 
-    unsafe fn write_nolock(&self, bus: u8, dev: u8, func: u8, offset: u16, value: u32) {
+    unsafe fn write_nolock(&self, addr: PciAddr, offset: u16, value: u32) {
         self.iopl_once.call_once(Self::set_iopl);
 
         let offset = u8::try_from(offset).expect("offset too large for PCI 3.0 configuration space");
-        let address = Self::address(bus, dev, func, offset);
+        let address = Self::address(addr, offset);
 
         Pio::<u32>::new(0xCF8).write(address);
         Pio::<u32>::new(0xCFC).write(value);
     }
-    unsafe fn write(&self, bus: u8, dev: u8, func: u8, offset: u16, value: u32) {
+    unsafe fn write(&self, addr: PciAddr, offset: u16, value: u32) {
         let _guard = self.lock.lock().unwrap();
-        self.write_nolock(bus, dev, func, offset, value)
+        self.write_nolock(addr, offset, value)
     }
 }
 

@@ -6,7 +6,7 @@ use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
 use std::{slice, usize};
 
-use pcid_interface::{PciBar, PciFeature, PciFeatureInfo, PciFunction, PcidServerHandle};
+use pcid_lib::driver_interface::{self as pcid_interface, PciBar, PciFeature, PciFeatureInfo, PciFunction, PcidServerHandle};
 use syscall::{
     CloneFlags, Event, Mmio, Packet, Result, SchemeBlockMut, PHYSMAP_NO_CACHE,
     PHYSMAP_WRITE,

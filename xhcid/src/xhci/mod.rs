@@ -19,8 +19,8 @@ use syscall::io::{Dma, Io, PhysBox};
 
 use crate::usb;
 
-use pcid_interface::msi::{MsixTableEntry, MsixCapability};
-use pcid_interface::{PcidServerHandle, PciFeature};
+use pcid_lib::driver_interface::msi::{MsixTableEntry, MsixCapability};
+use pcid_lib::driver_interface::{PcidServerHandle, PciFeature};
 
 mod capability;
 mod context;

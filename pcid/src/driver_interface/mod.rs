@@ -7,12 +7,12 @@ use std::os::unix::io::{FromRawFd, RawFd};
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use thiserror::Error;
 
-pub use crate::pci::PciBar;
+pub use crate::pci::{PciBar, PciClass};
 pub use crate::pci::msi;
 
 pub mod irq_helpers;
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum LegacyInterruptPin {
     /// INTa#
@@ -181,6 +181,7 @@ pub enum PcidClientRequest {
 pub enum PcidServerResponseError {
     NonexistentFeature(PciFeature),
     InvalidBitPattern,
+    InternalError(String),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -195,14 +196,9 @@ pub enum PcidClientResponse {
     SetFeatureInfo(PciFeature),
 }
 
-// TODO: Ideally, pcid might have its own scheme, like lots of other Redox drivers, where this kind of IPC is done. Otherwise, instead of writing serde messages over
-// a channel, the communication could potentially be done via mmap, using a channel
-// very similar to crossbeam-channel or libstd's mpsc (except the cycle, enqueue and dequeue fields
-// are stored in the same buffer as the actual data).
 /// A handle from a `pcid` client (e.g. `ahcid`) to `pcid`.
 pub struct PcidServerHandle {
-    pcid_to_client: File,
-    pcid_from_client: File,
+    channel: File,
 }
 
 pub(crate) fn send<W: Write, T: Serialize>(w: &mut W, message: &T) -> Result<()> {
@@ -227,23 +223,21 @@ pub(crate) fn recv<R: Read, T: DeserializeOwned>(r: &mut R) -> Result<T> {
 }
 
 impl PcidServerHandle {
-    pub fn connect(pcid_to_client: RawFd, pcid_from_client: RawFd) -> Result<Self> {
+    pub fn connect(channel: RawFd) -> Result<Self> {
         Ok(Self {
-            pcid_to_client: unsafe { File::from_raw_fd(pcid_to_client) },
-            pcid_from_client: unsafe { File::from_raw_fd(pcid_from_client) },
+            channel: unsafe { File::from_raw_fd(channel) },
         })
     }
     pub fn connect_default() -> Result<Self> {
-        let pcid_to_client_fd = env::var("PCID_TO_CLIENT_FD")?.parse::<RawFd>().map_err(PcidClientHandleError::EnvValidityError)?;
-        let pcid_from_client_fd = env::var("PCID_FROM_CLIENT_FD")?.parse::<RawFd>().map_err(PcidClientHandleError::EnvValidityError)?;
+        let channel_fd = env::var("PCID_CLIENT_CHANNEL")?.parse::<RawFd>().map_err(PcidClientHandleError::EnvValidityError)?;
 
-        Self::connect(pcid_to_client_fd, pcid_from_client_fd)
+        Self::connect(channel_fd)
     }
     pub(crate) fn send(&mut self, req: &PcidClientRequest) -> Result<()> {
-        send(&mut self.pcid_from_client, req)
+        send(&mut self.channel, req)
     }
     pub(crate) fn recv(&mut self) -> Result<PcidClientResponse> {
-        recv(&mut self.pcid_to_client)
+        recv(&mut self.channel)
     }
     pub fn fetch_config(&mut self) -> Result<SubdriverArguments> {
         self.send(&PcidClientRequest::RequestConfig)?;

@@ -11,6 +11,8 @@ use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
 use std::env;
 
+use pcid_lib::driver_interface as pcid_interface;
+
 use pcid_interface::{MsiSetFeatureInfo, PcidServerHandle, PciFeature, PciFeatureInfo, SetFeatureInfo};
 use pcid_interface::irq_helpers::{read_bsp_apic_id, allocate_single_interrupt_vector};
 use pcid_interface::msi::{MsiCapability, MsixCapability, MsixTableEntry};

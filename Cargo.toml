@@ -10,6 +10,7 @@ members = [
     "ixgbed",
     "nvmed",
     "pcid",
+    "pcid-spawner",
     "pcspkrd",
     "ps2d",
     "rtl8168d",

@@ -49,9 +49,9 @@ impl From<u8> for PciClass {
     }
 }
 
-impl Into<u8> for PciClass {
-    fn into(self) -> u8 {
-        match self {
+impl From<PciClass> for u8 {
+    fn from(class: PciClass) -> Self {
+        match class {
             PciClass::Legacy => 0x00,
             PciClass::Storage => 0x01,
             PciClass::Network => 0x02,
@@ -73,5 +73,31 @@ impl Into<u8> for PciClass {
             PciClass::Unknown => 0xFF,
             PciClass::Reserved(reserved) => reserved
         }
+    }
+}
+impl std::fmt::Display for PciClass {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", match self {
+            PciClass::Legacy => "legacy",
+            PciClass::Storage => "storage",
+            PciClass::Network => "network",
+            PciClass::Display => "display",
+            PciClass::Multimedia => "multimedia",
+            PciClass::Memory => "memory",
+            PciClass::Bridge => "bridge",
+            PciClass::SimpleComms => "simple comms",
+            PciClass::Peripheral => "peripheral",
+            PciClass::Input => "input",
+            PciClass::Docking => "docking",
+            PciClass::Processor => "processor",
+            PciClass::SerialBus => "serial bus",
+            PciClass::Wireless => "wireless",
+            PciClass::IntelligentIo => "intelligent i/o",
+            PciClass::SatelliteComms => "satellite comms",
+            PciClass::Cryptography => "cryptography",
+            PciClass::SignalProc => "signal proc",
+            PciClass::Unknown => "unknown",
+            PciClass::Reserved(reserved) => return write!(f, "reserved ({:#x})", reserved),
+        })
     }
 }
