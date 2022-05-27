@@ -56,7 +56,7 @@ fn main() -> Result<()> {
             class: r("class")?.parse::<u8>()?.into(),
             subclass: r("subclass")?.parse::<u8>()?,
             interface: r("interface")?.parse::<u8>()?,
-            irq: r("irq")?.parse::<u8>()?,
+            irq: r("interrupt-line")?.parse::<u8>()?,
             revision: r("revision")?.parse::<u8>()?,
             bars: r("bars")?.lines().map(|line| {
                 let bar_str = line.trim();

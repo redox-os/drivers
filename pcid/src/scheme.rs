@@ -30,7 +30,18 @@ enum ChannelState {
 }
 
 const ROOT_CONTENTS: &[u8] = b"tree\n";
-const DEVICE_CONTENTS: &[u8] = b"cfg-space\nchannel\n";
+const DEVICE_CONTENTS: &[u8] = br"cfg-space
+channel
+vendor-id
+device-id
+class
+subclass
+interface
+interrupt-line
+revision
+bars
+bar-sizes
+";
 
 impl SchemeMut for PciScheme {
     fn open(&mut self, path: &str, flags: usize, uid: u32, gid: u32) -> Result<usize> {
@@ -161,7 +172,7 @@ impl PciScheme {
                 "class" => p(u8::from(func.header.class()).to_string()),
                 "subclass" => p(func.header.subclass().to_string()),
                 "interface" => p(func.header.interface().to_string()),
-                "irq" => p(func.header.interrupt_line().to_string()),
+                "interrupt-line" => p(func.header.interrupt_line().to_string()),
                 "revision" => p(func.header.revision().to_string()),
                 "bars" => p({
                     let mut s = String::new();
