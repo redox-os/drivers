@@ -1,15 +1,15 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt::Write;
 
-use syscall::error::{Error, Result, EBADF, EINVAL, EIO, ENOENT, ESPIPE};
-use syscall::flag::{MODE_CHR, MODE_DIR, MODE_FILE};
+use syscall::error::{Error, Result, EBADF, EINVAL, EIO, EISDIR, ENOENT, ENOTDIR, ESPIPE};
+use syscall::flag::{MODE_CHR, MODE_DIR, MODE_FILE, O_DIRECTORY, O_STAT};
 use syscall::scheme::SchemeMut;
 
 use crate::{CfgAccess, PciAddr, State};
 use crate::pci::{ConfigReader, ConfigWriter, PciFunc, PciDev, PciBus};
 
 pub struct PciScheme {
-    handles: BTreeMap<usize, Handle>,
+    handles: BTreeMap<usize, HandleWrapper>,
     next_id: usize,
     state: State,
     tree: BTreeMap<PciAddr, crate::Func>,
@@ -21,6 +21,18 @@ enum Handle {
     CfgSpace { offset: usize, addr: PciAddr },
     Channel { addr: PciAddr, st: ChannelState },
     DeviceProperty { offset: usize, property: String },
+}
+struct HandleWrapper {
+    inner: Handle,
+    stat: bool,
+}
+impl Handle {
+    fn is_file(&self) -> bool {
+        matches!(self, Self::CfgSpace { .. } | Self::Channel { .. } | Self::DeviceProperty { .. })
+    }
+    fn is_dir(&self) -> bool {
+        !self.is_file()
+    }
 }
 
 enum ChannelState {
@@ -48,7 +60,7 @@ impl SchemeMut for PciScheme {
         log::trace!("OPEN `{}` flags {}", path, flags);
 
         // TODO: Check flags are correct
-        let expects_dir = path.ends_with('/');
+        let expects_dir = path.ends_with('/') || flags & O_DIRECTORY != 0;
 
         let path = path.trim_matches('/');
 
@@ -76,26 +88,41 @@ impl SchemeMut for PciScheme {
             return Err(Error::new(ENOENT))?;
         };
 
+        let stat = flags & O_STAT != 0;
+        if expects_dir && handle.is_file() && !stat {
+            return Err(Error::new(ENOTDIR));
+        }
+        if !expects_dir && handle.is_dir() && !stat {
+            return Err(Error::new(EISDIR));
+        }
+
         let id = self.next_id;
         self.next_id += 1;
 
-        self.handles.insert(id, handle);
+        self.handles.insert(id, HandleWrapper { inner: handle, stat });
         Ok(id)
     }
     fn fstat(&mut self, id: usize, stat: &mut syscall::Stat) -> Result<usize> {
         let handle = self.handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
-        stat.st_mode = match handle {
-            Handle::TopLevel { .. } | Handle::Tree { .. } | Handle::Device { .. } => MODE_DIR,
-            Handle::CfgSpace { .. } | Handle::Channel { .. } => MODE_CHR,
-            Handle::DeviceProperty { .. } => MODE_FILE,
+        let (len, mode) = match handle.inner {
+            Handle::TopLevel { .. } => (ROOT_CONTENTS.len(), MODE_DIR | 0o755),
+            Handle::Tree { ref bytes, .. } => (bytes.len(), MODE_DIR | 0o755),
+            Handle::Device { .. } => (DEVICE_CONTENTS.len(), MODE_DIR | 0o755),
+            Handle::CfgSpace { .. } => (Self::cfg_space_len(&self.state), MODE_CHR | 0o600),
+            Handle::Channel { .. } => (0, MODE_CHR | 0o600),
+            Handle::DeviceProperty { ref property, .. } => (property.len(), MODE_FILE | 0o400),
         };
+        stat.st_size = len as u64;
+        stat.st_mode = mode;
         Ok(0)
     }
     fn read(&mut self, id: usize, buf: &mut [u8]) -> Result<usize> {
         let handle = self.handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
-        let (offset, bytes) = match *handle {
+        if handle.stat { return Err(Error::new(EBADF)); }
+
+        let (offset, bytes) = match handle.inner {
             Handle::CfgSpace { ref mut offset, addr } => return Self::read_cfgspace(&self.state, offset, addr, buf),
             Handle::TopLevel { ref mut offset } => (offset, ROOT_CONTENTS),
             Handle::Tree { ref mut offset, ref bytes } => (offset, bytes.as_slice()),
@@ -113,7 +140,9 @@ impl SchemeMut for PciScheme {
     fn write(&mut self, id: usize, buf: &[u8]) -> Result<usize> {
         let handle = self.handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
-        match *handle {
+        if handle.stat { return Err(Error::new(EBADF)); }
+
+        match handle.inner {
             Handle::CfgSpace { ref mut offset, addr } => Self::write_cfgspace(&self.state, offset, addr, buf),
             Handle::Channel { addr, ref mut st } => Self::write_channel(&self.state, &mut self.tree, addr, st, buf),
 
@@ -123,7 +152,9 @@ impl SchemeMut for PciScheme {
     fn seek(&mut self, id: usize, pos: isize, whence: usize) -> Result<isize> {
         let handle = self.handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
-        let (offset, len) = match handle {
+        if handle.stat { return Err(Error::new(EBADF)); }
+
+        let (offset, len) = match &mut handle.inner {
             Handle::Tree { offset, bytes, .. } => (offset, bytes.len()),
             Handle::TopLevel { offset } => (offset, ROOT_CONTENTS.len()),
             Handle::Device { offset } => (offset, DEVICE_CONTENTS.len()),
