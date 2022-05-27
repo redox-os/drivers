@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt::Write;
 
-use syscall::error::{Error, Result, EBADF, EINVAL, EIO, EISDIR, ENOENT, ENOTDIR, ESPIPE};
+use syscall::error::{Error, Result, EACCES, EBADF, EINVAL, EIO, EISDIR, ENOENT, ENOTDIR, ESPIPE};
 use syscall::flag::{MODE_CHR, MODE_DIR, MODE_FILE, O_DIRECTORY, O_STAT};
 use syscall::scheme::SchemeMut;
 
@@ -33,6 +33,10 @@ impl Handle {
     fn is_dir(&self) -> bool {
         !self.is_file()
     }
+    // TODO: capability rather than root
+    fn requires_root(&self) -> bool {
+        matches!(self, Self::CfgSpace { .. } | Self::Channel { .. })
+    }
 }
 
 enum ChannelState {
@@ -56,7 +60,7 @@ bar-sizes
 ";
 
 impl SchemeMut for PciScheme {
-    fn open(&mut self, path: &str, flags: usize, uid: u32, gid: u32) -> Result<usize> {
+    fn open(&mut self, path: &str, flags: usize, uid: u32, _gid: u32) -> Result<usize> {
         log::trace!("OPEN `{}` flags {}", path, flags);
 
         // TODO: Check flags are correct
@@ -94,6 +98,9 @@ impl SchemeMut for PciScheme {
         }
         if !expects_dir && handle.is_dir() && !stat {
             return Err(Error::new(EISDIR));
+        }
+        if uid != 0 && handle.requires_root() && !stat {
+            return Err(Error::new(EACCES));
         }
 
         let id = self.next_id;
