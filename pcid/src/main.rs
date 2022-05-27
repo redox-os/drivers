@@ -42,8 +42,8 @@ fn read_bar_sizes(pci: &dyn CfgAccess, addr: PciAddr, header: &PciHeader) -> [(P
 
     unsafe {
         let count = match header.header_type() {
-            PciHeaderType::GENERAL => 6,
-            PciHeaderType::PCITOPCI => 2,
+            PciHeaderType::General => 6,
+            PciHeaderType::PciToPci => 2,
             _ => 0,
         };
 
@@ -334,7 +334,7 @@ fn main() {
 
     let pci = Arc::new(Pci::new());
 
-    let mut state = State {
+    let state = State {
         pci: Arc::clone(&pci),
         pcie: match Pcie::new(Arc::clone(&pci)) {
             Ok(pcie) => Some(pcie),
@@ -348,13 +348,10 @@ fn main() {
 
     let pci = state.preferred_cfg_access();
 
-    info!("PCI BS/DV/FN VEND:DEVI CL.SC.IN.RV");
-
     'bus: for bus in PciIter::new(pci) {
         'dev: for dev in bus.devs() {
             for func in dev.funcs() {
                 let func_num = func.num;
-
                 let addr = PciAddr {
                     // TODO
                     seg: 0,
@@ -365,7 +362,13 @@ fn main() {
 
                 match PciHeader::from_reader(func) {
                     Ok(header) => {
+                        let is_multifunction = header.is_multifunction();
+
                         handle_parsed_header(&state, &mut tree, addr, header);
+
+                        if func_num == 0 && !is_multifunction {
+                            continue 'dev;
+                        }
                     }
                     Err(PciHeaderError::NoDevice) => {
                         if func_num == 0 {

@@ -41,6 +41,7 @@ fn main() -> Result<()> {
             config = toml::from_str(&config_data).unwrap_or(Config::default());
         }
     }
+    log::info!("PCI BS/DV/FN VEND:DEVI CL.SC.IN.RV");
 
     for entry in fs::read_dir("pci:tree")? {
         let entry = entry.context("failed to get entry")?;
@@ -239,7 +240,8 @@ fn find_driver<'config>(config: &'config Config, header: &Header, addr: pcid_lib
         }
     }
 
-    log::debug!("pcid-spawner enumerated: {}", string);
+
+    log::info!("{}", string);
 
     for driver in config.drivers.iter() {
         if driver.class.map_or(false, |c| c != raw_class) { continue; }

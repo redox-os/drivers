@@ -1,7 +1,6 @@
 use super::func::ConfigReader;
 use super::class::PciClass;
 use super::bar::PciBar;
-use bitflags::bitflags;
 
 use crate::driver_interface::LegacyInterruptPin;
 
@@ -11,21 +10,27 @@ pub enum PciHeaderError {
     UnknownHeaderType(u8)
 }
 
-bitflags! {
-    /// Flags found in the status register of a PCI device
-    pub struct PciHeaderType: u8 {
-        /// A general PCI device (Type 0x01).
-        const GENERAL       = 0b00000000;
-        /// A PCI-to-PCI bridge device (Type 0x01).
-        const PCITOPCI      = 0b00000001;
-        /// A PCI-to-PCI bridge device (Type 0x02).
-        const CARDBUSBRIDGE = 0b00000010;
-        /// A multifunction device.
-        const MULTIFUNCTION = 0b01000000;
-        /// Mask used for fetching the header type.
-        const HEADER_TYPE   = 0b00000011;
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PciHeaderType {
+    General = 0,
+    PciToPci = 1,
+    CardbusBridge = 2,
+}
+impl PciHeaderType {
+    fn from_raw(raw: u8) -> Option<(Self, bool)> {
+        Some((match raw & HEADER_TYPE_MASK {
+            0 => Self::General,
+            1 => Self::PciToPci,
+            2 => Self::CardbusBridge,
+
+            _ => return None,
+        }, raw & MULTIFUNCTION_BIT != 0))
     }
 }
+
+const MULTIFUNCTION_BIT: u8 = 1 << 7;
+const HEADER_TYPE_MASK: u8 = 0x7F;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PciHeader {
@@ -41,6 +46,7 @@ pub enum PciHeader {
         cache_line_size: u8,
         latency_timer: u8,
         header_type: PciHeaderType,
+        is_multifunction: bool,
         bist: u8,
         bars: [PciBar; 6],
         cardbus_cis_ptr: u32,
@@ -65,6 +71,7 @@ pub enum PciHeader {
         cache_line_size: u8,
         latency_timer: u8,
         header_type: PciHeaderType,
+        is_multifunction: bool,
         bist: u8,
         bars: [PciBar; 2],
         primary_bus_num: u8,
@@ -109,10 +116,10 @@ impl PciHeader {
         let class = PciClass::from(bytes[11]);
         let cache_line_size = bytes[12];
         let latency_timer = bytes[13];
-        let header_type = PciHeaderType::from_bits_truncate(bytes[14]);
+        let (header_type, is_multifunction) = PciHeaderType::from_raw(bytes[14]).ok_or(PciHeaderError::UnknownHeaderType(bytes[14]))?;
         let bist = bytes[15];
-        match header_type & PciHeaderType::HEADER_TYPE {
-            PciHeaderType::GENERAL => {
+        match header_type {
+            PciHeaderType::General => {
                 let bytes = unsafe { reader.read_range(16, 48) };
                 let bars = [
                     PciBar::from(read_u32(&bytes[0..4])),
@@ -132,14 +139,13 @@ impl PciHeader {
                 let min_grant = bytes[46];
                 let max_latency = bytes[47];
                 Ok(PciHeader::General {
-                    vendor_id, device_id, command, status, revision, interface,
-                    subclass, class, cache_line_size, latency_timer, header_type,
-                    bist, bars, cardbus_cis_ptr, subsystem_vendor_id, subsystem_id,
-                    expansion_rom_bar, cap_pointer, interrupt_line, interrupt_pin,
-                    min_grant, max_latency
+                    vendor_id, device_id, command, status, revision, interface, subclass, class,
+                    cache_line_size, latency_timer, header_type, is_multifunction, bist, bars,
+                    cardbus_cis_ptr, subsystem_vendor_id, subsystem_id, expansion_rom_bar,
+                    cap_pointer, interrupt_line, interrupt_pin, min_grant, max_latency
                 })
             },
-            PciHeaderType::PCITOPCI => {
+            PciHeaderType::PciToPci => {
                 let bytes = unsafe { reader.read_range(16, 48) };
                 let bars = [
                     PciBar::from(read_u32(&bytes[0..4])),
@@ -166,17 +172,17 @@ impl PciHeader {
                 let interrupt_pin = Self::parse_interrupt_pin(bytes[45]);
                 let bridge_control = read_u16(&bytes[46..48]);
                 Ok(PciHeader::PciToPci {
-                    vendor_id, device_id, command, status, revision, interface,
-                    subclass, class, cache_line_size, latency_timer, header_type,
-                    bist, bars, primary_bus_num, secondary_bus_num, subordinate_bus_num,
-                    secondary_latency_timer, io_base, io_limit, secondary_status,
-                    mem_base, mem_limit, prefetch_base, prefetch_limit, prefetch_base_upper,
+                    vendor_id, device_id, command, status, revision, interface, subclass, class,
+                    cache_line_size, latency_timer, header_type, is_multifunction, bist, bars,
+                    primary_bus_num, secondary_bus_num, subordinate_bus_num,
+                    secondary_latency_timer, io_base, io_limit, secondary_status, mem_base,
+                    mem_limit, prefetch_base, prefetch_limit, prefetch_base_upper,
                     prefetch_limit_upper, io_base_upper, io_limit_upper, cap_pointer,
                     expansion_rom, interrupt_line, interrupt_pin, bridge_control
                 })
 
             },
-            id => Err(PciHeaderError::UnknownHeaderType(id.bits()))
+            ty @ PciHeaderType::CardbusBridge => Err(PciHeaderError::UnknownHeaderType(ty as u8))
         }
     }
 
@@ -199,6 +205,11 @@ impl PciHeader {
     pub fn header_type(&self) -> PciHeaderType {
         match self {
             &PciHeader::General { header_type, .. } | &PciHeader::PciToPci { header_type, .. } => header_type,
+        }
+    }
+    pub fn is_multifunction(&self) -> bool {
+        match *self {
+            PciHeader::General { is_multifunction, .. } | PciHeader::PciToPci { is_multifunction, .. } => is_multifunction,
         }
     }
 
