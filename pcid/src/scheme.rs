@@ -1,12 +1,11 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt::Write;
 
-use syscall::error::{Error, Result, EACCES, EBADF, EINVAL, EIO, EISDIR, ENOENT, ENOTDIR, ESPIPE};
+use syscall::error::{Error, Result, EACCES, EBADF, EBADFD, EINVAL, EIO, EISDIR, ENOENT, ENOTDIR, ESPIPE};
 use syscall::flag::{MODE_CHR, MODE_DIR, MODE_FILE, O_DIRECTORY, O_STAT};
 use syscall::scheme::SchemeMut;
 
-use crate::{CfgAccess, PciAddr, State};
-use crate::pci::{ConfigReader, ConfigWriter, PciFunc, PciDev, PciBus};
+use crate::{PciAddr, State};
 
 pub struct PciScheme {
     handles: BTreeMap<usize, HandleWrapper>,
@@ -21,6 +20,7 @@ enum Handle {
     CfgSpace { offset: usize, addr: PciAddr },
     Channel { addr: PciAddr, st: ChannelState },
     DeviceProperty { offset: usize, property: String },
+    Enabled { offset: usize, addr: PciAddr },
 }
 struct HandleWrapper {
     inner: Handle,
@@ -28,7 +28,7 @@ struct HandleWrapper {
 }
 impl Handle {
     fn is_file(&self) -> bool {
-        matches!(self, Self::CfgSpace { .. } | Self::Channel { .. } | Self::DeviceProperty { .. })
+        matches!(self, Self::CfgSpace { .. } | Self::Channel { .. } | Self::DeviceProperty { .. } | Self::Enabled { .. })
     }
     fn is_dir(&self) -> bool {
         !self.is_file()
@@ -57,6 +57,7 @@ interrupt-line
 revision
 bars
 bar-sizes
+enabled
 ";
 
 impl SchemeMut for PciScheme {
@@ -119,6 +120,7 @@ impl SchemeMut for PciScheme {
             Handle::CfgSpace { .. } => (Self::cfg_space_len(&self.state), MODE_CHR | 0o600),
             Handle::Channel { .. } => (0, MODE_CHR | 0o600),
             Handle::DeviceProperty { ref property, .. } => (property.len(), MODE_FILE | 0o400),
+            Handle::Enabled { .. } => (1, MODE_FILE | 0o600),
         };
         stat.st_size = len as u64;
         stat.st_mode = mode;
@@ -136,6 +138,10 @@ impl SchemeMut for PciScheme {
             Handle::Device { ref mut offset } => (offset, DEVICE_CONTENTS),
             Handle::Channel { addr, ref mut st } => return Self::read_channel(addr, st, buf),
             Handle::DeviceProperty { ref mut offset, ref property } =>  (offset, property.as_bytes()),
+            Handle::Enabled { ref mut offset, addr } => {
+                let is_enabled = self.tree.get(&addr).ok_or(Error::new(EBADF))?.enabled;
+                (offset, (if is_enabled { b"1" } else { b"0" }).as_slice())
+            }
         };
 
         let byte_count = std::cmp::min(bytes.len().saturating_sub(*offset), buf.len());
@@ -152,6 +158,7 @@ impl SchemeMut for PciScheme {
         match handle.inner {
             Handle::CfgSpace { ref mut offset, addr } => Self::write_cfgspace(&self.state, offset, addr, buf),
             Handle::Channel { addr, ref mut st } => Self::write_channel(&self.state, &mut self.tree, addr, st, buf),
+            Handle::Enabled { ref mut offset, addr } => Self::set_enabled(&self.state, self.tree.get_mut(&addr).ok_or(Error::new(EBADFD))?, addr, offset, buf),
 
             _ => Err(Error::new(EBADF)),
         }
@@ -168,6 +175,7 @@ impl SchemeMut for PciScheme {
             Handle::CfgSpace { offset, .. } => (offset, Self::cfg_space_len(&self.state)),
             Handle::Channel { .. } => return Err(Error::new(ESPIPE)),
             Handle::DeviceProperty { offset, property } => (offset, property.len()),
+            Handle::Enabled { offset, .. } => (offset, 1),
         };
 
         *offset = syscall::calc_seek_offset_usize(*offset, pos, whence, len)? as usize;
@@ -187,6 +195,23 @@ impl PciScheme {
             state,
             tree,
         }
+    }
+    fn set_enabled(state: &State, func: &mut crate::Func, addr: PciAddr, file_offset: &mut usize, buf: &[u8]) -> Result<usize> {
+        if *file_offset > 0 || buf.is_empty() { return Ok(0); }
+
+        let enable = match buf[0] {
+            b'1' => true,
+            b'0' => false,
+            _ => return Err(Error::new(EINVAL)),
+        };
+
+        if enable {
+            crate::enable_func(state.preferred_cfg_access(), addr, func);
+        } else {
+            log::warn!("TODO: Support disabling device (called on {})", addr);
+        }
+
+        Ok(1)
     }
     fn parse_after_pci_addr(&self, addr: PciAddr, after: &str) -> Option<Handle> {
         if after.chars().next().map_or(false, |c| c != '/') {
@@ -226,6 +251,7 @@ impl PciScheme {
                     }
                     s
                 }),
+                "enabled" => Handle::Enabled { offset: 0, addr },
                 _ => return None,
             }
         })

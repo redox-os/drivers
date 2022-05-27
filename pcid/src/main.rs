@@ -222,6 +222,7 @@ pub struct Func {
     capabilities: Vec<(u8, PciCapability)>,
     header: PciHeader,
     bars: [(PciBar, u32); 6],
+    enabled: bool,
 }
 impl State {
     fn preferred_cfg_access(&self) -> &dyn CfgAccess {
@@ -231,7 +232,9 @@ impl State {
     }
 }
 
-fn enable_func(pci: &dyn CfgAccess, addr: PciAddr, func: &Func) {
+pub fn enable_func(pci: &dyn CfgAccess, addr: PciAddr, func: &mut Func) {
+    func.enabled = true;
+
     // Enable bus mastering, memory space, and I/O space
     unsafe {
         let mut data = pci.read(addr, 0x04);
@@ -241,12 +244,10 @@ fn enable_func(pci: &dyn CfgAccess, addr: PciAddr, func: &Func) {
 
     // Set IRQ line to 9 if not set
     let mut irq;
-    let mut interrupt_pin;
 
     unsafe {
         let mut data = pci.read(addr, 0x3C);
         irq = (data & 0xFF) as u8;
-        interrupt_pin = ((data & 0x0000_FF00) >> 8) as u8;
         if irq == 0xFF {
             irq = 9;
         }
@@ -272,6 +273,7 @@ fn handle_parsed_header(state: &State, tree: &mut BTreeMap<PciAddr, Func>, addr:
         capabilities,
         header,
         bars,
+        enabled: false,
     };
 
     tree.insert(addr, func);

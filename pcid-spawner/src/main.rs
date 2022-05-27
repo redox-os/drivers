@@ -49,6 +49,7 @@ fn main() -> Result<()> {
         let path = entry.path();
 
         let r = |name| fs::read_to_string(path.join(name)).context("failed to read PCI device property");
+        let w = |name, v| fs::write(path.join(name), v).context("failed to write to PCI device directory");
 
         let header = Header {
             vendor_id: u16::from_str_radix(&r("vendor-id")?, 16)?,
@@ -74,7 +75,15 @@ fn main() -> Result<()> {
             bar_sizes: r("bar-sizes")?.lines().map(|l| Ok(u32::from_str_radix(l, 16)?)).collect::<Result<Vec<_>>>()?.try_into().map_err(|_| anyhow!("invalid number of BAR sizes"))?,
         };
 
-        find_driver(&config, &header, addr).context("failed to find driver")?;
+        let (driver, args) = match find_driver(&config, &header, addr).context("failed to find driver")? {
+            Some(d) => d,
+            None => {
+                log::debug!("no driver for {}, continuing", addr);
+                continue;
+            }
+        };
+        w("enabled", "1").context("failed to enable device")?;
+        spawn_driver(addr, &header, driver, args).context("failed to spawn driver")?;
     }
 
     Ok(())
@@ -184,7 +193,7 @@ fn spawn_driver(addr: pcid_lib::PciAddr, header: &Header, driver: &DriverConfig,
     }
     Ok(())
 }
-fn find_driver(config: &Config, header: &Header, addr: pcid_lib::PciAddr) -> Result<()> {
+fn find_driver<'config>(config: &'config Config, header: &Header, addr: pcid_lib::PciAddr) -> Result<Option<(&'config DriverConfig, &'config [String])>> {
     let raw_class: u8 = header.class.into();
     let mut string = format!("PCI {:>04X}/{:>02X}/{:>02X}/{:>02X} {:>04X}:{:>04X} {:>02X}.{:>02X}.{:>02X}.{:>02X} {:?}",
                              addr.seg, addr.bus, addr.dev, addr.func, header.vendor_id, header.device_id, raw_class,
@@ -258,8 +267,7 @@ fn find_driver(config: &Config, header: &Header, addr: pcid_lib::PciAddr) -> Res
             None => continue,
         };
 
-        spawn_driver(addr, header, driver, args).context("failed to spawn driver")?;
-        break;
+        return Ok(Some((driver, args)));
     }
-    Ok(())
+    Ok(None)
 }
