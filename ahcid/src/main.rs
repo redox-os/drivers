@@ -88,7 +88,7 @@ fn main() {
     info!(" + AHCI {} on: {:X} size: {} IRQ: {}", name, bar, bar_size, irq);
 
     let address = unsafe {
-        syscall::physmap(bar, bar_size, PHYSMAP_WRITE | PHYSMAP_NO_CACHE)
+        syscall::physmap(bar, (bar_size+4095)/4096*4096, PHYSMAP_WRITE | PHYSMAP_NO_CACHE)
             .expect("ahcid: failed to map address")
     };
     {

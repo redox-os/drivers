@@ -616,7 +616,7 @@ dependencies = [
 [[package]]
 name = "netutils"
 version = "0.1.0"
-source = "git+https://gitlab.redox-os.org/redox-os/netutils.git?branch=redox-unix#55c55eb6452ee886dfd81f1cbb7f9ec45012d95e"
+source = "git+https://gitlab.redox-os.org/redox-os/netutils.git?branch=redox-unix#a55df137538fabadea2eff74153ac0b8d3ce3dcf"
 dependencies = [
  "arg_parser",
  "extra",
@@ -1108,8 +1108,7 @@ dependencies = [
 [[package]]
 name = "redox_syscall"
 version = "0.2.16"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb5a58c1855b4b6819d59012155603f0b22ad30cad752600aadfcb695265519a"
+source = "git+https://gitlab.redox-os.org/4lDO2/syscall.git?branch=userspace_fexec#d6af266119e7b4a3b0e9a04c63b3cfcfac94781a"
 dependencies = [
  "bitflags",
 ]
