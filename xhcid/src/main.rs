@@ -20,7 +20,7 @@ use log::info;
 use redox_log::{RedoxLogger, OutputBuilder};
 use syscall::data::Packet;
 use syscall::error::EWOULDBLOCK;
-use syscall::flag::{CloneFlags, EventFlags, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
+use syscall::flag::{EventFlags, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
 use syscall::scheme::Scheme;
 use syscall::io::Io;
 
@@ -229,11 +229,10 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle, address: usize) -> (Option
 }
 
 fn main() {
-    // Daemonize
-    if unsafe { syscall::clone(CloneFlags::empty()).unwrap() } != 0 {
-        return;
-    }
+    redox_daemon::Daemon::new(daemon).expect("xhcid: failed to daemonize");
+}
 
+fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let _logger_ref = setup_logging();
 
     let mut pcid_handle = PcidServerHandle::connect_default().expect("xhcid: failed to setup channel to pcid");
@@ -286,6 +285,8 @@ fn main() {
 
     syscall::setrens(0, 0).expect("xhcid: failed to enter null namespace");
 
+    daemon.ready().expect("xhcid: failed to notify parent");
+
     let todo = Arc::new(Mutex::new(Vec::<Packet>::new()));
     let todo_futures = Arc::new(Mutex::new(Vec::<Pin<Box<dyn Future<Output = usize> + Send + Sync + 'static>>>::new()));
 
@@ -326,4 +327,5 @@ fn main() {
     unsafe {
         let _ = syscall::physunmap(address);
     }
+    std::process::exit(0);
 }

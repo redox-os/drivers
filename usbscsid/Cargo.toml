@@ -10,6 +10,7 @@ license = "MIT"
 [dependencies]
 base64 = "0.11" # Only for debugging
 plain = "0.2"
+redox-daemon = "0.1"
 redox_syscall = "0.2.12"
 thiserror = "1"
 xhcid = { path = "../xhcid" }

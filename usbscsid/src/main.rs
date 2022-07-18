@@ -3,7 +3,7 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::os::unix::io::{FromRawFd, RawFd};
 
-use syscall::{CloneFlags, Packet, SchemeMut};
+use syscall::{Packet, SchemeMut};
 use xhcid_interface::{ConfigureEndpointsReq, DeviceReqData, XhciClientHandle};
 
 pub mod protocol;
@@ -36,16 +36,15 @@ fn main() {
         scheme, port, protocol
     );
 
-    // Daemonize so that xhcid can continue to do other useful work (until proper IRQs,
-    // async-await, and multithreading :D)
-    if unsafe { syscall::clone(CloneFlags::empty()).unwrap() } != 0 {
-        return;
-    }
-
+    redox_daemon::Daemon::new(move |d| daemon(d, scheme, port, protocol)).expect("usbscsid: failed to daemonize");
+}
+fn daemon(daemon: redox_daemon::Daemon, scheme: String, port: usize, protocol: u8) -> ! {
     let disk_scheme_name = format!(":disk/{}-{}_scsi", scheme, port);
 
     // TODO: Use eventfds.
-    let handle = XhciClientHandle::new(scheme, port);
+    let handle = XhciClientHandle::new(scheme.to_owned(), port);
+
+    daemon.ready().expect("usbscsid: failed to signal rediness");
 
     let desc = handle
         .get_standard_descs()
@@ -111,4 +110,6 @@ fn main() {
             .write(&packet)
             .expect("scsid: failed to write packet");
     }
+
+    std::process::exit(0);
 }

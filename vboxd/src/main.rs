@@ -11,7 +11,7 @@ use std::fs::File;
 use std::io::{Result, Read, Write};
 
 use syscall::call::iopl;
-use syscall::flag::{CloneFlags, EventFlags, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
+use syscall::flag::{EventFlags, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
 use syscall::io::{Dma, Io, Mmio, Pio};
 
 use crate::bga::Bga;
@@ -199,7 +199,9 @@ fn main() {
     print!("{}", format!(" + VirtualBox {} on: {:X}, {:X}, IRQ {}\n", name, bar0, bar1, irq));
 
     // Daemonize
-    if unsafe { syscall::clone(CloneFlags::empty()).unwrap() } == 0 {
+    redox_daemon::Daemon::new(move |daemon| {
+        daemon.ready().expect("failed to signal readiness");
+
         unsafe { iopl(3).expect("vboxd: failed to get I/O permission"); };
 
         let mut width = 0;
@@ -295,5 +297,7 @@ fn main() {
             event_queue.run().expect("vboxd: failed to run event loop");
         }
         unsafe { let _ = syscall::physunmap(address); }
-    }
+
+        std::process::exit(0);
+    }).expect("vboxd: failed to daemonize");
 }

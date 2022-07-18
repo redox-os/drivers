@@ -468,6 +468,9 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, bus_num: u8,
                             capabilities,
                         };
                         let thread = thread::spawn(move || {
+                            // RFLAGS are no longer kept in the relibc clone() implementation.
+                            unsafe { syscall::iopl(3).expect("pcid: failed to set IOPL"); }
+
                             driver_handler.handle_spawn(pcid_to_client_write, pcid_from_client_read, subdriver_args);
                         });
                         match child.wait() {

@@ -6,3 +6,4 @@ edition = "2018"
 
 [dependencies]
 redox_syscall = "0.2.12"
+redox-daemon = "0.1"

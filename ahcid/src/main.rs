@@ -8,7 +8,7 @@ use std::os::unix::io::{FromRawFd, RawFd};
 
 use syscall::error::{Error, ENODEV};
 use syscall::data::{Event, Packet};
-use syscall::flag::{CloneFlags, EVENT_READ, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
+use syscall::flag::{EVENT_READ, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
 use syscall::scheme::SchemeBlockMut;
 
 use log::{error, info};
@@ -64,6 +64,10 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
 }
 
 fn main() {
+    redox_daemon::Daemon::new(daemon).expect("ahcid: failed to daemonize");
+}
+
+fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let mut args = env::args().skip(1);
 
     let mut name = args.next().expect("ahcid: no name provided");
@@ -77,11 +81,6 @@ fn main() {
 
     let irq_str = args.next().expect("ahcid: no irq provided");
     let irq = irq_str.parse::<u8>().expect("ahcid: failed to parse irq");
-
-    // Daemonize
-    if unsafe { syscall::clone(CloneFlags::empty()).unwrap() } != 0 {
-        return;
-    }
 
     let _logger_ref = setup_logging();
 
@@ -108,6 +107,8 @@ fn main() {
         let mut event_file = File::open("event:").expect("ahcid: failed to open event file");
 
         syscall::setrens(0, 0).expect("ahcid: failed to enter null namespace");
+
+        daemon.ready().expect("ahcid: failed to notify parent");
 
         event_file.write(&Event {
             id: socket_fd,
@@ -198,4 +199,6 @@ fn main() {
         }
     }
     unsafe { let _ = syscall::physunmap(address); }
+
+    std::process::exit(0);
 }

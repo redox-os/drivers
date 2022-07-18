@@ -6,24 +6,25 @@ use std::io::{Read, Write};
 
 use syscall::call::iopl;
 use syscall::data::Packet;
-use syscall::flag::CloneFlags;
 use syscall::scheme::SchemeMut;
+
+use redox_daemon::Daemon;
 
 use self::pcspkr::Pcspkr;
 use self::scheme::PcspkrScheme;
 
 fn main() {
-    // Daemonize
-    if unsafe { syscall::clone(CloneFlags::empty()).unwrap() } == 0 {
+    Daemon::new(move |daemon| {
         unsafe { iopl(3).unwrap() };
 
         let mut socket = File::create(":pcspkr").expect("pcspkrd: failed to create pcspkr scheme");
+        daemon.ready().expect("failed to notify parent");
 
         let pcspkr = Pcspkr::new();
         println!(" + pcspkr");
 
         let mut scheme = PcspkrScheme {
-            pcspkr: pcspkr,
+            pcspkr,
             handle: None,
             next_id: 0,
         };
@@ -40,5 +41,5 @@ fn main() {
                 .write(&packet)
                 .expect("pcspkrd: failed to write responses to pcspkr scheme");
         }
-    }
+    }).expect("pcspkrd: failed to daemonize");
 }

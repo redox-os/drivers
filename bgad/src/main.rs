@@ -9,7 +9,6 @@ use std::io::{Read, Write};
 
 use syscall::call::iopl;
 use syscall::data::Packet;
-use syscall::flag::CloneFlags;
 use syscall::scheme::SchemeMut;
 
 use crate::bga::Bga;
@@ -29,8 +28,7 @@ fn main() {
 
     print!("{}", format!(" + BGA {} on: {:X}\n", name, bar));
 
-    // Daemonize
-    if unsafe { syscall::clone(CloneFlags::empty()).unwrap() } == 0 {
+    redox_daemon::Daemon::new(move |daemon| {
         unsafe { iopl(3).unwrap() };
 
         let mut socket = File::create(":bga").expect("bgad: failed to create bga scheme");
@@ -45,6 +43,8 @@ fn main() {
 
         syscall::setrens(0, 0).expect("bgad: failed to enter null namespace");
 
+        daemon.ready().expect("bgad: failed to notify parent");
+
         loop {
             let mut packet = Packet::default();
             if socket.read(&mut packet).expect("bgad: failed to read events from bga scheme") == 0 {
@@ -53,5 +53,6 @@ fn main() {
             scheme.handle(&mut packet);
             socket.write(&packet).expect("bgad: failed to write responses to bga scheme");
         }
-    }
+        std::process::exit(0);
+    }).expect("bgad: failed to daemonize");
 }

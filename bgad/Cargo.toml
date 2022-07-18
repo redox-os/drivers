@@ -5,4 +5,5 @@ edition = "2018"
 
 [dependencies]
 orbclient = "0.3.27"
+redox-daemon = "0.1"
 redox_syscall = "0.2.12"

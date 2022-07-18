@@ -15,7 +15,7 @@ use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::sync::Arc;
 
 use event::EventQueue;
-use syscall::{CloneFlags, EventFlags, Packet, SchemeMut, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
+use syscall::{EventFlags, Packet, SchemeMut, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
 use syscall::error::EWOULDBLOCK;
 
 pub mod device;
@@ -35,10 +35,11 @@ fn main() {
     print!("{}", format!(" + ALX {} on: {:X}, IRQ: {}\n", name, bar, irq));
 
     // Daemonize
-    if unsafe { syscall::clone(CloneFlags::empty()).unwrap() } == 0
-    {
+    redox_daemon::Daemon::new(move |daemon| {
         let socket_fd = syscall::open(":network", syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK).expect("alxd: failed to create network scheme");
         let socket = Arc::new(RefCell::new(unsafe { File::from_raw_fd(socket_fd as RawFd) }));
+
+        daemon.ready().expect("alxd: failed to signal readiness");
 
         let mut irq_file = File::open(format!("irq:{}", irq)).expect("alxd: failed to open IRQ file");
 
@@ -141,5 +142,6 @@ fn main() {
             }
         }
         unsafe { let _ = syscall::physunmap(address); }
-    }
+        std::process::exit(0);
+    }).expect("alxd: failed to daemonize");
 }
