@@ -14,6 +14,12 @@ use super::aml::AmlValue;
 pub mod dmar;
 use self::dmar::Dmar;
 
+#[cfg(target_arch = "aarch64")]
+pub const PAGE_SIZE: usize = 4096;
+
+#[cfg(target_arch = "x86")]
+pub const PAGE_SIZE: usize = 4096;
+
 #[cfg(target_arch = "x86_64")]
 pub const PAGE_SIZE: usize = 4096;
 

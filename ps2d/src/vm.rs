@@ -26,6 +26,7 @@ pub const LEFT_BUTTON: u32 = 0x20;
 pub const RIGHT_BUTTON: u32 = 0x10;
 pub const MIDDLE_BUTTON: u32 = 0x08;
 
+#[cfg(target_arch = "x86_64")]
 global_asm!("
     .globl cmd_inner
 cmd_inner:
@@ -54,7 +55,7 @@ cmd_inner:
     PORT = const PORT,
 );
 
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 pub unsafe fn cmd(cmd: u32, arg: u32) -> (u32, u32, u32, u32, u32, u32) {
     extern "sysv64" {
         fn cmd_inner(array_ptr: *mut u32, cmd: u32, arg: u32);
@@ -68,6 +69,13 @@ pub unsafe fn cmd(cmd: u32, arg: u32) -> (u32, u32, u32, u32, u32, u32) {
     (a, b, c, d, e, f)
 }
 
+//TODO: is it possible to enable this on non-x86_64?
+#[cfg(not(target_arch = "x86_64"))]
+pub unsafe fn cmd(_cmd: u32, _arg: u32) -> (u32, u32, u32, u32, u32, u32) {
+    (0, 0, 0, 0, 0, 0)
+}
+
+#[cfg(target_arch = "x86_64")]
 pub fn enable(relative: bool) -> bool {
     eprintln!("ps2d: Enable vmmouse");
 

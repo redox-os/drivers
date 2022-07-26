@@ -82,7 +82,7 @@ impl NvmeCompQueue {
             if let Some(some) = self.complete() {
                 return some;
             } else {
-                unsafe { std::arch::x86_64::_mm_pause() }
+                unsafe { super::pause(); }
             }
         }
     }

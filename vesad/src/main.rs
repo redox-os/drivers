@@ -3,17 +3,15 @@
 extern crate orbclient;
 extern crate syscall;
 
-use std::{env, process};
+use std::{env, process, ptr};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::os::unix::io::{RawFd, FromRawFd};
 use syscall::{physmap, physunmap, Packet, SchemeMut, EVENT_READ, PHYSMAP_WRITE, PHYSMAP_WRITE_COMBINE};
 
-use crate::primitive::fast_set64;
 use crate::scheme::{DisplayScheme, HandleKind};
 
 pub mod display;
-pub mod primitive;
 pub mod scheme;
 pub mod screen;
 
@@ -74,7 +72,7 @@ fn main() {
             //TODO: Remap on resize
             let largest_size = 8 * 1024 * 1024;
             let onscreen = unsafe { physmap(physbaseptr, largest_size * 4, PHYSMAP_WRITE | PHYSMAP_WRITE_COMBINE).expect("vesad: failed to map VBE LFB") };
-            unsafe { fast_set64(onscreen as *mut u64, 0, size/2) };
+            unsafe { ptr::write_bytes(onscreen as *mut u32, 0, size); }
 
             let mut scheme = DisplayScheme::new(width, height, onscreen, &spec);
 

@@ -51,6 +51,7 @@ pub struct AllocatedBars(pub [Mutex<Option<Bar>>; 6]);
 /// Get the most optimal yet functional interrupt mechanism: either (in the order of preference):
 /// MSI-X, MSI, and INTx# pin. Returns both runtime interrupt structures (MSI/MSI-X capability
 /// structures), and the handles to the interrupts.
+#[cfg(target_arch = "x86_64")]
 fn get_int_method(
     pcid_handle: &mut PcidServerHandle,
     function: &PciFunction,
@@ -212,6 +213,15 @@ fn get_int_method(
         // No interrupts at all
         todo!("handling of no interrupts")
     }
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn get_int_method(
+    pcid_handle: &mut PcidServerHandle,
+    function: &PciFunction,
+    allocated_bars: &AllocatedBars,
+) -> Result<(InterruptMethod, InterruptSources)> {
+    todo!("handling of interrupts on non-x86_64")
 }
 
 fn setup_logging() -> Option<&'static RedoxLogger> {

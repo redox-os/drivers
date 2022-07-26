@@ -2,10 +2,8 @@
 extern crate rusttype;
 
 use std::alloc::{Allocator, Global, Layout};
-use std::{cmp, slice};
+use std::{cmp, ptr, slice};
 use std::ptr::NonNull;
-
-use crate::primitive::{fast_set32, fast_copy};
 
 #[cfg(feature="rusttype")]
 use self::rusttype::{Font, FontCollection, Scale, point};
@@ -96,9 +94,17 @@ impl Display {
 
                 for _y in 0..cmp::min(height, self.height) {
                     unsafe {
-                        fast_copy(new_ptr as *mut u8, old_ptr as *const u8, cmp::min(width, self.width) * 4);
+                        ptr::copy(
+                            old_ptr as *const u8,
+                            new_ptr as *mut u8,
+                            cmp::min(width, self.width) * 4
+                        );
                         if width > self.width {
-                            fast_set32(new_ptr.offset(self.width as isize), 0, width - self.width);
+                            ptr::write_bytes(
+                                new_ptr.offset(self.width as isize),
+                                0,
+                                width - self.width
+                            );
                         }
                         old_ptr = old_ptr.offset(self.width as isize);
                         new_ptr = new_ptr.offset(width as isize);
@@ -108,7 +114,7 @@ impl Display {
                 if height > self.height {
                     for _y in self.height..height {
                         unsafe {
-                            fast_set32(new_ptr, 0, width);
+                            ptr::write_bytes(new_ptr, 0, width);
                             new_ptr = new_ptr.offset(width as isize);
                         }
                     }
@@ -145,8 +151,10 @@ impl Display {
 
         let mut rows = end_y - start_y;
         while rows > 0 {
-            unsafe {
-                fast_set32(offscreen_ptr as *mut u32, color, len);
+            for i in 0..len {
+                unsafe {
+                    *(offscreen_ptr as *mut u32).add(i) = color;
+                }
             }
             offscreen_ptr += stride;
             rows -= 1;
@@ -279,7 +287,11 @@ impl Display {
         let mut rows = end_y - start_y;
         while rows > 0 {
             unsafe {
-                fast_copy(onscreen_ptr as *mut u8, offscreen_ptr as *const u8, len);
+                ptr::copy(
+                    offscreen_ptr as *const u8,
+                    onscreen_ptr as *mut u8,
+                    len
+                );
             }
             offscreen_ptr += stride;
             onscreen_ptr += stride;

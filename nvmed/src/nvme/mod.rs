@@ -22,6 +22,18 @@ pub use self::queues::{NvmeCmd, NvmeCmdQueue, NvmeComp, NvmeCompQueue};
 use pcid_interface::msi::{MsiCapability, MsixCapability, MsixTableEntry};
 use pcid_interface::PcidServerHandle;
 
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+pub(crate) unsafe fn pause() { std::arch::x86::__yield(); }
+
+#[cfg(target_arch = "x86")]
+#[inline(always)]
+pub(crate) unsafe fn pause() { std::arch::x86::_mm_pause(); }
+
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+pub(crate) unsafe fn pause() { std::arch::x86_64::_mm_pause(); }
+
 /// Used in conjunction with `InterruptMethod`, primarily by the CQ reactor.
 #[derive(Debug)]
 pub enum InterruptSources {
@@ -264,7 +276,7 @@ impl Nvme {
             let csts = self.regs.get_mut().unwrap().csts.read();
             log::trace!("CSTS: {:X}", csts);
             if csts & 1 == 1 {
-                std::arch::x86_64::_mm_pause();
+                pause();
             } else {
                 break;
             }
@@ -318,7 +330,7 @@ impl Nvme {
             let csts = self.regs.get_mut().unwrap().csts.read();
             log::debug!("CSTS: {:X}", csts);
             if csts & 1 == 0 {
-                std::arch::x86_64::_mm_pause();
+                pause();
             } else {
                 break;
             }

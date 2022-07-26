@@ -112,9 +112,9 @@ impl HbaPort {
         }
 
         self.clb[0].write(clb.physical() as u32);
-        self.clb[1].write((clb.physical() >> 32) as u32);
+        self.clb[1].write(((clb.physical() as u64) >> 32) as u32);
         self.fb[0].write(fb.physical() as u32);
-        self.fb[1].write((fb.physical() >> 32) as u32);
+        self.fb[1].write(((fb.physical() as u64) >> 32) as u32);
         let is = self.is.read();
         self.is.write(is);
         self.ie.write(0 /*TODO: Enable interrupts: 0b10111*/);

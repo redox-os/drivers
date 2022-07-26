@@ -1,12 +1,11 @@
 use std::collections::VecDeque;
-use std::{cmp, mem, slice};
+use std::{cmp, mem, ptr, slice};
 
 use orbclient::{Event, ResizeEvent};
 use syscall::error::*;
 use syscall::flag::{SEEK_SET, SEEK_CUR, SEEK_END};
 
 use crate::display::Display;
-use crate::primitive::fast_copy;
 use crate::screen::Screen;
 
 pub struct GraphicScreen {
@@ -81,9 +80,17 @@ impl Screen for GraphicScreen {
 
         if size > 0 {
             unsafe {
-                fast_copy(self.display.offscreen.as_mut_ptr().offset(self.seek as isize) as *mut u8, buf.as_ptr(), size * 4);
+                ptr::copy(
+                    buf.as_ptr(),
+                    self.display.offscreen.as_mut_ptr().offset(self.seek as isize) as *mut u8,
+                    size * 4
+                );
                 if sync {
-                    fast_copy(self.display.onscreen.as_mut_ptr().offset(self.seek as isize) as *mut u8, buf.as_ptr(), size * 4);
+                    ptr::copy(
+                        buf.as_ptr(),
+                        self.display.onscreen.as_mut_ptr().offset(self.seek as isize) as *mut u8,
+                        size * 4
+                    );
                 }
             }
         }
