@@ -420,7 +420,7 @@ impl Intel8259x {
 
         self.write_reg(IXGBE_RDBAL(i), self.receive_ring.physical() as u32);
 
-        self.write_reg(IXGBE_RDBAH(i), (self.receive_ring.physical() >> 32) as u32);
+        self.write_reg(IXGBE_RDBAH(i), ((self.receive_ring.physical() as u64) >> 32) as u32);
         self.write_reg(
             IXGBE_RDLEN(i),
             (self.receive_ring.len() * mem::size_of::<ixgbe_adv_rx_desc>()) as u32,
@@ -462,7 +462,7 @@ impl Intel8259x {
         // section 7.1.9 - setup descriptor ring
 
         self.write_reg(IXGBE_TDBAL(i), self.transmit_ring.physical() as u32);
-        self.write_reg(IXGBE_TDBAH(i), (self.transmit_ring.physical() >> 32) as u32);
+        self.write_reg(IXGBE_TDBAH(i), ((self.transmit_ring.physical() as u64) >> 32) as u32);
         self.write_reg(
             IXGBE_TDLEN(i),
             (self.transmit_ring.len() * mem::size_of::<ixgbe_adv_tx_desc>()) as u32,

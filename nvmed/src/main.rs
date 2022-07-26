@@ -217,13 +217,22 @@ fn get_int_method(
     }
 }
 
+//TODO: MSI on non-x86_64?
 #[cfg(not(target_arch = "x86_64"))]
 fn get_int_method(
     pcid_handle: &mut PcidServerHandle,
     function: &PciFunction,
     allocated_bars: &AllocatedBars,
 ) -> Result<(InterruptMethod, InterruptSources)> {
-    todo!("handling of interrupts on non-x86_64")
+    if function.legacy_interrupt_pin.is_some() {
+        // INTx# pin based interrupts.
+        let irq_handle = File::open(format!("irq:{}", function.legacy_interrupt_line))
+            .expect("nvmed: failed to open INTx# interrupt line");
+        Ok((InterruptMethod::Intx, InterruptSources::Intx(irq_handle)))
+    } else {
+        // No interrupts at all
+        todo!("handling of no interrupts")
+    }
 }
 
 fn setup_logging() -> Option<&'static RedoxLogger> {

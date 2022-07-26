@@ -130,7 +130,7 @@ impl Corb {
 
     pub fn set_address(&mut self, addr: usize) {
         self.regs.corblbase.write((addr & 0xFFFFFFFF) as u32);
-        self.regs.corbubase.write((addr >> 32) as u32);
+        self.regs.corbubase.write(((addr as u64) >> 32) as u32);
     }
 
     pub fn reset_read_pointer(&mut self) {
@@ -268,7 +268,7 @@ impl Rirb {
 
     pub fn set_address(&mut self, addr: usize) {
         self.regs.rirblbase.write((addr & 0xFFFFFFFF) as u32);
-        self.regs.rirbubase.write((addr >> 32) as u32);
+        self.regs.rirbubase.write(((addr as u64) >> 32) as u32);
     }
 
     pub fn reset_write_pointer(&mut self) {

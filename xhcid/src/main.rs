@@ -82,37 +82,10 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
     }
 }
 
-fn main() {
-    // Daemonize
-    if unsafe { syscall::clone(CloneFlags::empty()).unwrap() } != 0 {
-        return;
-    }
-
-    let _logger_ref = setup_logging();
-
-    let mut pcid_handle = PcidServerHandle::connect_default().expect("xhcid: failed to setup channel to pcid");
+#[cfg(target_arch = "x86_64")]
+fn get_int_method(pcid_handle: &mut PcidServerHandle) -> (Option<File>, InterruptMethod) {
     let pci_config = pcid_handle.fetch_config().expect("xhcid: failed to fetch config");
-    info!("XHCI PCI CONFIG: {:?}", pci_config);
-
-    let bar = pci_config.func.bars[0];
-    let bar_size = pci_config.func.bar_sizes[0];
     let irq = pci_config.func.legacy_interrupt_line;
-
-    let mut name = pci_config.func.name();
-    name.push_str("_xhci");
-
-    let bar_ptr = match bar {
-        pcid_interface::PciBar::Memory(ptr) => match ptr {
-            0 => panic!("BAR 0 is mapped to address 0"),
-            _ => ptr,
-        },
-        other => panic!("Expected memory bar, found {}", other),
-    };
-
-    let address = unsafe {
-        syscall::physmap(bar_ptr as usize, bar_size as usize, PHYSMAP_WRITE | PHYSMAP_NO_CACHE)
-            .expect("xhcid: failed to map address")
-    };
 
     let all_pci_features = pcid_handle.fetch_all_features().expect("xhcid: failed to fetch pci features");
     info!("XHCI PCI FEATURES: {:?}", all_pci_features);
@@ -127,7 +100,7 @@ fn main() {
         msix_enabled = true;
     }
 
-    let (mut irq_file, interrupt_method) = if msi_enabled && !msix_enabled {
+    if msi_enabled && !msix_enabled {
         use pcid_interface::msi::x86_64::{DeliveryMode, self as x86_64_msix};
 
         let mut capability = match pcid_handle.feature_info(PciFeature::MsiX).expect("xhcid: failed to retrieve the MSI capability structure from pcid") {
@@ -226,7 +199,57 @@ fn main() {
     } else {
         // no interrupts at all
         (None, InterruptMethod::Polling)
+    }
+}
+
+//TODO: MSI on non-x86_64?
+#[cfg(not(target_arch = "x86_64"))]
+fn get_int_method(pcid_handle: &mut PcidServerHandle) -> (Option<File>, InterruptMethod) {
+    let pci_config = pcid_handle.fetch_config().expect("xhcid: failed to fetch config");
+    let irq = pci_config.func.legacy_interrupt_line;
+
+    if pci_config.func.legacy_interrupt_pin.is_some() {
+        // legacy INTx# interrupt pins.
+        (Some(File::open(format!("irq:{}", irq)).expect("xhcid: failed to open legacy IRQ file")), InterruptMethod::Intx)
+    } else {
+        // no interrupts at all
+        (None, InterruptMethod::Polling)
+    }
+}
+
+fn main() {
+    // Daemonize
+    if unsafe { syscall::clone(CloneFlags::empty()).unwrap() } != 0 {
+        return;
+    }
+
+    let _logger_ref = setup_logging();
+
+    let mut pcid_handle = PcidServerHandle::connect_default().expect("xhcid: failed to setup channel to pcid");
+    let pci_config = pcid_handle.fetch_config().expect("xhcid: failed to fetch config");
+    info!("XHCI PCI CONFIG: {:?}", pci_config);
+
+    let bar = pci_config.func.bars[0];
+    let bar_size = pci_config.func.bar_sizes[0];
+    let irq = pci_config.func.legacy_interrupt_line;
+
+    let mut name = pci_config.func.name();
+    name.push_str("_xhci");
+
+    let bar_ptr = match bar {
+        pcid_interface::PciBar::Memory(ptr) => match ptr {
+            0 => panic!("BAR 0 is mapped to address 0"),
+            _ => ptr,
+        },
+        other => panic!("Expected memory bar, found {}", other),
     };
+
+    let address = unsafe {
+        syscall::physmap(bar_ptr as usize, bar_size as usize, PHYSMAP_WRITE | PHYSMAP_NO_CACHE)
+            .expect("xhcid: failed to map address")
+    };
+
+    let (mut irq_file, interrupt_method) = get_int_method(&mut pcid_handle);
 
     print!(
         "{}",

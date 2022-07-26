@@ -156,7 +156,7 @@ impl StreamDescriptorRegs {
 
 	pub fn set_address(&mut self, addr: usize) {
 		self.buff_desc_list_lo.write( (addr & 0xFFFFFFFF) as u32);
-		self.buff_desc_list_hi.write( ( (addr >> 32) & 0xFFFFFFFF) as u32);
+		self.buff_desc_list_hi.write( ( ((addr as u64) >> 32) & 0xFFFFFFFF) as u32);
 	}
 
 	pub fn set_last_valid_index(&mut self, index:u16) {

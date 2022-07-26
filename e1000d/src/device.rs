@@ -364,7 +364,7 @@ impl Intel8254x {
             self.receive_ring[i].buffer = self.receive_buffer[i].physical() as u64;
         }
 
-        self.write_reg(RDBAH, (self.receive_ring.physical() >> 32) as u32);
+        self.write_reg(RDBAH, ((self.receive_ring.physical() as u64) >> 32) as u32);
         self.write_reg(RDBAL, self.receive_ring.physical() as u32);
         self.write_reg(
             RDLEN,
@@ -378,7 +378,7 @@ impl Intel8254x {
             self.transmit_ring[i].buffer = self.transmit_buffer[i].physical() as u64;
         }
 
-        self.write_reg(TDBAH, (self.transmit_ring.physical() >> 32) as u32);
+        self.write_reg(TDBAH, ((self.transmit_ring.physical() as u64) >> 32) as u32);
         self.write_reg(TDBAL, self.transmit_ring.physical() as u32);
         self.write_reg(
             TDLEN,

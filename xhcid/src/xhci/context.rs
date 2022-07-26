@@ -182,7 +182,7 @@ impl ScratchpadBufferArray {
 
         let pages = entries.iter_mut().map(|entry: &mut ScratchpadBufferEntry| -> Result<usize> {
             let pointer = unsafe { syscall::physalloc(page_size)? };
-            assert_eq!(pointer & 0xFFFF_FFFF_FFFF_F000, pointer, "physically allocated pointer (physalloc) wasn't 4k page-aligned");
+            assert_eq!((pointer as u64) & 0xFFFF_FFFF_FFFF_F000, pointer as u64, "physically allocated pointer (physalloc) wasn't 4k page-aligned");
             entry.set_addr(pointer as u64);
             Ok(pointer)
         }).collect::<Result<Vec<usize>, _>>()?;

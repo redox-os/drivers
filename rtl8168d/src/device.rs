@@ -333,15 +333,15 @@ impl Rtl8168 {
 
         // Set tx low priority buffer address
         self.regs.tnpds[0].write(self.transmit_ring.physical() as u32);
-        self.regs.tnpds[1].write((self.transmit_ring.physical() >> 32) as u32);
+        self.regs.tnpds[1].write(((self.transmit_ring.physical() as u64) >> 32) as u32);
 
         // Set tx high priority buffer address
         self.regs.thpds[0].write(self.transmit_ring_h.physical() as u32);
-        self.regs.thpds[1].write((self.transmit_ring_h.physical() >> 32) as u32);
+        self.regs.thpds[1].write(((self.transmit_ring_h.physical() as u64) >> 32) as u32);
 
         // Set rx buffer address
         self.regs.rdsar[0].write(self.receive_ring.physical() as u32);
-        self.regs.rdsar[1].write((self.receive_ring.physical() >> 32) as u32);
+        self.regs.rdsar[1].write(((self.receive_ring.physical() as u64) >> 32) as u32);
 
         // Disable timer interrupt
         self.regs.timer_int.write(0);

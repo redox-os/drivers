@@ -66,8 +66,8 @@ impl Ring {
     /// # Panics
     /// Panics if paddr is not a multiple of 16 bytes, i.e. the size of a TRB.
     pub fn phys_addr_to_index(&self, ac64: bool, paddr: u64) -> Option<usize> {
-        let base = self.trbs.physical() & if ac64 { 0xFFFF_FFFF_FFFF_FFFF } else { 0xFFFF_FFFF };
-        let offset = paddr.checked_sub(base as u64)? as usize;
+        let base = (self.trbs.physical() as u64) & if ac64 { 0xFFFF_FFFF_FFFF_FFFF } else { 0xFFFF_FFFF };
+        let offset = paddr.checked_sub(base)? as usize;
 
         assert_eq!(offset % mem::size_of::<Trb>(), 0, "unaligned TRB physical address");
 

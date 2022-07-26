@@ -245,8 +245,8 @@ impl Trb {
 
     pub fn address_device(&mut self, slot_id: u8, input_ctx_ptr: usize, bsr: bool, cycle: bool) {
         assert_eq!(
-            input_ctx_ptr & 0xFFFF_FFFF_FFFF_FFF0,
-            input_ctx_ptr,
+            (input_ctx_ptr as u64) & 0xFFFF_FFFF_FFFF_FFF0,
+            input_ctx_ptr as u64,
             "unaligned input context ptr"
         );
         self.set(
@@ -261,8 +261,8 @@ impl Trb {
     // Synchronizes the input context endpoints with the device context endpoints, I think.
     pub fn configure_endpoint(&mut self, slot_id: u8, input_ctx_ptr: usize, cycle: bool) {
         assert_eq!(
-            input_ctx_ptr & 0xFFFF_FFFF_FFFF_FFF0,
-            input_ctx_ptr,
+            (input_ctx_ptr as u64) & 0xFFFF_FFFF_FFFF_FFF0,
+            input_ctx_ptr as u64,
             "unaligned input context ptr"
         );
 
@@ -276,8 +276,8 @@ impl Trb {
     }
     pub fn evaluate_context(&mut self, slot_id: u8, input_ctx_ptr: usize, bsr: bool, cycle: bool) {
         assert_eq!(
-            input_ctx_ptr & 0xFFFF_FFFF_FFFF_FFF0,
-            input_ctx_ptr,
+            (input_ctx_ptr as u64) & 0xFFFF_FFFF_FFFF_FFF0,
+            input_ctx_ptr as u64,
             "unaligned input context ptr"
         );
         self.set(
