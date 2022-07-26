@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use syscall::io::{Io, Pio};
 
 use crate::acpi::{AcpiContext, AmlContainingTable, Sdt, SdtHeader};
@@ -126,8 +127,16 @@ pub fn set_global_s_state(context: &AcpiContext, state: u8) {
     log::info!("Shutdown SLP_TYPa {:X}, SLP_TYPb {:X}", slp_typa, slp_typb);
     val |= slp_typa as u16;
 
-    log::info!("Shutdown with ACPI outw(0x{:X}, 0x{:X})", port, val);
-    Pio::<u16>::new(port).write(val);
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    {
+        log::info!("Shutdown with ACPI outw(0x{:X}, 0x{:X})", port, val);
+        Pio::<u16>::new(port).write(val);
+    }
+
+    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+    {
+        log::error!("Cannot shutdown with ACPI outw(0x{:X}, 0x{:X}) on this architecture", port, val);
+    }
 
     loop {
         core::hint::spin_loop();

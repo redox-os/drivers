@@ -24,7 +24,7 @@ use pcid_interface::PcidServerHandle;
 
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
-pub(crate) unsafe fn pause() { std::arch::x86::__yield(); }
+pub(crate) unsafe fn pause() { std::arch::aarch64::__yield(); }
 
 #[cfg(target_arch = "x86")]
 #[inline(always)]

@@ -1,3 +1,5 @@
+#![cfg_attr(target_arch = "aarch64", feature(stdsimd))] // Required for yield instruction
+
 use std::convert::TryInto;
 use std::fs::File;
 use std::io::{ErrorKind, Read, Write};
