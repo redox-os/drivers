@@ -83,9 +83,20 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
 }
 
 #[cfg(target_arch = "x86_64")]
-fn get_int_method(pcid_handle: &mut PcidServerHandle) -> (Option<File>, InterruptMethod) {
+fn get_int_method(pcid_handle: &mut PcidServerHandle, address: usize) -> (Option<File>, InterruptMethod) {
     let pci_config = pcid_handle.fetch_config().expect("xhcid: failed to fetch config");
+
+    let bar = pci_config.func.bars[0];
+    let bar_size = pci_config.func.bar_sizes[0];
     let irq = pci_config.func.legacy_interrupt_line;
+
+    let bar_ptr = match bar {
+        pcid_interface::PciBar::Memory(ptr) => match ptr {
+            0 => panic!("BAR 0 is mapped to address 0"),
+            _ => ptr,
+        },
+        other => panic!("Expected memory bar, found {}", other),
+    };
 
     let all_pci_features = pcid_handle.fetch_all_features().expect("xhcid: failed to fetch pci features");
     info!("XHCI PCI FEATURES: {:?}", all_pci_features);
@@ -204,7 +215,7 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle) -> (Option<File>, Interrup
 
 //TODO: MSI on non-x86_64?
 #[cfg(not(target_arch = "x86_64"))]
-fn get_int_method(pcid_handle: &mut PcidServerHandle) -> (Option<File>, InterruptMethod) {
+fn get_int_method(pcid_handle: &mut PcidServerHandle, address: usize) -> (Option<File>, InterruptMethod) {
     let pci_config = pcid_handle.fetch_config().expect("xhcid: failed to fetch config");
     let irq = pci_config.func.legacy_interrupt_line;
 
@@ -249,7 +260,7 @@ fn main() {
             .expect("xhcid: failed to map address")
     };
 
-    let (mut irq_file, interrupt_method) = get_int_method(&mut pcid_handle);
+    let (mut irq_file, interrupt_method) = get_int_method(&mut pcid_handle, address);
 
     print!(
         "{}",
