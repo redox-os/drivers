@@ -13,7 +13,7 @@ dependencies = [
  "plain",
  "redox-daemon",
  "redox-log",
- "redox_syscall",
+ "redox_syscall 0.3.0",
  "thiserror",
 ]
 
@@ -28,7 +28,7 @@ dependencies = [
  "partitionlib",
  "redox-daemon",
  "redox-log",
- "redox_syscall",
+ "redox_syscall 0.3.0",
 ]
 
 [[package]]
@@ -39,7 +39,7 @@ dependencies = [
  "netutils",
  "redox-daemon",
  "redox_event",
- "redox_syscall",
+ "redox_syscall 0.3.0",
 ]
 
 [[package]]
@@ -109,7 +109,7 @@ version = "0.1.0"
 dependencies = [
  "orbclient",
  "redox-daemon",
- "redox_syscall",
+ "redox_syscall 0.3.0",
 ]
 
 [[package]]
@@ -293,7 +293,7 @@ dependencies = [
  "netutils",
  "redox-daemon",
  "redox_event",
- "redox_syscall",
+ "redox_syscall 0.3.0",
 ]
 
 [[package]]
@@ -461,7 +461,7 @@ dependencies = [
  "redox-daemon",
  "redox-log",
  "redox_event",
- "redox_syscall",
+ "redox_syscall 0.3.0",
  "spin",
 ]
 
@@ -497,7 +497,7 @@ dependencies = [
  "netutils",
  "redox-daemon",
  "redox_event",
- "redox_syscall",
+ "redox_syscall 0.3.0",
 ]
 
 [[package]]
@@ -623,7 +623,7 @@ dependencies = [
 [[package]]
 name = "netutils"
 version = "0.1.0"
-source = "git+https://gitlab.redox-os.org/redox-os/netutils.git?branch=redox-unix#a55df137538fabadea2eff74153ac0b8d3ce3dcf"
+source = "git+https://gitlab.redox-os.org/redox-os/netutils.git?branch=redox-unix#34d1ec9c2e9f7904b57547ca16d4c3145c109880"
 dependencies = [
  "arg_parser",
  "extra",
@@ -632,8 +632,9 @@ dependencies = [
  "net2",
  "ntpclient",
  "pbr",
+ "redox-daemon",
  "redox_event",
- "redox_syscall",
+ "redox_syscall 0.2.16",
  "redox_termios",
  "termion",
  "url",
@@ -704,7 +705,7 @@ dependencies = [
  "pcid",
  "redox-daemon",
  "redox-log",
- "redox_syscall",
+ "redox_syscall 0.3.0",
  "smallvec 1.9.0",
 ]
 
@@ -721,7 +722,7 @@ source = "git+https://gitlab.redox-os.org/redox-os/orbclient.git#192dc30edbad43e
 dependencies = [
  "libc",
  "raw-window-handle 0.3.4",
- "redox_syscall",
+ "redox_syscall 0.2.16",
  "sdl2",
  "sdl2-sys",
  "wasm-bindgen",
@@ -779,7 +780,7 @@ dependencies = [
  "cfg-if 1.0.0",
  "instant",
  "libc",
- "redox_syscall",
+ "redox_syscall 0.2.16",
  "smallvec 1.9.0",
  "winapi 0.3.9",
 ]
@@ -845,7 +846,7 @@ dependencies = [
  "paw",
  "plain",
  "redox-log",
- "redox_syscall",
+ "redox_syscall 0.3.0",
  "serde",
  "serde_json",
  "smallvec 1.9.0",
@@ -859,7 +860,7 @@ name = "pcspkrd"
 version = "0.1.0"
 dependencies = [
  "redox-daemon",
- "redox_syscall",
+ "redox_syscall 0.3.0",
 ]
 
 [[package]]
@@ -926,7 +927,7 @@ dependencies = [
  "bitflags",
  "orbclient",
  "redox-daemon",
- "redox_syscall",
+ "redox_syscall 0.3.0",
 ]
 
 [[package]]
@@ -1102,7 +1103,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "21e31c834277709c7ff3eb74959fe62be4b45b1189ba9d41fd3744cd3a9c554f"
 dependencies = [
  "libc",
- "redox_syscall",
+ "redox_syscall 0.2.16",
 ]
 
 [[package]]
@@ -1120,15 +1121,25 @@ dependencies = [
 [[package]]
 name = "redox_event"
 version = "0.1.0"
-source = "git+https://gitlab.redox-os.org/redox-os/event.git#228eb0719c4424357012c6aad71cf26976048990"
+source = "git+https://gitlab.redox-os.org/redox-os/event.git#f7db3d25ca5e282c12ded12bf6c720087b570132"
 dependencies = [
- "redox_syscall",
+ "redox_syscall 0.3.0",
 ]
 
 [[package]]
 name = "redox_syscall"
 version = "0.2.16"
-source = "git+https://gitlab.redox-os.org/4lDO2/syscall.git?branch=userspace_fexec#d6af266119e7b4a3b0e9a04c63b3cfcfac94781a"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fb5a58c1855b4b6819d59012155603f0b22ad30cad752600aadfcb695265519a"
+dependencies = [
+ "bitflags",
+]
+
+[[package]]
+name = "redox_syscall"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ca8ce969b6629faa6f60a71f84022b0217e5ca8bcaeb6d11654506a55ebf8fed"
 dependencies = [
  "bitflags",
 ]
@@ -1139,7 +1150,7 @@ version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8440d8acb4fd3d277125b4bd01a6f38aee8d814b3b5fc09b3f2b825d37d3fe8f"
 dependencies = [
- "redox_syscall",
+ "redox_syscall 0.2.16",
 ]
 
 [[package]]
@@ -1150,7 +1161,7 @@ dependencies = [
  "netutils",
  "redox-daemon",
  "redox_event",
- "redox_syscall",
+ "redox_syscall 0.3.0",
 ]
 
 [[package]]
@@ -1362,7 +1373,7 @@ checksum = "077185e2eac69c3f8379a4298e1e07cd36beb962290d4a51199acf0fdc10607e"
 dependencies = [
  "libc",
  "numtoa",
- "redox_syscall",
+ "redox_syscall 0.2.16",
  "redox_termios",
 ]
 
@@ -1501,7 +1512,7 @@ dependencies = [
  "base64",
  "plain",
  "redox-daemon",
- "redox_syscall",
+ "redox_syscall 0.3.0",
  "thiserror",
  "xhcid",
 ]
@@ -1534,7 +1545,7 @@ dependencies = [
  "orbclient",
  "redox-daemon",
  "redox_event",
- "redox_syscall",
+ "redox_syscall 0.3.0",
 ]
 
 [[package]]
@@ -1562,7 +1573,7 @@ dependencies = [
  "orbclient",
  "ransid",
  "redox-daemon",
- "redox_syscall",
+ "redox_syscall 0.3.0",
  "rusttype",
 ]
 
@@ -1704,7 +1715,7 @@ dependencies = [
  "redox-daemon",
  "redox-log",
  "redox_event",
- "redox_syscall",
+ "redox_syscall 0.3.0",
  "serde",
  "serde_json",
  "smallvec 1.9.0",

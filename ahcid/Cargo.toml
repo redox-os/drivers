@@ -10,5 +10,5 @@ log = "0.4"
 partitionlib = { git = "https://gitlab.redox-os.org/redox-os/partitionlib.git" }
 redox-daemon = "0.1"
 redox-log = "0.1"
-redox_syscall = { git = "https://gitlab.redox-os.org/4lDO2/syscall.git", branch = "userspace_fexec" }
+redox_syscall = "0.3"
 block-io-wrapper = { path = "../block-io-wrapper" }
