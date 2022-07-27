@@ -20,7 +20,7 @@ mod keymap;
 mod state;
 mod vm;
 
-fn daemon(daemon: syscall::Daemon) -> core::convert::Infallible {
+fn daemon(daemon: redox_daemon::Daemon) -> ! {
     unsafe {
         iopl(3).expect("ps2d: failed to get I/O permission");
     }
@@ -124,5 +124,5 @@ fn daemon(daemon: syscall::Daemon) -> core::convert::Infallible {
 }
 
 fn main() {
-    syscall::Daemon::new(daemon).expect("ps2d: failed to create daemon");
+    redox_daemon::Daemon::new(daemon).expect("ps2d: failed to create daemon");
 }

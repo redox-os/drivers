@@ -79,7 +79,7 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
     }
 }
 
-fn daemon(mut write_part: File) {
+fn daemon(daemon: redox_daemon::Daemon) -> ! {
     setup_logging();
 
     let rxsdt_raw_data: Arc<[u8]> = std::fs::read("kernel/acpi:rxsdt")
@@ -135,8 +135,7 @@ fn daemon(mut write_part: File) {
         .open(":acpi")
         .expect("acpid: failed to open scheme socket");
 
-    write_part.write_all(&[0]).expect("acpid: failed to write to sync pipe");
-    drop(write_part);
+    daemon.ready().expect("acpid: failed to notify parent");
 
     syscall::setrens(0, 0).expect("acpid: failed to enter null namespace");
 
@@ -163,14 +162,14 @@ fn daemon(mut write_part: File) {
                 match scheme_socket.read(&mut packet) {
                     Ok(0) => {
                         log::info!("Terminating acpid driver, without shutting down the main system.");
-                        return;
+                        break 'events;
                     }
                     Ok(n) => break 'eintr1 n,
                     Err(error) if error.kind() == io::ErrorKind::Interrupted => continue 'eintr1,
                     Err(error) if error.kind() == io::ErrorKind::WouldBlock => break 'packets,
                     Err(other) => {
                         log::error!("failed to read from scheme socket: {}", other);
-                        return;
+                        break 'events;
                     }
                 }
             };
@@ -185,14 +184,14 @@ fn daemon(mut write_part: File) {
                 match scheme_socket.write(&packet) {
                     Ok(0) => {
                         log::info!("Terminating acpid driver, without shutting down the main system.");
-                        return;
+                        break 'events;
                     }
                     Ok(n) => break 'eintr2 n,
                     Err(error) if error.kind() == io::ErrorKind::Interrupted => continue 'eintr2,
                     Err(error) if error.kind() == io::ErrorKind::WouldBlock => break 'packets,
                     Err(other) => {
                         log::error!("failed to read from scheme socket: {}", other);
-                        return;
+                        break 'events;
                     }
                 }
             };
@@ -222,21 +221,5 @@ fn daemon(mut write_part: File) {
 }
 
 fn main() {
-    let mut pipes = [0; 2];
-    syscall::pipe2(&mut pipes, 0).expect("acpid: failed to create synchronization pipe");
-
-    let mut read_part = unsafe { File::from_raw_fd(pipes[0] as RawFd) };
-    let mut write_part = unsafe { File::from_raw_fd(pipes[1] as RawFd) };
-
-    if unsafe { syscall::clone(syscall::CloneFlags::empty()).expect("failed to daemonize acpid") } == 0 {
-        drop(read_part);
-        daemon(write_part);
-    } else {
-        drop(write_part);
-
-        let mut res = [0];
-        let bytes_read = read_part.read_exact(&mut res).expect("acpid: failed to read from sync pipe");
-
-        std::process::exit(res[0].into());
-    }
+    redox_daemon::Daemon::new(daemon).expect("acpid: failed to daemonize");
 }

@@ -449,14 +449,18 @@ impl Xhci {
         };
         PhysBox::new_with_flags(byte_count, flags)
     }
+    fn page_align(size: usize) -> usize {
+        // TODO: PAGE_SIZE
+        (size+4095)/4096*4096
+    }
     pub unsafe fn alloc_dma_zeroed_raw<T>(ac64: bool) -> Result<Dma<T>> {
-        Ok(Dma::from_physbox_zeroed(Self::alloc_phys(ac64, mem::size_of::<T>())?)?.assume_init())
+        Ok(Dma::from_physbox_zeroed(Self::alloc_phys(ac64, Self::page_align(mem::size_of::<T>()))?)?.assume_init())
     }
     pub unsafe fn alloc_dma_zeroed<T>(&self) -> Result<Dma<T>> {
         Self::alloc_dma_zeroed_raw(self.cap.ac64())
     }
     pub unsafe fn alloc_dma_zeroed_unsized_raw<T>(ac64: bool, count: usize) -> Result<Dma<[T]>> {
-        Ok(Dma::from_physbox_zeroed_unsized(Self::alloc_phys(ac64, mem::size_of::<T>() * count)?, count)?.assume_init())
+        Ok(Dma::from_physbox_zeroed_unsized(Self::alloc_phys(ac64, Self::page_align(mem::size_of::<T>() * count))?, count)?.assume_init())
     }
     pub unsafe fn alloc_dma_zeroed_unsized<T>(&self, count: usize) -> Result<Dma<[T]>> {
         Self::alloc_dma_zeroed_unsized_raw(self.cap.ac64(), count)

@@ -11,6 +11,7 @@ dependencies = [
  "num-traits",
  "parking_lot 0.11.2",
  "plain",
+ "redox-daemon",
  "redox-log",
  "redox_syscall",
  "thiserror",
@@ -25,6 +26,7 @@ dependencies = [
  "byteorder 1.4.3",
  "log",
  "partitionlib",
+ "redox-daemon",
  "redox-log",
  "redox_syscall",
 ]
@@ -35,6 +37,7 @@ version = "0.1.0"
 dependencies = [
  "bitflags",
  "netutils",
+ "redox-daemon",
  "redox_event",
  "redox_syscall",
 ]
@@ -105,6 +108,7 @@ name = "bgad"
 version = "0.1.0"
 dependencies = [
  "orbclient",
+ "redox-daemon",
  "redox_syscall",
 ]
 
@@ -287,6 +291,7 @@ version = "0.1.0"
 dependencies = [
  "bitflags",
  "netutils",
+ "redox-daemon",
  "redox_event",
  "redox_syscall",
 ]
@@ -453,6 +458,7 @@ version = "0.1.0"
 dependencies = [
  "bitflags",
  "log",
+ "redox-daemon",
  "redox-log",
  "redox_event",
  "redox_syscall",
@@ -489,6 +495,7 @@ version = "1.0.0"
 dependencies = [
  "bitflags",
  "netutils",
+ "redox-daemon",
  "redox_event",
  "redox_syscall",
 ]
@@ -616,7 +623,7 @@ dependencies = [
 [[package]]
 name = "netutils"
 version = "0.1.0"
-source = "git+https://gitlab.redox-os.org/redox-os/netutils.git?branch=redox-unix#55c55eb6452ee886dfd81f1cbb7f9ec45012d95e"
+source = "git+https://gitlab.redox-os.org/redox-os/netutils.git?branch=redox-unix#a55df137538fabadea2eff74153ac0b8d3ce3dcf"
 dependencies = [
  "arg_parser",
  "extra",
@@ -695,6 +702,7 @@ dependencies = [
  "log",
  "partitionlib",
  "pcid",
+ "redox-daemon",
  "redox-log",
  "redox_syscall",
  "smallvec 1.9.0",
@@ -850,6 +858,7 @@ dependencies = [
 name = "pcspkrd"
 version = "0.1.0"
 dependencies = [
+ "redox-daemon",
  "redox_syscall",
 ]
 
@@ -916,6 +925,7 @@ version = "0.1.0"
 dependencies = [
  "bitflags",
  "orbclient",
+ "redox-daemon",
  "redox_syscall",
 ]
 
@@ -1086,6 +1096,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "redox-daemon"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "21e31c834277709c7ff3eb74959fe62be4b45b1189ba9d41fd3744cd3a9c554f"
+dependencies = [
+ "libc",
+ "redox_syscall",
+]
+
+[[package]]
 name = "redox-log"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1108,8 +1128,7 @@ dependencies = [
 [[package]]
 name = "redox_syscall"
 version = "0.2.16"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb5a58c1855b4b6819d59012155603f0b22ad30cad752600aadfcb695265519a"
+source = "git+https://gitlab.redox-os.org/4lDO2/syscall.git?branch=userspace_fexec#d6af266119e7b4a3b0e9a04c63b3cfcfac94781a"
 dependencies = [
  "bitflags",
 ]
@@ -1129,6 +1148,7 @@ version = "0.1.0"
 dependencies = [
  "bitflags",
  "netutils",
+ "redox-daemon",
  "redox_event",
  "redox_syscall",
 ]
@@ -1480,6 +1500,7 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "plain",
+ "redox-daemon",
  "redox_syscall",
  "thiserror",
  "xhcid",
@@ -1511,6 +1532,7 @@ name = "vboxd"
 version = "0.1.0"
 dependencies = [
  "orbclient",
+ "redox-daemon",
  "redox_event",
  "redox_syscall",
 ]
@@ -1539,6 +1561,7 @@ version = "0.1.0"
 dependencies = [
  "orbclient",
  "ransid",
+ "redox-daemon",
  "redox_syscall",
  "rusttype",
 ]
@@ -1678,6 +1701,7 @@ dependencies = [
  "log",
  "pcid",
  "plain",
+ "redox-daemon",
  "redox-log",
  "redox_event",
  "redox_syscall",

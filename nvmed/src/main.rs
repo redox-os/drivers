@@ -10,7 +10,7 @@ use std::{slice, usize};
 
 use pcid_interface::{PciBar, PciFeature, PciFeatureInfo, PciFunction, PcidServerHandle};
 use syscall::{
-    CloneFlags, Event, Mmio, Packet, Result, SchemeBlockMut, PHYSMAP_NO_CACHE,
+    Event, Mmio, Packet, Result, SchemeBlockMut, PHYSMAP_NO_CACHE,
     PHYSMAP_WRITE,
 };
 use redox_log::{OutputBuilder, RedoxLogger};
@@ -280,11 +280,9 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
 }
 
 fn main() {
-    // Daemonize
-    if unsafe { syscall::clone(CloneFlags::empty()).unwrap() } != 0 {
-        return;
-    }
-
+    redox_daemon::Daemon::new(daemon).expect("nvmed: failed to daemonize");
+}
+fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let _logger_ref = setup_logging();
 
     let mut pcid_handle =
@@ -333,6 +331,8 @@ fn main() {
         syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK | syscall::O_CLOEXEC,
     )
     .expect("nvmed: failed to create disk scheme");
+
+    daemon.ready().expect("nvmed: failed to signal readiness");
 
     syscall::write(
         event_fd,
@@ -406,4 +406,6 @@ fn main() {
 
     //TODO: destroy NVMe stuff
     reactor_thread.join().expect("nvmed: failed to join reactor thread");
+
+    std::process::exit(0);
 }

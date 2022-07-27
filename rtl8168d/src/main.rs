@@ -10,7 +10,7 @@ use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::sync::Arc;
 
 use event::EventQueue;
-use syscall::{CloneFlags, EventFlags, Packet, SchemeBlockMut, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
+use syscall::{EventFlags, Packet, SchemeBlockMut, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
 
 pub mod device;
 
@@ -74,7 +74,7 @@ fn main() {
 
     eprintln!(" + RTL8168 {} on: {:X} size: {} IRQ: {}", name, bar, bar_size, irq);
 
-    syscall::Daemon::new(move |daemon| {
+    redox_daemon::Daemon::new(move |daemon| {
         let socket_fd = syscall::open(
             ":network",
             syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK,

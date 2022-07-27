@@ -11,7 +11,7 @@ use std::{env, thread};
 
 use event::EventQueue;
 use std::time::Duration;
-use syscall::{CloneFlags, EventFlags, Packet, SchemeBlockMut, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
+use syscall::{EventFlags, Packet, SchemeBlockMut, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
 
 pub mod device;
 #[rustfmt::skip]
@@ -76,8 +76,7 @@ fn main() {
 
     println!(" + IXGBE {} on: {:X} IRQ: {}", name, bar, irq);
 
-    // Daemonize
-    if unsafe { syscall::clone(CloneFlags::empty()).unwrap() } == 0 {
+    redox_daemon::Daemon::new(move |daemon| {
         let socket_fd = syscall::open(
             ":network",
             syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK,
@@ -86,6 +85,8 @@ fn main() {
         let socket = Arc::new(RefCell::new(unsafe {
             File::from_raw_fd(socket_fd as RawFd)
         }));
+
+        daemon.ready().expect("ixgbed: failed to signal readiness");
 
         let mut irq_file =
             File::open(format!("irq:{}", irq)).expect("ixgbed: failed to open IRQ file");
@@ -197,7 +198,8 @@ fn main() {
         unsafe {
             let _ = syscall::physunmap(address);
         }
-    }
+        std::process::exit(0);
+    }).expect("ixgbed: failed to daemonize");
 
     thread::sleep(Duration::from_secs(20));
 }

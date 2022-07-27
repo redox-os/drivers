@@ -9,7 +9,7 @@ use std::{env, usize};
 use std::fs::File;
 use std::io::{ErrorKind, Read, Write, Result};
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
-use syscall::{CloneFlags, PHYSMAP_NO_CACHE, PHYSMAP_WRITE, Packet, SchemeBlockMut, EventFlags};
+use syscall::{PHYSMAP_NO_CACHE, PHYSMAP_WRITE, Packet, SchemeBlockMut, EventFlags};
 use std::cell::RefCell;
 use std::sync::Arc;
 
@@ -93,7 +93,7 @@ fn main() {
 	print!("{}", format!(" + ihda {} on: {:X} size: {} IRQ: {}\n", name, bar, bar_size, irq));
 
 	// Daemonize
-	if unsafe { syscall::clone(CloneFlags::empty()).unwrap() } == 0 {
+  redox_daemon::Daemon::new(move |daemon| {
 	    let _logger_ref = setup_logging();
 
 		let address = unsafe {
@@ -108,6 +108,7 @@ fn main() {
 			let device = Arc::new(RefCell::new(unsafe { hda::IntelHDA::new(address, vend_prod).expect("ihdad: failed to allocate device") }));
 			let socket_fd = syscall::open(":hda", syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK).expect("IHDA: failed to create hda scheme");
 			let socket = Arc::new(RefCell::new(unsafe { File::from_raw_fd(socket_fd as RawFd) }));
+      daemon.ready().expect("IHDA: failed to signal readiness");
 
 			let mut event_queue = EventQueue::<usize>::new().expect("IHDA: Could not create event queue.");
 
@@ -220,5 +221,6 @@ fn main() {
 		}
 
 		unsafe { let _ = syscall::physunmap(address); }
-	}
+    std::process::exit(0);
+	}).expect("IHDA: failed to daemonize");
 }
