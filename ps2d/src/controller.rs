@@ -286,7 +286,7 @@ impl Ps2 {
             // Reset keyboard
             b = self.keyboard_command(KeyboardCommand::Reset)?;
             if b == 0xFA {
-                b = self.read()?;
+                b = self.read().unwrap_or(0);
                 if b != 0xAA {
                     eprintln!("ps2d: keyboard failed self test: {:02X}", b);
                 }
@@ -334,17 +334,17 @@ impl Ps2 {
                     b = x.read()?;
                     if b != 0xAA {
                         eprintln!("ps2d: mouse failed self test 1: {:02X}", b);
-                        return Err(Error::CommandRetry);
+                        //return Err(Error::CommandRetry);
                     }
 
                     b = x.read()?;
                     if b != 0x00 {
                         eprintln!("ps2d: mouse failed self test 2: {:02X}", b);
-                        return Err(Error::CommandRetry);
+                        //return Err(Error::CommandRetry);
                     }
                 } else {
                     eprintln!("ps2d: mouse failed to reset: {:02X}", b);
-                    return Err(Error::CommandRetry);
+                    //return Err(Error::CommandRetry);
                 }
 
                 // Clear remaining data
