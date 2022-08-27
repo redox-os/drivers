@@ -114,7 +114,7 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle, address: usize) -> (Option
     if msi_enabled && !msix_enabled {
         use pcid_interface::msi::x86_64::{DeliveryMode, self as x86_64_msix};
 
-        let mut capability = match pcid_handle.feature_info(PciFeature::MsiX).expect("xhcid: failed to retrieve the MSI capability structure from pcid") {
+        let mut capability = match pcid_handle.feature_info(PciFeature::Msi).expect("xhcid: failed to retrieve the MSI capability structure from pcid") {
             PciFeatureInfo::Msi(s) => s,
             PciFeatureInfo::MsiX(_) => panic!(),
         };
