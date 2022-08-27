@@ -276,6 +276,8 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         File::from_raw_fd(socket_fd as RawFd)
     }));
 
+    daemon.ready().expect("xhcid: failed to notify parent");
+
     let hci = Arc::new(Xhci::new(scheme_name, address, interrupt_method, pcid_handle).expect("xhcid: failed to allocate device"));
     xhci::start_irq_reactor(&hci, irq_file);
     futures::executor::block_on(hci.probe()).expect("xhcid: failed to probe");
@@ -284,8 +286,6 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         EventQueue::<()>::new().expect("xhcid: failed to create event queue");
 
     syscall::setrens(0, 0).expect("xhcid: failed to enter null namespace");
-
-    daemon.ready().expect("xhcid: failed to notify parent");
 
     let todo = Arc::new(Mutex::new(Vec::<Packet>::new()));
     let todo_futures = Arc::new(Mutex::new(Vec::<Pin<Box<dyn Future<Output = usize> + Send + Sync + 'static>>>::new()));
