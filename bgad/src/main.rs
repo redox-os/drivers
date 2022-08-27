@@ -41,6 +41,8 @@ fn main() {
             display: File::open("display:input").ok()
         };
 
+        scheme.update_size();
+
         syscall::setrens(0, 0).expect("bgad: failed to enter null namespace");
 
         daemon.ready().expect("bgad: failed to notify parent");

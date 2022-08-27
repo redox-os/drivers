@@ -11,6 +11,17 @@ pub struct BgaScheme {
     pub display: Option<File>,
 }
 
+impl BgaScheme {
+    pub fn update_size(&mut self) {
+        if let Some(ref mut display) = self.display {
+            let _ = display.write(&orbclient::ResizeEvent {
+                width: self.bga.width() as u32,
+                height: self.bga.height() as u32,
+            }.to_event());
+        }
+    }
+}
+
 impl SchemeMut for BgaScheme {
     fn open(&mut self, _path: &str, _flags: usize, uid: u32, _gid: u32) -> Result<usize> {
         if uid == 0 {
@@ -58,12 +69,7 @@ impl SchemeMut for BgaScheme {
 
         self.bga.set_size(width, height);
 
-        if let Some(ref mut display) = self.display {
-            let _ = display.write(&orbclient::ResizeEvent {
-                width: width as u32,
-                height: height as u32,
-            }.to_event());
-        }
+        self.update_size();
 
         Ok(buf.len())
     }
