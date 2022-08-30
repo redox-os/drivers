@@ -127,7 +127,7 @@ impl NvmeCmd {
     pub fn io_read(cid: u16, nsid: u32, lba: u64, blocks_1: u16, ptr0: u64, ptr1: u64) -> Self {
         Self {
             opcode: 2,
-            flags: 1 << 6,
+            flags: 0,
             cid,
             nsid,
             _rsvd: 0,
@@ -145,7 +145,7 @@ impl NvmeCmd {
     pub fn io_write(cid: u16, nsid: u32, lba: u64, blocks_1: u16, ptr0: u64, ptr1: u64) -> Self {
         Self {
             opcode: 1,
-            flags: 1 << 6,
+            flags: 0,
             cid,
             nsid,
             _rsvd: 0,
