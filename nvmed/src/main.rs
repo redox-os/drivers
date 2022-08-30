@@ -348,18 +348,19 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     let mut scheme = DiskScheme::new(scheme_name, nvme, namespaces);
     let mut todo = Vec::new();
-    'running: loop {
-        loop {
-            let mut packet = Packet::default();
-            match socket_file.read(&mut packet) {
-                Ok(0) => break 'running,
-                Ok(_) => (),
-                Err(err) => match err.kind() {
-                    ErrorKind::WouldBlock => break,
-                    _ => Err(err).expect("nvmed: failed to read disk scheme"),
-                },
-            }
-            todo.push(packet);
+    loop {
+        let mut packet = Packet::default();
+        match socket_file.read(&mut packet) {
+            Ok(0) => {
+                break;
+            },
+            Ok(_) => {
+                todo.push(packet);
+            },
+            Err(err) => match err.kind() {
+                ErrorKind::WouldBlock => break,
+                _ => Err(err).expect("nvmed: failed to read disk scheme"),
+            },
         }
 
         let mut i = 0;
