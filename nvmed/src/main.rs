@@ -321,30 +321,16 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         bar_size: bar_size as usize,
         ptr: NonNull::new(address as *mut u8).expect("Physmapping BAR gave nullptr"),
     });
-    let event_fd = syscall::open("event:", syscall::O_RDWR | syscall::O_CLOEXEC)
-        .expect("nvmed: failed to open event queue");
-    let mut event_file = unsafe { File::from_raw_fd(event_fd as RawFd) };
 
     let scheme_name = format!("disk/{}", name);
     let socket_fd = syscall::open(
         &format!(":{}", scheme_name),
-        syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK | syscall::O_CLOEXEC,
+        syscall::O_RDWR | syscall::O_CREAT | syscall::O_CLOEXEC,
     )
     .expect("nvmed: failed to create disk scheme");
+    let mut socket_file = unsafe { File::from_raw_fd(socket_fd as RawFd) };
 
     daemon.ready().expect("nvmed: failed to signal readiness");
-
-    syscall::write(
-        event_fd,
-        &syscall::Event {
-            id: socket_fd,
-            flags: syscall::EVENT_READ,
-            data: 0,
-        },
-    )
-    .expect("nvmed: failed to watch disk scheme events");
-
-    let mut socket_file = unsafe { File::from_raw_fd(socket_fd as RawFd) };
 
     let (reactor_sender, reactor_receiver) = crossbeam_channel::unbounded();
     let (interrupt_method, interrupt_sources) =
@@ -362,32 +348,18 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     let mut scheme = DiskScheme::new(scheme_name, nvme, namespaces);
     let mut todo = Vec::new();
-    'events: loop {
-        let mut event = Event::default();
-        if event_file
-            .read(&mut event)
-            .expect("nvmed: failed to read event queue")
-            == 0
-        {
-            break;
-        }
-
-        match event.data {
-            0 => loop {
-                let mut packet = Packet::default();
-                match socket_file.read(&mut packet) {
-                    Ok(0) => break 'events,
-                    Ok(_) => (),
-                    Err(err) => match err.kind() {
-                        ErrorKind::WouldBlock => break,
-                        _ => Err(err).expect("nvmed: failed to read disk scheme"),
-                    },
-                }
-                todo.push(packet);
-            },
-            unknown => {
-                panic!("nvmed: unknown event data {}", unknown);
+    'running: loop {
+        loop {
+            let mut packet = Packet::default();
+            match socket_file.read(&mut packet) {
+                Ok(0) => break 'running,
+                Ok(_) => (),
+                Err(err) => match err.kind() {
+                    ErrorKind::WouldBlock => break,
+                    _ => Err(err).expect("nvmed: failed to read disk scheme"),
+                },
             }
+            todo.push(packet);
         }
 
         let mut i = 0;
