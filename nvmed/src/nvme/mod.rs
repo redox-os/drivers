@@ -8,7 +8,7 @@ use std::sync::{Mutex, RwLock};
 use crossbeam_channel::Sender;
 use smallvec::{smallvec, SmallVec};
 
-use syscall::error::{Error, Result, EINVAL};
+use syscall::error::{Error, Result, EINVAL, EIO};
 use syscall::io::{Dma, Io, Mmio};
 
 pub mod cmd;
@@ -542,9 +542,13 @@ impl Nvme {
                 NvmeCmd::io_read(cid, nsid, lba, blocks_1, ptr0, ptr1)
             }
         });
-        // TODO: Handle errors
-
-        Ok(())
+        let status = comp.status >> 1;
+        if status == 0 {
+            Ok(())
+        } else {
+            log::error!("command failed with status {:#x}", status);
+            Err(Error::new(EIO))
+        }
     }
 
     pub fn namespace_read(
