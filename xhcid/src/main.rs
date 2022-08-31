@@ -87,7 +87,7 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle, address: usize) -> (Option
     let pci_config = pcid_handle.fetch_config().expect("xhcid: failed to fetch config");
 
     let bar = pci_config.func.bars[0];
-    let bar_size = pci_config.func.bar_sizes[0];
+    let bar_size = pci_config.func.bar_sizes[0] as u64;
     let irq = pci_config.func.legacy_interrupt_line;
 
     let bar_ptr = match bar {
@@ -159,11 +159,11 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle, address: usize) -> (Option
 
         let pba_base = capability.pba_base_pointer(pci_config.func.bars);
 
-        if !(bar_ptr..bar_ptr + bar_size).contains(&(table_base as u32 + table_min_length as u32)) {
+        if !(bar_ptr..bar_ptr + bar_size).contains(&(table_base as u64 + table_min_length as u64)) {
             panic!("Table {:#x}{:#x} outside of BAR {:#x}:{:#x}", table_base, table_base + table_min_length as usize, bar_ptr, bar_ptr + bar_size);
         }
 
-        if !(bar_ptr..bar_ptr + bar_size).contains(&(pba_base as u32 + pba_min_length as u32)) {
+        if !(bar_ptr..bar_ptr + bar_size).contains(&(pba_base as u64 + pba_min_length as u64)) {
             panic!("PBA {:#x}{:#x} outside of BAR {:#x}:{:#X}", pba_base, pba_base + pba_min_length as usize, bar_ptr, bar_ptr + bar_size);
         }
 

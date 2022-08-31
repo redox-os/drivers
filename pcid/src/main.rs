@@ -325,6 +325,7 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, bus_num: u8,
             };
 
             // Find BAR sizes
+            //TODO: support 64-bit BAR sizes?
             let mut bars = [PciBar::None; 6];
             let mut bar_sizes = [0; 6];
             unsafe {
