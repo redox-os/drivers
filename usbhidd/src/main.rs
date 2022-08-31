@@ -305,7 +305,8 @@ fn main() {
 
     let (mut global_state, mut local_state, mut stack) = (GlobalItemsState::default(), LocalItemsState::default(), Vec::new());
 
-    let (_, application_collection, application_global_state, application_local_state) = report_desc.iter().filter_map(|item: &ReportIterItem|
+    let (_, application_collection, application_global_state, application_local_state) = report_desc.iter().filter_map(|item: &ReportIterItem| {
+        println!("1: {:?}", item);
         match item {
             &ReportIterItem::Item(ref item) => {
                 report_desc::update_global_state(&mut global_state, &mut stack, item).unwrap();
@@ -317,26 +318,36 @@ fn main() {
                 Some((n, collection, global_state, lc_state))
             }
         }
-    ).find(|&(n, _, _, _)| n == MainCollectionFlags::Application as u8).expect("Failed to find application collection");
+    }).find(|&(n, _, _, _)| n == MainCollectionFlags::Application as u8).expect("Failed to find application collection");
 
     // Get all main items, and their global item options.
     {
-        let items = application_collection.iter().filter_map(ReportIterItem::as_item).filter_map(|item| match item {
-            ReportItem::Global(_) => {
-                report_desc::update_global_state(&mut global_state, &mut stack, item).unwrap();
-                None
+        let items = application_collection.iter().filter_map(|item| {
+            println!("2: {:?}", item);
+            match item {
+                ReportIterItem::Item(ref item) => match item {
+                    ReportItem::Global(_) => {
+                        report_desc::update_global_state(&mut global_state, &mut stack, item).unwrap();
+                        None
+                    }
+                    ReportItem::Main(m) => {
+                        let lc_state = std::mem::replace(&mut local_state, LocalItemsState::default());
+                        Some((global_state, lc_state, m))
+                    }
+                    ReportItem::Local(_) => {
+                        report_desc::update_local_state(&mut local_state, item);
+                        None
+                    },
+                },
+                //TODO
+                _ => {
+                    None
+                }
             }
-            ReportItem::Main(m) => {
-                let lc_state = std::mem::replace(&mut local_state, LocalItemsState::default());
-                Some((global_state, lc_state, m))
-            }
-            ReportItem::Local(_) => {
-                report_desc::update_local_state(&mut local_state, item);
-                None
-            },
         });
         let mut bit_offset = 0;
         let inputs = items.filter_map(|(global_state, local_state, item)| {
+            println!("3: {:?}", item);
             let report_size = match global_state.report_size {
                 Some(s) => s,
                 None => return None,
