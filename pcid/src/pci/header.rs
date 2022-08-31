@@ -91,6 +91,33 @@ pub enum PciHeader {
 }
 
 impl PciHeader {
+    fn get_bars(bytes: &[u8], bars: &mut [PciBar]) {
+        let mut i = 0;
+        while i < bars.len() {
+            let offset = i * 4;
+            let bar_bytes = match bytes.get(offset..offset + 4) {
+                Some(some) => some,
+                None => continue,
+            };
+
+            match PciBar::from(LittleEndian::read_u32(bar_bytes)) {
+                PciBar::Memory64(mut addr) => {
+                    let high_bytes = match bytes.get(offset + 4..offset + 8) {
+                        Some(some) => some,
+                        None => continue,
+                    };
+                    addr |= (LittleEndian::read_u32(high_bytes) as u64) << 32;
+                    bars[i] = PciBar::Memory64(addr);
+                    i += 2;
+                },
+                bar => {
+                    bars[i] = bar;
+                    i += 1;
+                }
+            }
+        }
+    }
+
     /// Parse the bytes found in the Configuration Space of the PCI device into
     /// a more usable PciHeader.
     pub fn from_reader<T: ConfigReader>(reader: T) -> Result<PciHeader, PciHeaderError> {
@@ -112,14 +139,8 @@ impl PciHeader {
             match header_type & PciHeaderType::HEADER_TYPE {
                 PciHeaderType::GENERAL => {
                     let bytes = unsafe { reader.read_range(16, 48) };
-                    let bars = [
-                        PciBar::from(LittleEndian::read_u32(&bytes[0..4])),
-                        PciBar::from(LittleEndian::read_u32(&bytes[4..8])),
-                        PciBar::from(LittleEndian::read_u32(&bytes[8..12])),
-                        PciBar::from(LittleEndian::read_u32(&bytes[12..16])),
-                        PciBar::from(LittleEndian::read_u32(&bytes[16..20])),
-                        PciBar::from(LittleEndian::read_u32(&bytes[20..24])),
-                    ];
+                    let mut bars = [PciBar::None; 6];
+                    Self::get_bars(&bytes, &mut bars);
                     let cardbus_cis_ptr = LittleEndian::read_u32(&bytes[24..28]);
                     let subsystem_vendor_id = LittleEndian::read_u16(&bytes[28..30]);
                     let subsystem_id = LittleEndian::read_u16(&bytes[30..32]);
@@ -139,10 +160,8 @@ impl PciHeader {
                 },
                 PciHeaderType::PCITOPCI => {
                     let bytes = unsafe { reader.read_range(16, 48) };
-                    let bars = [
-                        PciBar::from(LittleEndian::read_u32(&bytes[0..4])),
-                        PciBar::from(LittleEndian::read_u32(&bytes[4..8])),
-                    ];
+                    let mut bars = [PciBar::None; 2];
+                    Self::get_bars(&bytes, &mut bars);
                     let primary_bus_num = bytes[8];
                     let secondary_bus_num = bytes[9];
                     let subordinate_bus_num = bytes[10];
@@ -323,10 +342,10 @@ mod test {
         assert_eq!(header.class(), PciClass::Network);
         assert_eq!(header.subclass(), 0);
         assert_eq!(header.bars().len(), 6);
-        assert_eq!(header.get_bar(0), PciBar::Memory(0xf7500000));
+        assert_eq!(header.get_bar(0), PciBar::Memory32(0xf7500000));
         assert_eq!(header.get_bar(1), PciBar::None);
         assert_eq!(header.get_bar(2), PciBar::Port(0xb000));
-        assert_eq!(header.get_bar(3), PciBar::Memory(0xf7580000));
+        assert_eq!(header.get_bar(3), PciBar::Memory32(0xf7580000));
         assert_eq!(header.get_bar(4), PciBar::None);
         assert_eq!(header.get_bar(5), PciBar::None);
         assert_eq!(header.interrupt_line(), 10);

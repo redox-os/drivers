@@ -88,7 +88,11 @@ fn get_int_method(
                 &mut Some(ref bar) => Ok(bar.ptr),
                 bar_to_set @ &mut None => {
                     let bar = match function.bars[bir] {
-                        PciBar::Memory(addr) => match addr {
+                        PciBar::Memory32(addr) => match addr {
+                            0 => panic!("BAR {} is mapped to address 0", bir),
+                            _ => addr as u64,
+                        },
+                        PciBar::Memory64(addr) => match addr {
                             0 => panic!("BAR {} is mapped to address 0", bir),
                             _ => addr,
                         },
@@ -292,7 +296,11 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         .expect("nvmed: failed to fetch config");
 
     let bar = match pci_config.func.bars[0] {
-        PciBar::Memory(mem) => match mem {
+        PciBar::Memory32(mem) => match mem {
+            0 => panic!("BAR 0 is mapped to address 0"),
+            _ => mem as u64,
+        },
+        PciBar::Memory64(mem) => match mem {
             0 => panic!("BAR 0 is mapped to address 0"),
             _ => mem,
         },

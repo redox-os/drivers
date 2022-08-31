@@ -91,7 +91,11 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle, address: usize) -> (Option
     let irq = pci_config.func.legacy_interrupt_line;
 
     let bar_ptr = match bar {
-        pcid_interface::PciBar::Memory(ptr) => match ptr {
+        pcid_interface::PciBar::Memory32(ptr) => match ptr {
+            0 => panic!("BAR 0 is mapped to address 0"),
+            _ => ptr as u64,
+        },
+        pcid_interface::PciBar::Memory64(ptr) => match ptr {
             0 => panic!("BAR 0 is mapped to address 0"),
             _ => ptr,
         },
@@ -247,7 +251,11 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     name.push_str("_xhci");
 
     let bar_ptr = match bar {
-        pcid_interface::PciBar::Memory(ptr) => match ptr {
+        pcid_interface::PciBar::Memory32(ptr) => match ptr {
+            0 => panic!("BAR 0 is mapped to address 0"),
+            _ => ptr as u64,
+        },
+        pcid_interface::PciBar::Memory64(ptr) => match ptr {
             0 => panic!("BAR 0 is mapped to address 0"),
             _ => ptr,
         },

@@ -291,10 +291,17 @@ impl MsixCapability {
         }
         let base = bars[usize::from(self.table_bir())];
 
-        if let PciBar::Memory(ptr) = base {
-            ptr as usize + self.table_offset() as usize
-        } else {
-            panic!("MSI-X Table BIR referenced a non-memory BAR: {:?}", base);
+        //TODO: ensure type conversions are safe
+        match base {
+            PciBar::Memory32(ptr) => {
+                ptr as usize + self.table_offset() as usize
+            },
+            PciBar::Memory64(ptr) => {
+                ptr as usize + self.table_offset() as usize
+            },
+            _ => {
+                panic!("MSI-X Table BIR referenced a non-memory BAR: {:?}", base);
+            }
         }
     }
     pub fn table_pointer(&self, bars: [PciBar; 6], k: u16) -> usize {
@@ -307,10 +314,17 @@ impl MsixCapability {
         }
         let base = bars[usize::from(self.pba_bir())];
 
-        if let PciBar::Memory(ptr) = base {
-            ptr as usize + self.pba_offset() as usize
-        } else {
-            panic!("MSI-X PBA BIR referenced a non-memory BAR: {:?}", base);
+        //TODO: ensure type conversions are safe
+        match base {
+            PciBar::Memory32(ptr) => {
+                ptr as usize + self.pba_offset() as usize
+            },
+            PciBar::Memory64(ptr) => {
+                ptr as usize + self.pba_offset() as usize
+            },
+            _ => {
+                panic!("MSI-X PBA BIR referenced a non-memory BAR: {:?}", base);
+            }
         }
     }
     pub fn pba_pointer_dword(&self, bars: [PciBar; 6], k: u16) -> usize {
