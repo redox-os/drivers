@@ -17,3 +17,7 @@ smallvec = "1"
 block-io-wrapper = { path = "../block-io-wrapper" }
 
 pcid = { path = "../pcid" }
+
+[features]
+default = []
+async = []

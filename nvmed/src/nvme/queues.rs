@@ -62,8 +62,18 @@ impl NvmeCompQueue {
     }
 
     /// Get a new completion queue entry, or return None if no entry is available yet.
-    pub(crate) fn complete(&mut self) -> Option<(u16, NvmeComp)> {
+    pub(crate) fn complete(&mut self, cmd_opt: Option<(u16, NvmeCmd)>) -> Option<(u16, NvmeComp)> {
         let entry = unsafe { ptr::read_volatile(self.data.as_ptr().add(self.head as usize)) };
+
+        //HACK FOR SOMETIMES RETURNING INVALID DATA ON QEMU!
+        if let Some((sq_id, cmd)) = cmd_opt {
+            if entry.sq_id != sq_id
+            || entry.cid != cmd.cid
+            {
+                return None;
+            }
+        }
+
         if ((entry.status & 1) == 1) == self.phase {
             self.head = (self.head + 1) % (self.data.len() as u16);
             if self.head == 0 {
@@ -76,10 +86,10 @@ impl NvmeCompQueue {
     }
 
     /// Get a new CQ entry, busy waiting until an entry appears.
-    fn complete_spin(&mut self) -> (u16, NvmeComp) {
+    fn complete_spin(&mut self, cmd_opt: Option<(u16, NvmeCmd)>) -> (u16, NvmeComp) {
         log::debug!("Waiting for new CQ entry");
         loop {
-            if let Some(some) = self.complete() {
+            if let Some(some) = self.complete(cmd_opt) {
                 return some;
             } else {
                 unsafe { super::pause(); }

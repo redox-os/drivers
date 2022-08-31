@@ -141,7 +141,7 @@ impl CqReactor {
             let mut completion_queue_guard = cqs_read_guard.get(&cq_id)?.lock().unwrap();
             let &mut (ref mut completion_queue, _) = &mut *completion_queue_guard;
 
-            while let Some((head, entry)) = completion_queue.complete() {
+            while let Some((head, entry)) = completion_queue.complete(None) {
                 unsafe { self.nvme.completion_queue_head(cq_id, head) };
 
                 log::trace!("Got completion queue entry (CQID {}): {:?} at {}", cq_id, entry, head);

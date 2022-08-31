@@ -349,6 +349,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     unsafe { nvme.init() }
     log::debug!("Finished base initialization");
     let nvme = Arc::new(nvme);
+    #[cfg(feature = "async")]
     let reactor_thread = nvme::cq_reactor::start_cq_reactor_thread(Arc::clone(&nvme), interrupt_sources, reactor_receiver);
     let namespaces = nvme.init_with_queues();
 
@@ -386,6 +387,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     }
 
     //TODO: destroy NVMe stuff
+    #[cfg(feature = "async")]
     reactor_thread.join().expect("nvmed: failed to join reactor thread");
 
     std::process::exit(0);
