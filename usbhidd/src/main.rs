@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use std::env;
 use std::fs::File;
 use std::io::Write;
+use std::os::unix::io::AsRawFd;
 
 use bitflags::bitflags;
 use orbclient::KeyEvent as OrbKeyEvent;
@@ -108,7 +109,7 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
     }
 }
 
-fn send_key_event(orbital_socket: &mut File, usage_page: u32, usage: u8, pressed: bool, shift_opt: Option<bool>) {
+fn send_key_event(display: &mut File, usage_page: u32, usage: u8, pressed: bool, shift_opt: Option<bool>) {
     let scancode = match usage_page {
         0x07 => match usage {
             0x04 => orbclient::K_A,
@@ -215,7 +216,7 @@ fn send_key_event(orbital_socket: &mut File, usage_page: u32, usage: u8, pressed
             0xE0 => orbclient::K_CTRL, // TODO: left control
             0xE1 => orbclient::K_LEFT_SHIFT,
             0xE2 => orbclient::K_ALT,
-            // 0xE3 left super
+            0xE3 => 0x5B, // left super
             0xE4 => orbclient::K_CTRL, // TODO: right control
             0xE5 => orbclient::K_RIGHT_SHIFT,
             0xE6 => orbclient::K_ALT_GR,
@@ -245,7 +246,7 @@ fn send_key_event(orbital_socket: &mut File, usage_page: u32, usage: u8, pressed
         pressed,
     };
 
-    match orbital_socket.write(&key_event.to_event()) {
+    match display.write(&key_event.to_event()) {
         Ok(_) => (),
         Err(err) => {
             log::warn!("failed to send key event to orbital: {}", err);
@@ -391,7 +392,20 @@ fn main() {
         let report_ty = ReportTy::Input;
         let report_id = 0;
 
-        let mut orbital_socket = File::open("display:input").expect("Failed to open orbital input socket");
+        let mut display = File::open("display:input").expect("Failed to open orbital input socket");
+
+        //TODO: get dynamically
+        let mut display_width = 0;
+        let mut display_height = 0;
+        {
+            let mut buf = [0; 4096];
+            if let Ok(count) = syscall::fpath(display.as_raw_fd() as usize, &mut buf) {
+                let path = unsafe { String::from_utf8_unchecked(Vec::from(&buf[..count])) };
+                let res = path.split(":").nth(1).unwrap_or("");
+                display_width = res.split("/").nth(1).unwrap_or("").parse::<u32>().unwrap_or(0);
+                display_height = res.split("/").nth(2).unwrap_or("").parse::<u32>().unwrap_or(0);
+            }
+        }
 
         let mut pressed_keys = Vec::<u8>::new();
         let mut last_pressed_keys = pressed_keys.clone();
@@ -433,32 +447,58 @@ fn main() {
                             }
                         }
                         log::trace!("Report variable {:#x?}", bits);
-                    } else if report_count == 3 && report_size == 8 && global_state.usage_page == Some(1) {
+                    } else if report_count == 2 && report_size == 16 && global_state.usage_page == Some(1) {
                         //TODO: Make this less hard-coded
-                        let vx = binary_view.read_u8(0).expect("Failed to read array item") as i8;
-                        let vy = binary_view.read_u8(8).expect("Failed to read array item") as i8;
-                        let vz = binary_view.read_u8(16).expect("Failed to read array item") as i8;
-                        log::trace!("Mouse {}, {}, {}", vx, vy, vz);
-                        if vx != 0 || vy != 0 {
-                            let mouse_event = orbclient::event::MouseRelativeEvent {
-                                dx: vx as i32,
-                                dy: vy as i32,
+                        let raw_x =
+                            binary_view.read_u8(0).expect("Failed to read array item") as u16 |
+                            (binary_view.read_u8(8).expect("Failed to read array item") as u16) << 8;
+                        let raw_y =
+                            binary_view.read_u8(16).expect("Failed to read array item") as u16 |
+                            (binary_view.read_u8(24).expect("Failed to read array item") as u16) << 8;
+
+                        let x = ((raw_x as u32) * display_width) / 32767;
+                        let y = ((raw_y as u32) * display_height) / 32767;
+
+                        log::trace!("Touchscreen {}, {} => {}, {}", raw_x, raw_y, x, y);
+                        if x != 0 || y != 0 {
+                            let mouse_event = orbclient::event::MouseEvent {
+                                x: x as i32,
+                                y: y as i32,
                             };
 
-                            match orbital_socket.write(&mouse_event.to_event()) {
+                            match display.write(&mouse_event.to_event()) {
                                 Ok(_) => (),
                                 Err(err) => {
                                     log::warn!("failed to send mouse event to orbital: {}", err);
                                 }
                             }
                         }
-                        if vz != 0 {
+                    } else if report_count == 3 && report_size == 8 && global_state.usage_page == Some(1) {
+                        //TODO: Make this less hard-coded
+                        let dx = binary_view.read_u8(0).expect("Failed to read array item") as i8;
+                        let dy = binary_view.read_u8(8).expect("Failed to read array item") as i8;
+                        let dz = binary_view.read_u8(16).expect("Failed to read array item") as i8;
+                        log::trace!("Mouse {}, {}, {}", dx, dy, dz);
+                        if dx != 0 || dy != 0 {
+                            let mouse_event = orbclient::event::MouseRelativeEvent {
+                                dx: dx as i32,
+                                dy: dy as i32,
+                            };
+
+                            match display.write(&mouse_event.to_event()) {
+                                Ok(_) => (),
+                                Err(err) => {
+                                    log::warn!("failed to send mouse event to orbital: {}", err);
+                                }
+                            }
+                        }
+                        if dz != 0 {
                             let scroll_event = orbclient::event::ScrollEvent {
-                                x: vz as i32,
+                                x: dz as i32,
                                 y: 0,
                             };
 
-                            match orbital_socket.write(&scroll_event.to_event()) {
+                            match display.write(&scroll_event.to_event()) {
                                 Ok(_) => (),
                                 Err(err) => {
                                     log::warn!("failed to send scroll event to orbital: {}", err);
@@ -480,7 +520,7 @@ fn main() {
                                 middle,
                             };
 
-                            match orbital_socket.write(&button_event.to_event()) {
+                            match display.write(&button_event.to_event()) {
                                 Ok(_) => (),
                                 Err(err) => {
                                     log::warn!("failed to send button event to orbital: {}", err);
@@ -513,14 +553,14 @@ fn main() {
             for usage in last_pressed_keys.iter() {
                 if ! pressed_keys.contains(usage) {
                     log::debug!("Released {:#x}", usage);
-                    send_key_event(&mut orbital_socket, global_state.usage_page.unwrap_or(0), *usage, false, None);
+                    send_key_event(&mut display, global_state.usage_page.unwrap_or(0), *usage, false, None);
                 }
             }
 
             for usage in pressed_keys.iter() {
                 if ! last_pressed_keys.contains(usage) {
                     log::debug!("Pressed {:#x}", usage);
-                    send_key_event(&mut orbital_socket, global_state.usage_page.unwrap_or(0), *usage, true, Some(
+                    send_key_event(&mut display, global_state.usage_page.unwrap_or(0), *usage, true, Some(
                         pressed_keys.contains(&0xE1) || pressed_keys.contains(&0xE5)
                     ));
                 }
