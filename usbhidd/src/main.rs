@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::env;
 use std::fs::File;
 use std::io::Write;
@@ -306,7 +307,7 @@ fn main() {
     let (mut global_state, mut local_state, mut stack) = (GlobalItemsState::default(), LocalItemsState::default(), Vec::new());
 
     let (_, application_collection, application_global_state, application_local_state) = report_desc.iter().filter_map(|item: &ReportIterItem| {
-        println!("1: {:?}", item);
+        log::trace!("1: {:?}", item);
         match item {
             &ReportIterItem::Item(ref item) => {
                 report_desc::update_global_state(&mut global_state, &mut stack, item).unwrap();
@@ -322,32 +323,35 @@ fn main() {
 
     // Get all main items, and their global item options.
     {
-        let items = application_collection.iter().filter_map(|item| {
-            println!("2: {:?}", item);
-            match item {
-                ReportIterItem::Item(ref item) => match item {
-                    ReportItem::Global(_) => {
-                        report_desc::update_global_state(&mut global_state, &mut stack, item).unwrap();
-                        None
-                    }
-                    ReportItem::Main(m) => {
-                        let lc_state = std::mem::replace(&mut local_state, LocalItemsState::default());
-                        Some((global_state, lc_state, m))
-                    }
-                    ReportItem::Local(_) => {
-                        report_desc::update_local_state(&mut local_state, item);
-                        None
+        let mut collections = VecDeque::new();
+        collections.push_back(application_collection);
+        let mut items = Vec::new();
+        while let Some(collection) = collections.pop_front() {
+            for item in collection {
+                log::trace!("2: {:?}", item);
+                match item {
+                    ReportIterItem::Item(item) => match item {
+                        ReportItem::Global(_) => {
+                            report_desc::update_global_state(&mut global_state, &mut stack, item).unwrap();
+                        }
+                        ReportItem::Main(m) => {
+                            let lc_state = std::mem::replace(&mut local_state, LocalItemsState::default());
+                            items.push((global_state, lc_state, m));
+                        }
+                        ReportItem::Local(_) => {
+                            report_desc::update_local_state(&mut local_state, item);
+                        },
                     },
-                },
-                //TODO
-                _ => {
-                    None
+                    //TODO: does local state need to be different for inner collections?
+                    ReportIterItem::Collection(_, collection) => {
+                        collections.push_back(collection);
+                    },
                 }
             }
-        });
+        }
         let mut bit_offset = 0;
-        let inputs = items.filter_map(|(global_state, local_state, item)| {
-            println!("3: {:?}", item);
+        let inputs = items.iter().filter_map(|(global_state, local_state, item)| {
+            log::trace!("3: {:?}", item);
             let report_size = match global_state.report_size {
                 Some(s) => s,
                 None => return None,
@@ -356,17 +360,24 @@ fn main() {
                 Some(c) => c,
                 None => return None,
             };
-            if global_state.usage_page != Some(0x7) {
-                log::warn!("Unsupported usage page: {:#x?}", global_state.usage_page);
-                return None;
-            }
+
             let bit_length = report_size * report_count;
 
             let offset = bit_offset;
             bit_offset += bit_length;
 
+            match global_state.usage_page {
+                Some(1) => (),
+                Some(7) => (),
+                Some(9) => (),
+                _ => {
+                    log::warn!("Unsupported usage page: {:?}", global_state.usage_page);
+                    return None;
+                }
+            }
+
             if let &MainItem::Input(flags) = item {
-                Some((bit_length, offset, global_state, local_state, MainItemFlags::from_bits_truncate(flags)))
+                Some((bit_length, offset, global_state, local_state, MainItemFlags::from_bits_truncate(*flags)))
             } else {
                 None
             }
@@ -384,6 +395,7 @@ fn main() {
 
         let mut pressed_keys = Vec::<u8>::new();
         let mut last_pressed_keys = pressed_keys.clone();
+        let mut last_buttons = (false, false, false);
 
         loop {
             std::thread::sleep(std::time::Duration::from_millis(10));
@@ -413,7 +425,7 @@ fn main() {
 
                     let binary_view = BinaryView::new(&report_buffer, bit_offset as usize, bit_length as usize);
 
-                    if report_count == 8 && report_size == 1 && local_state.usage_min == Some(224) && local_state.usage_max == Some(231) && global_state.logical_min == Some(0)  && global_state.logical_max == Some(1) {
+                    if report_count == 8 && report_size == 1 && global_state.usage_page == Some(7) && local_state.usage_min == Some(224) && local_state.usage_max == Some(231) && global_state.logical_min == Some(0)  && global_state.logical_max == Some(1) {
                         let bits = binary_view.read_u8(0).expect("Failed to read array item");
                         for bit in 0..8 {
                             if bits & (1 << bit) > 0 {
@@ -421,21 +433,78 @@ fn main() {
                             }
                         }
                         log::trace!("Report variable {:#x?}", bits);
+                    } else if report_count == 3 && report_size == 8 && global_state.usage_page == Some(1) {
+                        //TODO: Make this less hard-coded
+                        let vx = binary_view.read_u8(0).expect("Failed to read array item") as i8;
+                        let vy = binary_view.read_u8(8).expect("Failed to read array item") as i8;
+                        let vz = binary_view.read_u8(16).expect("Failed to read array item") as i8;
+                        log::trace!("Mouse {}, {}, {}", vx, vy, vz);
+                        if vx != 0 || vy != 0 {
+                            let mouse_event = orbclient::event::MouseRelativeEvent {
+                                dx: vx as i32,
+                                dy: vy as i32,
+                            };
+
+                            match orbital_socket.write(&mouse_event.to_event()) {
+                                Ok(_) => (),
+                                Err(err) => {
+                                    log::warn!("failed to send mouse event to orbital: {}", err);
+                                }
+                            }
+                        }
+                        if vz != 0 {
+                            let scroll_event = orbclient::event::ScrollEvent {
+                                x: vz as i32,
+                                y: 0,
+                            };
+
+                            match orbital_socket.write(&scroll_event.to_event()) {
+                                Ok(_) => (),
+                                Err(err) => {
+                                    log::warn!("failed to send scroll event to orbital: {}", err);
+                                }
+                            }
+                        }
+                    } else if report_count == 3 && report_size == 1 && global_state.usage_page == Some(9) {
+                        //TODO: Make this less hard-coded
+                        let left = binary_view.get(0).expect("Failed to read array item");
+                        let right = binary_view.get(1).expect("Failed to read array item");
+                        let middle = binary_view.get(2).expect("Failed to read array item");
+                        log::trace!("Left {}, Right {}, Middle {}", left, right, middle);
+                        if last_buttons != (left, right, middle) {
+                            last_buttons = (left, right, middle);
+
+                            let button_event = orbclient::event::ButtonEvent {
+                                left,
+                                right,
+                                middle,
+                            };
+
+                            match orbital_socket.write(&button_event.to_event()) {
+                                Ok(_) => (),
+                                Err(err) => {
+                                    log::warn!("failed to send button event to orbital: {}", err);
+                                }
+                            }
+                        }
                     } else {
-                        log::warn!("unknown report variable item");
+                        log::trace!("Unknown report variable item: size {} count {} at {}", report_size, report_count, bit_offset);
                     }
                 } else {
                     // The item is an array.
 
                     log::trace!("INPUT FLAGS: {:?}", input);
-                    assert_eq!(report_size, 8);
-                    for report_index in 0..report_count as usize {
-                        let binary_view = BinaryView::new(&report_buffer, bit_offset as usize + report_index * report_size as usize, report_size as usize);
-                        let usage = binary_view.read_u8(0).expect("Failed to read array item");
-                        if usage != 0 {
-                            pressed_keys.push(usage);
+                    if report_size == 8 {
+                        for report_index in 0..report_count as usize {
+                            let binary_view = BinaryView::new(&report_buffer, bit_offset as usize + report_index * report_size as usize, report_size as usize);
+                            let usage = binary_view.read_u8(0).expect("Failed to read array item");
+                            if usage != 0 {
+                                pressed_keys.push(usage);
+                            }
+                            log::trace!("Report index array {}: {:#x}", report_index, usage);
                         }
-                        log::trace!("Report index array {}: {:#x}", report_index, usage);
+                    } else {
+                        log::trace!("Unknown report array item: size {} count {} at {}", report_size, report_count, bit_offset);
                     }
                 }
             }
