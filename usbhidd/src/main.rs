@@ -353,31 +353,21 @@ fn main() {
         let mut bit_offset = 0;
         let inputs = items.iter().filter_map(|(global_state, local_state, item)| {
             log::trace!("3: {:?}", item);
-            let report_size = match global_state.report_size {
-                Some(s) => s,
-                None => return None,
-            };
-            let report_count = match global_state.report_count {
-                Some(c) => c,
-                None => return None,
-            };
-
-            let bit_length = report_size * report_count;
-
-            let offset = bit_offset;
-            bit_offset += bit_length;
-
-            match global_state.usage_page {
-                Some(1) => (),
-                Some(7) => (),
-                Some(9) => (),
-                _ => {
-                    log::warn!("Unsupported usage page: {:?}", global_state.usage_page);
-                    return None;
-                }
-            }
 
             if let &MainItem::Input(flags) = item {
+                let report_size = match global_state.report_size {
+                    Some(s) => s,
+                    None => return None,
+                };
+                let report_count = match global_state.report_count {
+                    Some(c) => c,
+                    None => return None,
+                };
+
+                let bit_length = report_size * report_count;
+                let offset = bit_offset;
+                bit_offset += bit_length;
+
                 Some((bit_length, offset, global_state, local_state, MainItemFlags::from_bits_truncate(*flags)))
             } else {
                 None
@@ -407,7 +397,7 @@ fn main() {
             }
         }
 
-        let mut pressed_keys = Vec::<u8>::new();
+        let mut pressed_keys = Vec::<(u32, u8)>::new();
         let mut last_pressed_keys = pressed_keys.clone();
         let mut last_buttons = (false, false, false);
 
@@ -424,6 +414,14 @@ fn main() {
             for &(bit_length, bit_offset, global_state, local_state, input) in &inputs {
                 let report_size = global_state.report_size.unwrap();
                 let report_count = global_state.report_count.unwrap();
+
+                log::trace!(
+                    "size {} count {} at {} length {}",
+                    report_size,
+                    report_count,
+                    bit_offset,
+                    bit_length
+                );
 
                 // TODO: For now, the dynamic value usages cannot overlap with selector usages...
                 // for now.
@@ -443,7 +441,7 @@ fn main() {
                         let bits = binary_view.read_u8(0).expect("Failed to read array item");
                         for bit in 0..8 {
                             if bits & (1 << bit) > 0 {
-                                pressed_keys.push(0xE0 + bit);
+                                pressed_keys.push((0x07, 0xE0 + bit));
                             }
                         }
                         log::trace!("Report variable {:#x?}", bits);
@@ -539,7 +537,7 @@ fn main() {
                             let binary_view = BinaryView::new(&report_buffer, bit_offset as usize + report_index * report_size as usize, report_size as usize);
                             let usage = binary_view.read_u8(0).expect("Failed to read array item");
                             if usage != 0 {
-                                pressed_keys.push(usage);
+                                pressed_keys.push((global_state.usage_page.unwrap_or(0), usage));
                             }
                             log::trace!("Report index array {}: {:#x}", report_index, usage);
                         }
@@ -550,18 +548,18 @@ fn main() {
             }
 
 
-            for usage in last_pressed_keys.iter() {
-                if ! pressed_keys.contains(usage) {
-                    log::debug!("Released {:#x}", usage);
-                    send_key_event(&mut display, global_state.usage_page.unwrap_or(0), *usage, false, None);
+            for &(usage_page, usage) in last_pressed_keys.iter() {
+                if ! pressed_keys.contains(&(usage_page, usage)) {
+                    log::debug!("Released {:#x},{:#x}", usage_page, usage);
+                    send_key_event(&mut display, usage_page, usage, false, None);
                 }
             }
 
-            for usage in pressed_keys.iter() {
-                if ! last_pressed_keys.contains(usage) {
-                    log::debug!("Pressed {:#x}", usage);
-                    send_key_event(&mut display, global_state.usage_page.unwrap_or(0), *usage, true, Some(
-                        pressed_keys.contains(&0xE1) || pressed_keys.contains(&0xE5)
+            for &(usage_page, usage) in pressed_keys.iter() {
+                if ! last_pressed_keys.contains(&(usage_page, usage)) {
+                    log::debug!("Pressed {:#x},{:#x}", usage_page, usage);
+                    send_key_event(&mut display, usage_page, usage, true, Some(
+                        pressed_keys.contains(&(0x07, 0xE1)) || pressed_keys.contains(&(0x07, 0xE5))
                     ));
                 }
             }
