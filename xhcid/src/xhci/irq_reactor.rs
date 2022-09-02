@@ -122,9 +122,11 @@ impl IrqReactor {
 
                 if trb.completion_code() == TrbCompletionCode::Invalid as u8 {
                     self.pause();
-                    continue 'busy_waiting;
+                } else {
+                    break;
                 }
             }
+
             if self.check_event_ring_full(trb.clone()) { continue 'event_loop }
 
             self.handle_requests();
