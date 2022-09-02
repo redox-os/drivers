@@ -110,29 +110,35 @@ impl IrqReactor {
         debug!("Running IRQ reactor in polling mode.");
         let hci_clone = Arc::clone(&self.hci);
 
-        'event_loop: loop {
-            let mut event_ring_guard = hci_clone.primary_event_ring.lock().unwrap();
+        let mut event_trb_index = { hci_clone.primary_event_ring.lock().unwrap().ring.next_index() };
 
-            let index = event_ring_guard.ring.next_index();
+        'trb_loop: loop {
+            self.pause();
 
-            let mut trb;
+            let mut event_ring = hci_clone.primary_event_ring.lock().unwrap();
 
-            'busy_waiting: loop {
-                trb = &event_ring_guard.ring.trbs[index];
+            let event_trb = &mut event_ring.ring.trbs[event_trb_index];
 
-                if trb.completion_code() == TrbCompletionCode::Invalid as u8 {
-                    self.pause();
-                } else {
-                    break;
-                }
+            if event_trb.completion_code() == TrbCompletionCode::Invalid as u8 {
+                continue 'trb_loop;
             }
 
-            if self.check_event_ring_full(trb.clone()) { continue 'event_loop }
+            trace!("Found event TRB: {:?}", event_trb);
+
+            if self.check_event_ring_full(event_trb.clone()) {
+                info!("Had to resize event TRB, retrying...");
+                hci_clone.event_handler_finished();
+                continue 'trb_loop;
+            }
 
             self.handle_requests();
-            self.acknowledge(trb.clone());
+            self.acknowledge(event_trb.clone());
 
-            self.update_erdp(&*event_ring_guard);
+            event_trb.reserved(false);
+
+            self.update_erdp(&*event_ring);
+
+            event_trb_index = event_ring.ring.next_index();
         }
     }
     fn run_with_irq_file(mut self) {
