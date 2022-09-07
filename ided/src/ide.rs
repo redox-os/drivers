@@ -131,102 +131,116 @@ impl Disk for AtaDisk {
         self.size
     }
 
-    fn read(&mut self, block: u64, buffer: &mut [u8]) -> Result<Option<usize>> {
-        //TODO: support other LBA modes
-        assert!(block < 0x1_0000_0000_0000);
+    fn read(&mut self, start_block: u64, buffer: &mut [u8]) -> Result<Option<usize>> {
+        let mut count = 0;
+        for chunk in buffer.chunks_mut(65536) {
+            let block = start_block + (count as u64) / 512;
 
-        let sectors = buffer.len() / 512;
-        assert!(sectors < 0x1_0000);
+            //TODO: support other LBA modes
+            assert!(block < 0x1_0000_0000_0000);
 
-        let mut chan = self.chan.lock().unwrap();
+            let sectors = chunk.len() / 512;
+            assert!(sectors < 0x1_0000);
 
-        // Select drive
-        chan.device_select.write(0xE0 | (self.dev << 4));
+            let mut chan = self.chan.lock().unwrap();
 
-        // Set high sector count and LBA
-        //TODO: only if LBA mode is 48-bit
-        chan.control.writef(0x80, true);
-        chan.sector_count.write((sectors >> 8) as u8);
-        chan.lba_0.write((block >> 24) as u8);
-        chan.lba_1.write((block >> 32) as u8);
-        chan.lba_2.write((block >> 40) as u8);
-        chan.control.writef(0x80, false);
+            // Select drive
+            chan.device_select.write(0xE0 | (self.dev << 4));
 
-        // Set low sector count and LBA
-        chan.sector_count.write(sectors as u8);
-        chan.lba_0.write(block as u8);
-        chan.lba_1.write((block >> 8) as u8);
-        chan.lba_2.write((block >> 16) as u8);
+            // Set high sector count and LBA
+            //TODO: only if LBA mode is 48-bit
+            chan.control.writef(0x80, true);
+            chan.sector_count.write((sectors >> 8) as u8);
+            chan.lba_0.write((block >> 24) as u8);
+            chan.lba_1.write((block >> 32) as u8);
+            chan.lba_2.write((block >> 40) as u8);
+            chan.control.writef(0x80, false);
 
-        // Send command
-        //TODO: use DMA
-        chan.command.write(AtaCommand::ReadPioExt as u8);
+            // Set low sector count and LBA
+            chan.sector_count.write(sectors as u8);
+            chan.lba_0.write(block as u8);
+            chan.lba_1.write((block >> 8) as u8);
+            chan.lba_2.write((block >> 16) as u8);
 
-        // Read data
-        for sector in 0..sectors {
-            chan.polling(true)?;
+            // Send command
+            //TODO: use DMA
+            chan.command.write(AtaCommand::ReadPioExt as u8);
 
-            for i in 0..128 {
-                let data = chan.data32.read();
-                buffer[sector * 512 + i * 4 + 0] = (data >> 0) as u8;
-                buffer[sector * 512 + i * 4 + 1] = (data >> 8) as u8;
-                buffer[sector * 512 + i * 4 + 2] = (data >> 16) as u8;
-                buffer[sector * 512 + i * 4 + 3] = (data >> 24) as u8;
+            // Read data
+            for sector in 0..sectors {
+                chan.polling(true)?;
+
+                for i in 0..128 {
+                    let data = chan.data32.read();
+                    chunk[sector * 512 + i * 4 + 0] = (data >> 0) as u8;
+                    chunk[sector * 512 + i * 4 + 1] = (data >> 8) as u8;
+                    chunk[sector * 512 + i * 4 + 2] = (data >> 16) as u8;
+                    chunk[sector * 512 + i * 4 + 3] = (data >> 24) as u8;
+                }
             }
+
+            count += chunk.len();
         }
 
-        Ok(Some(sectors * 512))
+        Ok(Some(count))
     }
 
-    fn write(&mut self, block: u64, buffer: &[u8]) -> Result<Option<usize>> {
-        //TODO: support other LBA modes
-        assert!(block < 0x1_0000_0000_0000);
+    fn write(&mut self, start_block: u64, buffer: &[u8]) -> Result<Option<usize>> {
+        let mut count = 0;
+        for chunk in buffer.chunks(65536) {
+            let block = start_block + (count as u64) / 512;
 
-        let sectors = buffer.len() / 512;
-        assert!(sectors < 0x1_0000);
+            //TODO: support other LBA modes
+            assert!(block < 0x1_0000_0000_0000);
 
-        let mut chan = self.chan.lock().unwrap();
+            let sectors = chunk.len() / 512;
+            assert!(sectors < 0x1_0000);
 
-        // Select drive
-        chan.device_select.write(0xE0 | (self.dev << 4));
+            let mut chan = self.chan.lock().unwrap();
 
-        // Set high sector count and LBA
-        //TODO: only if LBA mode is 48-bit
-        chan.control.writef(0x80, true);
-        chan.sector_count.write((sectors >> 8) as u8);
-        chan.lba_0.write((block >> 24) as u8);
-        chan.lba_1.write((block >> 32) as u8);
-        chan.lba_2.write((block >> 40) as u8);
-        chan.control.writef(0x80, false);
+            // Select drive
+            chan.device_select.write(0xE0 | (self.dev << 4));
 
-        // Set low sector count and LBA
-        chan.sector_count.write(sectors as u8);
-        chan.lba_0.write(block as u8);
-        chan.lba_1.write((block >> 8) as u8);
-        chan.lba_2.write((block >> 16) as u8);
+            // Set high sector count and LBA
+            //TODO: only if LBA mode is 48-bit
+            chan.control.writef(0x80, true);
+            chan.sector_count.write((sectors >> 8) as u8);
+            chan.lba_0.write((block >> 24) as u8);
+            chan.lba_1.write((block >> 32) as u8);
+            chan.lba_2.write((block >> 40) as u8);
+            chan.control.writef(0x80, false);
 
-        // Send command
-        //TODO: use DMA
-        chan.command.write(AtaCommand::WritePioExt as u8);
+            // Set low sector count and LBA
+            chan.sector_count.write(sectors as u8);
+            chan.lba_0.write(block as u8);
+            chan.lba_1.write((block >> 8) as u8);
+            chan.lba_2.write((block >> 16) as u8);
 
-        // Write data
-        for sector in 0..sectors {
+            // Send command
+            //TODO: use DMA
+            chan.command.write(AtaCommand::WritePioExt as u8);
+
+            // Write data
+            for sector in 0..sectors {
+                chan.polling(false)?;
+
+                for i in 0..128 {
+                    chan.data32.write(
+                        ((chunk[sector * 512 + i * 4 + 0] as u32) << 0) |
+                        ((chunk[sector * 512 + i * 4 + 1] as u32) << 8) |
+                        ((chunk[sector * 512 + i * 4 + 2] as u32) << 16) |
+                        ((chunk[sector * 512 + i * 4 + 3] as u32) << 24)
+                    );
+                }
+            }
+
+            chan.command.write(AtaCommand::CacheFlushExt as u8);
             chan.polling(false)?;
 
-            for i in 0..128 {
-                chan.data32.write(
-                    ((buffer[sector * 512 + i * 4 + 0] as u32) << 0) |
-                    ((buffer[sector * 512 + i * 4 + 1] as u32) << 8) |
-                    ((buffer[sector * 512 + i * 4 + 2] as u32) << 16) |
-                    ((buffer[sector * 512 + i * 4 + 3] as u32) << 24)
-                );
-            }
+            count += chunk.len();
         }
 
-        chan.command.write(AtaCommand::CacheFlushExt as u8);
-        chan.polling(false)?;
-
-        Ok(Some(sectors * 512))
+        Ok(Some(count))
     }
 
     fn block_length(&mut self) -> Result<u32> {
