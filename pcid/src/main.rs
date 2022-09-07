@@ -68,6 +68,9 @@ impl DriverHandler {
             PcidClientRequest::RequestConfig => {
                 PcidClientResponse::Config(args.clone())
             }
+            PcidClientRequest::RequestHeader => {
+                PcidClientResponse::Header(self.header.clone())
+            }
             PcidClientRequest::RequestFeatures => {
                 PcidClientResponse::AllFeatures(self.capabilities.iter().filter_map(|(_, capability)| match capability {
                     PciCapability::Msi(msi) => Some((PciFeature::Msi, FeatureStatus::enabled(msi.enabled()))),

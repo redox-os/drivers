@@ -7,7 +7,7 @@ use std::os::unix::io::{FromRawFd, RawFd};
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use thiserror::Error;
 
-pub use crate::pci::PciBar;
+pub use crate::pci::{PciBar, PciHeader};
 pub use crate::pci::msi;
 
 pub mod irq_helpers;
@@ -169,6 +169,7 @@ pub enum SetFeatureInfo {
 #[non_exhaustive]
 pub enum PcidClientRequest {
     RequestConfig,
+    RequestHeader,
     RequestFeatures,
     EnableFeature(PciFeature),
     FeatureStatus(PciFeature),
@@ -187,6 +188,7 @@ pub enum PcidServerResponseError {
 #[non_exhaustive]
 pub enum PcidClientResponse {
     Config(SubdriverArguments),
+    Header(PciHeader),
     AllFeatures(Vec<(PciFeature, FeatureStatus)>),
     FeatureEnabled(PciFeature),
     FeatureStatus(PciFeature, FeatureStatus),
@@ -249,6 +251,13 @@ impl PcidServerHandle {
         self.send(&PcidClientRequest::RequestConfig)?;
         match self.recv()? {
             PcidClientResponse::Config(a) => Ok(a),
+            other => Err(PcidClientHandleError::InvalidResponse(other)),
+        }
+    }
+    pub fn fetch_header(&mut self) -> Result<PciHeader> {
+        self.send(&PcidClientRequest::RequestHeader)?;
+        match self.recv()? {
+            PcidClientResponse::Header(a) => Ok(a),
             other => Err(PcidClientHandleError::InvalidResponse(other)),
         }
     }

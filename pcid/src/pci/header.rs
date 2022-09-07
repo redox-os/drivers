@@ -1,9 +1,10 @@
+use bitflags::bitflags;
 use byteorder::{LittleEndian, ByteOrder};
+use serde::{Serialize, Deserialize};
 
 use super::func::ConfigReader;
 use super::class::PciClass;
 use super::bar::PciBar;
-use bitflags::bitflags;
 
 #[derive(Debug, PartialEq)]
 pub enum PciHeaderError {
@@ -13,6 +14,7 @@ pub enum PciHeaderError {
 
 bitflags! {
     /// Flags found in the status register of a PCI device
+    #[derive(Serialize, Deserialize)]
     pub struct PciHeaderType: u8 {
         /// A general PCI device (Type 0x01).
         const GENERAL       = 0b00000000;
@@ -27,7 +29,7 @@ bitflags! {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum PciHeader {
     General {
         vendor_id: u16,
