@@ -39,8 +39,8 @@ impl Channel {
             device_select: Pio::new(base + 6),
             status: ReadOnly::new(Pio::new(base + 7)),
             command: WriteOnly::new(Pio::new(base + 7)),
-            alt_status: ReadOnly::new(Pio::new(control_base + 2)),
-            control: WriteOnly::new(Pio::new(control_base + 2)),
+            alt_status: ReadOnly::new(Pio::new(control_base)),
+            control: WriteOnly::new(Pio::new(control_base)),
         }
     }
 
