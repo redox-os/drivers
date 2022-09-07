@@ -7,6 +7,14 @@ class = 1
 subclass = 6
 command = ["ahcid", "$NAME", "$BAR5", "$BARSIZE5", "$IRQ"]
 
+# ided
+[[drivers]]
+name = "IDE storage"
+class = 1
+subclass = 1
+command = ["ided"]
+use_channel = true
+
 # nvmed
 [[drivers]]
 name = "NVME storage"

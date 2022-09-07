@@ -442,6 +442,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ided"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "pcid",
+ "redox-daemon",
+ "redox-log",
+ "redox_syscall 0.3.4",
+]
+
+[[package]]
 name = "idna"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"

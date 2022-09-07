@@ -6,6 +6,7 @@ members = [
     "bgad",
     "block-io-wrapper",
     "e1000d",
+    "ided",
     "ihdad",
     "ixgbed",
     "nvmed",
