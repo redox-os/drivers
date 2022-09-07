@@ -1,6 +1,5 @@
 use std::{
     sync::{Arc, Mutex},
-    thread,
 };
 use syscall::{
     error::{Error, Result, EIO},
@@ -8,6 +7,18 @@ use syscall::{
 };
 
 use crate::ata::AtaCommand;
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+pub(crate) unsafe fn pause() { std::arch::aarch64::__yield(); }
+
+#[cfg(target_arch = "x86")]
+#[inline(always)]
+pub(crate) unsafe fn pause() { std::arch::x86::_mm_pause(); }
+
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+pub(crate) unsafe fn pause() { std::arch::x86_64::_mm_pause(); }
 
 pub struct Channel {
     pub data8: Pio<u8>,
@@ -70,7 +81,7 @@ impl Channel {
         }
 
         while self.status.readf(0x80) {
-            thread::yield_now();
+            unsafe { pause(); }
         }
 
         if check {
