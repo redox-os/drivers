@@ -599,18 +599,20 @@ impl Nvme {
             (buffer_prp_guard[0], (buffer_prp_guard.physical() + 8) as u64)
         };
 
+        let mut cmd = NvmeCmd::default();
         let comp = self.submit_and_complete_command(1, |cid| {
-            if write {
+            cmd = if write {
                 NvmeCmd::io_write(cid, nsid, lba, blocks_1, ptr0, ptr1)
             } else {
                 NvmeCmd::io_read(cid, nsid, lba, blocks_1, ptr0, ptr1)
-            }
+            };
+            cmd.clone()
         });
         let status = comp.status >> 1;
         if status == 0 {
             Ok(())
         } else {
-            log::error!("command failed with status {:#x}", status);
+            log::error!("command {:#x?} failed with status {:#x}", cmd, status);
             Err(Error::new(EIO))
         }
     }
@@ -626,7 +628,7 @@ impl Nvme {
 
         let buffer_guard = self.buffer.lock().unwrap();
 
-        for chunk in buf.chunks_mut(buffer_guard.len()) {
+        for chunk in buf.chunks_mut(/*TODO: buffer_guard.len()*/ 8192) {
             let blocks = (chunk.len() + block_size - 1) / block_size;
 
             assert!(blocks > 0);
@@ -653,7 +655,7 @@ impl Nvme {
 
         let mut buffer_guard = self.buffer.lock().unwrap();
 
-        for chunk in buf.chunks(buffer_guard.len()) {
+        for chunk in buf.chunks(/*TODO: buffer_guard.len()*/ 8192) {
             let blocks = (chunk.len() + block_size - 1) / block_size;
 
             assert!(blocks > 0);
