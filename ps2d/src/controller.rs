@@ -109,26 +109,28 @@ impl Ps2 {
         StatusFlags::from_bits_truncate(self.status.read())
     }
 
-    fn wait_write(&mut self) -> Result<(), Error> {
-        let mut timeout = 1_000;
-        while self.status().contains(StatusFlags::INPUT_FULL) {
-            if timeout <= 0 {
-                return Err(Error::WriteTimeout);
-            }
-            timeout -= 1;
-        }
-        Ok(())
-    }
-
     fn wait_read(&mut self) -> Result<(), Error> {
         let mut timeout = 1_000;
-        while ! self.status().contains(StatusFlags::OUTPUT_FULL) {
-            if timeout <= 0 {
-                return Err(Error::ReadTimeout);
+        while timeout > 0 {
+            if self.status().contains(StatusFlags::OUTPUT_FULL) {
+                return Ok(());
             }
+            std::thread::yield_now();
             timeout -= 1;
         }
-        Ok(())
+        Err(Error::ReadTimeout)
+    }
+
+    fn wait_write(&mut self) -> Result<(), Error> {
+        let mut timeout = 1_000;
+        while timeout > 0 {
+            if ! self.status().contains(StatusFlags::INPUT_FULL) {
+                return Ok(());
+            }
+            std::thread::yield_now();
+            timeout -= 1;
+        }
+        Err(Error::WriteTimeout)
     }
 
     fn flush_read(&mut self, message: &str) {
@@ -137,6 +139,7 @@ impl Ps2 {
             if self.status().contains(StatusFlags::OUTPUT_FULL) {
                 eprintln!("ps2d: flush {}: {:X}", message, self.data.read());
             }
+            std::thread::yield_now();
             timeout -= 1;
         }
     }
