@@ -77,6 +77,8 @@ enum KeyboardCommandData {
 #[repr(u8)]
 #[allow(dead_code)]
 enum MouseCommand {
+    SetScaling1To1 = 0xE6,
+    SetScaling2To1 = 0xE7,
     GetDeviceId = 0xF2,
     EnableReporting = 0xF4,
     SetDefaultsDisable = 0xF5,
@@ -87,6 +89,7 @@ enum MouseCommand {
 #[derive(Clone, Copy, Debug)]
 #[repr(u8)]
 enum MouseCommandData {
+    SetResolution = 0xE8,
     SetSampleRate = 0xF3,
 }
 
@@ -105,41 +108,45 @@ impl Ps2 {
         }
     }
 
+    fn delay() {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+
     fn status(&mut self) -> StatusFlags {
         StatusFlags::from_bits_truncate(self.status.read())
     }
 
     fn wait_read(&mut self) -> Result<(), Error> {
-        let mut timeout = 1_000;
+        let mut timeout = 10;
         while timeout > 0 {
             if self.status().contains(StatusFlags::OUTPUT_FULL) {
                 return Ok(());
             }
-            std::thread::yield_now();
+            Self::delay();
             timeout -= 1;
         }
         Err(Error::ReadTimeout)
     }
 
     fn wait_write(&mut self) -> Result<(), Error> {
-        let mut timeout = 1_000;
+        let mut timeout = 10;
         while timeout > 0 {
             if ! self.status().contains(StatusFlags::INPUT_FULL) {
                 return Ok(());
             }
-            std::thread::yield_now();
+            Self::delay();
             timeout -= 1;
         }
         Err(Error::WriteTimeout)
     }
 
     fn flush_read(&mut self, message: &str) {
-        let mut timeout = 1_000;
+        let mut timeout = 10;
         while timeout > 0 {
-            if self.status().contains(StatusFlags::OUTPUT_FULL) {
+            while self.status().contains(StatusFlags::OUTPUT_FULL) {
                 eprintln!("ps2d: flush {}: {:X}", message, self.data.read());
             }
-            std::thread::yield_now();
+            Self::delay();
             timeout -= 1;
         }
     }
@@ -365,17 +372,6 @@ impl Ps2 {
         )?;
 
         {
-            // Set defaults
-            b = self.mouse_command(MouseCommand::SetDefaults)?;
-            if b != 0xFA {
-                eprintln!("ps2d: mouse failed to set defaults: {:02X}", b);
-            }
-
-            // Clear remaining data
-            self.flush_read("mouse defaults");
-        }
-
-        {
             // Enable extra packet on mouse
             //TODO: show error return values
             if self.mouse_command_data(MouseCommandData::SetSampleRate, 200)? != 0xFA
@@ -398,6 +394,29 @@ impl Ps2 {
 
         // Clear remaining data
         self.flush_read("get device id");
+
+        {
+            // Set resolution to maximum
+            let resolution = 3;
+            b = self.mouse_command_data(MouseCommandData::SetResolution, resolution)?;
+            if b != 0xFA {
+                eprintln!("ps2d: mouse failed to set resolution to {}: {:02X}", resolution, b);
+            }
+
+            // Clear remaining data
+            self.flush_read("set sample rate");
+        }
+
+        {
+            // Set scaling to 1:1
+            b = self.mouse_command(MouseCommand::SetScaling1To1)?;
+            if b != 0xFA {
+                eprintln!("ps2d: mouse failed to set scaling: {:02X}",  b);
+            }
+
+            // Clear remaining data
+            self.flush_read("set sample rate");
+        }
 
         {
             // Set sample rate to maximum
