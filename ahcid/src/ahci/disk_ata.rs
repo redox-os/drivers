@@ -7,6 +7,18 @@ use syscall::error::Result;
 use super::hba::{HbaPort, HbaCmdTable, HbaCmdHeader};
 use super::Disk;
 
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+pub(crate) unsafe fn pause() { std::arch::aarch64::__yield(); }
+
+#[cfg(target_arch = "x86")]
+#[inline(always)]
+pub(crate) unsafe fn pause() { std::arch::x86::_mm_pause(); }
+
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+pub(crate) unsafe fn pause() { std::arch::x86_64::_mm_pause(); }
+
 enum BufferKind<'a> {
     Read(&'a mut [u8]),
     Write(&'a [u8]),
@@ -97,7 +109,7 @@ impl DiskATA {
                     if use_interrupts {
                         return Ok(None);
                     } else {
-                        ::std::thread::yield_now();
+                        unsafe { pause(); }
                         continue;
                     }
                 }
@@ -132,7 +144,7 @@ impl DiskATA {
                 if use_interrupts {
                     return Ok(None);
                 } else {
-                    ::std::thread::yield_now();
+                    unsafe { pause(); }
                     continue;
                 }
             } else {
