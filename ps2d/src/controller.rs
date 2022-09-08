@@ -110,7 +110,7 @@ impl Ps2 {
     }
 
     fn wait_write(&mut self) -> Result<(), Error> {
-        let mut timeout = 100_000;
+        let mut timeout = 1_000;
         while self.status().contains(StatusFlags::INPUT_FULL) {
             if timeout <= 0 {
                 return Err(Error::WriteTimeout);
@@ -121,7 +121,7 @@ impl Ps2 {
     }
 
     fn wait_read(&mut self) -> Result<(), Error> {
-        let mut timeout = 100_000;
+        let mut timeout = 1_000;
         while ! self.status().contains(StatusFlags::OUTPUT_FULL) {
             if timeout <= 0 {
                 return Err(Error::ReadTimeout);
@@ -132,8 +132,12 @@ impl Ps2 {
     }
 
     fn flush_read(&mut self, message: &str) {
-        while self.status().contains(StatusFlags::OUTPUT_FULL) {
-            eprintln!("ps2d: flush {}: {:X}", message, self.data.read());
+        let mut timeout = 1_000;
+        while timeout > 0 {
+            if self.status().contains(StatusFlags::OUTPUT_FULL) {
+                eprintln!("ps2d: flush {}: {:X}", message, self.data.read());
+            }
+            timeout -= 1;
         }
     }
 
@@ -328,27 +332,30 @@ impl Ps2 {
             format_args!("mouse reset"),
             4,
             |x| {
+                // Clear remaining data
+                x.flush_read("mouse before reset");
+
                 // Reset mouse
                 let mut b = x.mouse_command(MouseCommand::Reset)?;
                 if b == 0xFA {
                     b = x.read()?;
                     if b != 0xAA {
                         eprintln!("ps2d: mouse failed self test 1: {:02X}", b);
-                        //return Err(Error::CommandRetry);
+                        return Err(Error::CommandRetry);
                     }
 
                     b = x.read()?;
                     if b != 0x00 {
                         eprintln!("ps2d: mouse failed self test 2: {:02X}", b);
-                        //return Err(Error::CommandRetry);
+                        return Err(Error::CommandRetry);
                     }
                 } else {
                     eprintln!("ps2d: mouse failed to reset: {:02X}", b);
-                    //return Err(Error::CommandRetry);
+                    return Err(Error::CommandRetry);
                 }
 
                 // Clear remaining data
-                x.flush_read("mouse reset");
+                x.flush_read("mouse after reset");
 
                 Ok(b)
             }
@@ -385,6 +392,9 @@ impl Ps2 {
             eprintln!("ps2d: mouse failed to get device id: {:02X}", b);
             false
         };
+
+        // Clear remaining data
+        self.flush_read("get device id");
 
         {
             // Set sample rate to maximum
