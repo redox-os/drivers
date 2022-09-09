@@ -1,7 +1,8 @@
-[[drivers]]
-name = "XHCI"
-class = 12
-subclass = 3
-interface = 48
-command = ["xhcid"]
-use_channel = true
+# Disabled - causes issues on real hardware
+# [[drivers]]
+# name = "XHCI"
+# class = 12
+# subclass = 3
+# interface = 48
+# command = ["xhcid"]
+# use_channel = true
