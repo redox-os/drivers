@@ -239,36 +239,36 @@ fn get_int_method(
     }
 }
 
-fn setup_logging() -> Option<&'static RedoxLogger> {
+fn setup_logging(name: &str) -> Option<&'static RedoxLogger> {
     let mut logger = RedoxLogger::new()
         .with_output(
             OutputBuilder::stderr()
-                .with_filter(log::LevelFilter::Debug) // limit global output to important info
+                .with_filter(log::LevelFilter::Info) // limit global output to important info
                 .with_ansi_escape_codes()
                 .flush_on_newline(true)
                 .build()
         );
 
     #[cfg(target_os = "redox")]
-    match OutputBuilder::in_redox_logging_scheme("disk", "pcie", "nvme.log") {
+    match OutputBuilder::in_redox_logging_scheme("disk", "pcie", &format!("{}.log", name)) {
         Ok(b) => logger = logger.with_output(
             // TODO: Add a configuration file for this
             b.with_filter(log::LevelFilter::Info)
                 .flush_on_newline(true)
                 .build()
         ),
-        Err(error) => eprintln!("nvmed: failed to create nvme.log: {}", error),
+        Err(error) => eprintln!("nvmed: failed to create log: {}", error),
     }
 
     #[cfg(target_os = "redox")]
-    match OutputBuilder::in_redox_logging_scheme("disk", "pcie", "nvme.ansi.log") {
+    match OutputBuilder::in_redox_logging_scheme("disk", "pcie", &format!("{}.ansi.log", name)) {
         Ok(b) => logger = logger.with_output(
             b.with_filter(log::LevelFilter::Info)
                 .with_ansi_escape_codes()
                 .flush_on_newline(true)
                 .build()
         ),
-        Err(error) => eprintln!("nvmed: failed to create nvme.ansi.log: {}", error),
+        Err(error) => eprintln!("nvmed: failed to create ansi log: {}", error),
     }
 
     match logger.enable() {
@@ -287,13 +287,16 @@ fn main() {
     redox_daemon::Daemon::new(daemon).expect("nvmed: failed to daemonize");
 }
 fn daemon(daemon: redox_daemon::Daemon) -> ! {
-    let _logger_ref = setup_logging();
-
     let mut pcid_handle =
         PcidServerHandle::connect_default().expect("nvmed: failed to setup channel to pcid");
     let pci_config = pcid_handle
         .fetch_config()
         .expect("nvmed: failed to fetch config");
+
+    let mut name = pci_config.func.name();
+    name.push_str("_nvme");
+
+    let _logger_ref = setup_logging(&name);
 
     let bar = match pci_config.func.bars[0] {
         PciBar::Memory32(mem) => match mem {
@@ -308,9 +311,6 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     };
     let bar_size = pci_config.func.bar_sizes[0];
     let irq = pci_config.func.legacy_interrupt_line;
-
-    let mut name = pci_config.func.name();
-    name.push_str("_nvme");
 
     log::info!("NVME PCI CONFIG: {:?}", pci_config);
 

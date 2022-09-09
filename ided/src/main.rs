@@ -80,12 +80,13 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         PcidServerHandle::connect_default().expect("ided: failed to setup channel to pcid");
 
     let pci_config = pcid_handle.fetch_config().expect("ided: failed to fetch config");
+
     let mut name = pci_config.func.name();
     name.push_str("_ide");
 
     let _logger_ref = setup_logging(&name);
 
-    info!("IDE {:?}", pci_config);
+    info!("IDE PCI CONFIG: {:?}", pci_config);
 
     let pci_header = pcid_handle.fetch_header().expect("ided: failed to fetch PCI header");
     let (primary, primary_irq) = if pci_header.interface() & 1 != 0 {
