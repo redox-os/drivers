@@ -2,6 +2,18 @@ use syscall::io::{Io, Pio, ReadOnly, WriteOnly};
 
 use std::fmt;
 
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+pub(crate) unsafe fn pause() { std::arch::aarch64::__yield(); }
+
+#[cfg(target_arch = "x86")]
+#[inline(always)]
+pub(crate) unsafe fn pause() { std::arch::x86::_mm_pause(); }
+
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+pub(crate) unsafe fn pause() { std::arch::x86_64::_mm_pause(); }
+
 #[derive(Debug)]
 pub enum Error {
     CommandRetry,
@@ -79,6 +91,7 @@ enum KeyboardCommandData {
 enum MouseCommand {
     SetScaling1To1 = 0xE6,
     SetScaling2To1 = 0xE7,
+    StatusRequest = 0xE9,
     GetDeviceId = 0xF2,
     EnableReporting = 0xF4,
     SetDefaultsDisable = 0xF5,
@@ -108,45 +121,41 @@ impl Ps2 {
         }
     }
 
-    fn delay() {
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-
     fn status(&mut self) -> StatusFlags {
         StatusFlags::from_bits_truncate(self.status.read())
     }
 
     fn wait_read(&mut self) -> Result<(), Error> {
-        let mut timeout = 10;
+        let mut timeout = 100_000;
         while timeout > 0 {
             if self.status().contains(StatusFlags::OUTPUT_FULL) {
                 return Ok(());
             }
-            Self::delay();
+            unsafe { pause(); }
             timeout -= 1;
         }
         Err(Error::ReadTimeout)
     }
 
     fn wait_write(&mut self) -> Result<(), Error> {
-        let mut timeout = 10;
+        let mut timeout = 100_000;
         while timeout > 0 {
             if ! self.status().contains(StatusFlags::INPUT_FULL) {
                 return Ok(());
             }
-            Self::delay();
+            unsafe { pause(); }
             timeout -= 1;
         }
         Err(Error::WriteTimeout)
     }
 
     fn flush_read(&mut self, message: &str) {
-        let mut timeout = 10;
+        let mut timeout = 100;
         while timeout > 0 {
             while self.status().contains(StatusFlags::OUTPUT_FULL) {
                 eprintln!("ps2d: flush {}: {:X}", message, self.data.read());
             }
-            Self::delay();
+            unsafe { pause(); }
             timeout -= 1;
         }
     }
@@ -210,7 +219,7 @@ impl Ps2 {
     }
 
     fn keyboard_command_inner(&mut self, command: u8) -> Result<u8, Error> {
-        self.write(command as u8)?;
+        self.write(command)?;
         match self.read()? {
             0xFE => Err(Error::CommandRetry),
             value => Ok(value),
@@ -243,7 +252,7 @@ impl Ps2 {
 
     fn mouse_command_inner(&mut self, command: u8) -> Result<u8, Error> {
         self.command(Command::WriteSecond)?;
-        self.write(command as u8)?;
+        self.write(command)?;
         match self.read()? {
             0xFE => Err(Error::CommandRetry),
             value => Ok(value),
@@ -309,8 +318,28 @@ impl Ps2 {
             }
 
             // Clear remaining data
-            self.flush_read("keyboard defaults");
+            self.flush_read("keyboard reset");
         }
+
+        self.retry(
+            format_args!("keyboard defaults"),
+            4,
+            |x| {
+                x.flush_read("keyboard before defaults");
+
+                // Set defaults and disable scanning
+                let b = x.keyboard_command(KeyboardCommand::SetDefaultsDisable)?;
+                if b != 0xFA {
+                    eprintln!("ps2d: keyboard failed to set defaults: {:02X}", b);
+                    return Err(Error::CommandRetry);
+                }
+
+                // Clear remaining data
+                x.flush_read("keyboard after defaults");
+
+                Ok(b)
+            }
+        )?;
 
         {
             // Set scancode set to 2
@@ -372,6 +401,17 @@ impl Ps2 {
         )?;
 
         {
+            // Set defaults
+            b = self.mouse_command(MouseCommand::SetDefaults)?;
+            if b != 0xFA {
+                eprintln!("ps2d: mouse failed to set defaults: {:02X}", b);
+            }
+
+            // Clear remaining data
+            self.flush_read("mouse defaults");
+        }
+
+        {
             // Enable extra packet on mouse
             //TODO: show error return values
             if self.mouse_command_data(MouseCommandData::SetSampleRate, 200)? != 0xFA
@@ -430,12 +470,23 @@ impl Ps2 {
             self.flush_read("set sample rate");
         }
 
+        {
+            b = self.mouse_command(MouseCommand::StatusRequest)?;
+            if b != 0xFA {
+                eprintln!("ps2d: mouse failed to request status: {:02X}",  b);
+            } else {
+                let a = self.read()?;
+                let b = self.read()?;
+                let c = self.read()?;
+
+                eprintln!("ps2d: mouse status {:#x} resolution {:#x} sample rate {:#x}", a, b, c);
+            }
+        }
+
         Ok(mouse_extra)
     }
 
     pub fn init(&mut self) -> Result<bool, Error> {
-        let mut b;
-
         // Clear remaining data
         self.flush_read("init start");
 
@@ -449,10 +500,11 @@ impl Ps2 {
         }
 
         // Disable clocks, disable interrupts, and disable translate
+        let mut config;
         {
             // Since the default config may have interrupts enabled, and the kernel may eat up
             // our data in that case, we will write a config without reading the current one
-            let mut config = ConfigFlags::POST_PASSED |
+            config = ConfigFlags::POST_PASSED |
                 ConfigFlags::FIRST_DISABLED |
                 ConfigFlags::SECOND_DISABLED;
             eprintln!("ps2d: config set {:?}", config);
@@ -485,30 +537,22 @@ impl Ps2 {
 
         {
             // Enable keyboard data reporting
-            b = self.keyboard_command(KeyboardCommand::EnableReporting)?;
-            if b != 0xFA {
-                eprintln!("ps2d: keyboard failed to enable reporting: {:02X}", b);
-            }
-
-            // Clear remaining data
-            self.flush_read("keyboard enable reporting");
+            // Use inner function to prevent retries
+            self.keyboard_command_inner(KeyboardCommand::EnableReporting as u8)?;
+            // Response is ignored since scanning is now on
+            //TODO: fix by using interrupts?
         }
 
         if mouse_found {
             // Enable mouse data reporting
-            b = self.mouse_command(MouseCommand::EnableReporting)?;
-            if b != 0xFA {
-                eprintln!("ps2d: mouse failed to enable reporting: {:02X}", b);
-            }
-
-            // Clear remaining data
-            self.flush_read("mouse enable reporting");
+            // Use inner function to prevent retries
+            self.mouse_command_inner(MouseCommand::EnableReporting as u8)?;
+            // Response is ignored since scanning is now on
+            //TODO: fix by using interrupts?
         }
 
         // Enable clocks and interrupts
         {
-            let mut config = self.config()?;
-            eprintln!("ps2d: config get {:?}", config);
             config.remove(ConfigFlags::FIRST_DISABLED);
             config.insert(ConfigFlags::FIRST_TRANSLATE);
             config.insert(ConfigFlags::FIRST_INTERRUPT);
