@@ -126,7 +126,7 @@ impl Ps2 {
     }
 
     fn wait_read(&mut self) -> Result<(), Error> {
-        let mut timeout = 100_000;
+        let mut timeout = 1_000_000;
         while timeout > 0 {
             if self.status().contains(StatusFlags::OUTPUT_FULL) {
                 return Ok(());
@@ -138,7 +138,7 @@ impl Ps2 {
     }
 
     fn wait_write(&mut self) -> Result<(), Error> {
-        let mut timeout = 100_000;
+        let mut timeout = 1_000_000;
         while timeout > 0 {
             if ! self.status().contains(StatusFlags::INPUT_FULL) {
                 return Ok(());
