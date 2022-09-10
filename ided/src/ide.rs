@@ -120,6 +120,7 @@ pub struct AtaDisk {
     pub chan_i: usize,
     pub dev: u8,
     pub size: u64,
+    pub lba_48: bool,
 }
 
 impl Disk for AtaDisk {
@@ -147,14 +148,15 @@ impl Disk for AtaDisk {
             // Select drive
             chan.device_select.write(0xE0 | (self.dev << 4));
 
-            // Set high sector count and LBA
-            //TODO: only if LBA mode is 48-bit
-            chan.control.writef(0x80, true);
-            chan.sector_count.write((sectors >> 8) as u8);
-            chan.lba_0.write((block >> 24) as u8);
-            chan.lba_1.write((block >> 32) as u8);
-            chan.lba_2.write((block >> 40) as u8);
-            chan.control.writef(0x80, false);
+            if self.lba_48 {
+                // Set high sector count and LBA
+                chan.control.writef(0x80, true);
+                chan.sector_count.write((sectors >> 8) as u8);
+                chan.lba_0.write((block >> 24) as u8);
+                chan.lba_1.write((block >> 32) as u8);
+                chan.lba_2.write((block >> 40) as u8);
+                chan.control.writef(0x80, false);
+            }
 
             // Set low sector count and LBA
             chan.sector_count.write(sectors as u8);
@@ -164,7 +166,11 @@ impl Disk for AtaDisk {
 
             // Send command
             //TODO: use DMA
-            chan.command.write(AtaCommand::ReadPioExt as u8);
+            chan.command.write(if self.lba_48 {
+                AtaCommand::ReadPioExt as u8
+            } else {
+                AtaCommand::ReadPio as u8
+            });
 
             // Read data
             for sector in 0..sectors {
@@ -201,14 +207,15 @@ impl Disk for AtaDisk {
             // Select drive
             chan.device_select.write(0xE0 | (self.dev << 4));
 
-            // Set high sector count and LBA
-            //TODO: only if LBA mode is 48-bit
-            chan.control.writef(0x80, true);
-            chan.sector_count.write((sectors >> 8) as u8);
-            chan.lba_0.write((block >> 24) as u8);
-            chan.lba_1.write((block >> 32) as u8);
-            chan.lba_2.write((block >> 40) as u8);
-            chan.control.writef(0x80, false);
+            if self.lba_48 {
+                // Set high sector count and LBA
+                chan.control.writef(0x80, true);
+                chan.sector_count.write((sectors >> 8) as u8);
+                chan.lba_0.write((block >> 24) as u8);
+                chan.lba_1.write((block >> 32) as u8);
+                chan.lba_2.write((block >> 40) as u8);
+                chan.control.writef(0x80, false);
+            }
 
             // Set low sector count and LBA
             chan.sector_count.write(sectors as u8);
@@ -218,7 +225,11 @@ impl Disk for AtaDisk {
 
             // Send command
             //TODO: use DMA
-            chan.command.write(AtaCommand::WritePioExt as u8);
+            chan.command.write(if self.lba_48 {
+                AtaCommand::WritePioExt as u8
+            } else {
+                AtaCommand::WritePio as u8
+            });
 
             // Write data
             for sector in 0..sectors {
@@ -234,7 +245,11 @@ impl Disk for AtaDisk {
                 }
             }
 
-            chan.command.write(AtaCommand::CacheFlushExt as u8);
+            chan.command.write(if self.lba_48 {
+                AtaCommand::CacheFlushExt as u8
+            } else {
+                AtaCommand::CacheFlush as u8
+            });
             chan.polling(false)?;
 
             count += chunk.len();

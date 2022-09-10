@@ -223,6 +223,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
                     chan_i,
                     dev,
                     size: sectors * 512,
+                    lba_48: lba_bits == 48,
                 }));
             }
         }
