@@ -18,7 +18,7 @@ mod bus;
 pub mod cap;
 mod class;
 mod dev;
-mod func;
+pub mod func;
 pub mod header;
 pub mod msi;
 

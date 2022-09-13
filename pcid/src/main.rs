@@ -12,6 +12,7 @@ use redox_log::{OutputBuilder, RedoxLogger};
 use crate::config::Config;
 use crate::pci::{CfgAccess, Pci, PciIter, PciBar, PciBus, PciClass, PciDev, PciFunc, PciHeader, PciHeaderError, PciHeaderType};
 use crate::pci::cap::Capability as PciCapability;
+use crate::pci::func::{ConfigReader, ConfigWriter};
 use crate::pcie::Pcie;
 
 mod config;
@@ -179,6 +180,22 @@ impl DriverHandler {
                 } else {
                     return PcidClientResponse::Error(PcidServerResponseError::NonexistentFeature(PciFeature::MsiX));
                 }
+            }
+            PcidClientRequest::ReadConfig(offset) => {
+                let value = unsafe {
+                    with_pci_func_raw(self.state.preferred_cfg_access(), self.bus_num, self.dev_num, self.func_num, |func| {
+                        func.read_u32(offset)
+                    })
+                };
+                return PcidClientResponse::ReadConfig(value);
+            },
+            PcidClientRequest::WriteConfig(offset, value) => {
+                unsafe {
+                    with_pci_func_raw(self.state.preferred_cfg_access(), self.bus_num, self.dev_num, self.func_num, |func| {
+                        func.write_u32(offset, value);
+                    });
+                }
+                return PcidClientResponse::WriteConfig;
             }
         }
     }

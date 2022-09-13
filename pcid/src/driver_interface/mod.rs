@@ -175,6 +175,8 @@ pub enum PcidClientRequest {
     FeatureStatus(PciFeature),
     FeatureInfo(PciFeature),
     SetFeatureInfo(SetFeatureInfo),
+    ReadConfig(u16),
+    WriteConfig(u16, u32),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -195,6 +197,8 @@ pub enum PcidClientResponse {
     Error(PcidServerResponseError),
     FeatureInfo(PciFeature, PciFeatureInfo),
     SetFeatureInfo(PciFeature),
+    ReadConfig(u32),
+    WriteConfig,
 }
 
 // TODO: Ideally, pcid might have its own scheme, like lots of other Redox drivers, where this kind of IPC is done. Otherwise, instead of writing serde messages over
@@ -293,6 +297,20 @@ impl PcidServerHandle {
         self.send(&PcidClientRequest::SetFeatureInfo(info))?;
         match self.recv()? {
             PcidClientResponse::SetFeatureInfo(_) => Ok(()),
+            other => Err(PcidClientHandleError::InvalidResponse(other)),
+        }
+    }
+    pub unsafe fn read_config(&mut self, offset: u16) -> Result<u32> {
+        self.send(&PcidClientRequest::ReadConfig(offset))?;
+        match self.recv()? {
+            PcidClientResponse::ReadConfig(value) => Ok(value),
+            other => Err(PcidClientHandleError::InvalidResponse(other)),
+        }
+    }
+    pub unsafe fn write_config(&mut self, offset: u16, value: u32) -> Result<()> {
+        self.send(&PcidClientRequest::WriteConfig(offset, value))?;
+        match self.recv()? {
+            PcidClientResponse::WriteConfig => Ok(()),
             other => Err(PcidClientHandleError::InvalidResponse(other)),
         }
     }
