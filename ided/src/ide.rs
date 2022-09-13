@@ -1,9 +1,10 @@
 use std::{
+    convert::TryInto,
     sync::{Arc, Mutex},
 };
 use syscall::{
     error::{Error, Result, EIO},
-    io::{Io, Pio, ReadOnly, WriteOnly},
+    io::{Dma, Io, Pio, PhysBox, ReadOnly, WriteOnly},
 };
 
 use crate::ata::AtaCommand;
@@ -20,6 +21,13 @@ pub(crate) unsafe fn pause() { std::arch::x86::_mm_pause(); }
 #[inline(always)]
 pub(crate) unsafe fn pause() { std::arch::x86_64::_mm_pause(); }
 
+#[repr(packed)]
+struct PrdtEntry {
+    phys: u32,
+    size: u16,
+    flags: u16,
+}
+
 pub struct Channel {
     pub data8: Pio<u8>,
     pub data32: Pio<u32>,
@@ -34,11 +42,16 @@ pub struct Channel {
     pub command: WriteOnly<Pio<u8>>,
     pub alt_status: ReadOnly<Pio<u8>>,
     pub control: WriteOnly<Pio<u8>>,
+    pub busmaster_command: Pio<u8>,
+    pub busmaster_status: Pio<u8>,
+    pub busmaster_prdt: Pio<u32>,
+    prdt: Dma<[PrdtEntry; 16]>,
+    buf: Dma<[u8; 16 * 4096]>,
 }
 
 impl Channel {
-    pub fn new(base: u16, control_base: u16) -> Self {
-        Self {
+    pub fn new(base: u16, control_base: u16, busmaster_base: u16) -> Result<Self> {
+        let mut chan = Self {
             data8: Pio::new(base + 0),
             data32: Pio::new(base + 0),
             error: ReadOnly::new(Pio::new(base + 1)),
@@ -52,18 +65,63 @@ impl Channel {
             command: WriteOnly::new(Pio::new(base + 7)),
             alt_status: ReadOnly::new(Pio::new(control_base)),
             control: WriteOnly::new(Pio::new(control_base)),
+            busmaster_command: Pio::new(busmaster_base),
+            busmaster_status: Pio::new(busmaster_base + 2),
+            busmaster_prdt: Pio::new(busmaster_base + 4),
+            prdt: unsafe {
+                Dma::from_physbox_zeroed(
+                    //TODO: PhysBox::new_in_32bit_space(4096)?
+                    PhysBox::new(4096)?
+                )?.assume_init()
+            },
+            buf: unsafe {
+                Dma::from_physbox_zeroed(
+                    //TODO: PhysBox::new_in_32bit_space(16 * 4096)?
+                    PhysBox::new(16 * 4096)?
+                )?.assume_init()
+            },
+        };
+
+        for i in 0..chan.prdt.len() {
+            chan.prdt[i] = PrdtEntry {
+                phys: (chan.buf.physical() + i * 4096).try_into().unwrap(),
+                size: 4096,
+                flags: if i + 1 == chan.prdt.len() {
+                    1 << 15 // End of table
+                } else {
+                    0
+                },
+            };
         }
+
+        Ok(chan)
     }
 
-    pub fn primary_compat() -> Self {
-        Self::new(0x1F0, 0x3F6)
+    pub fn primary_compat(busmaster_base: u16) -> Result<Self> {
+        Self::new(0x1F0, 0x3F6, busmaster_base)
     }
 
-    pub fn secondary_compat() -> Self {
-        Self::new(0x170, 0x376)
+    pub fn secondary_compat(busmaster_base: u16) -> Result<Self> {
+        Self::new(0x170, 0x376, busmaster_base)
     }
 
-    fn polling(&mut self, check: bool) -> Result<()> {
+    fn check_status(&mut self) -> Result<u8> {
+        let status = self.status.read();
+
+        if status & 0x01 != 0 {
+            log::error!("IDE error: {:#x}", self.error.read());
+            return Err(Error::new(EIO));
+        }
+
+        if status & 0x20 != 0 {
+            log::error!("IDE device write fault");
+            return Err(Error::new(EIO));
+        }
+
+        Ok(status)
+    }
+
+    fn polling(&mut self, read: bool) -> Result<()> {
         /*
         #define ATA_SR_BSY     0x80    // Busy
         #define ATA_SR_DRDY    0x40    // Drive ready
@@ -80,26 +138,16 @@ impl Channel {
             self.alt_status.read();
         }
 
-        while self.status.readf(0x80) {
-            unsafe { pause(); }
-        }
-
-        if check {
-            let status = self.status.read();
-
-            if status & 0x01 != 0 {
-                log::error!("IDE error");
-                return Err(Error::new(EIO));
-            }
-
-            if status & 0x20 != 0 {
-                log::error!("IDE device write fault");
-                return Err(Error::new(EIO));
-            }
-
-            if status & 0x08 == 0 {
-                log::error!("IDE data not ready");
-                return Err(Error::new(EIO));
+        loop {
+            let status = self.check_status()?;
+            if status & 0x80 != 0 {
+                unsafe { pause(); }
+            } else {
+                if read && status & 0x08 == 0 {
+                    log::error!("IDE data not ready");
+                    return Err(Error::new(EIO));
+                }
+                break;
             }
         }
 
@@ -120,6 +168,7 @@ pub struct AtaDisk {
     pub chan_i: usize,
     pub dev: u8,
     pub size: u64,
+    pub dma: bool,
     pub lba_48: bool,
 }
 
@@ -145,6 +194,18 @@ impl Disk for AtaDisk {
 
             let mut chan = self.chan.lock().unwrap();
 
+            if self.dma {
+                // Stop bus master
+                chan.busmaster_command.writef(1, false);
+                // Set PRDT
+                let prdt = chan.prdt.physical();
+                chan.busmaster_prdt.write(prdt.try_into().unwrap());
+                // Set to read
+                chan.busmaster_command.writef(1 << 3, true);
+                // Clear interrupt and error bits
+                chan.busmaster_status.write(0b110);
+            }
+
             // Select drive
             chan.device_select.write(0xE0 | (self.dev << 4));
 
@@ -165,23 +226,46 @@ impl Disk for AtaDisk {
             chan.lba_2.write((block >> 16) as u8);
 
             // Send command
-            //TODO: use DMA
-            chan.command.write(if self.lba_48 {
-                AtaCommand::ReadPioExt as u8
+            chan.command.write(if self.dma {
+                if self.lba_48 {
+                    AtaCommand::ReadDmaExt as u8
+                } else {
+                    AtaCommand::ReadDma as u8
+                }
             } else {
-                AtaCommand::ReadPio as u8
+                if self.lba_48 {
+                    AtaCommand::ReadPioExt as u8
+                } else {
+                    AtaCommand::ReadPio as u8
+                }
             });
 
             // Read data
-            for sector in 0..sectors {
-                chan.polling(true)?;
+            if self.dma {
+                // Start bus master
+                chan.busmaster_command.writef(1, true);
 
-                for i in 0..128 {
-                    let data = chan.data32.read();
-                    chunk[sector * 512 + i * 4 + 0] = (data >> 0) as u8;
-                    chunk[sector * 512 + i * 4 + 1] = (data >> 8) as u8;
-                    chunk[sector * 512 + i * 4 + 2] = (data >> 16) as u8;
-                    chunk[sector * 512 + i * 4 + 3] = (data >> 24) as u8;
+                // Wait for transaction to finish
+                chan.polling(false)?;
+
+                //TODO: use bus master status
+
+                // Stop bus master
+                chan.busmaster_command.writef(1, false);
+
+                // Read buffer
+                chunk.copy_from_slice(&chan.buf[..chunk.len()]);
+            } else {
+                for sector in 0..sectors {
+                    chan.polling(true)?;
+
+                    for i in 0..128 {
+                        let data = chan.data32.read();
+                        chunk[sector * 512 + i * 4 + 0] = (data >> 0) as u8;
+                        chunk[sector * 512 + i * 4 + 1] = (data >> 8) as u8;
+                        chunk[sector * 512 + i * 4 + 2] = (data >> 16) as u8;
+                        chunk[sector * 512 + i * 4 + 3] = (data >> 24) as u8;
+                    }
                 }
             }
 
@@ -204,6 +288,21 @@ impl Disk for AtaDisk {
 
             let mut chan = self.chan.lock().unwrap();
 
+            if self.dma {
+                // Stop bus master
+                chan.busmaster_command.writef(1, false);
+                // Set PRDT
+                let prdt = chan.prdt.physical();
+                chan.busmaster_prdt.write(prdt.try_into().unwrap());
+                // Set to write
+                chan.busmaster_command.writef(1 << 3, false);
+                // Clear interrupt and error bits
+                chan.busmaster_status.write(0b110);
+
+                // Write buffer
+                chan.buf[..chunk.len()].copy_from_slice(chunk);
+            }
+
             // Select drive
             chan.device_select.write(0xE0 | (self.dev << 4));
 
@@ -224,24 +323,46 @@ impl Disk for AtaDisk {
             chan.lba_2.write((block >> 16) as u8);
 
             // Send command
-            //TODO: use DMA
-            chan.command.write(if self.lba_48 {
-                AtaCommand::WritePioExt as u8
+            chan.command.write(if self.dma {
+                if self.lba_48 {
+                    AtaCommand::WriteDmaExt as u8
+                } else {
+                    AtaCommand::WriteDma as u8
+                }
             } else {
-                AtaCommand::WritePio as u8
+                if self.lba_48 {
+                    AtaCommand::WritePioExt as u8
+                } else {
+                    AtaCommand::WritePio as u8
+                }
             });
 
             // Write data
-            for sector in 0..sectors {
+            if self.dma {
+                // Start bus master
+                chan.busmaster_command.writef(1, true);
+
+                // Wait for transaction to finish
                 chan.polling(false)?;
 
-                for i in 0..128 {
-                    chan.data32.write(
-                        ((chunk[sector * 512 + i * 4 + 0] as u32) << 0) |
-                        ((chunk[sector * 512 + i * 4 + 1] as u32) << 8) |
-                        ((chunk[sector * 512 + i * 4 + 2] as u32) << 16) |
-                        ((chunk[sector * 512 + i * 4 + 3] as u32) << 24)
-                    );
+                //TODO: use bus master status
+
+                // Stop bus master
+                chan.busmaster_command.writef(1, false);
+
+                chan.check_status()?;
+            } else {
+                for sector in 0..sectors {
+                    chan.polling(false)?;
+
+                    for i in 0..128 {
+                        chan.data32.write(
+                            ((chunk[sector * 512 + i * 4 + 0] as u32) << 0) |
+                            ((chunk[sector * 512 + i * 4 + 1] as u32) << 8) |
+                            ((chunk[sector * 512 + i * 4 + 2] as u32) << 16) |
+                            ((chunk[sector * 512 + i * 4 + 3] as u32) << 24)
+                        );
+                    }
                 }
             }
 

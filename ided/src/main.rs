@@ -1,5 +1,5 @@
 use log::{error, info};
-use pcid_interface::PcidServerHandle;
+use pcid_interface::{PciBar, PcidServerHandle};
 use redox_log::{OutputBuilder, RedoxLogger};
 use std::{
     fs::File,
@@ -89,15 +89,19 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     info!("IDE PCI CONFIG: {:?}", pci_config);
 
     let pci_header = pcid_handle.fetch_header().expect("ided: failed to fetch PCI header");
+    let busmaster_base = match pci_header.get_bar(4) {
+        PciBar::Port(port) => port,
+        other => panic!("TODO: IDE busmaster BAR {:#x?}", other),
+    };
     let (primary, primary_irq) = if pci_header.interface() & 1 != 0 {
         panic!("TODO: IDE primary channel is PCI native");
     } else {
-        (Channel::primary_compat(), 14)
+        (Channel::primary_compat(busmaster_base).unwrap(), 14)
     };
     let (secondary, secondary_irq) = if pci_header.interface() & 1 != 0 {
         panic!("TODO: IDE secondary channel is PCI native");
     } else {
-        (Channel::secondary_compat(), 15)
+        (Channel::secondary_compat(busmaster_base + 8).unwrap(), 15)
     };
 
     unsafe { syscall::iopl(3).expect("ided: failed to get I/O privilege") };
@@ -223,6 +227,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
                     chan_i,
                     dev,
                     size: sectors * 512,
+                    dma: true, //TODO: detect!
                     lba_48: lba_bits == 48,
                 }));
             }
