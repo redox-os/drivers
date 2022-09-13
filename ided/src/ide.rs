@@ -45,8 +45,8 @@ pub struct Channel {
     pub busmaster_command: Pio<u8>,
     pub busmaster_status: Pio<u8>,
     pub busmaster_prdt: Pio<u32>,
-    prdt: Dma<[PrdtEntry; 16]>,
-    buf: Dma<[u8; 16 * 4096]>,
+    prdt: Dma<[PrdtEntry; 128]>,
+    buf: Dma<[u8; 128 * 512]>,
 }
 
 impl Channel {
@@ -71,28 +71,16 @@ impl Channel {
             prdt: unsafe {
                 Dma::from_physbox_zeroed(
                     //TODO: PhysBox::new_in_32bit_space(4096)?
-                    PhysBox::new(4096)?
+                    PhysBox::new(4096 /* 128 * 8 page aligned */)?
                 )?.assume_init()
             },
             buf: unsafe {
                 Dma::from_physbox_zeroed(
                     //TODO: PhysBox::new_in_32bit_space(16 * 4096)?
-                    PhysBox::new(16 * 4096)?
+                    PhysBox::new(128 * 512)?
                 )?.assume_init()
             },
         };
-
-        for i in 0..chan.prdt.len() {
-            chan.prdt[i] = PrdtEntry {
-                phys: (chan.buf.physical() + i * 4096).try_into().unwrap(),
-                size: 4096,
-                flags: if i + 1 == chan.prdt.len() {
-                    1 << 15 // End of table
-                } else {
-                    0
-                },
-            };
-        }
 
         Ok(chan)
     }
@@ -189,14 +177,26 @@ impl Disk for AtaDisk {
             //TODO: support other LBA modes
             assert!(block < 0x1_0000_0000_0000);
 
-            let sectors = chunk.len() / 512;
-            assert!(sectors < 0x1_0000);
+            let sectors = (chunk.len() + 511) / 512;
+            assert!(sectors <= 128);
 
             let mut chan = self.chan.lock().unwrap();
 
             if self.dma {
                 // Stop bus master
                 chan.busmaster_command.writef(1, false);
+                // Make PRDT EOT match chunk size
+                for i in 0..sectors {
+                    chan.prdt[i] = PrdtEntry {
+                        phys: (chan.buf.physical() + i * 512).try_into().unwrap(),
+                        size: 512,
+                        flags: if i + 1 == sectors {
+                            1 << 15 // End of table
+                        } else {
+                            0
+                        },
+                    };
+                }
                 // Set PRDT
                 let prdt = chan.prdt.physical();
                 chan.busmaster_prdt.write(prdt.try_into().unwrap());
@@ -207,6 +207,7 @@ impl Disk for AtaDisk {
             }
 
             // Select drive
+            //TODO: upper part of LBA 28
             chan.device_select.write(0xE0 | (self.dev << 4));
 
             if self.lba_48 {
@@ -248,10 +249,29 @@ impl Disk for AtaDisk {
                 // Wait for transaction to finish
                 chan.polling(false)?;
 
-                //TODO: use bus master status
+                // Wait for bus master to finish
+                let error = loop {
+                    let status = chan.busmaster_status.read();
+                    if status & 1 << 1 != 0 {
+                        // Break with error status
+                        break true;
+                    }
+                    if status & 1 == 0 {
+                        // Break when not busy and no error
+                        break false;
+                    }
+                };
 
                 // Stop bus master
                 chan.busmaster_command.writef(1, false);
+
+                // Clear bus master error and interrupt
+                chan.busmaster_status.write(0b110);
+
+                if error {
+                    log::error!("IDE bus master error");
+                    return Err(Error::new(EIO));
+                }
 
                 // Read buffer
                 chunk.copy_from_slice(&chan.buf[..chunk.len()]);
@@ -283,14 +303,26 @@ impl Disk for AtaDisk {
             //TODO: support other LBA modes
             assert!(block < 0x1_0000_0000_0000);
 
-            let sectors = chunk.len() / 512;
-            assert!(sectors < 0x1_0000);
+            let sectors = (chunk.len() + 511) / 512;
+            assert!(sectors <= 128);
 
             let mut chan = self.chan.lock().unwrap();
 
             if self.dma {
                 // Stop bus master
                 chan.busmaster_command.writef(1, false);
+                // Make PRDT EOT match chunk size
+                for i in 0..sectors {
+                    chan.prdt[i] = PrdtEntry {
+                        phys: (chan.buf.physical() + i * 512).try_into().unwrap(),
+                        size: 512,
+                        flags: if i + 1 == sectors {
+                            1 << 15 // End of table
+                        } else {
+                            0
+                        },
+                    };
+                }
                 // Set PRDT
                 let prdt = chan.prdt.physical();
                 chan.busmaster_prdt.write(prdt.try_into().unwrap());
@@ -304,6 +336,7 @@ impl Disk for AtaDisk {
             }
 
             // Select drive
+            //TODO: upper part of LBA 28
             chan.device_select.write(0xE0 | (self.dev << 4));
 
             if self.lba_48 {
@@ -345,12 +378,29 @@ impl Disk for AtaDisk {
                 // Wait for transaction to finish
                 chan.polling(false)?;
 
-                //TODO: use bus master status
+                // Wait for bus master to finish
+                let error = loop {
+                    let status = chan.busmaster_status.read();
+                    if status & 1 << 1 != 0 {
+                        // Break with error status
+                        break true;
+                    }
+                    if status & 1 == 0 {
+                        // Break when not busy and no error
+                        break false;
+                    }
+                };
 
                 // Stop bus master
                 chan.busmaster_command.writef(1, false);
 
-                chan.check_status()?;
+                // Clear bus master error and interrupt
+                chan.busmaster_status.write(0b110);
+
+                if error {
+                    log::error!("IDE bus master error");
+                    return Err(Error::new(EIO));
+                }
             } else {
                 for sector in 0..sectors {
                     chan.polling(false)?;
