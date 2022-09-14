@@ -180,6 +180,8 @@ impl Disk for AtaDisk {
             let sectors = (chunk.len() + 511) / 512;
             assert!(sectors <= 128);
 
+            log::trace!("IDE read chan {} dev {} block {:#x} count {:#x}", self.chan_i, self.dev, block, sectors);
+
             let mut chan = self.chan.lock().unwrap();
 
             if self.dma {
@@ -305,6 +307,8 @@ impl Disk for AtaDisk {
 
             let sectors = (chunk.len() + 511) / 512;
             assert!(sectors <= 128);
+
+            log::trace!("IDE write chan {} dev {} block {:#x} count {:#x}", self.chan_i, self.dev, block, sectors);
 
             let mut chan = self.chan.lock().unwrap();
 
