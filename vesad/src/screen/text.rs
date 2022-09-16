@@ -132,7 +132,7 @@ impl Screen for TextScreen {
         }
     }
 
-    fn write(&mut self, buf: &[u8], sync: bool) -> Result<usize> {
+    fn write(&mut self, buf: &[u8]) -> Result<usize> {
         if self.console.state.cursor && self.console.state.x < self.console.state.w && self.console.state.y < self.console.state.h {
             let x = self.console.state.x;
             let y = self.console.state.y;
@@ -202,10 +202,6 @@ impl Screen for TextScreen {
             self.changed.insert(y);
         }
 
-        if sync {
-            self.sync();
-        }
-
         Ok(buf.len())
     }
 
@@ -213,18 +209,18 @@ impl Screen for TextScreen {
         Ok(0)
     }
 
-    fn sync(&mut self) {
+    fn sync(&mut self, onscreen: &mut [u32], stride: usize) {
         let width = self.display.width;
         for change in self.changed.iter() {
-            self.display.sync(0, change * 16, width, 16);
+            self.display.sync(0, change * 16, width, 16, onscreen, stride);
         }
         self.changed.clear();
     }
 
-    fn redraw(&mut self) {
+    fn redraw(&mut self, onscreen: &mut [u32], stride: usize) {
         let width = self.display.width;
         let height = self.display.height;
-        self.display.sync(0, 0, width, height);
+        self.display.sync(0, 0, width, height, onscreen, stride);
         self.changed.clear();
     }
 }

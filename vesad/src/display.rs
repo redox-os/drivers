@@ -24,7 +24,6 @@ static FONT_ITALIC: &'static [u8] = include_bytes!("../res/DejaVuSansMono-Obliqu
 pub struct Display {
     pub width: usize,
     pub height: usize,
-    pub onscreen: &'static mut [u32],
     pub offscreen: &'static mut [u32],
     #[cfg(feature="rusttype")]
     pub font: Font<'static>,
@@ -38,7 +37,7 @@ pub struct Display {
 
 impl Display {
     #[cfg(not(feature="rusttype"))]
-    pub fn new(width: usize, height: usize, onscreen: usize) -> Display {
+    pub fn new(width: usize, height: usize) -> Display {
         let size = width * height;
 
         let offscreen = unsafe {
@@ -50,13 +49,12 @@ impl Display {
         Display {
             width: width,
             height: height,
-            onscreen: unsafe { slice::from_raw_parts_mut(onscreen as *mut u32, size) },
             offscreen: unsafe { slice::from_raw_parts_mut(offscreen as *mut u32, size) }
         }
     }
 
     #[cfg(feature="rusttype")]
-    pub fn new(width: usize, height: usize, onscreen: usize) -> Display {
+    pub fn new(width: usize, height: usize) -> Display {
         let size = width * height;
         let offscreen = unsafe {
             Global
@@ -67,7 +65,6 @@ impl Display {
         Display {
             width: width,
             height: height,
-            onscreen: unsafe { slice::from_raw_parts_mut(onscreen as *mut u32, size) },
             offscreen: unsafe { slice::from_raw_parts_mut(offscreen as *mut u32, size) },
             font: FontCollection::from_bytes(FONT).into_font().unwrap(),
             font_bold: FontCollection::from_bytes(FONT_BOLD).into_font().unwrap(),
@@ -123,9 +120,6 @@ impl Display {
 
             self.width = width;
             self.height = height;
-
-            let onscreen = self.onscreen.as_mut_ptr();
-            self.onscreen = unsafe { slice::from_raw_parts_mut(onscreen, size) };
 
             unsafe { Global.deallocate(NonNull::new_unchecked(self.offscreen.as_mut_ptr() as *mut u8), Layout::from_size_align_unchecked(self.offscreen.len() * 4, 4096)) };
             self.offscreen = unsafe { slice::from_raw_parts_mut(offscreen as *mut u32, size) };
@@ -268,7 +262,7 @@ impl Display {
     }
 
     /// Copy from offscreen to onscreen
-    pub fn sync(&mut self, x: usize, y: usize, w: usize, h: usize) {
+    pub fn sync(&mut self, x: usize, y: usize, w: usize, h: usize, onscreen: &mut [u32], stride: usize) {
         let start_y = cmp::min(self.height, y);
         let end_y = cmp::min(self.height, y + h);
 
@@ -276,13 +270,10 @@ impl Display {
         let len = (cmp::min(self.width, x + w) - start_x) * 4;
 
         let mut offscreen_ptr = self.offscreen.as_mut_ptr() as usize;
-        let mut onscreen_ptr = self.onscreen.as_mut_ptr() as usize;
+        let mut onscreen_ptr = onscreen.as_mut_ptr() as usize;
 
-        let stride = self.width * 4;
-
-        let offset = y * stride + start_x * 4;
-        offscreen_ptr += offset;
-        onscreen_ptr += offset;
+        offscreen_ptr += (y * self.width + start_x) * 4;
+        onscreen_ptr += (y * stride + start_x) * 4;
 
         let mut rows = end_y - start_y;
         while rows > 0 {
@@ -293,8 +284,8 @@ impl Display {
                     len
                 );
             }
-            offscreen_ptr += stride;
-            onscreen_ptr += stride;
+            offscreen_ptr += self.width * 4;
+            onscreen_ptr += stride * 4;
             rows -= 1;
         }
     }

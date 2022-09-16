@@ -7,7 +7,7 @@ use std::{env, process, ptr};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::os::unix::io::{RawFd, FromRawFd};
-use syscall::{physmap, physunmap, Packet, SchemeMut, EVENT_READ, PHYSMAP_WRITE, PHYSMAP_WRITE_COMBINE};
+use syscall::{Packet, SchemeMut, EVENT_READ};
 
 use crate::scheme::{DisplayScheme, HandleKind};
 
@@ -43,24 +43,23 @@ fn main() {
                 .expect("FRAMEBUFFER_ADDR not set"),
             16
         ).expect("failed to parse FRAMEBUFFER_ADDR");
+    let stride = usize::from_str_radix(
+            &env::var("FRAMEBUFFER_STRIDE")
+                .expect("FRAMEBUFFER_STRIDE not set"),
+            16
+        ).expect("failed to parse FRAMEBUFFER_STRIDE");
 
-    println!("vesad: {}x{} at 0x{:X}", width, height, physbaseptr);
+    println!("vesad: {}x{} stride {} at 0x{:X}", width, height, stride, physbaseptr);
 
     if physbaseptr == 0 {
         return;
     }
-    redox_daemon::Daemon::new(|daemon| inner(daemon, width, height, physbaseptr, &spec)).expect("failed to create daemon");
+    redox_daemon::Daemon::new(|daemon| inner(daemon, width, height, physbaseptr, stride, &spec)).expect("failed to create daemon");
 }
-fn inner(daemon: redox_daemon::Daemon, width: usize, height: usize, physbaseptr: usize, spec: &[bool]) -> ! { 
+fn inner(daemon: redox_daemon::Daemon, width: usize, height: usize, physbaseptr: usize, stride: usize, spec: &[bool]) -> ! {
     let mut socket = File::create(":display").expect("vesad: failed to create display scheme");
 
-    let size = width * height;
-    //TODO: Remap on resize
-    let largest_size = 8 * 1024 * 1024;
-    let onscreen = unsafe { physmap(physbaseptr, largest_size * 4, PHYSMAP_WRITE | PHYSMAP_WRITE_COMBINE).expect("vesad: failed to map VBE LFB") };
-    unsafe { ptr::write_bytes(onscreen as *mut u32, 0, size); }
-
-    let mut scheme = DisplayScheme::new(width, height, onscreen, &spec);
+    let mut scheme = DisplayScheme::new(width, height, physbaseptr, stride, &spec);
 
     syscall::setrens(0, 0).expect("vesad: failed to enter null namespace");
 

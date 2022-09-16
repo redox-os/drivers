@@ -22,11 +22,11 @@ pub trait Screen {
 
     fn can_read(&self) -> Option<usize>;
 
-    fn write(&mut self, buf: &[u8], sync: bool) -> Result<usize>;
+    fn write(&mut self, buf: &[u8]) -> Result<usize>;
 
     fn seek(&mut self, pos: isize, whence: usize) -> Result<usize>;
 
-    fn sync(&mut self);
+    fn sync(&mut self, onscreen: &mut [u32], stride: usize);
 
-    fn redraw(&mut self);
+    fn redraw(&mut self, onscreen: &mut [u32], stride: usize);
 }

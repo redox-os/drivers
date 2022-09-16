@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
-use std::{mem, slice, str};
+use std::{mem, ptr, slice, str};
 
 use orbclient::{Event, EventOption};
-use syscall::{Error, EventFlags, EACCES, EBADF, EINVAL, ENOENT, Map, OldMap, O_NONBLOCK, Result, SchemeMut};
+use syscall::{Error, EventFlags, EACCES, EBADF, EINVAL, ENOENT, Map, OldMap, O_NONBLOCK, physmap, physunmap, PHYSMAP_WRITE, PHYSMAP_WRITE_COMBINE, Result, SchemeMut};
 
 use crate::display::Display;
 use crate::screen::{Screen, GraphicScreen, TextScreen};
@@ -24,6 +24,9 @@ pub struct Handle {
 pub struct DisplayScheme {
     width: usize,
     height: usize,
+    physbaseptr: usize,
+    onscreen: &'static mut [u32],
+    stride: usize,
     active: usize,
     pub screens: BTreeMap<usize, Box<dyn Screen>>,
     next_id: usize,
@@ -31,24 +34,42 @@ pub struct DisplayScheme {
 }
 
 impl DisplayScheme {
-    pub fn new(width: usize, height: usize, onscreen: usize, spec: &[bool]) -> DisplayScheme {
+    pub fn new(width: usize, height: usize, physbaseptr: usize, stride: usize, spec: &[bool]) -> DisplayScheme {
+        let onscreen = unsafe {
+            let size = stride * height;
+            let onscreen_ptr = physmap(
+                physbaseptr,
+                size * 4,
+                PHYSMAP_WRITE | PHYSMAP_WRITE_COMBINE
+            ).expect("vesad: failed to map framebuffer") as *mut u32;
+            ptr::write_bytes(onscreen_ptr, 0, size);
+
+            slice::from_raw_parts_mut(
+                onscreen_ptr,
+                size
+            )
+        };
+
         let mut screens: BTreeMap<usize, Box<dyn Screen>> = BTreeMap::new();
 
         let mut screen_i = 1;
         for &screen_type in spec.iter() {
             if screen_type {
-                screens.insert(screen_i, Box::new(GraphicScreen::new(Display::new(width, height, onscreen))));
+                screens.insert(screen_i, Box::new(GraphicScreen::new(Display::new(width, height))));
             } else {
-                screens.insert(screen_i, Box::new(TextScreen::new(Display::new(width, height, onscreen))));
+                screens.insert(screen_i, Box::new(TextScreen::new(Display::new(width, height))));
             }
             screen_i += 1;
         }
 
         DisplayScheme {
-            width: width,
-            height: height,
+            width,
+            height,
+            physbaseptr,
+            onscreen,
+            stride,
             active: 1,
-            screens: screens,
+            screens,
             next_id: 0,
             handles: BTreeMap::new(),
         }
@@ -68,6 +89,44 @@ impl DisplayScheme {
         }
 
         Some(0)
+    }
+
+    fn resize(&mut self, width: usize, height: usize, stride: usize) {
+        println!("Resizing to {}, {} stride {}", width, height, stride);
+
+        // Unmap old onscreen
+        unsafe {
+            physunmap(self.onscreen.as_mut_ptr() as usize).expect("vesad: failed to unmap framebuffer");
+        }
+
+        // Map new onscreen
+        self.onscreen = unsafe {
+            let size = stride * height;
+            let onscreen_ptr = physmap(
+                self.physbaseptr,
+                size * 4,
+                PHYSMAP_WRITE | PHYSMAP_WRITE_COMBINE
+            ).expect("vesad: failed to map framebuffer") as *mut u32;
+            ptr::write_bytes(onscreen_ptr, 0, size);
+
+            slice::from_raw_parts_mut(
+                onscreen_ptr,
+                size
+            )
+        };
+
+        // Update size
+        self.width = width;
+        self.height = height;
+        self.stride = stride;
+
+        // Resize screens
+        for (screen_i, screen) in self.screens.iter_mut() {
+            screen.resize(width, height);
+            if *screen_i == self.active {
+                screen.redraw(self.onscreen, self.stride);
+            }
+        }
     }
 }
 
@@ -195,7 +254,7 @@ impl SchemeMut for DisplayScheme {
         if let HandleKind::Screen(screen_i) = handle.kind {
             if let Some(screen) = self.screens.get_mut(&screen_i) {
                 if screen_i == self.active {
-                    screen.sync();
+                    screen.sync(self.onscreen, self.stride);
                 }
                 return Ok(0);
             }
@@ -224,7 +283,7 @@ impl SchemeMut for DisplayScheme {
                 let new_active = (buf[0] - 0xF4) as usize + 1;
                 if let Some(screen) = self.screens.get_mut(&new_active) {
                     self.active = new_active;
-                    screen.redraw();
+                    screen.redraw(self.onscreen, self.stride);
                 }
                 Ok(1)
             } else {
@@ -246,15 +305,10 @@ impl SchemeMut for DisplayScheme {
                             _ => ()
                         },
                         EventOption::Resize(resize_event) => {
-                            println!("Resizing to {}, {}", resize_event.width, resize_event.height);
-                            self.width = resize_event.width as usize;
-                            self.height = resize_event.height as usize;
-                            for (screen_i, screen) in self.screens.iter_mut() {
-                                screen.resize(resize_event.width as usize, resize_event.height as usize);
-                                if *screen_i == self.active {
-                                    screen.redraw();
-                                }
-                            }
+                            let width = resize_event.width as usize;
+                            let height = resize_event.height as usize;
+                            let stride = width; //TODO: get stride somehow
+                            self.resize(width, height, stride);
                         },
                         _ => ()
                     };
@@ -262,7 +316,7 @@ impl SchemeMut for DisplayScheme {
                     if let Some(new_active) = new_active_opt {
                         if let Some(screen) = self.screens.get_mut(&new_active) {
                             self.active = new_active;
-                            screen.redraw();
+                            screen.redraw(self.onscreen, self.stride);
                         }
                     } else {
                         if let Some(screen) = self.screens.get_mut(&self.active) {
@@ -274,7 +328,11 @@ impl SchemeMut for DisplayScheme {
                 Ok(events.len() * mem::size_of::<Event>())
             },
             HandleKind::Screen(screen_i) => if let Some(screen) = self.screens.get_mut(&screen_i) {
-                screen.write(buf, screen_i == self.active)
+                let count = screen.write(buf)?;
+                if screen_i == self.active {
+                    screen.sync(self.onscreen, self.stride);
+                }
+                Ok(count)
             } else {
                 Err(Error::new(EBADF))
             }

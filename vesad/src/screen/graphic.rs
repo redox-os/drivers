@@ -75,7 +75,7 @@ impl Screen for GraphicScreen {
         }
     }
 
-    fn write(&mut self, buf: &[u8], sync: bool) -> Result<usize> {
+    fn write(&mut self, buf: &[u8]) -> Result<usize> {
         let size = cmp::max(0, cmp::min(self.display.offscreen.len() as isize - self.seek as isize, (buf.len()/4) as isize)) as usize;
 
         if size > 0 {
@@ -85,13 +85,6 @@ impl Screen for GraphicScreen {
                     self.display.offscreen.as_mut_ptr().offset(self.seek as isize) as *mut u8,
                     size * 4
                 );
-                if sync {
-                    ptr::copy(
-                        buf.as_ptr(),
-                        self.display.onscreen.as_mut_ptr().offset(self.seek as isize) as *mut u8,
-                        size * 4
-                    );
-                }
             }
         }
 
@@ -111,13 +104,13 @@ impl Screen for GraphicScreen {
         Ok(self.seek * 4)
     }
 
-    fn sync(&mut self) {
-        self.redraw();
+    fn sync(&mut self, onscreen: &mut [u32], stride: usize) {
+        self.redraw(onscreen, stride);
     }
 
-    fn redraw(&mut self) {
+    fn redraw(&mut self, onscreen: &mut [u32], stride: usize) {
         let width = self.display.width;
         let height = self.display.height;
-        self.display.sync(0, 0, width, height);
+        self.display.sync(0, 0, width, height, onscreen, stride);
     }
 }
