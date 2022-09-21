@@ -152,7 +152,7 @@ impl Ps2 {
     fn flush_read(&mut self, message: &str) {
         let mut timeout = 100;
         while timeout > 0 {
-            while self.status().contains(StatusFlags::OUTPUT_FULL) {
+            if self.status().contains(StatusFlags::OUTPUT_FULL) {
                 eprintln!("ps2d: flush {}: {:X}", message, self.data.read());
             }
             unsafe { pause(); }
