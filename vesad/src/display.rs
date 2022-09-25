@@ -47,8 +47,8 @@ impl Display {
                 .as_ptr()
         };
         Display {
-            width: width,
-            height: height,
+            width,
+            height,
             offscreen: unsafe { slice::from_raw_parts_mut(offscreen as *mut u32, size) }
         }
     }
@@ -63,8 +63,8 @@ impl Display {
                 .as_ptr()
         };
         Display {
-            width: width,
-            height: height,
+            width,
+            height,
             offscreen: unsafe { slice::from_raw_parts_mut(offscreen as *mut u32, size) },
             font: FontCollection::from_bytes(FONT).into_font().unwrap(),
             font_bold: FontCollection::from_bytes(FONT_BOLD).into_font().unwrap(),
