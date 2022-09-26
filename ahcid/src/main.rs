@@ -1,3 +1,5 @@
+#![cfg_attr(target_arch = "aarch64", feature(stdsimd))] // Required for yield instruction
+
 extern crate syscall;
 extern crate byteorder;
 
