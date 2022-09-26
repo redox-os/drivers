@@ -762,6 +762,7 @@ impl Xhci {
                 .or(Err(Error::new(ENOENT)))?;
             self.drivers.insert(port, process);
         } else {
+            warn!("No driver for USB class {}.{}", ifdesc.class, ifdesc.sub_class);
             return Err(Error::new(ENOENT));
         }
 
