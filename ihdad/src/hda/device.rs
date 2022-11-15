@@ -205,7 +205,7 @@ impl IntelHDA {
 
 		module.init();
 
-		// module.info();
+		module.info();
 		module.enumerate();
 
 		module.configure();
@@ -372,9 +372,6 @@ impl IntelHDA {
 						} else if config.is_input() {
 							self.input_pins.push(widget.addr);
 						}
-
-						log::info!("{:02X}{:02X} {}", widget.addr().0, widget.addr().1, config);
-
 					},
 					_ => {},
 				}
@@ -471,14 +468,14 @@ impl IntelHDA {
 	pub fn configure(&mut self) {
 		let outpin = self.find_best_output_pin().expect("IHDA: No output pins?!");
 
-		//log::info!("Best pin: {:01X}:{:02X}", outpin.0, outpin.1);
+		log::info!("Best pin: {:01X}:{:02X}", outpin.0, outpin.1);
 
 		let path = self.find_path_to_dac(outpin).unwrap();
 
 		let dac = *path.last().unwrap();
 		let pin = *path.first().unwrap();
 
-		//log::info!("Path to DAC: {:?}", path);
+		log::info!("Path to DAC: {:X?}", path);
 
 		// Pin enable
 		self.cmd.cmd12(pin, 0x707, 0x40);
@@ -490,8 +487,8 @@ impl IntelHDA {
 
 		self.update_sound_buffers();
 
-		//log::info!("Supported Formats: {:08X}", self.get_supported_formats((0,0x1)));
-		//log::info!("Capabilities: {:08X}", self.get_capabilities(path[0]));
+		log::info!("Supported Formats: {:08X}", self.get_supported_formats((0,0x1)));
+		log::info!("Capabilities: {:08X}", self.get_capabilities(path[0]));
 
 		let output = self.get_output_stream_descriptor(0).unwrap();
 
@@ -526,7 +523,7 @@ impl IntelHDA {
 		log::info!("Best pin: {:01X}:{:02X}", outpin.0, outpin.1);
 
 		let path = self.find_path_to_dac(outpin).unwrap();
-		log::info!("Path to DAC: {:?}", path);
+		log::info!("Path to DAC: {:X?}", path);
 
 		// Pin enable
 		self.cmd.cmd12((0,0xC), 0x707, 0x40);

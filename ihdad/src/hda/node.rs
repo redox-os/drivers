@@ -87,7 +87,7 @@ impl fmt::Display for HDANode {
 			match self.widget_type() {
 				HDAWidgetType::PinComplex => write!(
 					f,
-					"Addr: {:02X}:{:02X}, Type: {:?}: {:?}, Inputs: {:X}: {:?}.",
+					"Addr: {:02X}:{:02X}, Type: {:?}: {:?}, Inputs: {:X}: {:X?}.",
 					self.addr.0,
 					self.addr.1,
 					self.widget_type(),
@@ -95,7 +95,7 @@ impl fmt::Display for HDANode {
 					self.conn_list_len,
 					self.connections
 				),
-			  	_ => write!(f, "Addr: {:02X}:{:02X}, Type: {:?}, Inputs: {:X}: {:?}.", self.addr.0, self.addr.1, self.widget_type(), self.conn_list_len, self.connections),
+			  	_ => write!(f, "Addr: {:02X}:{:02X}, Type: {:?}, Inputs: {:X}: {:X?}.", self.addr.0, self.addr.1, self.widget_type(), self.conn_list_len, self.connections),
 			}
 		} else {
 			write!(f, "Addr: {:02X}:{:02X}, AFG: {}, Widget count {}.", self.addr.0, self.addr.1, self.function_group_type, self.subnode_count)
