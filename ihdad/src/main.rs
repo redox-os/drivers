@@ -106,7 +106,7 @@ fn main() {
 			let vend_prod:u32 = ((vend as u32) << 16) | (prod as u32);
 
 			let device = Arc::new(RefCell::new(unsafe { hda::IntelHDA::new(address, vend_prod).expect("ihdad: failed to allocate device") }));
-			let socket_fd = syscall::open(":hda", syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK).expect("IHDA: failed to create hda scheme");
+			let socket_fd = syscall::open(":audiohw", syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK).expect("IHDA: failed to create hda scheme");
 			let socket = Arc::new(RefCell::new(unsafe { File::from_raw_fd(socket_fd as RawFd) }));
       daemon.ready().expect("IHDA: failed to signal readiness");
 

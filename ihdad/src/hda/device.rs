@@ -919,7 +919,7 @@ impl SchemeBlockMut for IntelHDA {
         let _handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
         let mut i = 0;
-        let scheme_path = b"hda:";
+        let scheme_path = b"audiohw:";
         while i < buf.len() && i < scheme_path.len() {
             buf[i] = scheme_path[i];
             i += 1;
