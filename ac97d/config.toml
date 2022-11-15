@@ -1,0 +1,5 @@
+[[drivers]]
+name = "AC97 Audio"
+class = 4
+subclass = 1
+command = ["ac97d", "$NAME", "$BAR0", "$BAR1", "$IRQ"]
