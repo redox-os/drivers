@@ -396,7 +396,7 @@ impl IntelHDA {
 				let widget = self.widget_map.get(&out).unwrap();
 
 				let cd = widget.configuration_default();
-				if cd.sequence() == 0 && cd.default_device() == DefaultDevice::Speaker {
+				if cd.sequence() == 0 && cd.default_device() == DefaultDevice::HPOut {
 					return Some(out);
 				}
 			}
@@ -477,8 +477,8 @@ impl IntelHDA {
 
 		log::info!("Path to DAC: {:X?}", path);
 
-		// Pin enable
-		self.cmd.cmd12(pin, 0x707, 0x40);
+		// Pin enable (0x80 = headphone amp enable, 0x40 = output enable)
+		self.cmd.cmd12(pin, 0x707, 0xC0);
 
 		// EAPD enable
 		self.cmd.cmd12(pin, 0x70C, 2);
@@ -504,7 +504,7 @@ impl IntelHDA {
 		self.set_power_state(dac, 0); // Power state 0 is fully on
 		self.set_converter_format(dac, &super::SR_44_1, BitsPerSample::Bits16, 2);
 
-
+		// Get converter format
 		self.cmd.cmd12(dac, 0xA00, 0);
 
 		// Unmute and set gain for pin complex and DAC
