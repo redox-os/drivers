@@ -54,7 +54,7 @@ const IRV:      u16 = 1 << 1;
 
 const COMMAND_BUFFER_OFFSET: usize = 0x40;
 
-const NUM_SUB_BUFFS: usize = 2;
+const NUM_SUB_BUFFS: usize = 4;
 const SUB_BUFF_SIZE: usize = 2048;
 
 enum Handle {
@@ -461,13 +461,11 @@ impl IntelHDA {
 
 		let o = self.output_streams.get_mut(0).unwrap();
 
-		self.buff_desc[0].set_address(o.phys());
-		self.buff_desc[0].set_length(o.block_size() as u32);
-		self.buff_desc[0].set_interrupt_on_complete(true);
-
-		self.buff_desc[1].set_address(o.phys() + o.block_size());
-		self.buff_desc[1].set_length(o.block_size() as u32);
-		self.buff_desc[1].set_interrupt_on_complete(true);
+		for i in 0..NUM_SUB_BUFFS {
+			self.buff_desc[i].set_address(o.phys() + o.block_size() * i);
+			self.buff_desc[i].set_length(o.block_size() as u32);
+			self.buff_desc[i].set_interrupt_on_complete(true);
+		}
 	}
 
 	pub fn configure(&mut self) {
@@ -500,9 +498,9 @@ impl IntelHDA {
 		output.set_address(self.buff_desc_phys);
 
 		output.set_pcm_format(&super::SR_44_1, BitsPerSample::Bits16, 2);
-		output.set_cyclic_buffer_length(0x8000); // number of bytes
+		output.set_cyclic_buffer_length((NUM_SUB_BUFFS * SUB_BUFF_SIZE) as u32); // number of bytes
 		output.set_stream_number(1);
-		output.set_last_valid_index(1);
+		output.set_last_valid_index((NUM_SUB_BUFFS - 1) as u16);
 		output.set_interrupt_on_completion(true);
 
 
@@ -550,9 +548,9 @@ impl IntelHDA {
 		output.set_address(self.buff_desc_phys);
 
 		output.set_pcm_format(&super::SR_44_1, BitsPerSample::Bits16, 2);
-		output.set_cyclic_buffer_length(0x8000);
+		output.set_cyclic_buffer_length((NUM_SUB_BUFFS * SUB_BUFF_SIZE) as u32);
 		output.set_stream_number(1);
-		output.set_last_valid_index(1);
+		output.set_last_valid_index((NUM_SUB_BUFFS - 1) as u16);
 		output.set_interrupt_on_completion(true);
 
 
@@ -744,10 +742,9 @@ impl IntelHDA {
 		//let sample_size:usize = output.sample_size();
 		let mut open_block = (output.link_position() as usize) / os.block_size();
 
-		if open_block == 0 {
-			open_block = 1;
-		} else {
-			open_block = open_block - 1;
+		open_block += NUM_SUB_BUFFS / 2;
+		while open_block >= NUM_SUB_BUFFS {
+			open_block -= NUM_SUB_BUFFS;
 		}
 
 		//log::info!("Status: {:02X} Pos: {:08X} Output CTL: {:06X}", output.status(), output.link_position(), output.control());
