@@ -9,7 +9,7 @@ use std::{env, usize};
 use std::fs::File;
 use std::io::{ErrorKind, Read, Write, Result};
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
-use syscall::{PHYSMAP_NO_CACHE, PHYSMAP_WRITE, Packet, SchemeBlockMut, EventFlags};
+use syscall::{Packet, SchemeBlockMut, EventFlags};
 use std::cell::RefCell;
 use std::sync::Arc;
 
@@ -82,6 +82,8 @@ fn main() {
 	// Daemonize
     redox_daemon::Daemon::new(move |daemon| {
 	    let _logger_ref = setup_logging();
+        
+        unsafe { syscall::iopl(3) }.expect("ac97d: failed to set I/O privilege level to Ring 3");
 
 		let mut irq_file = File::open(format!("irq:{}", irq)).expect("ac97d: failed to open IRQ file");
 

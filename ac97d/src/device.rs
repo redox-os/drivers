@@ -1,27 +1,22 @@
 #![allow(dead_code)]
 
-use std::cmp;
-use std::collections::HashMap;
-use std::str;
+use std::mem;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use syscall::{PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
-use syscall::error::{Error, EACCES, EBADF, Result, EINVAL};
-use syscall::flag::{SEEK_SET, SEEK_CUR, SEEK_END};
-use syscall::io::{Pio, Io};
+use syscall::error::{Error, EACCES, EBADF, Result, EINVAL, ENOENT};
+use syscall::io::{Dma, PhysBox, Mmio, Pio, Io};
 use syscall::scheme::SchemeBlockMut;
 
 use spin::Mutex;
 
-const NUM_SUB_BUFFS: usize = 4;
+const NUM_SUB_BUFFS: usize = 32;
 const SUB_BUFF_SIZE: usize = 2048;
 
 enum Handle {
 	Todo,
 }
 
-#[repr(packed)]
 #[allow(dead_code)]
 struct MixerRegs {
 	/* 0x00 */ reset: Pio<u16>,
@@ -44,7 +39,9 @@ struct MixerRegs {
 	/* 0x22 */ control_3d: Pio<u16>,
 	/* 0x24 */ audio_int_paging: Pio<u16>,
 	/* 0x26 */ powerdown: Pio<u16>,
-	//TODO: extended registers
+	/* 0x28 */ extended_id: Pio<u16>,
+	/* 0x2A */ extended_ctrl: Pio<u16>,
+	/* 0x2C */ vra_pcm_front: Pio<u16>,
 }
 
 impl MixerRegs {
@@ -70,11 +67,13 @@ impl MixerRegs {
 			control_3d: Pio::new(bar0 + 0x22),
 			audio_int_paging: Pio::new(bar0 + 0x24),
 			powerdown: Pio::new(bar0 + 0x26),
+			extended_id: Pio::new(bar0 + 0x28),
+			extended_ctrl: Pio::new(bar0 + 0x2A),
+			vra_pcm_front: Pio::new(bar0 + 0x2C),
 		}
 	}
 }
 
-#[repr(packed)]
 #[allow(dead_code)]
 struct BusBoxRegs {
 	/// Buffer descriptor list base address
@@ -107,7 +106,6 @@ impl BusBoxRegs {
 	}
 }
 
-#[repr(packed)]
 #[allow(dead_code)]
 struct BusRegs {
 	/// PCM in register box
@@ -128,30 +126,120 @@ impl BusRegs {
 	}
 }
 
+#[repr(packed)]
+pub struct BufferDescriptor {
+	/* 0x00 */ addr: Mmio<u32>,
+	/* 0x04 */ samples: Mmio<u16>,
+	/* 0x06 */ flags: Mmio<u16>,
+}
+
 pub struct Ac97 {
 	mixer: MixerRegs,
 	bus: BusRegs,
+	bdl: Dma<[BufferDescriptor; NUM_SUB_BUFFS]>,
+    buf: Dma<[u8; NUM_SUB_BUFFS * SUB_BUFF_SIZE]>,
 	handles: Mutex<BTreeMap<usize, Handle>>,
 	next_id: AtomicUsize,
 }
 
 impl Ac97 {
 	pub unsafe fn new(bar0: u16, bar1: u16) -> Result<Self> {
+		let round_page = |size: usize| -> usize {
+			let page_size = 4096;
+			let pages = (size + (page_size - 1)) / page_size;
+			pages * page_size
+		};
+		let bdl_size = round_page(NUM_SUB_BUFFS * mem::size_of::<BufferDescriptor>());
+		let buf_size = round_page(NUM_SUB_BUFFS * SUB_BUFF_SIZE);
+
 		let mut module = Ac97 {
 			mixer: MixerRegs::new(bar0),
 			bus: BusRegs::new(bar1),
+            bdl: Dma::from_physbox_zeroed(
+                //TODO: PhysBox::new_in_32bit_space(bdl_size)?
+                PhysBox::new(bdl_size)?
+            )?.assume_init(),
+            buf: Dma::from_physbox_zeroed(
+                //TODO: PhysBox::new_in_32bit_space(buf_size)?
+                PhysBox::new(buf_size)?
+            )?.assume_init(),
 			handles: Mutex::new(BTreeMap::new()),
 			next_id: AtomicUsize::new(0),
 		};
 
-		//TODO: init
+		module.init()?;
 
 		Ok(module)
 	}
 
+	fn init(&mut self) -> Result<()> {
+		//TODO: support other sample rates, or just the default of 48000 Hz
+		{
+			// Check if VRA is supported
+			if ! self.mixer.extended_id.readf(1 << 0) {
+				println!("ac97d: VRA not supported and is currently required");
+				return Err(Error::new(ENOENT));
+			}
+
+			// Enable VRA
+			self.mixer.extended_ctrl.writef(1 << 0, true);
+
+			// Attempt to set sample rate for PCM front to 44100 Hz
+			let desired_sample_rate = 44100;
+			self.mixer.vra_pcm_front.write(desired_sample_rate);
+
+			// Read back real sample rate
+			let real_sample_rate = self.mixer.vra_pcm_front.read();
+			println!("ac97d: set sample rate to {}", real_sample_rate);
+
+			// Error if we cannot set the sample rate as desired
+			if real_sample_rate != desired_sample_rate {
+				println!("ac97d: sample rate is {} but only {} is supported", real_sample_rate, desired_sample_rate);
+				return Err(Error::new(ENOENT));
+			}
+		}
+
+		// Ensure PCM out is stopped
+		self.bus.po.cr.writef(1, false);
+
+		// Reset PCM out
+		self.bus.po.cr.writef(1 << 1, true);
+		while self.bus.po.cr.readf(1 << 1) {
+			// Spinning on resetting PCM out
+			//TODO: relax
+		}
+
+		// Initialize BDL for PCM out
+		for i in 0..NUM_SUB_BUFFS {
+			self.bdl[i].addr.write((self.buf.physical() + i * SUB_BUFF_SIZE) as u32);
+			self.bdl[i].samples.write((SUB_BUFF_SIZE / 2 /* Each sample is i16 or 2 bytes */) as u16);
+			self.bdl[i].flags.write(1 << 15 /* Interrupt on completion */);
+		}
+		self.bus.po.bdbar.write(self.bdl.physical() as u32);
+
+		// Enable interrupt on completion
+		self.bus.po.cr.writef(1 << 4, true);
+
+		// Start bus master
+		self.bus.po.cr.writef(1 << 0, true);
+
+		// Set master volume to 0 db (loudest output, DANGER!)
+		self.mixer.master_volume.write(0);
+
+		// Set PCM output volume to 0 db (medium)
+		self.mixer.pcm_out_volume.write(0x808);
+
+		Ok(())
+	}
+
 	pub fn irq(&mut self) -> bool {
-		//TODO
-		false
+		let ints = self.bus.po.sr.read() & 0b11100;
+		if ints != 0 {
+			self.bus.po.sr.write(ints);
+			true
+		} else {
+			false
+		}
 	}
 }
 
@@ -167,13 +255,30 @@ impl SchemeBlockMut for Ac97 {
 	}
 
 	fn write(&mut self, id: usize, buf: &[u8]) -> Result<Option<usize>> {
-		let index = {
+		{
 	        let mut handles = self.handles.lock();
 	        let _handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
-			0
-		};
+		}
 
-		Ok(Some(buf.len()))
+		if buf.len() != SUB_BUFF_SIZE {
+			return Err(Error::new(EINVAL));
+		}
+
+		let civ = self.bus.po.civ.read() as usize;
+		let mut lvi = self.bus.po.lvi.read() as usize;
+		if lvi == (civ + 1) % NUM_SUB_BUFFS {
+			// Block if we already are 1 buffer ahead
+			Ok(None)
+		} else {
+			// Fill next buffer
+			lvi = (lvi + 1) % NUM_SUB_BUFFS;
+			for i in 0..SUB_BUFF_SIZE {
+				self.buf[lvi * SUB_BUFF_SIZE + i] = buf[i];
+			}
+			self.bus.po.lvi.write(lvi as u8);
+
+			Ok(Some(SUB_BUFF_SIZE))
+		}
 	}
 
     fn fpath(&mut self, id: usize, buf: &mut [u8]) -> Result<Option<usize>> {
