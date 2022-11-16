@@ -268,13 +268,13 @@ impl IntelHDA {
 		temp = self.cmd.cmd12(addr, 0xF00, 0x09);
 		node.capabilities = temp as u32;
 
-
 		temp = self.cmd.cmd12(addr, 0xF00, 0x0E);
 
 		node.conn_list_len = (temp & 0xFF) as u8;
 
 		node.connections = self.node_get_connection_list(&node);
 
+		node.connection_default = self.cmd.cmd12(addr, 0xF01, 0x00) as u8;
 
 		node.config_default = self.cmd.cmd12(addr, 0xF1C, 0x00) as u32;
 
@@ -408,24 +408,12 @@ impl IntelHDA {
 	pub fn find_path_to_dac(&self, addr: WidgetAddr) -> Option<Vec<WidgetAddr>>{
 		let widget = self.widget_map.get(&addr).unwrap();
 		if widget.widget_type() == HDAWidgetType::AudioOutput {
-			return Some(vec![addr]);
-		}else{
-			if widget.connections.len() == 0 {
-				return None;
-			}else{
-				// TODO: do more than just first widget
-
-				let res = self.find_path_to_dac(widget.connections[0]);
-				match res {
-					Some(p) => {
-						let mut ret = p.clone();
-						ret.insert(0, addr);
-						Some(ret)
-					},
-					None => {None},
-				}
-			}
-
+			Some(vec![addr])
+		} else {
+			let connection = widget.connections.get(widget.connection_default as usize)?;
+			let mut path = self.find_path_to_dac(*connection)?;
+			path.insert(0, addr);
+			Some(path)
 		}
 	}
 

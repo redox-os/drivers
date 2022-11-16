@@ -32,6 +32,8 @@ pub struct HDANode {
 
 	pub connections:      Vec<WidgetAddr>,
 
+	pub connection_default: u8,
+
 	pub is_widget:        bool,
 
 	pub config_default:   u32,
@@ -54,6 +56,7 @@ impl HDANode {
 			config_default: 0,
 			is_widget: false,
 			connections: Vec::<WidgetAddr>::new(),
+			connection_default: 0,
 		}
 	}
 
@@ -87,18 +90,35 @@ impl fmt::Display for HDANode {
 			match self.widget_type() {
 				HDAWidgetType::PinComplex => write!(
 					f,
-					"Addr: {:02X}:{:02X}, Type: {:?}: {:?}, Inputs: {:X}: {:X?}.",
+					"Addr: {:02X}:{:02X}, Type: {:?}: {:?}, Inputs: {}/{}: {:X?}.",
 					self.addr.0,
 					self.addr.1,
 					self.widget_type(),
 					self.device_default().unwrap(),
+					self.connection_default,
 					self.conn_list_len,
 					self.connections
 				),
-			  	_ => write!(f, "Addr: {:02X}:{:02X}, Type: {:?}, Inputs: {:X}: {:X?}.", self.addr.0, self.addr.1, self.widget_type(), self.conn_list_len, self.connections),
+			  	_ => write!(
+					f,
+					"Addr: {:02X}:{:02X}, Type: {:?}, Inputs: {}/{}: {:X?}.",
+					self.addr.0,
+					self.addr.1,
+					self.widget_type(),
+					self.connection_default,
+					self.conn_list_len,
+					self.connections
+				),
 			}
 		} else {
-			write!(f, "Addr: {:02X}:{:02X}, AFG: {}, Widget count {}.", self.addr.0, self.addr.1, self.function_group_type, self.subnode_count)
+			write!(
+				f,
+				"Addr: {:02X}:{:02X}, AFG: {}, Widget count {}.",
+				self.addr.0,
+				self.addr.1,
+				self.function_group_type,
+				self.subnode_count
+			)
 		}
     }
 }
