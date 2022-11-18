@@ -101,25 +101,54 @@ fn main() {
 				.expect("ihdad: failed to map address")
 		};
 		{
-			let mut irq_file = File::open(format!("irq:{}", irq)).expect("IHDA: failed to open IRQ file");
+            let mut time_file = File::open(format!("time:{}", syscall::CLOCK_MONOTONIC)).expect("ihdad: failed to open time file");
+
+			let mut irq_file = File::open(format!("irq:{}", irq)).expect("ihdad: failed to open IRQ file");
 
 			let vend_prod:u32 = ((vend as u32) << 16) | (prod as u32);
 
 			let device = Arc::new(RefCell::new(unsafe { hda::IntelHDA::new(address, vend_prod).expect("ihdad: failed to allocate device") }));
-			let socket_fd = syscall::open(":audiohw", syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK).expect("IHDA: failed to create hda scheme");
+			let socket_fd = syscall::open(":audiohw", syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK).expect("ihdad: failed to create hda scheme");
 			let socket = Arc::new(RefCell::new(unsafe { File::from_raw_fd(socket_fd as RawFd) }));
-      daemon.ready().expect("IHDA: failed to signal readiness");
+			daemon.ready().expect("ihdad: failed to signal readiness");
 
-			let mut event_queue = EventQueue::<usize>::new().expect("IHDA: Could not create event queue.");
+			let mut event_queue = EventQueue::<usize>::new().expect("ihdad: Could not create event queue.");
 
             syscall::setrens(0, 0).expect("ihdad: failed to enter null namespace");
 
 			let todo = Arc::new(RefCell::new(Vec::<Packet>::new()));
 
+			let todo_time = todo.clone();
+			let device_time = device.clone();
+			let socket_time = socket.clone();
+			event_queue.add(time_file.as_raw_fd(), move |_event| -> Result<Option<usize>> {
+				let mut todo = todo_time.borrow_mut();
+				let mut i = 0;
+				while i < todo.len() {
+					if let Some(a) = device_time.borrow_mut().handle(&mut todo[i]) {
+	                    let mut packet = todo.remove(i);
+	                    packet.a = a;
+						socket_time.borrow_mut().write(&packet)?;
+	                } else {
+	                    i += 1;
+					}
+				}
+
+                let mut time = syscall::TimeSpec::default();
+                time_file.read(&mut time)?;
+                time.tv_nsec += 1_000_000; // 1 ms
+                while time.tv_nsec >= 1_000_000_000 {
+                    time.tv_sec += 1;
+                    time.tv_nsec -= 1_000_000_000;
+                }
+                time_file.write(&time)?;
+
+				Ok(None)
+            }).expect("ihdad: failed to catch events on time file");
+
 			let todo_irq = todo.clone();
 			let device_irq = device.clone();
 			let socket_irq = socket.clone();
-
 			event_queue.add(irq_file.as_raw_fd(), move |_event| -> Result<Option<usize>> {
 				let mut irq = [0; 8];
 				irq_file.read(&mut irq)?;
@@ -147,7 +176,7 @@ fn main() {
 					*/
 				}
 				Ok(None)
-			}).expect("IHDA: failed to catch events on IRQ file");
+			}).expect("ihdad: failed to catch events on IRQ file");
 			let socket_fd = socket.borrow().as_raw_fd();
 			let socket_packet = socket.clone();
 			event_queue.add(socket_fd, move |_event| -> Result<Option<usize>> {
@@ -179,12 +208,12 @@ fn main() {
 				*/
 
 				Ok(None)
-			}).expect("IHDA: failed to catch events on IRQ file");
+			}).expect("ihdad: failed to catch events on IRQ file");
 
 			for event_count in event_queue.trigger_all(event::Event {
 				fd: 0,
 				flags: EventFlags::empty(),
-			}).expect("IHDA: failed to trigger events") {
+			}).expect("ihdad: failed to trigger events") {
 				socket.borrow_mut().write(&Packet {
 					id: 0,
 					pid: 0,
@@ -194,14 +223,14 @@ fn main() {
 					b: 0,
 					c: syscall::flag::EVENT_READ.bits(),
 					d: event_count
-				}).expect("IHDA: failed to write event");
+				}).expect("ihdad: failed to write event");
 			}
 
 			loop {
 				{
 					//device_loop.borrow_mut().handle_interrupts();
 				}
-				let event_count = event_queue.run().expect("IHDA: failed to handle events");
+				let event_count = event_queue.run().expect("ihdad: failed to handle events");
 				if event_count == 0 {
 					//TODO: Handle todo
 					break;
@@ -216,11 +245,11 @@ fn main() {
 					b: 0,
 					c: syscall::flag::EVENT_READ.bits(),
 					d: event_count
-				}).expect("IHDA: failed to write event");
+				}).expect("ihdad: failed to write event");
 			}
 		}
 
 		unsafe { let _ = syscall::physunmap(address); }
     std::process::exit(0);
-	}).expect("IHDA: failed to daemonize");
+	}).expect("ihdad: failed to daemonize");
 }
