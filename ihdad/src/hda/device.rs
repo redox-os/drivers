@@ -233,8 +233,8 @@ impl IntelHDA {
 		// TODO: provide a function to enable certain interrupts
 		// This just enables the first output stream interupt and the global interrupt
 
-		// TODO: No magic numbers! Bad Schemm.
-		self.regs.intctl.write((1 << 31) | /* (1 << 30) |*/ (1 << 4));
+		let iss = self.num_input_streams();
+		self.regs.intctl.write((1 << 31) | /* (1 << 30) |*/ (1 << iss));
 	}
 
 	pub fn irq(&mut self) -> bool {
