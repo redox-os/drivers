@@ -2,6 +2,7 @@
 
 use std::cmp;
 use std::collections::HashMap;
+use std::fmt::Write;
 use std::str;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -345,7 +346,7 @@ impl IntelHDA {
 
 		let root = self.read_node((codec,0));
 
-		// log::info!("{}", root);
+		log::info!("{}", root);
 
 		let root_count = root.subnode_count;
 		let root_start = root.subnode_start;
@@ -353,12 +354,11 @@ impl IntelHDA {
 		//FIXME: So basically the way this is set up is to only support one codec and hopes the first one is an audio
 		for i in 0..root_count {
 			let afg = self.read_node((codec, root_start + i));
-			// log::info!("{}", afg);
+			log::info!("{}", afg);
 			let afg_count = afg.subnode_count;
 			let afg_start = afg.subnode_start;
 
 			for j in 0..afg_count {
-
 				let mut widget = self.read_node((codec, afg_start + j));
 				widget.is_widget = true;
 				match widget.widget_type() {
@@ -465,12 +465,18 @@ impl IntelHDA {
 
 		log::info!("Path to DAC: {:X?}", path);
 
+		// Set power state 0 (on) for all widgets in path
+		for &addr in &path {
+			self.set_power_state(addr, 0);
+		}
+
 		// Pin enable (0x80 = headphone amp enable, 0x40 = output enable)
 		self.cmd.cmd12(pin, 0x707, 0xC0);
 
 		// EAPD enable
 		self.cmd.cmd12(pin, 0x70C, 2);
 
+		// Set DAC stream and channel
 		self.set_stream_channel(dac, 1, 0);
 
 		self.update_sound_buffers();
@@ -478,29 +484,67 @@ impl IntelHDA {
 		log::info!("Supported Formats: {:08X}", self.get_supported_formats((0,0x1)));
 		log::info!("Capabilities: {:08X}", self.get_capabilities(path[0]));
 
+		// Create output stream
 		let output = self.get_output_stream_descriptor(0).unwrap();
-
 		output.set_address(self.buff_desc_phys);
-
 		output.set_pcm_format(&super::SR_44_1, BitsPerSample::Bits16, 2);
 		output.set_cyclic_buffer_length((NUM_SUB_BUFFS * SUB_BUFF_SIZE) as u32); // number of bytes
 		output.set_stream_number(1);
 		output.set_last_valid_index((NUM_SUB_BUFFS - 1) as u16);
 		output.set_interrupt_on_completion(true);
 
-
-		self.set_power_state(dac, 0); // Power state 0 is fully on
+		// Set DAC converter format
 		self.set_converter_format(dac, &super::SR_44_1, BitsPerSample::Bits16, 2);
 
-		// Get converter format
+		// Get DAC converter format
+		//TODO: should validate?
 		self.cmd.cmd12(dac, 0xA00, 0);
 
-		// Unmute and set gain for pin complex and DAC
-		self.set_amplifier_gain_mute(dac, true, true, true, true, 0, false, 0x7f);
-		self.set_amplifier_gain_mute(pin, true, true, true, true, 0, false, 0x7f);
+		// Unmute and set gain to 0db for input and output amplifiers on all widgets in path
+		for &addr in &path {
+			// Read widget capabilities
+			let caps = self.cmd.cmd12(addr, 0xF00, 0x09);
+
+			//TODO: do we need to set any other indexes?
+			let left = true;
+			let right = true;
+			let index = 0;
+			let mute = false;
+
+			// Check for input amp
+			if (caps & (1 << 1)) != 0 {
+				// Read input capabilities
+				let in_caps = self.cmd.cmd12(addr, 0xF00, 0x0D);
+				let in_gain = (in_caps & 0x7f) as u8;
+				// Set input gain
+				let output = false;
+				let input = true;
+				self.set_amplifier_gain_mute(addr, output, input, left, right, index, mute, in_gain);
+				log::info!("Set {:X?} input gain to 0x{:X}", addr, in_gain);
+			}
+
+			// Check for output amp
+			if (caps & (1 << 2)) != 0 {
+				// Read output capabilities
+				let out_caps = self.cmd.cmd12(addr, 0xF00, 0x12);
+				let out_gain = (out_caps & 0x7f) as u8;
+				// Set output gain
+				let output = true;
+				let input = false;
+				self.set_amplifier_gain_mute(addr, output, input, left, right, index, mute, out_gain);
+				log::info!("Set {:X?} output gain to 0x{:X}", addr, out_gain);
+			}
+		}
+
+		//TODO: implement hda-verb?
 
 		output.run();
+		log::info!("Waiting for output 0 to start running...");
+		while output.control() & (1 << 1) == 0 {
+			//TODO: relax
+		}
 
+		eprintln!("Output 0 CONTROL {:#X} STATUS {:#X} POS {:#X}", output.control(), output.status(), output.link_position());
 	}
 	/*
 
@@ -556,6 +600,16 @@ impl IntelHDA {
 	}
 
 	*/
+
+	pub fn dump_codec(&self, codec:u8) -> String {
+		let mut string = String::new();
+
+		for (_, widget) in self.widget_map.iter() {
+			let _ = writeln!(string, "{}", widget);
+		}
+
+		string
+	}
 
 	// BEEP!!
 	pub fn beep(&mut self, div:u8) {
@@ -716,8 +770,6 @@ impl IntelHDA {
 		payload |= (gain  as u16) & 0x7F;
 
 		self.cmd.cmd4(addr, 0x3, payload);
-
-
 	}
 
 	pub fn write_to_output(&mut self, index:u8, buf: &[u8]) -> Result<Option<usize>> {
@@ -761,8 +813,8 @@ impl IntelHDA {
 	}
 
 	pub fn handle_stream_interrupts(&mut self, sis: u32) {
-		let oss = self.num_output_streams();
 		let iss = self.num_input_streams();
+		let oss = self.num_output_streams();
 		let bss = self.num_bidirectional_streams();
 
 		for i in 0..iss {
@@ -848,7 +900,7 @@ impl Drop for IntelHDA {
 }
 
 impl SchemeBlockMut for IntelHDA {
-	fn open(&mut self, _path: &str, _flags: usize, uid: u32, _gid: u32) -> Result<Option<usize>> {
+	fn open(&mut self, path: &str, _flags: usize, uid: u32, _gid: u32) -> Result<Option<usize>> {
 		//let path: Vec<&str>;
 		/*
 		match str::from_utf8(_path) {
@@ -863,19 +915,42 @@ impl SchemeBlockMut for IntelHDA {
 
 		// TODO:
 		if uid == 0 {
+			let handle = match path.trim_matches('/') {
+				//TODO: allow multiple codecs
+				"codec" => Handle::StrBuf(self.dump_codec(0).into_bytes(), 0),
+				_ => Handle::Todo,
+			};
 			let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-			self.handles.lock().insert(id, Handle::Todo);
+			self.handles.lock().insert(id, handle);
 			Ok(Some(id))
 		} else {
 			Err(Error::new(EACCES))
 		}
 	}
 
+	fn read(&mut self, id: usize, buf: &mut [u8]) -> Result<Option<usize>> {
+        let mut handles = self.handles.lock();
+        match *handles.get_mut(&id).ok_or(Error::new(EBADF))? {
+			Handle::StrBuf(ref strbuf, ref mut size) => {
+				let mut i = 0;
+				while i < buf.len() && *size < strbuf.len() {
+					buf[i] = strbuf[*size];
+					i += 1;
+					*size += 1;
+				}
+				Ok(Some(i))
+			},
+			_ => Err(Error::new(EBADF)),
+		}
+	}
+
 	fn write(&mut self, id: usize, buf: &[u8]) -> Result<Option<usize>> {
 		let index = {
 	        let mut handles = self.handles.lock();
-	        let _handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
-			0
+	        match handles.get_mut(&id).ok_or(Error::new(EBADF))? {
+				Handle::Todo => 0,
+				_ => return Err(Error::new(EBADF)),
+			}
 		};
 
 		//log::info!("Int count: {}", self.int_counter);
@@ -884,7 +959,7 @@ impl SchemeBlockMut for IntelHDA {
 	}
 
 	fn seek(&mut self, id: usize, pos: isize, whence: usize) -> Result<Option<isize>> {
-    let pos = pos as usize;
+	    let pos = pos as usize;
 		let mut handles = self.handles.lock();
 		match *handles.get_mut(&id).ok_or(Error::new(EBADF))? {
 			Handle::StrBuf(ref mut strbuf, ref mut size) => {
