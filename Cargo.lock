@@ -484,6 +484,7 @@ version = "0.1.0"
 dependencies = [
  "bitflags",
  "log",
+ "pcid",
  "redox-daemon",
  "redox-log",
  "redox_event",

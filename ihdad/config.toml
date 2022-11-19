@@ -2,4 +2,5 @@
 name = "Intel HD Audio"
 class = 4
 subclass = 3
-command = ["ihdad", "$NAME", "$BAR0", "$BARSIZE0", "$IRQ", "$VENID", "$DEVID"]
+command = ["ihdad"]
+use_channel = true
