@@ -1185,8 +1185,11 @@ name = "rtl8168d"
 version = "0.1.0"
 dependencies = [
  "bitflags",
+ "log",
  "netutils",
+ "pcid",
  "redox-daemon",
+ "redox-log",
  "redox_event",
  "redox_syscall 0.3.4",
 ]
