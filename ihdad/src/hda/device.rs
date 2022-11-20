@@ -55,7 +55,7 @@ const IRV:      u16 = 1 << 1;
 
 const COMMAND_BUFFER_OFFSET: usize = 0x40;
 
-const NUM_SUB_BUFFS: usize = 4;
+const NUM_SUB_BUFFS: usize = 32;
 const SUB_BUFF_SIZE: usize = 2048;
 
 enum Handle {
@@ -781,16 +781,12 @@ impl IntelHDA {
 		let os = self.output_streams.get_mut(index as usize).unwrap();
 
 		//let sample_size:usize = output.sample_size();
-		let mut open_block = (output.link_position() as usize) / os.block_size();
-
-		open_block += NUM_SUB_BUFFS / 2;
-		while open_block >= NUM_SUB_BUFFS {
-			open_block -= NUM_SUB_BUFFS;
-		}
+		let open_block = (output.link_position() as usize) / os.block_size();
 
 		//log::info!("Status: {:02X} Pos: {:08X} Output CTL: {:06X}", output.status(), output.link_position(), output.control());
 
-		if open_block == os.current_block() {
+		if os.current_block() == (open_block + 3) % NUM_SUB_BUFFS {
+			// Block if we already are 3 buffers ahead
 			Ok(None)
 		} else {
 			os.write_block(buf).map(|count| Some(count))

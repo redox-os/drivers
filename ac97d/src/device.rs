@@ -266,8 +266,8 @@ impl SchemeBlockMut for Ac97 {
 
 		let civ = self.bus.po.civ.read() as usize;
 		let mut lvi = self.bus.po.lvi.read() as usize;
-		if lvi == (civ + 1) % NUM_SUB_BUFFS {
-			// Block if we already are 1 buffer ahead
+		if lvi == (civ + 3) % NUM_SUB_BUFFS {
+			// Block if we already are 3 buffers ahead
 			Ok(None)
 		} else {
 			// Fill next buffer
