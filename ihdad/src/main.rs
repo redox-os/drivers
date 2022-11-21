@@ -134,7 +134,7 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle) -> Option<File> {
 
 //TODO: MSI on non-x86_64?
 #[cfg(not(target_arch = "x86_64"))]
-fn get_int_method(pcid_handle: &mut PcidServerHandle, address: usize) -> Option<File> {
+fn get_int_method(pcid_handle: &mut PcidServerHandle) -> Option<File> {
     let pci_config = pcid_handle.fetch_config().expect("ihdad: failed to fetch config");
     let irq = pci_config.func.legacy_interrupt_line;
 
