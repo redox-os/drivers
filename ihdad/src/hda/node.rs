@@ -15,20 +15,8 @@ pub struct HDANode {
 	// 0x9
 	pub capabilities:     u32,
 
-	// 0xC
-	pub pin_caps:         u32,
-
-	// 0xD
-	pub in_amp: 	  u32,
-
 	// 0xE
 	pub conn_list_len:    u8,
-
-	// 0x12
-	pub out_amp:          u32,
-
-	// 0x13
-	pub vol_knob:         u8,
 
 	pub connections:      Vec<WidgetAddr>,
 
@@ -47,10 +35,6 @@ impl HDANode {
 			subnode_start: 0,
 			function_group_type: 0,
 			capabilities: 0,
-			pin_caps: 0,
-			in_amp: 0,
-			out_amp: 0,
-			vol_knob: 0,
 			conn_list_len: 0,
 
 			config_default: 0,
