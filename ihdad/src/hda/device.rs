@@ -515,9 +515,7 @@ impl IntelHDA {
 			if (caps & (1 << 1)) != 0 {
 				// Read input capabilities
 				let in_caps = self.cmd.cmd12(addr, 0xF00, 0x0D);
-				let mut in_gain = (in_caps & 0x7f) as u8;
-				// Divide gain by two (to try to adjust volume to 50%)
-				in_gain /= 2;
+				let in_gain = (in_caps & 0x7f) as u8;
 				// Set input gain
 				let output = false;
 				let input = true;
@@ -529,9 +527,7 @@ impl IntelHDA {
 			if (caps & (1 << 2)) != 0 {
 				// Read output capabilities
 				let out_caps = self.cmd.cmd12(addr, 0xF00, 0x12);
-				let mut out_gain = (out_caps & 0x7f) as u8;
-				// Divide gain by two (to try to adjust volume to 50%)
-				out_gain /= 2;
+				let out_gain = (out_caps & 0x7f) as u8;
 				// Set output gain
 				let output = true;
 				let input = false;
