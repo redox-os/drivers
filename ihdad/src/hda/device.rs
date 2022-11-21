@@ -382,22 +382,36 @@ impl IntelHDA {
 		}
 	}
 
-	pub fn find_best_output_pin(&self) -> Option<WidgetAddr>{
+	pub fn find_best_output_pin(&mut self) -> Option<WidgetAddr>{
 		let outs = &self.output_pins;
 		if outs.len() == 0 {
 			None
 		} else if outs.len() == 1 {
 			Some(outs[0])
 		} else {
-			// TODO: Somehow find the best.
-			// Slightly okay is find the speaker with the lowest sequence number.
-
-			for &out in outs {
-				let widget = self.widget_map.get(&out).unwrap();
-
-				let cd = widget.configuration_default();
-				if cd.sequence() == 0 && cd.default_device() == DefaultDevice::HPOut {
-					return Some(out);
+			//TODO: change output based on "unsolicited response" interrupts
+			// Check for devices in this order: Headphone, Speaker, Line Out
+			for supported_device in &[
+				DefaultDevice::HPOut,
+				DefaultDevice::LineOut,
+				DefaultDevice::Speaker,
+			] {
+				for &out in outs {
+					let widget = self.widget_map.get(&out).unwrap();
+					let cd = widget.configuration_default();
+					if cd.sequence() == 0 && &cd.default_device() == supported_device {
+						// Check for jack detect bit
+						let pin_caps = self.cmd.cmd12(widget.addr, 0xF00, 0x0C);
+						if pin_caps & (1 << 2) != 0 {
+							// Check for presence
+							let pin_sense = self.cmd.cmd12(widget.addr, 0xF09, 0);
+							if pin_sense & (1 << 31) == 0 {
+								// Skip if nothing is plugged in
+								continue;
+							}
+						}
+						return Some(out);
+					}
 				}
 			}
 
