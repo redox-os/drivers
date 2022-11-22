@@ -28,6 +28,7 @@ pub struct Ps2d<F: Fn(u8,bool) -> char>  {
     input: File,
     width: u32,
     height: u32,
+    extended: bool,
     lshift: bool,
     rshift: bool,
     mouse_x: i32,
@@ -57,6 +58,7 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
             input,
             width: 0,
             height: 0,
+            extended: false,
             lshift: false,
             rshift: false,
             mouse_x: 0,
@@ -93,23 +95,32 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
 
     pub fn handle(&mut self, keyboard: bool, data: u8) {
         if keyboard {
-            let (scancode, pressed) = if data >= 0x80 {
-                (data - 0x80, false)
+            if data == 0xE0 {
+                self.extended = true;
             } else {
-                (data, true)
-            };
+                let (mut scancode, pressed) = if data >= 0x80 {
+                    (data - 0x80, false)
+                } else {
+                    (data, true)
+                };
 
-            if scancode == 0x2A {
-                self.lshift = pressed;
-            } else if scancode == 0x36 {
-                self.rshift = pressed;
+                if self.extended {
+                    self.extended = false;
+                    scancode += 0x80;
+                }
+
+                if scancode == 0x2A {
+                    self.lshift = pressed;
+                } else if scancode == 0x36 {
+                    self.rshift = pressed;
+                }
+
+                self.input.write(&KeyEvent {
+                    character: (self.get_char)(scancode, self.lshift || self.rshift),
+                    scancode: scancode,
+                    pressed: pressed
+                }.to_event()).expect("ps2d: failed to write key event");
             }
-
-            self.input.write(&KeyEvent {
-                character: (self.get_char)(scancode, self.lshift || self.rshift),
-                scancode: scancode,
-                pressed: pressed
-            }.to_event()).expect("ps2d: failed to write key event");
         } else if self.vmmouse {
             for _i in 0..256 {
         		let (status, _, _, _, _, _) = unsafe { vm::cmd(vm::ABSPOINTER_STATUS, 0) };
