@@ -110,6 +110,9 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
                         //TODO: media keys
                         //TODO: 0x1C => orbclient::K_NUM_ENTER,
                         //TODO: 0x1D => orbclient::K_RIGHT_CTRL,
+                        0x20 => 0x80 + 0x20, //TODO: orbclient::K_VOLUME_MUTE,
+                        0x2E => 0x80 + 0x2E, //TODO: orbclient::K_VOLUME_DOWN,
+                        0x30 => 0x80 + 0x30, //TODO: orbclient::K_VOLUME_UP,
                         //TODO: 0x35 => orbclient::K_NUM_SLASH,
                         0x38 => orbclient::K_ALT_GR,
                         0x47 => orbclient::K_HOME,
