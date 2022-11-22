@@ -98,28 +98,155 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
             if data == 0xE0 {
                 self.extended = true;
             } else {
-                let (mut scancode, pressed) = if data >= 0x80 {
+                let (ps2_scancode, pressed) = if data >= 0x80 {
                     (data - 0x80, false)
                 } else {
                     (data, true)
                 };
 
-                if self.extended {
+                let scancode = if self.extended {
                     self.extended = false;
-                    scancode += 0x80;
-                }
+                    match ps2_scancode {
+                        //TODO: media keys
+                        //TODO: 0x1C => orbclient::K_NUM_ENTER,
+                        //TODO: 0x1D => orbclient::K_RIGHT_CTRL,
+                        //TODO: 0x35 => orbclient::K_NUM_SLASH,
+                        0x38 => orbclient::K_ALT_GR,
+                        0x47 => orbclient::K_HOME,
+                        0x48 => orbclient::K_UP,
+                        0x49 => orbclient::K_PGUP,
+                        0x4B => orbclient::K_LEFT,
+                        0x4D => orbclient::K_RIGHT,
+                        0x4F => orbclient::K_END,
+                        0x50 => orbclient::K_DOWN,
+                        0x51 => orbclient::K_PGDN,
+                        //TODO: 0x52 => orbclient::K_INSERT,
+                        0x53 => orbclient::K_DEL,
+                        0x5B => 0x5B, //TODO: orbclient::K_LEFT_SUPER,
+                        //TODO: 0x5C => orbclient::K_RIGHT_SUPER,
+                        //TODO: 0x5D => orbclient::K_APP,
+                        //TODO power keys
+                        /* 0x80 to 0xFF used for press/release detection */
+                        _ => {
+                            if pressed {
+                                println!("ps2d: unknown extended scancode {:02X}", ps2_scancode);
+                            }
+                            0
+                        }
+                    }
+                } else {
+                    match ps2_scancode {
+                        /* 0x00 unused */
+                        0x01 => orbclient::K_ESC,
+                        0x02 => orbclient::K_1,
+                        0x03 => orbclient::K_2,
+                        0x04 => orbclient::K_3,
+                        0x05 => orbclient::K_4,
+                        0x06 => orbclient::K_5,
+                        0x07 => orbclient::K_6,
+                        0x08 => orbclient::K_7,
+                        0x09 => orbclient::K_8,
+                        0x0A => orbclient::K_9,
+                        0x0B => orbclient::K_0,
+                        0x0C => orbclient::K_MINUS,
+                        0x0D => orbclient::K_EQUALS,
+                        0x0E => orbclient::K_BKSP,
+                        0x0F => orbclient::K_TAB,
+                        0x10 => orbclient::K_Q,
+                        0x11 => orbclient::K_W,
+                        0x12 => orbclient::K_E,
+                        0x13 => orbclient::K_R,
+                        0x14 => orbclient::K_T,
+                        0x15 => orbclient::K_Y,
+                        0x16 => orbclient::K_U,
+                        0x17 => orbclient::K_I,
+                        0x18 => orbclient::K_O,
+                        0x19 => orbclient::K_P,
+                        0x1A => orbclient::K_BRACE_OPEN,
+                        0x1B => orbclient::K_BRACE_CLOSE,
+                        0x1C => orbclient::K_ENTER,
+                        0x1D => orbclient::K_CTRL,
+                        0x1E => orbclient::K_A,
+                        0x1F => orbclient::K_S,
+                        0x20 => orbclient::K_D,
+                        0x21 => orbclient::K_F,
+                        0x22 => orbclient::K_G,
+                        0x23 => orbclient::K_H,
+                        0x24 => orbclient::K_J,
+                        0x25 => orbclient::K_K,
+                        0x26 => orbclient::K_L,
+                        0x27 => orbclient::K_SEMICOLON,
+                        0x28 => orbclient::K_QUOTE,
+                        0x29 => orbclient::K_TICK,
+                        0x2A => orbclient::K_LEFT_SHIFT,
+                        0x2B => orbclient::K_BACKSLASH,
+                        0x2C => orbclient::K_Z,
+                        0x2D => orbclient::K_X,
+                        0x2E => orbclient::K_C,
+                        0x2F => orbclient::K_V,
+                        0x30 => orbclient::K_B,
+                        0x31 => orbclient::K_N,
+                        0x32 => orbclient::K_M,
+                        0x33 => orbclient::K_COMMA,
+                        0x34 => orbclient::K_PERIOD,
+                        0x35 => orbclient::K_SLASH,
+                        0x36 => orbclient::K_RIGHT_SHIFT,
+                        //TODO: 0x37 => orbclient::K_NUM_ASTERISK,
+                        0x38 => orbclient::K_ALT,
+                        0x39 => orbclient::K_SPACE,
+                        0x3A => orbclient::K_CAPS,
+                        0x3B => orbclient::K_F1,
+                        0x3C => orbclient::K_F2,
+                        0x3D => orbclient::K_F3,
+                        0x3E => orbclient::K_F4,
+                        0x3F => orbclient::K_F5,
+                        0x40 => orbclient::K_F6,
+                        0x41 => orbclient::K_F7,
+                        0x42 => orbclient::K_F8,
+                        0x43 => orbclient::K_F9,
+                        0x44 => orbclient::K_F10,
+                        //TODO: 0x45 => orbclient::K_NUM_LOCK,
+                        //TODO: 0x46 => orbclient::K_SCROLL_LOCK,
+                        0x47 => orbclient::K_NUM_7,
+                        0x48 => orbclient::K_NUM_8,
+                        0x49 => orbclient::K_NUM_9,
+                        //TODO: 0x4A => orbclient::K_NUM_MINUS,
+                        0x4B => orbclient::K_NUM_4,
+                        0x4C => orbclient::K_NUM_5,
+                        0x4D => orbclient::K_NUM_6,
+                        //TODO: 0x4E => orbclient::K_NUM_PLUS,
+                        0x4F => orbclient::K_NUM_1,
+                        0x50 => orbclient::K_NUM_2,
+                        0x51 => orbclient::K_NUM_3,
+                        0x52 => orbclient::K_NUM_0,
+                        //TODO: 0x53 => orbclient::K_NUM_PERIOD,
+                        /* 0x54 to 0x56 unused */
+                        0x57 => orbclient::K_F11,
+                        0x58 => orbclient::K_F12,
+                        /* 0x59 to 0x7F unused */
+                        /* 0x80 to 0xFF used for press/release detection */
+                        _ => {
+                            if pressed {
+                                println!("ps2d: unknown scancode {:02X}", ps2_scancode);
+                            }
+                            0
+                        }
+                    }
+                };
 
-                if scancode == 0x2A {
+                if scancode == orbclient::K_LEFT_SHIFT {
                     self.lshift = pressed;
-                } else if scancode == 0x36 {
+                } else if scancode == orbclient::K_RIGHT_SHIFT {
                     self.rshift = pressed;
                 }
 
-                self.input.write(&KeyEvent {
-                    character: (self.get_char)(scancode, self.lshift || self.rshift),
-                    scancode: scancode,
-                    pressed: pressed
-                }.to_event()).expect("ps2d: failed to write key event");
+                if scancode != 0 {
+                    self.input.write(&KeyEvent {
+                        character: (self.get_char)(ps2_scancode, self.lshift || self.rshift),
+                        scancode,
+                        pressed
+                    }.to_event()).expect("ps2d: failed to write key event");
+                }
             }
         } else if self.vmmouse {
             for _i in 0..256 {
