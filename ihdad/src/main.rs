@@ -150,12 +150,12 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle) -> Option<File> {
 fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let _logger_ref = setup_logging();
 
-    let mut pcid_handle = PcidServerHandle::connect_default().expect("rtl8168d: failed to setup channel to pcid");
+    let mut pcid_handle = PcidServerHandle::connect_default().expect("ihdad: failed to setup channel to pcid");
 
-    let pci_config = pcid_handle.fetch_config().expect("rtl8168d: failed to fetch config");
+    let pci_config = pcid_handle.fetch_config().expect("ihdad: failed to fetch config");
 
     let mut name = pci_config.func.name();
-    name.push_str("_rtl8168");
+    name.push_str("_ihda");
 
     let bar = pci_config.func.bars[0];
     let bar_size = pci_config.func.bar_sizes[0];
@@ -179,7 +179,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 	};
 
     //TODO: MSI-X
-    let mut irq_file = get_int_method(&mut pcid_handle).expect("rtl8168d: no interrupt file");
+    let mut irq_file = get_int_method(&mut pcid_handle).expect("ihdad: no interrupt file");
 
 	{
 		let vend_prod:u32 = ((pci_config.func.venid as u32) << 16) | (pci_config.func.devid as u32);
