@@ -119,6 +119,7 @@ pub enum BosAnyDevDesc {
     Usb2Ext(BosUsb2ExtDesc),
     SuperSpeed(BosSuperSpeedDesc),
     SuperSpeedPlus(BosSuperSpeedPlusDesc),
+    Unknown,
 }
 
 impl BosAnyDevDesc {
@@ -167,7 +168,8 @@ impl<'a> Iterator for BosAnyDevDescIter<'a> {
             // TODO
             return None;
         } else {
-            unimplemented!("USB device capability of type: {}", base.cap_ty)
+            log::warn!("unknown USB device capability of type: {:#x}", base.cap_ty);
+            Some(BosAnyDevDesc::Unknown)
         }
     }
 }
