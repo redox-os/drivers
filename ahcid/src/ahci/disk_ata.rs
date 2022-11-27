@@ -1,5 +1,6 @@
 use std::convert::TryInto;
 use std::ptr;
+use std::thread;
 
 use syscall::io::Dma;
 use syscall::error::Result;
@@ -109,7 +110,7 @@ impl DiskATA {
                     if use_interrupts {
                         return Ok(None);
                     } else {
-                        unsafe { pause(); }
+                        thread::yield_now();
                         continue;
                     }
                 }
@@ -144,7 +145,7 @@ impl DiskATA {
                 if use_interrupts {
                     return Ok(None);
                 } else {
-                    unsafe { pause(); }
+                    thread::yield_now();
                     continue;
                 }
             } else {
