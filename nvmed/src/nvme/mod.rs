@@ -4,6 +4,7 @@ use std::fs::File;
 use std::ptr;
 use std::sync::atomic::{AtomicU16, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, RwLock};
+use std::thread;
 
 use crossbeam_channel::Sender;
 use smallvec::{smallvec, SmallVec};
@@ -471,7 +472,7 @@ impl Nvme {
                     return entry;
                 }
             }
-            unsafe { pause(); }
+            thread::yield_now();
         }
     }
 
