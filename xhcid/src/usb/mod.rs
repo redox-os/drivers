@@ -8,6 +8,7 @@ pub use self::endpoint::{
 pub use self::interface::InterfaceDescriptor;
 pub use self::setup::Setup;
 
+#[derive(Clone, Copy, Debug)]
 #[repr(u8)]
 pub enum DescriptorKind {
     None,
