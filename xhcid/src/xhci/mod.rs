@@ -336,6 +336,17 @@ impl Xhci {
     }
 
     pub fn init(&mut self, max_slots: u8) -> Result<()> {
+        // Set run/stop to 0
+        debug!("Stopping xHC.");
+        self.op.get_mut().unwrap().usb_cmd.writef(1, false);
+
+        // Warm reset
+        debug!("Reset xHC");
+        self.op.get_mut().unwrap().usb_cmd.writef(1 << 1, true);
+        while self.op.get_mut().unwrap().usb_cmd.readf(1 << 1) {
+            thread::yield_now();
+        }
+
         // Set enabled slots
         debug!("Setting enabled slots to {}.", max_slots);
         self.op.get_mut().unwrap().config.write(max_slots as u32);
@@ -382,7 +393,7 @@ impl Xhci {
         self.setup_scratchpads()?;
 
         // Set run/stop to 1
-        info!("Starting xHC.");
+        debug!("Starting xHC.");
         self.op.get_mut().unwrap().usb_cmd.writef(1, true);
 
         // Wait until controller is running
@@ -472,6 +483,17 @@ impl Xhci {
         let port_count = { self.ports.lock().unwrap().len() };
 
         for i in 0..port_count {
+            //TODO: only reset if USB 2.0?
+            debug!("Port reset");
+            {
+                let port = &mut self.ports.lock().unwrap()[i];
+                port.portsc.writef(port::PortFlags::PORT_PR.bits(), true);
+                while port.portsc.readf(port::PortFlags::PORT_PR.bits()) {
+                //while ! port.flags().contains(port::PortFlags::PORT_PRC) {
+                    std::thread::yield_now();
+                }
+            }
+
             let (data, state, speed, flags) = {
                 let port = &self.ports.lock().unwrap()[i];
                 (port.read(), port.state(), port.speed(), port.flags())
