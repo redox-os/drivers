@@ -181,7 +181,7 @@ impl IrqReactor {
                     return Ok(None);
                 } else { count += 1 }
 
-                trace!("Found event TRB: {:?}", event_trb);
+                trace!("Found event TRB type {}: {:?}", event_trb.trb_type(), event_trb);
 
                 if self.check_event_ring_full(event_trb.clone()) {
                     info!("Had to resize event TRB, retrying...");
@@ -206,7 +206,7 @@ impl IrqReactor {
         let dequeue_pointer = dequeue_pointer_and_dcs & 0xFFFF_FFFF_FFFF_FFFE;
         assert_eq!(dequeue_pointer & 0xFFFF_FFFF_FFFF_FFF0, dequeue_pointer, "unaligned ERDP received from primary event ring");
 
-        debug!("Updated ERDP to {:#0x}", dequeue_pointer);
+        trace!("Updated ERDP to {:#0x}", dequeue_pointer);
 
         self.hci.run.lock().unwrap().ints[0].erdp.write(dequeue_pointer);
     }
@@ -214,78 +214,78 @@ impl IrqReactor {
         self.states.extend(self.receiver.try_iter().inspect(|req| trace!("Received request: {:?}", req)));
     }
     fn acknowledge(&mut self, trb: Trb) {
-        let mut index = 0;
+        //TODO: handle TRBs without an attached state
 
-        loop {
-            if index >= self.states.len() { break }
+        trace!("ACK TRB {:X?}", trb);
+
+        let mut index = 0;
+        while index < self.states.len() {
+            trace!("ACK STATE {}: {:X?}", index, self.states[index].kind);
 
             match self.states[index].kind {
-                StateKind::CommandCompletion { phys_ptr } if trb.trb_type() == TrbType::CommandCompletion as u8 => if trb.completion_trb_pointer() == Some(phys_ptr) {
-                    trace!("Found matching command completion future");
-                    let state = self.states.remove(index);
-
-                    // Before waking, it's crucial that the command TRB that generated this event
-                    // is fetched before removing this event TRB from the queue.
-                    let command_trb = match self.hci.cmd.lock().unwrap().phys_addr_to_entry_mut(self.hci.cap.ac64(), phys_ptr) {
-                        Some(command_trb) => {
-                            let t = command_trb.clone();
-                            command_trb.reserved(false);
-                            t
-                        },
-                        None => {
-                            warn!("The xHC supplied a pointer to a command TRB that was outside the known command ring bounds. Ignoring event TRB {:?}.", trb);
-                            continue;
-                        }
-                    };
-
-                    // TODO: Validate the command TRB.
-                    *state.message.lock().unwrap() = Some(NextEventTrb {
-                        src_trb: Some(command_trb.clone()),
-                        event_trb: trb.clone(),
-                    });
-
-                    trace!("Waking up future with waker: {:?}", state.waker);
-                    state.waker.wake();
-
-                    return;
-                } else if trb.completion_trb_pointer().is_none() {
-                    warn!("Command TRB somehow resulted in an error that only can be caused by transfer TRBs. Ignoring event TRB: {:?}.", trb);
-                    continue;
-                } else {
-                    // The event TRB simply didn't match the current future
-                    continue;
-                }
-
-                StateKind::Transfer { phys_ptr, ring_id } if trb.trb_type() == TrbType::Transfer as u8 => if let Some(src_trb) = trb.transfer_event_trb_pointer().map(|ptr| self.hci.get_transfer_trb(ptr, ring_id)).flatten() {
-                    if trb.transfer_event_trb_pointer() == Some(phys_ptr) {
-                        // Give the source transfer TRB together with the event TRB, to the future.
-
+                StateKind::CommandCompletion { phys_ptr } if trb.trb_type() == TrbType::CommandCompletion as u8 => {
+                    if trb.completion_trb_pointer() == Some(phys_ptr) {
+                        trace!("Found matching command completion future");
                         let state = self.states.remove(index);
+
+                        // Before waking, it's crucial that the command TRB that generated this event
+                        // is fetched before removing this event TRB from the queue.
+                        let command_trb = match self.hci.cmd.lock().unwrap().phys_addr_to_entry_mut(self.hci.cap.ac64(), phys_ptr) {
+                            Some(command_trb) => {
+                                let t = command_trb.clone();
+                                command_trb.reserved(false);
+                                t
+                            },
+                            None => {
+                                warn!("The xHC supplied a pointer to a command TRB that was outside the known command ring bounds. Ignoring event TRB {:?}.", trb);
+                                continue;
+                            }
+                        };
+
+                        // TODO: Validate the command TRB.
                         *state.message.lock().unwrap() = Some(NextEventTrb {
-                            src_trb: Some(src_trb),
+                            src_trb: Some(command_trb.clone()),
                             event_trb: trb.clone(),
                         });
+
+                        trace!("Waking up future with waker: {:?}", state.waker);
                         state.waker.wake();
+
                         return;
-                    } else if trb.transfer_event_trb_pointer().is_none() {
-                        // Ring Overrun, Ring Underrun, or Virtual Function Event Ring Full.
-                        //
-                        // These errors are caused when either an isoch transfer that shall write data, doesn't
-                        // have any data since the ring is empty, or if an isoch receive is impossible due to a
-                        // full ring. The Virtual Function Event Ring Full is only for Virtual Machine
-                        // Managers, and since this isn't implemented yet, they are irrelevant.
-                        //
-                        // The best solution here is to differentiate between isoch transfers (and
-                        // virtual function event rings when virtualization gets implemented), with
-                        // regular commands and transfers, and send the error TRB to all of them, or
-                        // possibly an error code wrapped in a Result.
-                        self.acknowledge_failed_transfer_trbs(trb);
-                        return;
-                    } else {
-                        // The event TRB simply didn't match the current future
-                        continue;
+                    } else if trb.completion_trb_pointer().is_none() {
+                        warn!("Command TRB somehow resulted in an error that only can be caused by transfer TRBs. Ignoring event TRB: {:?}.", trb);
                     }
-                } else { continue }
+                }
+
+                StateKind::Transfer { phys_ptr, ring_id } if trb.trb_type() == TrbType::Transfer as u8 => {
+                    if let Some(src_trb) = trb.transfer_event_trb_pointer().map(|ptr| self.hci.get_transfer_trb(ptr, ring_id)).flatten() {
+                        if trb.transfer_event_trb_pointer() == Some(phys_ptr) {
+                            // Give the source transfer TRB together with the event TRB, to the future.
+
+                            let state = self.states.remove(index);
+                            *state.message.lock().unwrap() = Some(NextEventTrb {
+                                src_trb: Some(src_trb),
+                                event_trb: trb.clone(),
+                            });
+                            state.waker.wake();
+                            return;
+                        } else if trb.transfer_event_trb_pointer().is_none() {
+                            // Ring Overrun, Ring Underrun, or Virtual Function Event Ring Full.
+                            //
+                            // These errors are caused when either an isoch transfer that shall write data, doesn't
+                            // have any data since the ring is empty, or if an isoch receive is impossible due to a
+                            // full ring. The Virtual Function Event Ring Full is only for Virtual Machine
+                            // Managers, and since this isn't implemented yet, they are irrelevant.
+                            //
+                            // The best solution here is to differentiate between isoch transfers (and
+                            // virtual function event rings when virtualization gets implemented), with
+                            // regular commands and transfers, and send the error TRB to all of them, or
+                            // possibly an error code wrapped in a Result.
+                            self.acknowledge_failed_transfer_trbs(trb);
+                            return;
+                        }
+                    }
+                }
 
                 StateKind::Other(trb_type) if trb_type as u8 == trb.trb_type() => {
                     let state = self.states.remove(index);
@@ -293,13 +293,12 @@ impl IrqReactor {
                     return;
                 }
 
-                _ => {
-                    index += 1;
-                    continue;
-                }
+                _ => ()
             }
+
+            index += 1;
         }
-        warn!("Lost event TRB: {:?}", trb);
+        warn!("Lost event TRB type {}: {:?}", trb.trb_type(), trb);
     }
     fn acknowledge_failed_transfer_trbs(&mut self, trb: Trb) {
         let mut index = 0;
