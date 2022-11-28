@@ -38,7 +38,7 @@ async fn handle_packet(hci: Arc<Xhci>, packet: Packet) -> Packet {
     todo!()
 }
 
-fn setup_logging() -> Option<&'static RedoxLogger> {
+fn setup_logging(name: &str) -> Option<&'static RedoxLogger> {
     let mut logger = RedoxLogger::new()
         .with_output(
             OutputBuilder::stderr()
@@ -49,25 +49,25 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
         );
 
     #[cfg(target_os = "redox")]
-    match OutputBuilder::in_redox_logging_scheme("usb", "host", "xhci.log") {
+    match OutputBuilder::in_redox_logging_scheme("usb", "host", &format!("{}.log", name)) {
         Ok(b) => logger = logger.with_output(
             // TODO: Add a configuration file for this
-            b.with_filter(log::LevelFilter::Info)
+            b.with_filter(log::LevelFilter::Debug)
                 .flush_on_newline(true)
                 .build()
         ),
-        Err(error) => eprintln!("Failed to create xhci.log: {}", error),
+        Err(error) => eprintln!("Failed to create {}.log: {}", name, error),
     }
 
     #[cfg(target_os = "redox")]
-    match OutputBuilder::in_redox_logging_scheme("usb", "host", "xhci.ansi.log") {
+    match OutputBuilder::in_redox_logging_scheme("usb", "host", &format!("{}.ansi.log", name)) {
         Ok(b) => logger = logger.with_output(
-            b.with_filter(log::LevelFilter::Info)
+            b.with_filter(log::LevelFilter::Debug)
                 .with_ansi_escape_codes()
                 .flush_on_newline(true)
                 .build()
         ),
-        Err(error) => eprintln!("Failed to create xhci.ansi.log: {}", error),
+        Err(error) => eprintln!("Failed to create {}.ansi.log: {}", name, error),
     }
 
     match logger.enable() {
@@ -237,18 +237,18 @@ fn main() {
 }
 
 fn daemon(daemon: redox_daemon::Daemon) -> ! {
-    let _logger_ref = setup_logging();
-
     let mut pcid_handle = PcidServerHandle::connect_default().expect("xhcid: failed to setup channel to pcid");
     let pci_config = pcid_handle.fetch_config().expect("xhcid: failed to fetch config");
-    info!("XHCI PCI CONFIG: {:?}", pci_config);
-
-    let bar = pci_config.func.bars[0];
-    let bar_size = pci_config.func.bar_sizes[0];
-    let irq = pci_config.func.legacy_interrupt_line;
 
     let mut name = pci_config.func.name();
     name.push_str("_xhci");
+
+    let _logger_ref = setup_logging(&name);
+
+    info!("XHCI PCI CONFIG: {:?}", pci_config);
+    let bar = pci_config.func.bars[0];
+    let bar_size = pci_config.func.bar_sizes[0];
+    let irq = pci_config.func.legacy_interrupt_line;
 
     let bar_ptr = match bar {
         pcid_interface::PciBar::Memory32(ptr) => match ptr {
