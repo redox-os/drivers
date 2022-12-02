@@ -1000,12 +1000,12 @@ impl Xhci {
             },
         );
 
-        let (bos_desc, bos_data) = self.fetch_bos_desc(port_id, slot).await?;
+        //TODO let (bos_desc, bos_data) = self.fetch_bos_desc(port_id, slot).await?;
 
-        let supports_superspeed =
-            usb::bos_capability_descs(bos_desc, &bos_data).any(|desc| desc.is_superspeed());
-        let supports_superspeedplus =
-            usb::bos_capability_descs(bos_desc, &bos_data).any(|desc| desc.is_superspeedplus());
+        let supports_superspeed = false;
+            //TODO usb::bos_capability_descs(bos_desc, &bos_data).any(|desc| desc.is_superspeed());
+        let supports_superspeedplus = false;
+            //TODO usb::bos_capability_descs(bos_desc, &bos_data).any(|desc| desc.is_superspeedplus());
 
         let mut config_descs = SmallVec::new();
 
