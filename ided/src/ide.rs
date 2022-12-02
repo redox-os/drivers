@@ -1,6 +1,7 @@
 use std::{
     convert::TryInto,
     sync::{Arc, Mutex},
+    thread,
 };
 use syscall::{
     error::{Error, Result, EIO},
@@ -8,18 +9,6 @@ use syscall::{
 };
 
 use crate::ata::AtaCommand;
-
-#[cfg(target_arch = "aarch64")]
-#[inline(always)]
-pub(crate) unsafe fn pause() { std::arch::aarch64::__yield(); }
-
-#[cfg(target_arch = "x86")]
-#[inline(always)]
-pub(crate) unsafe fn pause() { std::arch::x86::_mm_pause(); }
-
-#[cfg(target_arch = "x86_64")]
-#[inline(always)]
-pub(crate) unsafe fn pause() { std::arch::x86_64::_mm_pause(); }
 
 #[repr(packed)]
 struct PrdtEntry {
@@ -129,7 +118,7 @@ impl Channel {
         loop {
             let status = self.check_status()?;
             if status & 0x80 != 0 {
-                unsafe { pause(); }
+                thread::yield_now();
             } else {
                 if read && status & 0x08 == 0 {
                     log::error!("IDE data not ready");
