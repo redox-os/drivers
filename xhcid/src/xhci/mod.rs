@@ -412,6 +412,28 @@ impl Xhci {
             self.op.get_mut().unwrap().set_cie(true);
         }
 
+
+        // Reset ports
+        {
+            let mut ports = self.ports.lock().unwrap();
+            for (i, port) in ports.iter_mut().enumerate() {
+                //TODO: only reset if USB 2.0?
+                debug!("XHCI Port {} reset", i);
+
+                let instant = std::time::Instant::now();
+
+                port.portsc.writef(port::PortFlags::PORT_PR.bits(), true);
+                while port.portsc.readf(port::PortFlags::PORT_PR.bits()) {
+                //while ! port.flags().contains(port::PortFlags::PORT_PRC) {
+                    if instant.elapsed().as_secs() >= 1 {
+                        warn!("timeout");
+                        break;
+                    }
+                    std::thread::yield_now();
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -483,17 +505,6 @@ impl Xhci {
         let port_count = { self.ports.lock().unwrap().len() };
 
         for i in 0..port_count {
-            //TODO: only reset if USB 2.0?
-            debug!("Port reset");
-            {
-                let port = &mut self.ports.lock().unwrap()[i];
-                port.portsc.writef(port::PortFlags::PORT_PR.bits(), true);
-                while port.portsc.readf(port::PortFlags::PORT_PR.bits()) {
-                //while ! port.flags().contains(port::PortFlags::PORT_PRC) {
-                    std::thread::yield_now();
-                }
-            }
-
             let (data, state, speed, flags) = {
                 let port = &self.ports.lock().unwrap()[i];
                 (port.read(), port.state(), port.speed(), port.flags())
@@ -504,10 +515,13 @@ impl Xhci {
             );
 
             if flags.contains(port::PortFlags::PORT_CCS) {
-                let slot_ty = self
-                    .supported_protocol(i as u8)
-                    .expect("Failed to find supported protocol information for port")
-                    .proto_slot_ty();
+                let slot_ty = match self.supported_protocol(i as u8) {
+                    Some(protocol) => protocol.proto_slot_ty(),
+                    None => {
+                        warn!("Failed to find supported protocol information for port");
+                        0
+                    }
+                };
 
                 debug!("Slot type: {}", slot_ty);
                 debug!("Enabling slot.");
