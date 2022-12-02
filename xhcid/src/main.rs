@@ -42,7 +42,7 @@ fn setup_logging(name: &str) -> Option<&'static RedoxLogger> {
     let mut logger = RedoxLogger::new()
         .with_output(
             OutputBuilder::stderr()
-                .with_filter(log::LevelFilter::Info) // limit global output to important info
+                .with_filter(log::LevelFilter::Debug) // limit global output to important info
                 .with_ansi_escape_codes()
                 .flush_on_newline(true)
                 .build()

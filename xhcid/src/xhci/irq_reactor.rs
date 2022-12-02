@@ -162,7 +162,7 @@ impl IrqReactor {
                 return Ok(None);
             }
 
-            trace!("IRQ reactor received an IRQ");
+            debug!("IRQ reactor received an IRQ");
 
             let _ = self.irq_file.as_mut().unwrap().write(&buffer);
 
