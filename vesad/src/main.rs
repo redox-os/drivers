@@ -3,10 +3,9 @@
 extern crate orbclient;
 extern crate syscall;
 
-use std::{env, process, ptr};
+use std::env;
 use std::fs::File;
 use std::io::{Read, Write};
-use std::os::unix::io::{RawFd, FromRawFd};
 use syscall::{Packet, SchemeMut, EVENT_READ};
 
 use crate::{

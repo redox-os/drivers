@@ -1,25 +1,35 @@
 use std::collections::VecDeque;
-use std::{cmp, mem, ptr, slice};
+use std::convert::TryInto;
+use std::{mem, slice};
 
 use orbclient::{Event, ResizeEvent};
 use syscall::error::*;
-use syscall::flag::{SEEK_SET, SEEK_CUR, SEEK_END};
 
 use crate::display::Display;
 use crate::screen::Screen;
 
+// Keep synced with orbital
+#[derive(Clone, Copy)]
+#[repr(packed)]
+struct SyncRect {
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+}
+
 pub struct GraphicScreen {
     pub display: Display,
-    pub seek: usize,
     pub input: VecDeque<Event>,
+    sync_rects: Vec<SyncRect>,
 }
 
 impl GraphicScreen {
     pub fn new(display: Display) -> GraphicScreen {
         GraphicScreen {
             display: display,
-            seek: 0,
             input: VecDeque::new(),
+            sync_rects: Vec::new(),
         }
     }
 }
@@ -76,36 +86,33 @@ impl Screen for GraphicScreen {
     }
 
     fn write(&mut self, buf: &[u8]) -> Result<usize> {
-        let size = cmp::max(0, cmp::min(self.display.offscreen.len() as isize - self.seek as isize, (buf.len()/4) as isize)) as usize;
-
-        if size > 0 {
-            unsafe {
-                ptr::copy(
-                    buf.as_ptr(),
-                    self.display.offscreen.as_mut_ptr().offset(self.seek as isize) as *mut u8,
-                    size * 4
-                );
-            }
-        }
-
-        Ok(size * 4)
-    }
-
-    fn seek(&mut self, pos: isize, whence: usize) -> Result<usize> {
-        let size = self.display.offscreen.len();
-
-        self.seek = match whence {
-            SEEK_SET => cmp::min(size, (pos/4) as usize),
-            SEEK_CUR => cmp::max(0, cmp::min(size as isize, self.seek as isize + (pos/4))) as usize,
-            SEEK_END => cmp::max(0, cmp::min(size as isize, size as isize + (pos/4))) as usize,
-            _ => return Err(Error::new(EINVAL))
+        let sync_rects = unsafe {
+            slice::from_raw_parts(
+                buf.as_ptr() as *const SyncRect,
+                buf.len() / mem::size_of::<SyncRect>()
+            )
         };
 
-        Ok(self.seek * 4)
+        self.sync_rects.extend_from_slice(sync_rects);
+
+        Ok(sync_rects.len() * mem::size_of::<SyncRect>())
+    }
+
+    fn seek(&mut self, _pos: isize, _whence: usize) -> Result<usize> {
+        Ok(0)
     }
 
     fn sync(&mut self, onscreen: &mut [u32], stride: usize) {
-        self.redraw(onscreen, stride);
+        for sync_rect in self.sync_rects.drain(..) {
+            self.display.sync(
+                sync_rect.x.try_into().unwrap_or(0),
+                sync_rect.y.try_into().unwrap_or(0),
+                sync_rect.w.try_into().unwrap_or(0),
+                sync_rect.h.try_into().unwrap_or(0),
+                onscreen,
+                stride,
+            );
+        }
     }
 
     fn redraw(&mut self, onscreen: &mut [u32], stride: usize) {

@@ -1,9 +1,8 @@
 use std::collections::BTreeMap;
-use std::convert::TryInto;
 use std::{mem, ptr, slice, str};
 
 use orbclient::{Event, EventOption};
-use syscall::{Error, EventFlags, EACCES, EBADF, EINVAL, ENOENT, Map, OldMap, O_NONBLOCK, physmap, physunmap, PHYSMAP_WRITE, PHYSMAP_WRITE_COMBINE, Result, SchemeMut};
+use syscall::{Error, EventFlags, EACCES, EBADF, EINVAL, ENOENT, Map, O_NONBLOCK, physmap, physunmap, PHYSMAP_WRITE, PHYSMAP_WRITE_COMBINE, Result, SchemeMut};
 
 use crate::{
     display::Display,
