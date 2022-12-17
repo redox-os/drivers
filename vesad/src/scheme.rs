@@ -37,6 +37,7 @@ pub struct DisplayScheme {
     pub vts: BTreeMap<VtIndex, BTreeMap<ScreenIndex, Box<dyn Screen>>>,
     next_id: usize,
     pub handles: BTreeMap<usize, Handle>,
+    super_key: bool,
 }
 
 impl DisplayScheme {
@@ -72,6 +73,7 @@ impl DisplayScheme {
             vts,
             next_id: 0,
             handles: BTreeMap::new(),
+            super_key: false,
         }
     }
 
@@ -330,14 +332,17 @@ impl SchemeMut for DisplayScheme {
                     let mut new_active_opt = None;
                     match event.to_option() {
                         EventOption::Key(key_event) => match key_event.scancode {
-                            f @ 0x3B ..= 0x44 => { // F1 through F10
+                            f @ 0x3B ..= 0x44 if self.super_key => { // F1 through F10
                                 new_active_opt = Some(VtIndex((f - 0x3A) as usize));
                             },
-                            0x57 => { // F11
+                            0x57 if self.super_key => { // F11
                                 new_active_opt = Some(VtIndex(11));
                             },
-                            0x58 => { // F12
+                            0x58 if self.super_key => { // F12
                                 new_active_opt = Some(VtIndex(12));
+                            },
+                            0x5B => { // Super
+                                self.super_key = key_event.pressed;
                             },
                             _ => ()
                         },
