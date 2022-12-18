@@ -393,7 +393,6 @@ impl IntelHDA {
 			// Check for devices in this order: Headphone, Speaker, Line Out
 			for supported_device in &[
 				DefaultDevice::HPOut,
-				DefaultDevice::LineOut,
 				DefaultDevice::Speaker,
 			] {
 				for &out in outs {
