@@ -7,7 +7,7 @@ use std::io::SeekFrom;
 use std::io;
 
 use syscall::{
-    Error, EACCES, EBADF, EINVAL, EISDIR, ENOENT, EOVERFLOW, Result,
+    Error, EACCES, EBADF, EINVAL, EISDIR, ENOENT, ENOLCK, EOVERFLOW, Result,
     Io, SchemeBlockMut, Stat, MODE_DIR, MODE_FILE, O_DIRECTORY,
     O_STAT, SEEK_CUR, SEEK_END, SEEK_SET};
 
@@ -124,9 +124,7 @@ impl DiskScheme {
             next_id: 0
         }
     }
-}
 
-impl DiskScheme {
     pub fn irq(&mut self) -> bool {
         let is = self.hba_mem.is.read();
         if is > 0 {
@@ -144,6 +142,29 @@ impl DiskScheme {
         } else {
             false
         }
+    }
+
+    // Checks if any conflicting handles already exist
+    fn check_locks(&self, disk_i: usize, part_i_opt: Option<u32>) -> Result<()> {
+        for (_, handle) in self.handles.iter() {
+            match handle {
+                Handle::Disk(i, _) => if disk_i == *i {
+                    return Err(Error::new(ENOLCK));
+                },
+                Handle::Partition(i, p, _) => if disk_i == *i {
+                    match part_i_opt {
+                        Some(part_i) => if part_i == *p {
+                            return Err(Error::new(ENOLCK));
+                        },
+                        None => {
+                            return Err(Error::new(ENOLCK));
+                        }
+                    }
+                },
+                _ => (),
+            }
+        }
+        Ok(())
     }
 }
 
@@ -186,11 +207,12 @@ impl SchemeBlockMut for DiskScheme {
                     if disk.pt.is_none() || disk.pt.as_ref().unwrap().partitions.get(p as usize).is_none() {
                         return Err(Error::new(ENOENT));
                     }
+
+                    self.check_locks(i, Some(p))?;
+
                     let id = self.next_id;
                     self.next_id += 1;
-
                     self.handles.insert(id, Handle::Partition(i, p, 0));
-
                     Ok(Some(id))
                 } else {
                     Err(Error::new(ENOENT))
@@ -199,6 +221,8 @@ impl SchemeBlockMut for DiskScheme {
                 let i = path_str.parse::<usize>().or(Err(Error::new(ENOENT)))?;
 
                 if self.disks.get(i).is_some() {
+                    self.check_locks(i, None)?;
+
                     let id = self.next_id;
                     self.next_id += 1;
                     self.handles.insert(id, Handle::Disk(i, 0));

@@ -7,8 +7,8 @@ use std::sync::Arc;
 use std::{cmp, str};
 
 use syscall::{
-    Error, Io, Result, SchemeBlockMut, Stat, EACCES, EBADF, EINVAL, EISDIR, ENOENT, EOVERFLOW,
-    MODE_DIR, MODE_FILE, O_DIRECTORY, O_STAT, SEEK_CUR, SEEK_END, SEEK_SET,
+    Error, Io, Result, SchemeBlockMut, Stat, EACCES, EBADF, EINVAL, EISDIR, ENOENT, ENOLCK,
+    EOVERFLOW, MODE_DIR, MODE_FILE, O_DIRECTORY, O_STAT, SEEK_CUR, SEEK_END, SEEK_SET,
 };
 
 use crate::nvme::{Nvme, NvmeNamespace};
@@ -157,6 +157,29 @@ impl DiskScheme {
             next_id: 0,
         }
     }
+
+    // Checks if any conflicting handles already exist
+    fn check_locks(&self, disk_i: u32, part_i_opt: Option<u32>) -> Result<()> {
+        for (_, handle) in self.handles.iter() {
+            match handle {
+                Handle::Disk(i, _) => if disk_i == *i {
+                    return Err(Error::new(ENOLCK));
+                },
+                Handle::Partition(i, p, _) => if disk_i == *i {
+                    match part_i_opt {
+                        Some(part_i) => if part_i == *p {
+                            return Err(Error::new(ENOLCK));
+                        },
+                        None => {
+                            return Err(Error::new(ENOLCK));
+                        }
+                    }
+                },
+                _ => (),
+            }
+        }
+        Ok(())
+    }
 }
 
 impl SchemeBlockMut for DiskScheme {
@@ -206,6 +229,8 @@ impl SchemeBlockMut for DiskScheme {
                         .get(part_num as usize)
                         .is_some()
                     {
+                        self.check_locks(nsid, Some(part_num))?;
+
                         let id = self.next_id;
                         self.next_id += 1;
                         self.handles
@@ -221,6 +246,8 @@ impl SchemeBlockMut for DiskScheme {
                 let nsid = path_str.parse::<u32>().or(Err(Error::new(ENOENT)))?;
 
                 if self.disks.contains_key(&nsid) {
+                    self.check_locks(nsid, None)?;
+
                     let id = self.next_id;
                     self.next_id += 1;
                     self.handles.insert(id, Handle::Disk(nsid, 0));
