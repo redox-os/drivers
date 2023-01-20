@@ -3,7 +3,7 @@ extern crate netutils;
 extern crate syscall;
 
 use std::cell::RefCell;
-use std::convert::TryFrom;
+use std::convert::{TryFrom, TryInto};
 use std::{env, process};
 use std::fs::File;
 use std::io::{ErrorKind, Read, Result, Write};
@@ -12,7 +12,7 @@ use std::ptr::NonNull;
 use std::sync::Arc;
 
 use event::EventQueue;
-use pcid_interface::{MsiSetFeatureInfo, PcidServerHandle, PciFeature, PciFeatureInfo, SetFeatureInfo};
+use pcid_interface::{MsiSetFeatureInfo, PcidServerHandle, PciFeature, PciFeatureInfo, SetFeatureInfo, SubdriverArguments};
 use pcid_interface::irq_helpers::{read_bsp_apic_id, allocate_single_interrupt_vector};
 use pcid_interface::msi::{MsixCapability, MsixTableEntry};
 use redox_log::{RedoxLogger, OutputBuilder};
@@ -305,6 +305,30 @@ fn handle_update(
     Ok(false)
 }
 
+fn find_bar(pci_config: &SubdriverArguments) -> Option<(usize, usize)> {
+    // RTL8168 uses BAR2, RTL8169 uses BAR1, search in that order
+    for &barnum in &[2, 1] {
+        match pci_config.func.bars[barnum] {
+            pcid_interface::PciBar::Memory32(ptr) => match ptr {
+                0 => log::warn!("BAR {} is mapped to address 0", barnum),
+                _ => return Some((
+                    ptr.try_into().unwrap(),
+                    pci_config.func.bar_sizes[barnum].try_into().unwrap()
+                )),
+            },
+            pcid_interface::PciBar::Memory64(ptr) => match ptr {
+                0 => log::warn!("BAR {} is mapped to address 0", barnum),
+                _ => return Some((
+                    ptr.try_into().unwrap(),
+                    pci_config.func.bar_sizes[barnum].try_into().unwrap()
+                )),
+            },
+            other => log::warn!("BAR {} is {} instead of memory BAR", barnum, other),
+        }
+    }
+    None
+}
+
 fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let _logger_ref = setup_logging();
 
@@ -315,29 +339,13 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let mut name = pci_config.func.name();
     name.push_str("_rtl8168");
 
-    let bar = pci_config.func.bars[2];
-    let bar_size = pci_config.func.bar_sizes[2];
-    let bar_ptr = match bar {
-        pcid_interface::PciBar::Memory32(ptr) => match ptr {
-            0 => panic!("BAR 0 is mapped to address 0"),
-            _ => ptr as u64,
-        },
-        pcid_interface::PciBar::Memory64(ptr) => match ptr {
-            0 => panic!("BAR 0 is mapped to address 0"),
-            _ => ptr,
-        },
-        other => panic!("Expected memory bar, found {}", other),
-    };
-
-    eprintln!(" + RTL8168 {} on: {:#X} size: {}", name, bar_ptr, bar_size);
+    let (bar_ptr, bar_size) = find_bar(&pci_config).expect("rtl8168d: failed to find BAR");
+    log::info!(" + RTL8168 {} on: {:#X} size: {}", name, bar_ptr, bar_size);
 
     let address = unsafe {
-        syscall::physmap(bar_ptr as usize, bar_size as usize, PHYSMAP_WRITE | PHYSMAP_NO_CACHE)
+        syscall::physmap(bar_ptr, bar_size, PHYSMAP_WRITE | PHYSMAP_NO_CACHE)
             .expect("rtl8168d: failed to map address")
     };
-
-    //TODO: MSI-X
-    let mut irq_file = get_int_method(&mut pcid_handle).expect("rtl8168d: no interrupt file");
 
     let socket_fd = syscall::open(
         ":network",
@@ -347,6 +355,9 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let socket = Arc::new(RefCell::new(unsafe {
         File::from_raw_fd(socket_fd as RawFd)
     }));
+
+    //TODO: MSI-X
+    let mut irq_file = get_int_method(&mut pcid_handle).expect("rtl8168d: no interrupt file");
 
     {
         let device = Arc::new(RefCell::new(unsafe {
