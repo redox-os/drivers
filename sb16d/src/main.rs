@@ -63,145 +63,140 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
 }
 
 fn main() {
-	let mut args = env::args().skip(1);
+    let mut args = env::args().skip(1);
 
-    //TODO: add addr to name?
-	let name = "sb16".to_string();
+    let addr_str = args.next().unwrap_or("220".to_string());
+    let addr = u16::from_str_radix(&addr_str, 16).expect("sb16: failed to parse address");
 
-	let addr_str = args.next().unwrap_or("220".to_string());
-	let addr = u16::from_str_radix(&addr_str, 16).expect("sb16: failed to parse address");
+    print!("{}", format!(" + sb16 at 0x{:X}\n", addr));
 
-	let irq_str = args.next().unwrap_or("5".to_string());
-	let irq = irq_str.parse::<u8>().expect("sb16: failed to parse irq");
-
-	let dma_str = args.next().unwrap_or("1".to_string());
-	let dma = dma_str.parse::<u8>().expect("sb16: failed to parse dma");
-
-	print!("{}", format!(" + sb16 at: ADDR 0x{:X}, IRQ {}, DMA {}\n", addr, irq, dma));
-
-	// Daemonize
+    // Daemonize
     redox_daemon::Daemon::new(move |daemon| {
-	    let _logger_ref = setup_logging();
+        let _logger_ref = setup_logging();
 
         unsafe { syscall::iopl(3) }.expect("sb16d: failed to set I/O privilege level to Ring 3");
 
-		let mut irq_file = File::open(format!("irq:{}", irq)).expect("sb16d: failed to open IRQ file");
+        let device = Arc::new(RefCell::new(unsafe { device::Sb16::new(addr).expect("sb16d: failed to allocate device") }));
+        let socket_fd = syscall::open(":audiohw", syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK).expect("sb16d: failed to create hda scheme");
+        let socket = Arc::new(RefCell::new(unsafe { File::from_raw_fd(socket_fd as RawFd) }));
 
-		let device = Arc::new(RefCell::new(unsafe { device::Sb16::new(addr).expect("sb16d: failed to allocate device") }));
-		let socket_fd = syscall::open(":audiohw", syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK).expect("sb16d: failed to create hda scheme");
-		let socket = Arc::new(RefCell::new(unsafe { File::from_raw_fd(socket_fd as RawFd) }));
+        //TODO: error on multiple IRQs?
+        let mut irq_file = match device.borrow().irqs.first() {
+            Some(irq) => File::open(format!("irq:{}", irq)).expect("sb16d: failed to open IRQ file"),
+            None => panic!("sb16d: no IRQs found"),
+        };
 
         daemon.ready().expect("sb16d: failed to signal readiness");
 
-		let mut event_queue = EventQueue::<usize>::new().expect("sb16d: Could not create event queue.");
+        let mut event_queue = EventQueue::<usize>::new().expect("sb16d: Could not create event queue.");
 
         syscall::setrens(0, 0).expect("sb16d: failed to enter null namespace");
 
-		let todo = Arc::new(RefCell::new(Vec::<Packet>::new()));
+        let todo = Arc::new(RefCell::new(Vec::<Packet>::new()));
 
-		let todo_irq = todo.clone();
-		let device_irq = device.clone();
-		let socket_irq = socket.clone();
+        let todo_irq = todo.clone();
+        let device_irq = device.clone();
+        let socket_irq = socket.clone();
 
-		event_queue.add(irq_file.as_raw_fd(), move |_event| -> Result<Option<usize>> {
-			let mut irq = [0; 8];
-			irq_file.read(&mut irq)?;
+        event_queue.add(irq_file.as_raw_fd(), move |_event| -> Result<Option<usize>> {
+            let mut irq = [0; 8];
+            irq_file.read(&mut irq)?;
 
-			if device_irq.borrow_mut().irq() {
-				irq_file.write(&mut irq)?;
+            if device_irq.borrow_mut().irq() {
+                irq_file.write(&mut irq)?;
 
-				let mut todo = todo_irq.borrow_mut();
-				let mut i = 0;
-				while i < todo.len() {
-					if let Some(a) = device_irq.borrow_mut().handle(&mut todo[i]) {
-	                    let mut packet = todo.remove(i);
-	                    packet.a = a;
-						socket_irq.borrow_mut().write(&packet)?;
-	                } else {
-	                    i += 1;
-					}
-				}
+                let mut todo = todo_irq.borrow_mut();
+                let mut i = 0;
+                while i < todo.len() {
+                    if let Some(a) = device_irq.borrow_mut().handle(&mut todo[i]) {
+                        let mut packet = todo.remove(i);
+                        packet.a = a;
+                        socket_irq.borrow_mut().write(&packet)?;
+                    } else {
+                        i += 1;
+                    }
+                }
 
-				/*
-				let next_read = device_irq.next_read();
-				if next_read > 0 {
-					return Ok(Some(next_read));
-				}
-				*/
-			}
-			Ok(None)
-		}).expect("sb16d: failed to catch events on IRQ file");
-		let socket_fd = socket.borrow().as_raw_fd();
-		let socket_packet = socket.clone();
-		event_queue.add(socket_fd, move |_event| -> Result<Option<usize>> {
-			loop {
-				let mut packet = Packet::default();
-				match socket_packet.borrow_mut().read(&mut packet) {
-		            Ok(0) => return Ok(Some(0)),
-		            Ok(_) => (),
-		            Err(err) => if err.kind() == ErrorKind::WouldBlock {
-		                break;
-		            } else {
-		                return Err(err);
-		            }
-				}
+                /*
+                let next_read = device_irq.next_read();
+                if next_read > 0 {
+                    return Ok(Some(next_read));
+                }
+                */
+            }
+            Ok(None)
+        }).expect("sb16d: failed to catch events on IRQ file");
+        let socket_fd = socket.borrow().as_raw_fd();
+        let socket_packet = socket.clone();
+        event_queue.add(socket_fd, move |_event| -> Result<Option<usize>> {
+            loop {
+                let mut packet = Packet::default();
+                match socket_packet.borrow_mut().read(&mut packet) {
+                    Ok(0) => return Ok(Some(0)),
+                    Ok(_) => (),
+                    Err(err) => if err.kind() == ErrorKind::WouldBlock {
+                        break;
+                    } else {
+                        return Err(err);
+                    }
+                }
 
-				if let Some(a) = device.borrow_mut().handle(&mut packet) {
-					packet.a = a;
-					socket_packet.borrow_mut().write(&packet)?;
-				} else {
-					todo.borrow_mut().push(packet);
-				}
-			}
+                if let Some(a) = device.borrow_mut().handle(&mut packet) {
+                    packet.a = a;
+                    socket_packet.borrow_mut().write(&packet)?;
+                } else {
+                    todo.borrow_mut().push(packet);
+                }
+            }
 
-			/*
-			let next_read = device.borrow().next_read();
-			if next_read > 0 {
-				return Ok(Some(next_read));
-			}
-			*/
+            /*
+            let next_read = device.borrow().next_read();
+            if next_read > 0 {
+                return Ok(Some(next_read));
+            }
+            */
 
-			Ok(None)
-		}).expect("sb16d: failed to catch events on IRQ file");
+            Ok(None)
+        }).expect("sb16d: failed to catch events on IRQ file");
 
-		for event_count in event_queue.trigger_all(event::Event {
-			fd: 0,
-			flags: EventFlags::empty(),
-		}).expect("sb16d: failed to trigger events") {
-			socket.borrow_mut().write(&Packet {
-				id: 0,
-				pid: 0,
-				uid: 0,
-				gid: 0,
-				a: syscall::number::SYS_FEVENT,
-				b: 0,
-				c: syscall::flag::EVENT_READ.bits(),
-				d: event_count
-			}).expect("sb16d: failed to write event");
-		}
+        for event_count in event_queue.trigger_all(event::Event {
+            fd: 0,
+            flags: EventFlags::empty(),
+        }).expect("sb16d: failed to trigger events") {
+            socket.borrow_mut().write(&Packet {
+                id: 0,
+                pid: 0,
+                uid: 0,
+                gid: 0,
+                a: syscall::number::SYS_FEVENT,
+                b: 0,
+                c: syscall::flag::EVENT_READ.bits(),
+                d: event_count
+            }).expect("sb16d: failed to write event");
+        }
 
-		loop {
-			{
-				//device_loop.borrow_mut().handle_interrupts();
-			}
-			let event_count = event_queue.run().expect("sb16d: failed to handle events");
-			if event_count == 0 {
-				//TODO: Handle todo
-				break;
-			}
+        loop {
+            {
+                //device_loop.borrow_mut().handle_interrupts();
+            }
+            let event_count = event_queue.run().expect("sb16d: failed to handle events");
+            if event_count == 0 {
+                //TODO: Handle todo
+                break;
+            }
 
-			socket.borrow_mut().write(&Packet {
-				id: 0,
-				pid: 0,
-				uid: 0,
-				gid: 0,
-				a: syscall::number::SYS_FEVENT,
-				b: 0,
-				c: syscall::flag::EVENT_READ.bits(),
-				d: event_count
-			}).expect("sb16d: failed to write event");
-		}
+            socket.borrow_mut().write(&Packet {
+                id: 0,
+                pid: 0,
+                uid: 0,
+                gid: 0,
+                a: syscall::number::SYS_FEVENT,
+                b: 0,
+                c: syscall::flag::EVENT_READ.bits(),
+                d: event_count
+            }).expect("sb16d: failed to write event");
+        }
 
         std::process::exit(0);
-	}).expect("sb16d: failed to daemonize");
+    }).expect("sb16d: failed to daemonize");
 }

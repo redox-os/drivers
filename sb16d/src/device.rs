@@ -14,100 +14,187 @@ const NUM_SUB_BUFFS: usize = 32;
 const SUB_BUFF_SIZE: usize = 2048;
 
 enum Handle {
-	Todo,
+    Todo,
 }
 
 #[allow(dead_code)]
-struct DspRegs {
-	/* 0x06 */ reset: WriteOnly<Pio<u8>>,
-	/* 0x0A */ read_data: ReadOnly<Pio<u8>>,
-	/* 0x0C */ write_data: WriteOnly<Pio<u8>>,
-	/* 0x0C */ write_status: ReadOnly<Pio<u8>>,
-	/* 0x0E */ read_status: ReadOnly<Pio<u8>>,
-}
-
-impl DspRegs {
-	fn new(addr: u16) -> Self {
-		Self {
-			reset: WriteOnly::new(Pio::new(addr + 0x06)),
-			read_data: ReadOnly::new(Pio::new(addr + 0x0A)),
-			write_data: WriteOnly::new(Pio::new(addr + 0x0C)),
-			write_status: ReadOnly::new(Pio::new(addr + 0x0C)),
-			read_status: ReadOnly::new(Pio::new(addr + 0x0E)),
-		}
-	}
-}
-
 pub struct Sb16 {
-	dsp: DspRegs,
-	handles: Mutex<BTreeMap<usize, Handle>>,
-	next_id: AtomicUsize,
+    handles: Mutex<BTreeMap<usize, Handle>>,
+    next_id: AtomicUsize,
+    pub(crate) irqs: Vec<u8>,
+    dmas: Vec<u8>,
+    // Regs
+    /* 0x04 */ mixer_addr: WriteOnly<Pio<u8>>,
+    /* 0x05 */ mixer_data: Pio<u8>,
+    /* 0x06 */ dsp_reset: WriteOnly<Pio<u8>>,
+    /* 0x0A */ dsp_read_data: ReadOnly<Pio<u8>>,
+    /* 0x0C */ dsp_write_data: WriteOnly<Pio<u8>>,
+    /* 0x0C */ dsp_write_status: ReadOnly<Pio<u8>>,
+    /* 0x0E */ dsp_read_status: ReadOnly<Pio<u8>>,
 }
 
 impl Sb16 {
-	pub unsafe fn new(addr: u16) -> Result<Self> {
-		let mut module = Sb16 {
-			dsp: DspRegs::new(addr),
-			handles: Mutex::new(BTreeMap::new()),
-			next_id: AtomicUsize::new(0),
-		};
+    pub unsafe fn new(addr: u16) -> Result<Self> {
+        let mut module = Sb16 {
+            handles: Mutex::new(BTreeMap::new()),
+            next_id: AtomicUsize::new(0),
+            irqs: Vec::new(),
+            dmas: Vec::new(),
+            // Regs
+            mixer_addr: WriteOnly::new(Pio::new(addr + 0x04)),
+            mixer_data: Pio::new(addr + 0x05),
+            dsp_reset: WriteOnly::new(Pio::new(addr + 0x06)),
+            dsp_read_data: ReadOnly::new(Pio::new(addr + 0x0A)),
+            dsp_write_data: WriteOnly::new(Pio::new(addr + 0x0C)),
+            dsp_write_status: ReadOnly::new(Pio::new(addr + 0x0C)),
+            dsp_read_status: ReadOnly::new(Pio::new(addr + 0x0E)),
+        };
 
-		module.init()?;
+        module.init()?;
 
-		Ok(module)
-	}
+        Ok(module)
+    }
 
-	fn init(&mut self) -> Result<()> {
-		// Perform DSP reset
-		{
-			// Write 1 to reset port
-			self.dsp.reset.write(1);
+    fn mixer_read(&mut self, index: u8) -> u8 {
+        self.mixer_addr.write(index);
+        self.mixer_data.read()
+    }
 
-			// Wait 3us
-			thread::sleep(time::Duration::from_micros(3));
+    fn mixer_write(&mut self, index: u8, value: u8) {
+        self.mixer_addr.write(index);
+        self.mixer_data.write(value);
+    }
 
-			// Write 0 to reset port
-			self.dsp.reset.write(0);
+    fn dsp_read(&mut self) -> Result<u8> {
+        // Bit 7 must be 1 before data can be sent
+        while ! self.dsp_read_status.readf(1 << 7) {
+            //TODO: timeout!
+            std::thread::yield_now();
+        }
 
-			//TODO: Wait for ready byte (0xAA) using read status
-			thread::sleep(time::Duration::from_micros(100));
+        Ok(self.dsp_read_data.read())
+    }
 
-			let ready = self.dsp.read_data.read();
-			if ready != 0xAA {
-				log::error!("ready byte was 0x{:02X} instead of 0xAA", ready);
-				return Err(Error::new(ENODEV));
-			}
-		}
+    fn dsp_write(&mut self, value: u8) -> Result<()> {
+        // Bit 7 must be 0 before data can be sent
+        while self.dsp_write_status.readf(1 << 7) {
+            //TODO: timeout!
+            std::thread::yield_now();
+        }
 
-		// Read DSP version
-		{
-			//TODO
-		}
+        self.dsp_write_data.write(value);
+        Ok(())
+    }
 
-		Ok(())
-	}
+    fn init(&mut self) -> Result<()> {
+        // Perform DSP reset
+        {
+            // Write 1 to reset port
+            self.dsp_reset.write(1);
 
-	pub fn irq(&mut self) -> bool {
-		//TODO
-		false
-	}
+            // Wait 3us
+            thread::sleep(time::Duration::from_micros(3));
+
+            // Write 0 to reset port
+            self.dsp_reset.write(0);
+
+            //TODO: Wait for ready byte (0xAA) using read status
+            thread::sleep(time::Duration::from_micros(100));
+
+            let ready = self.dsp_read()?;
+            if ready != 0xAA {
+                log::error!("ready byte was 0x{:02X} instead of 0xAA", ready);
+                return Err(Error::new(ENODEV));
+            }
+        }
+
+        // Read DSP version
+        {
+            self.dsp_write(0xE1)?;
+
+            let major = self.dsp_read()?;
+            let minor = self.dsp_read()?;
+            log::info!("DSP version {}.{:02}", major, minor);
+
+            if major != 4 {
+                log::error!("Unsupported DSP major version {}", major);
+                return Err(Error::new(ENODEV));
+            }
+        }
+
+        // Get available IRQs and DMAs
+        {
+            self.irqs.clear();
+            let irq_mask = self.mixer_read(0x80);
+            if (irq_mask & (1 << 0)) != 0 {
+                self.irqs.push(2);
+            }
+            if (irq_mask & (1 << 1)) != 0 {
+                self.irqs.push(5);
+            }
+            if (irq_mask & (1 << 2)) != 0 {
+                self.irqs.push(7);
+            }
+            if (irq_mask & (1 << 3)) != 0 {
+                self.irqs.push(10);
+            }
+
+            self.dmas.clear();
+            let dma_mask = self.mixer_read(0x81);
+            if (dma_mask & (1 << 0)) != 0 {
+                self.dmas.push(0);
+            }
+            if (dma_mask & (1 << 1)) != 0 {
+                self.dmas.push(1);
+            }
+            if (dma_mask & (1 << 3)) != 0 {
+                self.dmas.push(3);
+            }
+            if (dma_mask & (1 << 5)) != 0 {
+                self.dmas.push(5);
+            }
+            if (dma_mask & (1 << 6)) != 0 {
+                self.dmas.push(6);
+            }
+            if (dma_mask & (1 << 7)) != 0 {
+                self.dmas.push(7);
+            }
+
+            log::info!("IRQs {:02X?} DMAs {:02X?}", self.irqs, self.dmas);
+        }
+
+        // Set output sample rate to 44100 Hz (Redox OS standard)
+        {
+            let rate = 44100u16;
+            self.dsp_write(0x41)?;
+            self.dsp_write((rate >> 8) as u8)?;
+            self.dsp_write(rate as u8)?;
+        }
+
+        Ok(())
+    }
+
+    pub fn irq(&mut self) -> bool {
+        //TODO
+        false
+    }
 }
 
 impl SchemeBlockMut for Sb16 {
-	fn open(&mut self, _path: &str, _flags: usize, uid: u32, _gid: u32) -> Result<Option<usize>> {
-		if uid == 0 {
-			let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-			self.handles.lock().insert(id, Handle::Todo);
-			Ok(Some(id))
-		} else {
-			Err(Error::new(EACCES))
-		}
-	}
+    fn open(&mut self, _path: &str, _flags: usize, uid: u32, _gid: u32) -> Result<Option<usize>> {
+        if uid == 0 {
+            let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+            self.handles.lock().insert(id, Handle::Todo);
+            Ok(Some(id))
+        } else {
+            Err(Error::new(EACCES))
+        }
+    }
 
-	fn write(&mut self, id: usize, buf: &[u8]) -> Result<Option<usize>> {
-		//TODO
-		Err(Error::new(EBADF))
-	}
+    fn write(&mut self, id: usize, buf: &[u8]) -> Result<Option<usize>> {
+        //TODO
+        Err(Error::new(EBADF))
+    }
 
     fn fpath(&mut self, id: usize, buf: &mut [u8]) -> Result<Option<usize>> {
         let mut handles = self.handles.lock();
@@ -122,8 +209,8 @@ impl SchemeBlockMut for Sb16 {
         Ok(Some(i))
     }
 
-	fn close(&mut self, id: usize) -> Result<Option<usize>> {
-		let mut handles = self.handles.lock();
-    	handles.remove(&id).ok_or(Error::new(EBADF)).and(Ok(Some(0)))
-	}
+    fn close(&mut self, id: usize) -> Result<Option<usize>> {
+        let mut handles = self.handles.lock();
+        handles.remove(&id).ok_or(Error::new(EBADF)).and(Ok(Some(0)))
+    }
 }
