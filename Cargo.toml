@@ -15,6 +15,7 @@ members = [
     "pcspkrd",
     "ps2d",
     "rtl8168d",
+    "sb16d",
     "vboxd",
     "vesad",
     "xhcid",

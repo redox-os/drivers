@@ -1212,6 +1212,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f3f6f92acf49d1b98f7a81226834412ada05458b7364277387724a237f062695"
 
 [[package]]
+name = "sb16d"
+version = "0.1.0"
+dependencies = [
+ "bitflags",
+ "log",
+ "redox-daemon",
+ "redox-log",
+ "redox_event",
+ "redox_syscall 0.3.4",
+ "spin",
+]
+
+[[package]]
 name = "scopeguard"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1753,3 +1766,8 @@ dependencies = [
  "thiserror",
  "toml",
 ]
+
+[[patch.unused]]
+name = "libc"
+version = "0.2.137"
+source = "git+https://gitlab.redox-os.org/redox-os/liblibc.git?branch=rust-2022-03-18#6ba4d1a527c2b53bdd5554cb219a1cd7d315d518"
