@@ -1,3 +1,5 @@
+#![feature(if_let_guard)]
+
 use std::convert::TryFrom;
 use std::io::{self, prelude::*};
 use std::fs::{File, OpenOptions};
@@ -13,10 +15,7 @@ use syscall::data::{Event, Packet};
 use syscall::flag::{EventFlags, O_NONBLOCK};
 
 mod acpi;
-mod aml;
 mod scheme;
-
-// TODO: Perhaps use the acpi and aml crates?
 
 fn monotonic() -> (u64, u64) {
     use syscall::call::clock_gettime;
@@ -38,8 +37,8 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
     let mut logger = RedoxLogger::new()
         .with_output(
             OutputBuilder::stderr()
-                .with_filter(log::LevelFilter::Info) // limit global output to important info
-                .with_ansi_escape_codes()
+                .with_filter(log::LevelFilter::Warn) // limit global output to important info
+                // .with_ansi_escape_codes()
                 .flush_on_newline(true)
                 .build()
         );
@@ -48,9 +47,9 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
     match OutputBuilder::in_redox_logging_scheme("misc", "acpi", "acpid.log") {
         Ok(b) => logger = logger.with_output(
             // TODO: Add a configuration file for this
-            b.with_filter(log::LevelFilter::Trace)
+            b.with_filter(log::LevelFilter::Warn)
                 .flush_on_newline(true)
-                .with_ansi_escape_codes()
+                // .with_ansi_escape_codes()
                 .build()
         ),
         Err(error) => eprintln!("Failed to create xhci.log: {}", error),
@@ -59,8 +58,8 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
     #[cfg(target_os = "redox")]
     match OutputBuilder::in_redox_logging_scheme("misc", "acpi", "acpid.ansi.log") {
         Ok(b) => logger = logger.with_output(
-            b.with_filter(log::LevelFilter::Trace)
-                .with_ansi_escape_codes()
+            b.with_filter(log::LevelFilter::Warn)
+                // .with_ansi_escape_codes()
                 .flush_on_newline(true)
                 .build()
         ),
@@ -215,7 +214,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     drop(shutdown_pipe);
     drop(event_queue);
 
-    aml::set_global_s_state(&acpi_context, 5);
+    acpi_context.set_global_s_state(5);
 
     unreachable!("System should have shut down before this is entered");
 }
