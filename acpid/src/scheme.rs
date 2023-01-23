@@ -1,38 +1,43 @@
 use std::collections::BTreeMap;
 use std::convert::{TryFrom, TryInto};
+use parking_lot::RwLockReadGuard;
 
 use syscall::data::Stat;
-use syscall::error::{EBADF, EBADFD, EINVAL, EISDIR, ENOENT, ENOTDIR, EOVERFLOW};
+use syscall::error::{EIO, EBADF, EBADFD, EINVAL, EISDIR, ENOENT, ENOTDIR, EOVERFLOW};
 use syscall::error::{Error, Result};
 use syscall::flag::{O_ACCMODE, O_DIRECTORY, O_RDONLY, O_STAT, O_SYMLINK};
 use syscall::flag::{MODE_FILE, MODE_DIR, SEEK_CUR, SEEK_END, SEEK_SET};
 use syscall::scheme::SchemeMut;
 
-use crate::acpi::{AcpiContext, SdtSignature};
+use crate::acpi::{AcpiContext, SdtSignature, AmlSymbols};
 
 pub struct AcpiScheme<'acpi> {
     ctx: &'acpi AcpiContext,
-    handles: BTreeMap<usize, Handle>,
+    handles: BTreeMap<usize, Handle<'acpi>>,
     next_fd: usize,
 }
 
-struct Handle {
+struct Handle<'a> {
     offset: usize,
-    kind: HandleKind,
+    kind: HandleKind<'a>,
     stat: bool,
 }
-enum HandleKind {
+enum HandleKind<'a> {
     TopLevel,
     Tables,
     Table(SdtSignature),
+    Symbols(RwLockReadGuard<'a, Option<AmlSymbols>>),
+    Symbol(aml::AmlName),
 }
 
-impl HandleKind {
+impl HandleKind<'_> {
     fn is_dir(&self) -> bool {
         match self {
             Self::TopLevel => true,
             Self::Tables => true,
             Self::Table(_) => false,
+            Self::Symbols(_) => true,
+            Self::Symbol(_) => false,
         }
     }
     fn len(&self, acpi_ctx: &AcpiContext) -> Result<usize> {
@@ -40,6 +45,13 @@ impl HandleKind {
             Self::TopLevel => TOPLEVEL_CONTENTS.len(),
             Self::Tables => acpi_ctx.tables().len().checked_mul(TABLE_DENTRY_LENGTH).unwrap_or(usize::max_value()),
             Self::Table(signature) => acpi_ctx.sdt_from_signature(signature).ok_or(Error::new(EBADFD))?.length(),
+            Self::Symbols(symbols_option) => {
+                match symbols_option.as_ref() {
+                    Some(symbols) => symbols.symbols_str.len(),
+                    _ => 0,
+                }
+            },
+            Self::Symbol(_) => 0,
         })
     }
 }
@@ -54,7 +66,7 @@ impl<'acpi> AcpiScheme<'acpi> {
     }
 }
 
-const TOPLEVEL_CONTENTS: &[u8] = b"tables\n";
+const TOPLEVEL_CONTENTS: &[u8] = b"tables\nsymbols\n";
 
 const TABLE_DENTRY_LENGTH: usize = 35;
 
@@ -147,6 +159,20 @@ impl SchemeMut for AcpiScheme<'_> {
                 HandleKind::Table(signature)
             }
 
+            ["symbols"] => if let Ok(symbols_option) = self.ctx.aml_symbols() {
+                HandleKind::Symbols(symbols_option)
+            } else {
+                return Err(Error::new(EIO))
+            },
+
+            ["symbols", symbol] => {
+                if let Some(symbol) = self.ctx.aml_lookup(symbol) {
+                    HandleKind::Symbol(symbol)
+                } else {
+                    return Err(Error::new(ENOENT));
+                }
+            }
+
             _ => return Err(Error::new(ENOENT)),
         };
 
@@ -177,7 +203,7 @@ impl SchemeMut for AcpiScheme<'_> {
     }
     fn fstat(&mut self, id: usize, stat: &mut Stat) -> Result<usize> {
         let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
-
+        
         stat.st_size = handle.kind.len(self.ctx)?.try_into().unwrap_or(u64::max_value());
 
         if handle.kind.is_dir() {
@@ -223,7 +249,7 @@ impl SchemeMut for AcpiScheme<'_> {
             return Err(Error::new(EBADF));
         }
 
-        let src_buf = match handle.kind {
+        let src_buf = match &handle.kind {
             HandleKind::TopLevel => TOPLEVEL_CONTENTS,
             HandleKind::Table(ref signature) => self.ctx.sdt_from_signature(signature).ok_or(Error::new(EBADFD))?.as_slice(),
 
@@ -264,6 +290,26 @@ impl SchemeMut for AcpiScheme<'_> {
 
                 return Ok(bytes_written);
             }
+
+            HandleKind::Symbols(symbols_option) => {
+                match symbols_option.as_ref() {
+                    Some(symbols) => {
+                        let offset = std::cmp::min(symbols.symbols_str.len(), handle.offset);
+                        let src_buf = &symbols.symbols_str.as_bytes()[offset..];
+
+                        let to_copy = std::cmp::min(src_buf.len(), buf.len());
+                        buf[..to_copy].copy_from_slice(&src_buf[..to_copy]);
+
+                        handle.offset = handle.offset.checked_add(to_copy).ok_or(Error::new(EOVERFLOW))?;
+
+                        return Ok(to_copy);
+                    }
+                    _ => return Err(Error::new(EIO)),
+                }
+            }
+
+            HandleKind::Symbol(_) => b"",
+
         };
 
         let offset = std::cmp::min(src_buf.len(), handle.offset);
@@ -272,7 +318,7 @@ impl SchemeMut for AcpiScheme<'_> {
         let to_copy = std::cmp::min(src_buf.len(), buf.len());
         buf[..to_copy].copy_from_slice(&src_buf[..to_copy]);
 
-        handle.offset += to_copy;
+        handle.offset = handle.offset.checked_add(to_copy).ok_or(Error::new(EOVERFLOW))?;
 
         Ok(to_copy)
     }

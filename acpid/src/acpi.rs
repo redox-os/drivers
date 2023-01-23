@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use rustc_hash::FxHashSet;
 use std::convert::{TryFrom, TryInto};
 use std::ops::Deref;
 use std::sync::Arc;
@@ -6,10 +6,13 @@ use std::{fmt, mem};
 
 use syscall::flag::PhysmapFlags;
 
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+use syscall::io::{Io, Pio};
+
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use thiserror::Error;
 
-use super::aml::AmlValue;
+use aml::{AmlContext, AmlName};
 
 pub mod dmar;
 use self::dmar::Dmar;
@@ -219,14 +222,29 @@ impl fmt::Debug for Sdt {
 pub struct Dsdt(Sdt);
 pub struct Ssdt(Sdt);
 
+
+#[derive(Debug, Error)]
+pub enum SymbolListError {
+    #[error("Aml Internal Error")]
+    AmlInternalError,
+}
+
+pub struct AmlSymbols {
+    pub symbols_str: String,
+    symbols_hash: FxHashSet<String>,
+}
+
 pub struct AcpiContext {
     tables: Vec<Sdt>,
     dsdt: Option<Dsdt>,
     fadt: Option<Fadt>,
 
-    // TODO: Remove Option. This is not kernel code, and not static, but we still need to replace
-    // every match where namespace{,_mut}() are used.
-    namespace: RwLock<Option<BTreeMap<String, AmlValue>>>,
+    // the aml parser
+    aml_context: RwLock<AmlContext>,
+
+    // Use to cache the symbols list, which doesn't change very often
+    // Set it to None if the ACPI tables change e.g. due to PnP
+    aml_symbols: RwLock<Option<AmlSymbols>>,
 
     // TODO: The kernel ACPI code seemed to use load_table quite ubiquitously, however ACPI 5.1
     // states that DDBHandles can only be obtained when loading XSDT-pointed tables. So, we'll
@@ -236,6 +254,7 @@ pub struct AcpiContext {
 
     pub next_ctx: RwLock<u64>,
 }
+
 impl AcpiContext {
     pub fn init(rxsdt_physaddrs: impl Iterator<Item = u64>) -> Self {
         let tables = rxsdt_physaddrs.map(|physaddr| {
@@ -243,7 +262,7 @@ impl AcpiContext {
                 .try_into()
                 .expect("expected ACPI addresses to be compatible with the current word size");
 
-            log::debug!("TABLE AT {:#>08X}", physaddr);
+            log::trace!("TABLE AT {:#>08X}", physaddr);
 
             Sdt::load_from_physical(physaddr)
                 .expect("failed to load physical SDT")
@@ -253,7 +272,10 @@ impl AcpiContext {
             tables,
             dsdt: None,
             fadt: None,
-            namespace: RwLock::new(Some(BTreeMap::new())),
+
+            aml_context: RwLock::new(AmlContext::new(Box::new(AmlPhysMemHandler), aml::DebugVerbosity::None)),
+            aml_symbols: RwLock::new(None),
+
             next_ctx: RwLock::new(0),
 
             sdt_order: RwLock::new(Vec::new()),
@@ -266,10 +288,28 @@ impl AcpiContext {
         Fadt::init(&mut this);
         //TODO (hangs on real hardware): Dmar::init(&this);
 
-        crate::aml::init_namespace(&this);
+        if let Some(mut parser) = this.aml_context.try_write() {
+            if let Some(dsdt) = this.dsdt() {
+                match parser.parse_table(dsdt.aml()) {
+                    Ok(_) => log::trace!("Parsed DSDT"),
+                    Err(e) => {
+                        log::error!("DSDT: {:?}", e);
+                    }
+                }
+            } else {
+                log::error!("No DSDT for aml parsing");
+            }
 
-        for (path, _) in this.namespace.get_mut().as_mut().unwrap().iter() {
-            log::trace!("ACPI NS: {}", path);
+            for ssdt in this.ssdts() {
+                match parser.parse_table(ssdt.aml()) {
+                    Ok(_) => log::trace!("Parsed SSDT"),
+                    Err(e) => {
+                        log::error!("SSDT: {:?}", e);
+                    }
+                }
+            }
+        } else {
+            log::error!("Failed to obtain aml_context");
         }
 
         this
@@ -296,12 +336,6 @@ impl AcpiContext {
     pub fn take_single_sdt(&self, signature: [u8; 4]) -> Option<Sdt> {
         self.find_single_sdt_pos(signature).map(|pos| self.tables[pos].clone())
     }
-    pub fn namespace(&self) -> RwLockReadGuard<'_, Option<BTreeMap<String, AmlValue>>> {
-        self.namespace.read()
-    }
-    pub fn namespace_mut(&self) -> RwLockWriteGuard<'_, Option<BTreeMap<String, AmlValue>>> {
-        self.namespace.write()
-    }
     pub fn fadt(&self) -> Option<&Fadt> {
         self.fadt.as_ref()
     }
@@ -320,6 +354,204 @@ impl AcpiContext {
     pub fn new_index(&self, signature: &SdtSignature) {
         self.sdt_order.write().push(Some(*signature));
     }
+    fn aml_context(&self) -> RwLockReadGuard<'_, AmlContext>{
+        self.aml_context.read()
+    }
+    fn aml_context_mut(&self) -> RwLockWriteGuard<'_, AmlContext> {
+        self.aml_context.write()
+    }
+    pub fn aml_lookup(&self, symbol: &str) -> Option<AmlName> {
+        let aml_name = match AmlName::from_str(symbol) {
+            Ok(aml_name) => aml_name,
+            Err(error) => {
+                log::error!("Lookup failed to convert name to AmlName {}, {:?}", symbol, error);
+                return None;
+            }
+        };
+
+        // Check the cache first
+        if let Ok(symbols_option) = self.aml_symbols() {
+            if let Some(symbols) = symbols_option.as_ref() {
+                if symbols.symbols_hash.contains(symbol) {
+                    log::trace!("Found symbol in cache, {}", symbol);
+                    return Some(aml_name);
+                }
+            }
+        }
+
+        // Symbol does not exactly match cache, allow lookup using namespace rules
+        let aml_ctx = self.aml_context();
+        let root = aml::AmlName::root();
+        if aml_ctx.namespace.get_by_path(&aml_name).is_ok() 
+            || aml_ctx.namespace.search_for_level(&aml_name, &root).is_ok()
+        {
+            Some(aml_name)
+        } else {
+            log::trace!("Lookup did not find {}", aml_name);
+            None
+        }
+    }
+
+    pub fn aml_symbols(&self) -> Result<RwLockReadGuard<'_, Option<AmlSymbols>>, SymbolListError> {
+        // Some private functions for building the symbol name correctly and efficiently
+        fn level_name(level_aml_name: &aml::AmlName) -> String {
+            let mut name = level_aml_name.as_string();
+            // remove unnecessary underscores
+            while let Some(index) = name.find("_.") {
+                name.remove(index);
+            }
+            while name.len() > 0 && &name[name.len() - 1..] == "_" {
+                name.pop();
+            }
+            name.shrink_to_fit();
+            name
+        }
+        fn child_symbol(level_name: &str, value_name: &str) -> String {
+            let mut name = String::with_capacity(level_name.len() + 1 + value_name.len());
+            name.push_str(level_name);
+            name.push('.');
+            name.push_str(value_name.trim_end_matches('_'));
+            name.shrink_to_fit();
+            name
+        }
+        fn root_symbol(value_name: &str) -> String {
+            let mut name = String::with_capacity(1 + value_name.len());
+            name.push('\\');
+            name.push_str(value_name.trim_end_matches('_'));
+            name.shrink_to_fit();
+            name
+        }
+
+        // return the cached value if it exists
+        let symbols = self.aml_symbols.read();
+        if symbols.is_some() {
+            return Ok(symbols);
+        }
+        // free the read lock
+        drop(symbols);
+
+        // List has not been initialized, we have to build it
+        log::trace!("Creating symbols list");
+
+        let mut symbols_str: String = String::with_capacity(30000);
+
+        let mut symbols_hash: FxHashSet<String> = FxHashSet::default();
+
+        // Get write lock because traverse requires mut
+        let mut aml_ctx = self.aml_context_mut();
+
+        let root = aml::AmlName::root();
+        let traverse = aml_ctx.namespace.traverse(| level_aml_name, level | {
+            let level_is_root = level_aml_name.eq(&root);
+            let level_name = level_name(level_aml_name);
+            for (name, _handle) in level.values.iter() {
+                // Create the name of the symbol as "\levelname.symbolname"
+                let symbol = if level_is_root {
+                    root_symbol(name.as_str())
+                } else {
+                    child_symbol(&level_name, name.as_str())
+                };
+                symbols_str.push_str(&symbol);
+                symbols_str.push('\n');
+                symbols_hash.insert(symbol);
+            }
+            Ok(true)
+        });
+
+        match traverse {
+            Err(error) => {
+                log::error!("Traverse failed, {:?}", error);
+                return Err(SymbolListError::AmlInternalError);
+            }
+            _ => {}
+        }
+    
+        symbols_str.shrink_to_fit();
+
+        // Cache the new list
+        log::trace!("Updating symbols list");
+
+        let mut write_guarded_symbols = self.aml_symbols.write();
+        *write_guarded_symbols = Some(AmlSymbols { symbols_str, symbols_hash });
+
+        // return the cached value
+        Ok(RwLockWriteGuard::downgrade(write_guarded_symbols))
+    }
+
+    /// Discard any cached symbols list. To be called if the AML namespace changes.
+    /// The caller must have at least a Read Lock on the aml context to ensure
+    /// the cached list is not out of sync with the namespace.
+    pub fn aml_symbols_reset(&self) {
+        let mut symbols = self.aml_symbols.write();
+        *symbols = None;
+    }
+
+    /// Set Power State
+    /// See https://uefi.org/sites/default/files/resources/ACPI_6_1.pdf
+    /// - search for PM1a
+    /// See https://forum.osdev.org/viewtopic.php?t=16990 for practical details
+    pub fn set_global_s_state(&self, state: u8) {
+        if state != 5 {
+            return;
+        }
+        let fadt = match self.fadt() {
+            Some(fadt) => fadt,
+            None =>  {
+                log::error!("Cannot set global S-state due to missing FADT.");
+                return;
+            }
+        };
+
+        let port = fadt.pm1a_control_block as u16;
+        let mut val = 1 << 13;
+
+        let aml_ctx = self.aml_context();
+
+        let s5_aml_name = match aml::AmlName::from_str("\\_S5") {
+            Ok(aml_name) => aml_name,
+            Err(error) => { log::error!("Could not build AmlName for \\_S5, {:?}", error); return; }
+        };
+
+        let s5 = match aml_ctx.namespace.get_by_path(&s5_aml_name) {
+            Ok(s5) => s5,
+            Err(error) => { log::error!("Cannot set S-state, missing \\_S5, {:?}", error); return; }
+        };
+
+        let package = match s5 {
+            aml::AmlValue::Package(package) => package,
+            _ => { log::error!("Cannot set S-state, \\_S5 is not a package"); return; }
+        };
+        
+        let slp_typa = match package[0] {
+            aml::AmlValue::Integer(i) => i,
+            _ => { log::error!("typa is not an Integer"); return; }
+        };
+        let slp_typb = match package[1] {
+            aml::AmlValue::Integer(i) => i,
+            _ => { log::error!("typb is not an Integer"); return; }
+        };
+        
+        log::trace!("Shutdown SLP_TYPa {:X}, SLP_TYPb {:X}", slp_typa, slp_typb);
+        val |= slp_typa as u16;
+
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        {
+            log::warn!("Shutdown with ACPI outw(0x{:X}, 0x{:X})", port, val);
+            Pio::<u16>::new(port).write(val);
+        }
+
+        // TODO: Handle SLP_TYPb
+
+        #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+        {
+            log::error!("Cannot shutdown with ACPI outw(0x{:X}, 0x{:X}) on this architecture", port, val);
+        }
+
+        loop {
+            core::hint::spin_loop();
+        }
+    }
+
 }
 
 #[repr(packed)]
@@ -537,5 +769,90 @@ impl AmlContainingTable for Ssdt {
     }
     fn header(&self) -> &SdtHeader {
         &*self.0
+    }
+}
+
+struct AmlPhysMemHandler;
+
+impl aml::Handler for AmlPhysMemHandler {
+    fn read_u8(&self, _address: usize) -> u8 {
+        log::error!("read u8 {:X}", _address);
+        0
+    }
+    fn read_u16(&self, _address: usize) -> u16 {
+        log::error!("read u16 {:X}", _address);
+        0
+    }
+    fn read_u32(&self, _address: usize) -> u32 {
+        log::error!("read u32 {:X}", _address);
+        0
+    }
+    fn read_u64(&self, _address: usize) -> u64 {
+        log::error!("read u64 {:X}", _address);
+        0
+    }
+
+    fn write_u8(&mut self, _address: usize, _value: u8) {
+        log::error!("write u8 {:X}", _address);
+    }
+    fn write_u16(&mut self, _address: usize, _value: u16) {
+        log::error!("write u16 {:X}", _address);
+    }
+    fn write_u32(&mut self, _address: usize, _value: u32) {
+        log::error!("write u32 {:X}", _address);
+    }
+    fn write_u64(&mut self, _address: usize, _value: u64) {
+        log::error!("write u64 {:X}", _address);
+    }
+
+    fn read_io_u8(&self, _port: u16) -> u8 {
+        log::error!("read io u8 {:X}", _port);
+
+        0
+    }
+    fn read_io_u16(&self, _port: u16) -> u16 {
+        log::error!("read io u16 {:X}", _port);
+
+        0
+    }
+    fn read_io_u32(&self, _port: u16) -> u32 {
+        log::error!("read io u32 {:X}", _port);
+
+        0
+    }
+
+    fn write_io_u8(&self, _port: u16, _value: u8) {
+        log::error!("write io u8 {:X}", _port);
+    }
+    fn write_io_u16(&self, _port: u16, _value: u16) {
+        log::error!("write io u16 {:X}", _port);
+    }
+    fn write_io_u32(&self, _port: u16, _value: u32) {
+        log::error!("write io u32 {:X}", _port);
+    }
+
+    fn read_pci_u8(&self, _segment: u16, _bus: u8, _device: u8, _function: u8, _offset: u16) -> u8 {
+        log::error!("read pci u8 {:X}", _device);
+
+        0
+    }
+    fn read_pci_u16(&self, _segment: u16, _bus: u8, _device: u8, _function: u8, _offset: u16) -> u16 {
+        log::error!("read pci  u8 {:X}", _device);
+
+        0
+    }
+    fn read_pci_u32(&self, _segment: u16, _bus: u8, _device: u8, _function: u8, _offset: u16) -> u32 {
+        log::error!("read pci u8 {:X}", _device);
+
+        0
+    }
+    fn write_pci_u8(&self, _segment: u16, _bus: u8, _device: u8, _function: u8, _offset: u16, _value: u8) {
+        log::error!("write pci u8 {:X}", _device);
+    }
+    fn write_pci_u16(&self, _segment: u16, _bus: u8, _device: u8, _function: u8, _offset: u16, _value: u16) {
+        log::error!("write pci u8 {:X}", _device);
+    }
+    fn write_pci_u32(&self, _segment: u16, _bus: u8, _device: u8, _function: u8, _offset: u16, _value: u32) {
+        log::error!("write pci u8 {:X}", _device);
     }
 }
