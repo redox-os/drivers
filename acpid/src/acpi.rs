@@ -1,8 +1,9 @@
-use rustc_hash::FxHashSet;
+use rustc_hash::FxHashMap;
 use std::convert::{TryFrom, TryInto};
 use std::ops::Deref;
 use std::sync::Arc;
 use std::{fmt, mem};
+use std::fmt::Write;
 
 use syscall::flag::PhysmapFlags;
 
@@ -12,7 +13,7 @@ use syscall::io::{Io, Pio};
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use thiserror::Error;
 
-use aml::{AmlContext, AmlName};
+use aml::{AmlContext, AmlName, AmlHandle, AmlValue};
 
 pub mod dmar;
 use self::dmar::Dmar;
@@ -229,9 +230,147 @@ pub enum SymbolListError {
     AmlInternalError,
 }
 
+// Current AML implementation builds the aml_context.namespace at startup,
+// but the cache for symbols is lazy-loaded when someone
+// reads from the acpi:/symbols scheme.
+// If you dynamically add an SDT, you can add to the namespace, but you
+// must empty the cache so it is rebuilt.
+// If you modify an SDT, you must discard the aml_context and rebuild it.
 pub struct AmlSymbols {
+    aml_context: AmlContext,
+    // k = name, v = description
+    symbols_cache: FxHashMap<String, String>,
     pub symbols_str: String,
-    symbols_hash: FxHashSet<String>,
+}
+
+impl AmlSymbols {
+    pub fn to_str(&self) -> &str {
+        &self.symbols_str
+    }
+
+    /// Format a value as toml, to use as file contents
+    pub fn format_value(name: &str, value: &AmlValue, handle_lookup: &AmlHandleLookup) -> String {
+        let mut value_str = String::with_capacity(256);
+        let _ = write!(value_str, "[symbol]\nname = \"{}\"\n\n[value]\n", name);
+        let _ = match value {
+            AmlValue::Integer(n) => 
+                write!(value_str, "type = \"Integer\"\nvalue = \"{:#x}\"\n", n),
+            AmlValue::String(s) =>
+                write!(value_str, "type = \"String\"\nvalue = \"{}\"\n", s),
+            AmlValue::Processor { id, pblk_address, pblk_len } =>
+                write!(value_str, "type = \"Processor\"\nid = \"{}\"\npblk_address = \"{}\"\npblk_len = \"{}\"\n",
+                    id, pblk_address, pblk_len),
+            AmlValue::Method { flags, code } =>
+                write!(value_str, "type = \"Method\"\nflags = \"{:?}\"\ncode = {}\n", flags, AmlSymbols::code_as_string(code)),
+            AmlValue::OpRegion { region, offset, length, parent_device } =>
+                write!(value_str, "type = \"OpRegion\"\nregion = \"{:?}\"\noffset = \"{:#x}\"\nlength = \"{:#x}\"\ndevice = \"{}\"\n",
+                    region, offset, length, AmlSymbols::device_option_as_string(parent_device)),
+            AmlValue::Field { region, flags, offset, length } =>
+                write!(value_str, "type = \"Field\"\nregion = \"{}\"\nflags = \"{:?}\"\noffset = \"{:#x}\"\nlength = \"{:#x}\"\n",
+                    handle_lookup.get_as_str(region), flags, offset, length),
+            AmlValue::Package(contents) =>
+                write!(value_str, "type = \"Package\"\ncontents = {}\n",
+                    AmlSymbols::contents_as_string(contents)),
+            AmlValue::Device => write!(value_str, "type = \"Device\"\n"),
+            AmlValue::Buffer(_) => write!(value_str, "type = \"Buffer\"\n"),
+            other =>
+                write!(value_str, "type = \"Other\"\ndebug = \"{:.64?}\"\n", other),
+        };
+
+        value_str.shrink_to_fit();
+        value_str
+    }
+
+    fn device_option_as_string(device: &Option<AmlName>) -> String {
+        if let Some(name) = device {
+            format!("\"{}\"", AmlSymbols::pretty_name(name))
+        } else {
+            "\"None\"".to_string()
+        }
+    }
+
+    fn code_as_string(code: &aml::value::MethodCode) -> String {
+        match code {
+            aml::value::MethodCode::Aml(bytes) =>
+                if bytes.len() > 15 {
+                    format!("\"AML({:x?}...)\"", &bytes[..15])
+                } else {
+                    format!("\"AML({:x?})\"", bytes)
+                },
+            aml::value::MethodCode::Native(_) => format!("(native method)"),
+        }
+    }
+
+    fn contents_as_string(contents: &Vec<AmlValue>) -> String {
+        let mut buf = String::with_capacity(128);
+        let _ = write!(buf, "[ ");
+        for value in contents {
+            match value {
+                AmlValue::Integer(n) => { let _ = write!(buf, "{:x}, ", n); },
+                AmlValue::String(s) => { let _ = write!(buf, "\"{}\",", s); }
+                _ => { let _ = write!(buf, "{:?}", value); },
+            }
+            if buf.len() > 58 {
+                let _ = write!(buf, "...");
+                break;
+            }
+        }
+        let _ = write!(buf, "]");
+        buf
+    }
+
+    /// Remove trailing underscores from each name segment
+    pub fn pretty_name(level_aml_name: &AmlName) -> String {
+        let mut name = level_aml_name.as_string();
+        // remove unnecessary underscores
+        while let Some(index) = name.find("_.") {
+            name.remove(index);
+        }
+        while name.len() > 0 && &name[name.len() - 1..] == "_" {
+            name.pop();
+        }
+        name.shrink_to_fit();
+        name
+    }
+
+    pub fn child_symbol(level_name: &str, value_name: &str) -> String {
+        format!("{}.{}", level_name, value_name.trim_end_matches('_'))
+    }
+
+    pub fn root_symbol(value_name: &str) -> String {
+        format!("\\{}", value_name.trim_end_matches('_'))
+    }
+
+}
+
+pub struct AmlHandleLookup {
+    map: FxHashMap<String, String>,
+}
+
+impl AmlHandleLookup {
+    pub fn new() -> Self {
+        Self { map: FxHashMap::default() }
+    }
+
+    fn handle_to_key(&self, handle: &AmlHandle) -> String {
+        format!("{:?}", handle)
+    }
+
+    pub fn insert(&mut self, handle: &AmlHandle, name: &String) {
+        self.map.insert(self.handle_to_key(handle), name.to_owned());
+    }
+
+    pub fn get(&self, handle: &AmlHandle) -> Option<&String> {
+        self.map.get(&self.handle_to_key(handle))
+    }
+
+    pub fn get_as_str(&self, handle: &AmlHandle) -> &str {
+        if let Some(name) = self.get(handle) {
+            &name[..]
+        } else {
+            "Unrecognized"
+        }
+    }
 }
 
 pub struct AcpiContext {
@@ -239,12 +378,7 @@ pub struct AcpiContext {
     dsdt: Option<Dsdt>,
     fadt: Option<Fadt>,
 
-    // the aml parser
-    aml_context: RwLock<AmlContext>,
-
-    // Use to cache the symbols list, which doesn't change very often
-    // Set it to None if the ACPI tables change e.g. due to PnP
-    aml_symbols: RwLock<Option<AmlSymbols>>,
+    aml_symbols: RwLock<AmlSymbols>,
 
     // TODO: The kernel ACPI code seemed to use load_table quite ubiquitously, however ACPI 5.1
     // states that DDBHandles can only be obtained when loading XSDT-pointed tables. So, we'll
@@ -273,8 +407,12 @@ impl AcpiContext {
             dsdt: None,
             fadt: None,
 
-            aml_context: RwLock::new(AmlContext::new(Box::new(AmlPhysMemHandler), aml::DebugVerbosity::None)),
-            aml_symbols: RwLock::new(None),
+            // Temporary values
+            aml_symbols: RwLock::new(AmlSymbols {
+                aml_context: AmlContext::new(Box::new(AmlPhysMemHandler), aml::DebugVerbosity::None),
+                symbols_cache: FxHashMap::default(),
+                symbols_str: "".to_string(),
+            }),
 
             next_ctx: RwLock::new(0),
 
@@ -287,32 +425,36 @@ impl AcpiContext {
 
         Fadt::init(&mut this);
         //TODO (hangs on real hardware): Dmar::init(&this);
+        
 
-        if let Some(mut parser) = this.aml_context.try_write() {
-            if let Some(dsdt) = this.dsdt() {
-                match parser.parse_table(dsdt.aml()) {
-                    Ok(_) => log::trace!("Parsed DSDT"),
-                    Err(e) => {
-                        log::error!("DSDT: {:?}", e);
-                    }
-                }
-            } else {
-                log::error!("No DSDT for aml parsing");
-            }
+        this.aml_symbols.write().aml_context = AcpiContext::build_aml_context(&this);
 
-            for ssdt in this.ssdts() {
-                match parser.parse_table(ssdt.aml()) {
-                    Ok(_) => log::trace!("Parsed SSDT"),
-                    Err(e) => {
-                        log::error!("SSDT: {:?}", e);
-                    }
+        this
+    }
+
+    fn build_aml_context(acpi: &AcpiContext) -> AmlContext {
+        let mut aml_context = AmlContext::new(Box::new(AmlPhysMemHandler), aml::DebugVerbosity::None);
+
+        if let Some(dsdt) = acpi.dsdt() {
+            match aml_context.parse_table(dsdt.aml()) {
+                Ok(_) => log::trace!("Parsed DSDT"),
+                Err(e) => {
+                    log::error!("DSDT: {:?}", e);
                 }
             }
         } else {
-            log::error!("Failed to obtain aml_context");
+            log::error!("No DSDT for aml parsing");
         }
 
-        this
+        for ssdt in acpi.ssdts() {
+            match aml_context.parse_table(ssdt.aml()) {
+                Ok(_) => log::trace!("Parsed SSDT"),
+                Err(e) => {
+                    log::error!("SSDT: {:?}", e);
+                }
+            }
+        }
+        aml_context
     }
 
     pub fn dsdt(&self) -> Option<&Dsdt> {
@@ -354,77 +496,22 @@ impl AcpiContext {
     pub fn new_index(&self, signature: &SdtSignature) {
         self.sdt_order.write().push(Some(*signature));
     }
-    fn aml_context(&self) -> RwLockReadGuard<'_, AmlContext>{
-        self.aml_context.read()
-    }
-    fn aml_context_mut(&self) -> RwLockWriteGuard<'_, AmlContext> {
-        self.aml_context.write()
-    }
-    pub fn aml_lookup(&self, symbol: &str) -> Option<AmlName> {
-        let aml_name = match AmlName::from_str(symbol) {
-            Ok(aml_name) => aml_name,
-            Err(error) => {
-                log::error!("Lookup failed to convert name to AmlName {}, {:?}", symbol, error);
-                return None;
-            }
-        };
 
-        // Check the cache first
-        if let Ok(symbols_option) = self.aml_symbols() {
-            if let Some(symbols) = symbols_option.as_ref() {
-                if symbols.symbols_hash.contains(symbol) {
-                    log::trace!("Found symbol in cache, {}", symbol);
-                    return Some(aml_name);
-                }
+    pub fn aml_lookup(&self, symbol: &str) -> Option<String> {
+        if let Ok(aml_symbols) = self.aml_symbols() {
+            if let Some(description) = aml_symbols.symbols_cache.get(symbol) {
+                log::trace!("Found symbol in cache, {}, {}", symbol, description);
+                return Some(description.to_owned());
             }
         }
-
-        // Symbol does not exactly match cache, allow lookup using namespace rules
-        let aml_ctx = self.aml_context();
-        let root = aml::AmlName::root();
-        if aml_ctx.namespace.get_by_path(&aml_name).is_ok() 
-            || aml_ctx.namespace.search_for_level(&aml_name, &root).is_ok()
-        {
-            Some(aml_name)
-        } else {
-            log::trace!("Lookup did not find {}", aml_name);
-            None
-        }
+        None
     }
 
-    pub fn aml_symbols(&self) -> Result<RwLockReadGuard<'_, Option<AmlSymbols>>, SymbolListError> {
-        // Some private functions for building the symbol name correctly and efficiently
-        fn level_name(level_aml_name: &aml::AmlName) -> String {
-            let mut name = level_aml_name.as_string();
-            // remove unnecessary underscores
-            while let Some(index) = name.find("_.") {
-                name.remove(index);
-            }
-            while name.len() > 0 && &name[name.len() - 1..] == "_" {
-                name.pop();
-            }
-            name.shrink_to_fit();
-            name
-        }
-        fn child_symbol(level_name: &str, value_name: &str) -> String {
-            let mut name = String::with_capacity(level_name.len() + 1 + value_name.len());
-            name.push_str(level_name);
-            name.push('.');
-            name.push_str(value_name.trim_end_matches('_'));
-            name.shrink_to_fit();
-            name
-        }
-        fn root_symbol(value_name: &str) -> String {
-            let mut name = String::with_capacity(1 + value_name.len());
-            name.push('\\');
-            name.push_str(value_name.trim_end_matches('_'));
-            name.shrink_to_fit();
-            name
-        }
-
+    pub fn aml_symbols(&self) -> Result<RwLockReadGuard<'_, AmlSymbols>, SymbolListError> {
+        
         // return the cached value if it exists
         let symbols = self.aml_symbols.read();
-        if symbols.is_some() {
+        if !symbols.symbols_cache.is_empty() {
             return Ok(symbols);
         }
         // free the read lock
@@ -435,28 +522,28 @@ impl AcpiContext {
 
         let mut symbols_str: String = String::with_capacity(30000);
 
-        let mut symbols_hash: FxHashSet<String> = FxHashSet::default();
+        let mut symbols_list: Vec<(String, AmlHandle)> = Vec::with_capacity(3000);
 
-        // Get write lock because traverse requires mut
-        let mut aml_ctx = self.aml_context_mut();
+        let mut aml_symbols = self.aml_symbols.write();
 
         let root = aml::AmlName::root();
-        let traverse = aml_ctx.namespace.traverse(| level_aml_name, level | {
-            let level_is_root = level_aml_name.eq(&root);
-            let level_name = level_name(level_aml_name);
-            for (name, _handle) in level.values.iter() {
-                // Create the name of the symbol as "\levelname.symbolname"
-                let symbol = if level_is_root {
-                    root_symbol(name.as_str())
-                } else {
-                    child_symbol(&level_name, name.as_str())
-                };
-                symbols_str.push_str(&symbol);
-                symbols_str.push('\n');
-                symbols_hash.insert(symbol);
-            }
-            Ok(true)
-        });
+        let traverse = aml_symbols.aml_context.namespace
+            .traverse(| level_aml_name, level | {
+                let level_is_root = level_aml_name.eq(&root);
+                let level_name = AmlSymbols::pretty_name(level_aml_name);
+                for (name, handle) in level.values.iter() {
+                    // Create the name of the symbol as "\levelname.symbolname"
+                    let symbol = if level_is_root {
+                        AmlSymbols::root_symbol(name.as_str())
+                    } else {
+                        AmlSymbols::child_symbol(&level_name, name.as_str())
+                    };
+                    symbols_str.push_str(&symbol);
+                    symbols_str.push('\n');
+                    symbols_list.push((symbol, handle.to_owned()));
+                }
+                Ok(true)
+            });
 
         match traverse {
             Err(error) => {
@@ -465,25 +552,40 @@ impl AcpiContext {
             }
             _ => {}
         }
+
+        let mut handle_lookup = AmlHandleLookup::new();
+
+        for (name, handle) in &symbols_list {
+            handle_lookup.insert(handle, name);
+        }
     
+        let namespace = &aml_symbols.aml_context.namespace;
+
+        let mut symbols_cache: FxHashMap<String, String> = FxHashMap::default();
+
+        for (name, handle) in symbols_list {
+            if let Ok(value) = namespace.get(handle.to_owned()) {
+                symbols_cache.insert(name.to_owned(), AmlSymbols::format_value(&name, value, &handle_lookup));
+            }
+        }
+
         symbols_str.shrink_to_fit();
 
         // Cache the new list
         log::trace!("Updating symbols list");
 
-        let mut write_guarded_symbols = self.aml_symbols.write();
-        *write_guarded_symbols = Some(AmlSymbols { symbols_str, symbols_hash });
+        aml_symbols.symbols_str = symbols_str;
+        aml_symbols.symbols_cache = symbols_cache;
 
         // return the cached value
-        Ok(RwLockWriteGuard::downgrade(write_guarded_symbols))
+        Ok(RwLockWriteGuard::downgrade(aml_symbols))
     }
 
     /// Discard any cached symbols list. To be called if the AML namespace changes.
-    /// The caller must have at least a Read Lock on the aml context to ensure
-    /// the cached list is not out of sync with the namespace.
     pub fn aml_symbols_reset(&self) {
-        let mut symbols = self.aml_symbols.write();
-        *symbols = None;
+        let mut aml_symbols = self.aml_symbols.write();
+        aml_symbols.symbols_cache = FxHashMap::default();
+        aml_symbols.symbols_str = "".to_string();
     }
 
     /// Set Power State
@@ -505,14 +607,14 @@ impl AcpiContext {
         let port = fadt.pm1a_control_block as u16;
         let mut val = 1 << 13;
 
-        let aml_ctx = self.aml_context();
+        let aml_symbols = self.aml_symbols.read();
 
         let s5_aml_name = match aml::AmlName::from_str("\\_S5") {
             Ok(aml_name) => aml_name,
             Err(error) => { log::error!("Could not build AmlName for \\_S5, {:?}", error); return; }
         };
 
-        let s5 = match aml_ctx.namespace.get_by_path(&s5_aml_name) {
+        let s5 = match aml_symbols.aml_context.namespace.get_by_path(&s5_aml_name) {
             Ok(s5) => s5,
             Err(error) => { log::error!("Cannot set S-state, missing \\_S5, {:?}", error); return; }
         };
