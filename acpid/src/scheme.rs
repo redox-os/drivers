@@ -26,8 +26,8 @@ enum HandleKind<'a> {
     TopLevel,
     Tables,
     Table(SdtSignature),
-    Symbols(RwLockReadGuard<'a, Option<AmlSymbols>>),
-    Symbol(aml::AmlName),
+    Symbols(RwLockReadGuard<'a, AmlSymbols>),
+    Symbol(String),
 }
 
 impl HandleKind<'_> {
@@ -45,13 +45,8 @@ impl HandleKind<'_> {
             Self::TopLevel => TOPLEVEL_CONTENTS.len(),
             Self::Tables => acpi_ctx.tables().len().checked_mul(TABLE_DENTRY_LENGTH).unwrap_or(usize::max_value()),
             Self::Table(signature) => acpi_ctx.sdt_from_signature(signature).ok_or(Error::new(EBADFD))?.length(),
-            Self::Symbols(symbols_option) => {
-                match symbols_option.as_ref() {
-                    Some(symbols) => symbols.symbols_str.len(),
-                    _ => 0,
-                }
-            },
-            Self::Symbol(_) => 0,
+            Self::Symbols(aml_symbols) => aml_symbols.to_str().len(),
+            Self::Symbol(description) => description.len(),
         })
     }
 }
@@ -159,15 +154,15 @@ impl SchemeMut for AcpiScheme<'_> {
                 HandleKind::Table(signature)
             }
 
-            ["symbols"] => if let Ok(symbols_option) = self.ctx.aml_symbols() {
-                HandleKind::Symbols(symbols_option)
+            ["symbols"] => if let Ok(aml_symbols) = self.ctx.aml_symbols() {
+                HandleKind::Symbols(aml_symbols)
             } else {
                 return Err(Error::new(EIO))
             },
 
             ["symbols", symbol] => {
-                if let Some(symbol) = self.ctx.aml_lookup(symbol) {
-                    HandleKind::Symbol(symbol)
+                if let Some(description) = self.ctx.aml_lookup(symbol) {
+                    HandleKind::Symbol(description)
                 } else {
                     return Err(Error::new(ENOENT));
                 }
@@ -291,24 +286,20 @@ impl SchemeMut for AcpiScheme<'_> {
                 return Ok(bytes_written);
             }
 
-            HandleKind::Symbols(symbols_option) => {
-                match symbols_option.as_ref() {
-                    Some(symbols) => {
-                        let offset = std::cmp::min(symbols.symbols_str.len(), handle.offset);
-                        let src_buf = &symbols.symbols_str.as_bytes()[offset..];
+            HandleKind::Symbols(aml_symbols) => {
+                let symbols = aml_symbols.to_str();
+                let offset = std::cmp::min(symbols.len(), handle.offset);
+                let src_buf = &symbols.as_bytes()[offset..];
 
-                        let to_copy = std::cmp::min(src_buf.len(), buf.len());
-                        buf[..to_copy].copy_from_slice(&src_buf[..to_copy]);
+                let to_copy = std::cmp::min(src_buf.len(), buf.len());
+                buf[..to_copy].copy_from_slice(&src_buf[..to_copy]);
 
-                        handle.offset = handle.offset.checked_add(to_copy).ok_or(Error::new(EOVERFLOW))?;
+                handle.offset = handle.offset.checked_add(to_copy).ok_or(Error::new(EOVERFLOW))?;
 
-                        return Ok(to_copy);
-                    }
-                    _ => return Err(Error::new(EIO)),
-                }
+                return Ok(to_copy);
             }
 
-            HandleKind::Symbol(_) => b"",
+            HandleKind::Symbol(description) => description.as_bytes(),
 
         };
 
