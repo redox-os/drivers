@@ -44,7 +44,6 @@ pub struct BosSuperSpeedPlusDesc {
     pub attrs: u32,
     pub func_supp: u32,
     pub _rsvd1: u16,
-    sublink_speed_attr: [u32; 0],
 }
 
 unsafe impl plain::Plain for BosSuperSpeedPlusDesc {}
@@ -77,7 +76,7 @@ impl BosSuperSpeedPlusDesc {
     pub fn sublink_speed_attr(&self) -> &[u32] {
         unsafe {
             slice::from_raw_parts(
-                &self.sublink_speed_attr as *const u32,
+                (self as *const Self).add(1) as *const u32,
                 self.ssac() as usize + 1,
             )
         }

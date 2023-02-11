@@ -455,8 +455,8 @@ impl Nvme {
 
                     log::trace!("Got completion queue entry (CQID {}): {:?} at {}", cq_id, entry, head);
 
-                    assert_eq!(sq_id, entry.sq_id);
-                    assert_eq!(cmd.cid, entry.cid);
+                    assert_eq!(sq_id, { entry.sq_id });
+                    assert_eq!({ cmd.cid }, { entry.cid });
 
                     {
                         let submission_queues_read_lock = self.submission_queues.read().unwrap();
