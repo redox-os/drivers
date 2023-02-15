@@ -209,6 +209,8 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle, address: usize) -> (Option
 
         method
     } else if pci_config.func.legacy_interrupt_pin.is_some() {
+        info!("Legacy IRQ {}", irq);
+
         // legacy INTx# interrupt pins.
         (Some(File::open(format!("irq:{}", irq)).expect("xhcid: failed to open legacy IRQ file")), InterruptMethod::Intx)
     } else {

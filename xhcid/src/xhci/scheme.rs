@@ -253,6 +253,16 @@ impl Xhci {
         &self,
         f: F,
     ) -> (Trb, Trb) {
+        {
+            // If ERDP EHB bit is set, clear it before sending command
+            //TODO: find out why this bit is set earlier!
+            let mut run = self.run.lock().unwrap();
+            let mut int = &mut run.ints[0];
+            if int.erdp.readf(1 << 3) {
+                int.erdp.writef(1 << 3, true);
+            }
+        }
+
         let next_event = {
             let mut command_ring = self.cmd.lock().unwrap();
             let (cmd_index, cycle) = (command_ring.next_index(), command_ring.cycle);
