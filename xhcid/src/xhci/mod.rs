@@ -113,7 +113,7 @@ impl Xhci {
 
             let last_index = ring.next_index();
             let (cmd, cycle) = (&mut ring.trbs[last_index], ring.cycle);
-            cmd.status(0, true, true, false, false, cycle);
+            cmd.status(0, false, true, false, false, cycle);
 
             self.next_transfer_event_trb(RingId::default_control_pipe(port as u8), &ring, &ring.trbs[last_index])
         };
