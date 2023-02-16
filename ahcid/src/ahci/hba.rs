@@ -1,4 +1,4 @@
-use log::{error, info, trace};
+use log::{debug, error, info, trace};
 use std::mem::size_of;
 use std::ops::DerefMut;
 use std::{ptr, u32};
@@ -128,7 +128,7 @@ impl HbaPort {
         // Power on and spin up device
         self.cmd.writef(1 << 2 | 1 << 1, true);
 
-        info!("   - AHCI init {:X}", self.cmd.read());
+        debug!("   - AHCI init {:X}", self.cmd.read());
     }
 
     pub unsafe fn identify(&mut self, clb: &mut Dma<[HbaCmdHeader; 32]>, ctbas: &mut [Dma<HbaCmdTable>; 32]) -> Option<u64> {

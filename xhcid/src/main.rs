@@ -16,7 +16,6 @@ use pcid_interface::irq_helpers::{read_bsp_apic_id, allocate_single_interrupt_ve
 use pcid_interface::msi::{MsiCapability, MsixCapability, MsixTableEntry};
 
 use event::{Event, EventQueue};
-use log::info;
 use redox_log::{RedoxLogger, OutputBuilder};
 use syscall::data::Packet;
 use syscall::error::EWOULDBLOCK;
@@ -103,7 +102,7 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle, address: usize) -> (Option
     };
 
     let all_pci_features = pcid_handle.fetch_all_features().expect("xhcid: failed to fetch pci features");
-    info!("XHCI PCI FEATURES: {:?}", all_pci_features);
+    log::debug!("XHCI PCI FEATURES: {:?}", all_pci_features);
 
     let (has_msi, mut msi_enabled) = all_pci_features.iter().map(|(feature, status)| (feature.is_msi(), status.is_enabled())).find(|&(f, _)| f).unwrap_or((false, false));
     let (has_msix, mut msix_enabled) = all_pci_features.iter().map(|(feature, status)| (feature.is_msix(), status.is_enabled())).find(|&(f, _)| f).unwrap_or((false, false));
@@ -144,7 +143,7 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle, address: usize) -> (Option
         pcid_handle.set_feature_info(SetFeatureInfo::Msi(set_feature_info)).expect("xhcid: failed to set feature info");
 
         pcid_handle.enable_feature(PciFeature::Msi).expect("xhcid: failed to enable MSI");
-        info!("Enabled MSI");
+        log::debug!("Enabled MSI");
 
         (Some(interrupt_handle), InterruptMethod::Msi)
     } else if msix_enabled {
@@ -205,11 +204,11 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle, address: usize) -> (Option
         };
 
         pcid_handle.enable_feature(PciFeature::MsiX).expect("xhcid: failed to enable MSI-X");
-        info!("Enabled MSI-X");
+        log::debug!("Enabled MSI-X");
 
         method
     } else if pci_config.func.legacy_interrupt_pin.is_some() {
-        info!("Legacy IRQ {}", irq);
+        log::debug!("Legacy IRQ {}", irq);
 
         // legacy INTx# interrupt pins.
         (Some(File::open(format!("irq:{}", irq)).expect("xhcid: failed to open legacy IRQ file")), InterruptMethod::Intx)
@@ -247,7 +246,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     let _logger_ref = setup_logging(&name);
 
-    info!("XHCI PCI CONFIG: {:?}", pci_config);
+    log::debug!("XHCI PCI CONFIG: {:?}", pci_config);
     let bar = pci_config.func.bars[0];
     let bar_size = pci_config.func.bar_sizes[0];
     let irq = pci_config.func.legacy_interrupt_line;

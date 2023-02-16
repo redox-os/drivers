@@ -500,7 +500,7 @@ impl Xhci {
     }
 
     pub async fn probe(&self) -> Result<()> {
-        info!("XHCI capabilities: {:?}", self.capabilities_iter().collect::<Vec<_>>());
+        debug!("XHCI capabilities: {:?}", self.capabilities_iter().collect::<Vec<_>>());
 
         let port_count = { self.ports.lock().unwrap().len() };
 
@@ -913,7 +913,7 @@ pub fn start_irq_reactor(hci: &Arc<Xhci>, irq_file: Option<File>) {
     debug!("About to start IRQ reactor");
 
     *hci.irq_reactor.lock().unwrap() = Some(thread::spawn(move || {
-        info!("Started IRQ reactor thread");
+        debug!("Started IRQ reactor thread");
         IrqReactor::new(hci_clone, receiver, irq_file).run()
     }));
 }

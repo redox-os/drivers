@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::{i64, thread};
 
 use structopt::StructOpt;
-use log::{error, info, warn, trace};
+use log::{debug, error, info, warn, trace};
 use redox_log::{OutputBuilder, RedoxLogger};
 
 use crate::config::Config;
@@ -398,7 +398,7 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, bus_num: u8,
             } else {
                 Vec::new()
             };
-            info!("PCI DEVICE CAPABILITIES for {}: {:?}", args.iter().map(|string| string.as_ref()).nth(0).unwrap_or("[unknown]"), capabilities);
+            debug!("PCI DEVICE CAPABILITIES for {}: {:?}", args.iter().map(|string| string.as_ref()).nth(0).unwrap_or("[unknown]"), capabilities);
 
             use driver_interface::LegacyInterruptPin;
 

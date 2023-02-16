@@ -699,11 +699,11 @@ impl IntelHDA {
 
 	pub fn info(&self) {
 		log::info!("Intel HD Audio Version {}.{}", self.regs.vmaj.read(), self.regs.vmin.read());
-		log::info!("IHDA: Input Streams: {}", self.num_input_streams());
-		log::info!("IHDA: Output Streams: {}", self.num_output_streams());
-		log::info!("IHDA: Bidirectional Streams: {}", self.num_bidirectional_streams());
-		log::info!("IHDA: Serial Data Outputs: {}", self.num_serial_data_out());
-		log::info!("IHDA: 64-Bit: {}", self.regs.gcap.read() & 1 == 1);
+		log::debug!("IHDA: Input Streams: {}", self.num_input_streams());
+		log::debug!("IHDA: Output Streams: {}", self.num_output_streams());
+		log::debug!("IHDA: Bidirectional Streams: {}", self.num_bidirectional_streams());
+		log::debug!("IHDA: Serial Data Outputs: {}", self.num_serial_data_out());
+		log::debug!("IHDA: 64-Bit: {}", self.regs.gcap.read() & 1 == 1);
 	}
 
 	fn get_input_stream_descriptor(&self, index: usize) -> Option<&'static mut StreamDescriptorRegs> {
