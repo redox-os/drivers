@@ -626,6 +626,7 @@ impl Xhci {
             let endpoints = &config_desc.interface_descs.get(usize::from(req.interface_desc.unwrap_or(0))).ok_or(Error::new(EBADFD))?.endpoints;
 
             if endpoints.len() >= 31 {
+                warn!("endpoints length {} >= 31", endpoints.len());
                 return Err(Error::new(EIO));
             }
 
@@ -644,7 +645,10 @@ impl Xhci {
         let port_speed_id = self.ports.lock().unwrap()[port].speed();
         let speed_id: &ProtocolSpeed = self
             .lookup_psiv(port as u8, port_speed_id)
-            .ok_or(Error::new(EIO))?;
+            .ok_or_else(|| {
+                warn!("no speed_id");
+                Error::new(EIO)
+            })?;
 
         {
             let port_state = self.port_states.get(&port).ok_or(Error::new(EBADFD))?;
@@ -677,7 +681,10 @@ impl Xhci {
             let mut port_state = self.port_states.get_mut(&port).ok_or(Error::new(EBADFD))?;
             let dev_desc = port_state.dev_desc.as_ref().unwrap();
             let endpoints = &dev_desc.config_descs.get(usize::from(req.config_desc)).ok_or(Error::new(EBADFD))?.interface_descs.get(usize::from(req.interface_desc.unwrap_or(0))).ok_or(Error::new(EBADFD))?.endpoints;
-            let endp_desc = endpoints.get(endp_idx as usize).ok_or(Error::new(EIO))?;
+            let endp_desc = endpoints.get(endp_idx as usize).ok_or_else(|| {
+                warn!("failed to find endpoint {}", endp_idx);
+                Error::new(EIO)
+            })?;
 
             let endp_num_xhc = Self::endp_num_to_dci(endp_num, endp_desc);
 
@@ -724,7 +731,10 @@ impl Xhci {
             // driver probably knows better. The spec says that the initial value should be 8 bytes
             // for control, 1KiB for interrupt and 3KiB for bulk and isoch.
             let avg_trb_len: u16 = match endp_desc.ty() {
-                EndpointTy::Ctrl => return Err(Error::new(EIO)), // only endpoint zero is of type control, and is configured separately with the address device command.
+                EndpointTy::Ctrl => {
+                    warn!("trying to use control endpoint");
+                    return Err(Error::new(EIO)); // only endpoint zero is of type control, and is configured separately with the address device command.
+                }
                 EndpointTy::Bulk | EndpointTy::Isoch => 3072,    // 3 KiB
                 EndpointTy::Interrupt => 1024,                   // 1 KiB
             };
@@ -778,7 +788,10 @@ impl Xhci {
             let mut input_context = port_state.input_context.lock().unwrap();
             input_context.add_context.writef(1 << endp_num_xhc, true);
 
-            let endp_ctx = input_context.device.endpoints.get_mut(endp_num_xhc as usize - 1).ok_or(Error::new(EIO))?;
+            let endp_ctx = input_context.device.endpoints.get_mut(endp_num_xhc as usize - 1).ok_or_else(|| {
+                warn!("failed to find endpoint {}", endp_num_xhc - 1);
+                Error::new(EIO)
+            })?;
 
             endp_ctx.a.write(
                 u32::from(mult) << 8

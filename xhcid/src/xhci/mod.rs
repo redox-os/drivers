@@ -604,12 +604,14 @@ impl Xhci {
         b |= (new_max_packet_size) << 16;
         endp_ctx.b.write(b);
 
+        /*TODO: this causes issues on real hardware, maybe it should only be used on USB 2?
         let (event_trb, command_trb) = self.execute_command(|trb, cycle| {
             trb.evaluate_context(slot_id, input_context.physical(), false, cycle)
         }).await;
 
         self::scheme::handle_event_trb("EVALUATE_CONTEXT", &event_trb, &command_trb)?;
         self.event_handler_finished();
+        */
 
         Ok(())
     }
@@ -838,7 +840,7 @@ impl Xhci {
     pub fn supported_protocol_speeds(
         &self,
         port: u8,
-    ) -> Option<impl Iterator<Item = &'static ProtocolSpeed>> {
+    ) -> impl Iterator<Item = &'static ProtocolSpeed> {
         use extended::*;
         const DEFAULT_SUPP_PROTO_SPEEDS: [ProtocolSpeed; 7] = [
             // Full-speed
@@ -903,16 +905,20 @@ impl Xhci {
             ),
         ];
 
-        let supp_proto = self.supported_protocol(port)?;
-
-        Some(if supp_proto.psic() != 0 {
-            unsafe { supp_proto.protocol_speeds().iter() }
-        } else {
-            DEFAULT_SUPP_PROTO_SPEEDS.iter()
-        })
+        match self.supported_protocol(port) {
+            Some(supp_proto) => if supp_proto.psic() != 0 {
+                unsafe { supp_proto.protocol_speeds().iter() }
+            } else {
+                DEFAULT_SUPP_PROTO_SPEEDS.iter()
+            },
+            None => {
+                log::warn!("falling back to default supported protocol speeds for port {}", port);
+                DEFAULT_SUPP_PROTO_SPEEDS.iter()
+            }
+        }
     }
     pub fn lookup_psiv(&self, port: u8, psiv: u8) -> Option<&'static ProtocolSpeed> {
-        self.supported_protocol_speeds(port)?
+        self.supported_protocol_speeds(port)
             .find(|speed| speed.psiv() == psiv)
     }
 }
