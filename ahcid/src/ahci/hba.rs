@@ -382,7 +382,7 @@ impl HbaMem {
         */
         self.ghc.write(1 << 31 | 1 << 1);
 
-        info!("   - AHCI CAP {:X} GHC {:X} IS {:X} PI {:X} VS {:X} CAP2 {:X} BOHC {:X}",
+        debug!("   - AHCI CAP {:X} GHC {:X} IS {:X} PI {:X} VS {:X} CAP2 {:X} BOHC {:X}",
             self.cap.read(), self.ghc.read(), self.is.read(), self.pi.read(),
             self.vs.read(), self.cap2.read(), self.bohc.read());
     }
