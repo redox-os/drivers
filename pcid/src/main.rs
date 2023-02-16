@@ -600,13 +600,22 @@ fn main(args: Args) {
 
     info!("PCI BS/DV/FN VEND:DEVI CL.SC.IN.RV");
 
-    'bus: for bus in PciIter::new(pci) {
+    let mut bus_nums = vec![0];
+    let mut bus_i = 0;
+    'bus: while bus_i < bus_nums.len() {
+        let bus_num = bus_nums[bus_i];
+        bus_i += 1;
+
+        let bus = PciBus { pci, num: bus_num };
         'dev: for dev in bus.devs() {
             for func in dev.funcs() {
                 let func_num = func.num;
                 match PciHeader::from_reader(func) {
                     Ok(header) => {
                         handle_parsed_header(Arc::clone(&state), &config, bus.num, dev.num, func_num, header);
+                        if let PciHeader::PciToPci { secondary_bus_num, .. } = header {
+                            bus_nums.push(secondary_bus_num);
+                        }
                     }
                     Err(PciHeaderError::NoDevice) => {
                         if func_num == 0 {
