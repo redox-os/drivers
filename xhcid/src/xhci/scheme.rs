@@ -327,11 +327,13 @@ impl Xhci {
             let (cmd, cycle) = (&mut ring.trbs[last_index], ring.cycle);
 
             let interrupter = 0;
+            // When the data stage is in, the status stage must be out
+            let input = tk != TransferKind::In;
             let ioc = true;
             let ch = false;
             let ent = false;
+            cmd.status(interrupter, input, ioc, ch, ent, cycle);
 
-            cmd.status(interrupter, tk == TransferKind::In, ioc, ch, ent, cycle);
             (self.next_transfer_event_trb(RingId::default_control_pipe(port_num as u8), ring, &ring.trbs[last_index]), slot)
         };
 
