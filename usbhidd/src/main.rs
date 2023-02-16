@@ -300,7 +300,7 @@ fn main() {
     let report_desc = ReportIter::new(ReportFlatIter::new(&report_desc_bytes)).collect::<Vec<_>>();
 
     for item in &report_desc {
-        log::info!("{:?}", item);
+        log::debug!("{:?}", item);
     }
 
     handle.configure_endpoints(&ConfigureEndpointsReq { config_desc: 0, interface_desc: None, alternate_setting: None }).expect("Failed to configure endpoints");

@@ -531,7 +531,7 @@ impl Xhci {
 
                 let mut input = unsafe { self.alloc_dma_zeroed::<InputContext>()? };
                 let mut ring = self.address_device(&mut input, i, slot_ty, slot, speed).await?;
-                info!("Addressed device");
+                debug!("Addressed device");
 
                 // TODO: Should the descriptors be cached in PortState, or refetched?
 

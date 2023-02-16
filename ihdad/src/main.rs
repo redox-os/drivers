@@ -120,10 +120,12 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle) -> Option<File> {
         pcid_handle.set_feature_info(SetFeatureInfo::Msi(set_feature_info)).expect("ihdad: failed to set feature info");
 
         pcid_handle.enable_feature(PciFeature::Msi).expect("ihdad: failed to enable MSI");
-        log::info!("Enabled MSI");
+        log::debug!("Enabled MSI");
 
         Some(interrupt_handle)
     } else if pci_config.func.legacy_interrupt_pin.is_some() {
+        log::debug!("Legacy IRQ {}", irq);
+
         // legacy INTx# interrupt pins.
         Some(File::open(format!("irq:{}", irq)).expect("ihdad: failed to open legacy IRQ file"))
     } else {
@@ -171,7 +173,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         other => panic!("Expected memory bar, found {}", other),
     };
 
-    eprintln!(" + IHDA {} on: {:#X} size: {}", name, bar_ptr, bar_size);
+    log::info!(" + IHDA {} on: {:#X} size: {}", name, bar_ptr, bar_size);
 
 	let address = unsafe {
 		syscall::physmap(bar_ptr as usize, bar_size as usize, PHYSMAP_WRITE | PHYSMAP_NO_CACHE)
