@@ -312,7 +312,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let bar_size = pci_config.func.bar_sizes[0];
     let irq = pci_config.func.legacy_interrupt_line;
 
-    log::info!("NVME PCI CONFIG: {:?}", pci_config);
+    log::debug!("NVME PCI CONFIG: {:?}", pci_config);
 
     let allocated_bars = AllocatedBars::default();
 

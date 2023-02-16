@@ -167,7 +167,7 @@ impl Nvme {
         let serial = serial_cow.trim();
         let firmware = fw_cow.trim();
 
-        println!(
+        log::info!(
             "  - Model: {} Serial: {} Firmware: {}",
             model, serial, firmware,
         );
