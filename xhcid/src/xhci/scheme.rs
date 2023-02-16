@@ -27,7 +27,7 @@ use super::context::{
 };
 use super::doorbell::Doorbell;
 use super::extended::ProtocolSpeed;
-use super::irq_reactor::RingId;
+use super::irq_reactor::{EventDoorbell, RingId};
 use super::operational::OperationalRegs;
 use super::ring::Ring;
 use super::runtime::RuntimeRegs;
@@ -274,10 +274,12 @@ impl Xhci {
 
             // get the future here before awaiting, to destroy the lock before deadlock
             let command_trb = &command_ring.trbs[cmd_index];
-            self.next_command_completion_event_trb(&*command_ring, command_trb)
+            self.next_command_completion_event_trb(
+                &*command_ring,
+                command_trb,
+                EventDoorbell::new(self, 0, 0)
+            )
         };
-
-        self.dbs.lock().unwrap()[0].write(0);
 
         let trbs = next_event.await;
         let event_trb = trbs.event_trb;
@@ -298,7 +300,7 @@ impl Xhci {
     where
         D: FnMut(&mut Trb, bool) -> ControlFlow,
     {
-        let (future, slot) = {
+        let future = {
             let mut port_state = self.port_state_mut(port_num)?;
             let slot = port_state.slot;
 
@@ -334,10 +336,13 @@ impl Xhci {
             let ent = false;
             cmd.status(interrupter, input, ioc, ch, ent, cycle);
 
-            (self.next_transfer_event_trb(RingId::default_control_pipe(port_num as u8), ring, &ring.trbs[last_index]), slot)
+            self.next_transfer_event_trb(
+                RingId::default_control_pipe(port_num as u8),
+                ring,
+                &ring.trbs[last_index],
+                EventDoorbell::new(self, usize::from(slot), Self::def_control_endp_doorbell())
+            )
         };
-
-        self.dbs.lock().unwrap()[usize::from(slot)].write(Self::def_control_endp_doorbell());
 
         let trbs = future.await;
         let event_trb = trbs.event_trb;
@@ -374,6 +379,28 @@ impl Xhci {
 
         let slot = port_state.slot;
 
+        let (doorbell_data_stream, doorbell_data_no_stream) = {
+            let endp_desc = port_state
+                .dev_desc.as_ref().unwrap()
+                .config_descs.get(usize::from(cfg_idx)).ok_or(Error::new(EIO))?
+                .interface_descs.get(usize::from(if_idx)).ok_or(Error::new(EIO))?
+                .endpoints.get(usize::from(endp_idx)).ok_or(Error::new(EBADFD))?;
+
+            //TODO: clean this up
+            (
+                Self::endp_doorbell(
+                    endp_num,
+                    endp_desc,
+                    stream_id,
+                ),
+                Self::endp_doorbell(
+                    endp_num,
+                    endp_desc,
+                    0,
+                ),
+            )
+        };
+
         let endp_state = port_state
             .endpoint_states
             .get_mut(&endp_num)
@@ -399,21 +426,23 @@ impl Xhci {
 
             match d(trb, cycle) {
                 ControlFlow::Break => {
-                    break self.next_transfer_event_trb(super::irq_reactor::RingId { port: port_num as u8, endpoint_num: endp_num, stream_id }, ring, &ring.trbs[last_index]);
+                    break self.next_transfer_event_trb(
+                        super::irq_reactor::RingId { port: port_num as u8, endpoint_num: endp_num, stream_id },
+                        ring,
+                        &ring.trbs[last_index],
+                        EventDoorbell::new(self, usize::from(slot), if has_streams {
+                            doorbell_data_stream
+                        } else {
+                            doorbell_data_no_stream
+                        }),
+                    );
                 }
                 ControlFlow::Continue => continue,
             }
         };
 
-        let endp_desc = port_state.dev_desc.as_ref().unwrap().config_descs.get(usize::from(cfg_idx)).ok_or(Error::new(EIO))?.interface_descs.get(usize::from(if_idx)).ok_or(Error::new(EIO))?.endpoints.get(usize::from(endp_idx)).ok_or(Error::new(EBADFD))?;
-
-        self.dbs.lock().unwrap()[usize::from(slot)].write(Self::endp_doorbell(
-            endp_num,
-            endp_desc,
-            if has_streams { stream_id } else { 0 },
-        ));
-
         drop(port_state);
+
         let trbs = future.await;
         let event_trb = trbs.event_trb;
         let transfer_trb = trbs.src_trb.unwrap();

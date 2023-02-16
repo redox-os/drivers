@@ -17,6 +17,7 @@ use syscall::Io;
 use event::{Event, EventQueue};
 
 use super::Xhci;
+use super::doorbell::Doorbell;
 use super::ring::Ring;
 use super::trb::{Trb, TrbCompletionCode, TrbType};
 use super::event::EventRing;
@@ -211,7 +212,7 @@ impl IrqReactor {
         self.hci.run.lock().unwrap().ints[0].erdp.write(dequeue_pointer);
     }
     fn handle_requests(&mut self) {
-        self.states.extend(self.receiver.try_iter().inspect(|req| trace!("Received request: {:?}", req)));
+        self.states.extend(self.receiver.try_iter().inspect(|req| trace!("Received request: {:X?}", req)));
     }
     fn acknowledge(&mut self, trb: Trb) {
         //TODO: handle TRBs without an attached state
@@ -298,7 +299,7 @@ impl IrqReactor {
 
             index += 1;
         }
-        warn!("Lost event TRB type {}: {:?}", trb.trb_type(), trb);
+        warn!("Lost event TRB type {}, completion code: {}: {:X?}", trb.trb_type(), trb.completion_code(), trb);
     }
     fn acknowledge_failed_transfer_trbs(&mut self, trb: Trb) {
         let mut index = 0;
@@ -351,8 +352,30 @@ struct FutureState {
     state_kind: StateKind,
 }
 
+pub struct EventDoorbell {
+    dbs: Arc<Mutex<&'static mut [Doorbell]>>,
+    index: usize,
+    data: u32,
+}
+
+impl EventDoorbell {
+    pub fn new(hci: &Xhci, index: usize, data: u32) -> Self {
+        Self {
+            //TODO: simplify this logic, maybe just use a raw pointer?
+            dbs: hci.dbs.clone(),
+            index,
+            data,
+        }
+    }
+
+    pub fn ring(self) {
+        trace!("Ring doorbell {} with data {}", self.index, self.data);
+        self.dbs.lock().unwrap()[self.index].write(self.data);
+    }
+}
+
 enum EventTrbFuture {
-    Pending { state: FutureState, sender: Sender<State>, },
+    Pending { state: FutureState, sender: Sender<State>, doorbell_opt: Option<EventDoorbell> },
     Finished,
 }
 
@@ -363,16 +386,23 @@ impl Future for EventTrbFuture {
         let this = self.get_mut();
 
         let message = match this {
-            &mut Self::Pending { ref state, ref sender } => match state.message.lock().unwrap().take() {
+            &mut Self::Pending { ref state, ref sender, ref mut doorbell_opt } => match state.message.lock().unwrap().take() {
                 Some(message) => message,
 
                 None => {
+                    // Register state with IRQ reactor
+                    trace!("Send state {:X?}", state.state_kind);
                     sender.send(State {
                         message: Arc::clone(&state.message),
                         is_isoch_or_vf: state.is_isoch_or_vf,
                         kind: state.state_kind,
                         waker: context.waker().clone(),
                     }).expect("IRQ reactor thread unexpectedly stopped");
+
+                    // Doorbell must be rung after sending state
+                    if let Some(doorbell) = doorbell_opt.take() {
+                        doorbell.ring();
+                    }
 
                     return task::Poll::Pending;
                 }
@@ -414,26 +444,27 @@ impl Xhci {
 
         Some(function(ring_ref))
     }
-    pub fn next_transfer_event_trb(&self, ring_id: RingId, ring: &Ring, trb: &Trb) -> impl Future<Output = NextEventTrb> + Send + Sync + 'static {
+    pub fn next_transfer_event_trb(&self, ring_id: RingId, ring: &Ring, trb: &Trb, doorbell: EventDoorbell) -> impl Future<Output = NextEventTrb> + Send + Sync + 'static {
         if ! trb.is_transfer_trb() {
             panic!("Invalid TRB type given to next_transfer_event_trb(): {} (TRB {:?}. Expected transfer TRB.", trb.trb_type(), trb)
         }
 
         let is_isoch_or_vf = trb.trb_type() == TrbType::Isoch as u8;
-
+        let phys_ptr = ring.trb_phys_ptr(self.cap.ac64(), trb);
         EventTrbFuture::Pending {
             state: FutureState {
                 is_isoch_or_vf,
                 state_kind: StateKind::Transfer {
                     ring_id,
-                    phys_ptr: ring.trb_phys_ptr(self.cap.ac64(), trb),
+                    phys_ptr,
                 },
                 message: Arc::new(Mutex::new(None)),
             },
             sender: self.irq_reactor_sender.clone(),
+            doorbell_opt: Some(doorbell),
         }
     }
-    pub fn next_command_completion_event_trb(&self, command_ring: &Ring, trb: &Trb) -> impl Future<Output = NextEventTrb> + Send + Sync + 'static {
+    pub fn next_command_completion_event_trb(&self, command_ring: &Ring, trb: &Trb, doorbell: EventDoorbell) -> impl Future<Output = NextEventTrb> + Send + Sync + 'static {
         if ! trb.is_command_trb() {
             panic!("Invalid TRB type given to next_command_completion_event_trb(): {} (TRB {:?}. Expected command TRB.", trb.trb_type(), trb)
         }
@@ -447,6 +478,7 @@ impl Xhci {
                 message: Arc::new(Mutex::new(None)),
             },
             sender: self.irq_reactor_sender.clone(),
+            doorbell_opt: Some(doorbell),
         }
     }
     pub fn next_misc_event_trb(&self, trb_type: TrbType) -> impl Future<Output = NextEventTrb> + Send + Sync + 'static {
@@ -468,6 +500,7 @@ impl Xhci {
                 message: Arc::new(Mutex::new(None)),
             },
             sender: self.irq_reactor_sender.clone(),
+            doorbell_opt: None,
         }
     }
 

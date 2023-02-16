@@ -38,7 +38,7 @@ mod trb;
 use self::capability::CapabilityRegs;
 use self::context::{DeviceContextList, InputContext, ScratchpadBufferArray, StreamContextArray};
 use self::doorbell::Doorbell;
-use self::irq_reactor::{IrqReactor, NewPendingTrb, RingId};
+use self::irq_reactor::{EventDoorbell, IrqReactor, NewPendingTrb, RingId};
 use self::event::EventRing;
 use self::extended::{CapabilityId, ExtendedCapabilitiesIter, ProtocolSpeed, SupportedProtoCap};
 use self::operational::OperationalRegs;
@@ -113,12 +113,22 @@ impl Xhci {
 
             let last_index = ring.next_index();
             let (cmd, cycle) = (&mut ring.trbs[last_index], ring.cycle);
-            cmd.status(0, false, true, false, false, cycle);
 
-            self.next_transfer_event_trb(RingId::default_control_pipe(port as u8), &ring, &ring.trbs[last_index])
+            let interrupter = 0;
+            // When the data stage is in, the status stage must be out
+            let input = false;
+            let ioc = true;
+            let ch = false;
+            let ent = false;
+            cmd.status(interrupter, input, ioc, ch, ent, cycle);
+
+            self.next_transfer_event_trb(
+                RingId::default_control_pipe(port as u8),
+                &ring,
+                &ring.trbs[last_index],
+                EventDoorbell::new(self, usize::from(slot), Self::def_control_endp_doorbell())
+            )
         };
-
-        self.dbs.lock().unwrap()[usize::from(slot)].write(Self::def_control_endp_doorbell());
 
         let trbs = future.await;
         let event_trb = trbs.event_trb;
@@ -170,7 +180,7 @@ pub struct Xhci {
     // without having to wrap every element in a lock (which wouldn't work since they're packed).
     op: Mutex<&'static mut OperationalRegs>,
     ports: Mutex<&'static mut [Port]>,
-    dbs: Mutex<&'static mut [Doorbell]>,
+    dbs: Arc<Mutex<&'static mut [Doorbell]>>,
     run: Mutex<&'static mut RuntimeRegs>,
     cmd: Mutex<Ring>,
     primary_event_ring: Mutex<EventRing>,
@@ -307,7 +317,7 @@ impl Xhci {
 
             op: Mutex::new(op),
             ports: Mutex::new(ports),
-            dbs: Mutex::new(dbs),
+            dbs: Arc::new(Mutex::new(dbs)),
             run: Mutex::new(run),
 
             dev_ctx: DeviceContextList::new(cap.ac64(), max_slots)?,
@@ -404,7 +414,7 @@ impl Xhci {
 
         // Ring command doorbell
         debug!("Ringing command doorbell.");
-        self.dbs.get_mut().unwrap()[0].write(0);
+        self.dbs.lock().unwrap()[0].write(0);
 
         info!("XHCI initialized.");
 
