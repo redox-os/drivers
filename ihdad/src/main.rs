@@ -79,7 +79,7 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle) -> Option<File> {
     let irq = pci_config.func.legacy_interrupt_line;
 
     let all_pci_features = pcid_handle.fetch_all_features().expect("ihdad: failed to fetch pci features");
-    log::info!("PCI FEATURES: {:?}", all_pci_features);
+    log::debug!("PCI FEATURES: {:?}", all_pci_features);
 
     let (has_msi, mut msi_enabled) = all_pci_features.iter().map(|(feature, status)| (feature.is_msi(), status.is_enabled())).find(|&(f, _)| f).unwrap_or((false, false));
     let (has_msix, mut msix_enabled) = all_pci_features.iter().map(|(feature, status)| (feature.is_msix(), status.is_enabled())).find(|&(f, _)| f).unwrap_or((false, false));

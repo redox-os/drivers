@@ -162,7 +162,7 @@ impl IntelHDA {
 			syscall::physmap(buff_desc_phys, 0x1000, PHYSMAP_WRITE | PHYSMAP_NO_CACHE)
 				.expect("ihdad: failed to map address for buffer descriptor list.");
 
-		log::info!("Virt: {:016X}, Phys: {:016X}", buff_desc_virt, buff_desc_phys);
+		log::debug!("Virt: {:016X}, Phys: {:016X}", buff_desc_virt, buff_desc_phys);
 
 		let buff_desc = &mut *(buff_desc_virt as *mut [BufferDescriptorListEntry;256]);
 
@@ -172,7 +172,7 @@ impl IntelHDA {
 
 		let cmd_buff_virt = syscall::physmap(cmd_buff_address, 0x1000, PHYSMAP_WRITE | PHYSMAP_NO_CACHE).expect("ihdad: failed to map address for CORB/RIRB buff");
 
-		log::info!("Virt: {:016X}, Phys: {:016X}", cmd_buff_virt, cmd_buff_address);
+		log::debug!("Virt: {:016X}, Phys: {:016X}", cmd_buff_virt, cmd_buff_address);
 		let mut module = IntelHDA {
 			vend_prod: vend_prod,
 			base: base,
@@ -346,7 +346,7 @@ impl IntelHDA {
 
 		let root = self.read_node((codec,0));
 
-		log::info!("{}", root);
+		log::debug!("{}", root);
 
 		let root_count = root.subnode_count;
 		let root_start = root.subnode_start;
@@ -354,7 +354,7 @@ impl IntelHDA {
 		//FIXME: So basically the way this is set up is to only support one codec and hopes the first one is an audio
 		for i in 0..root_count {
 			let afg = self.read_node((codec, root_start + i));
-			log::info!("{}", afg);
+			log::debug!("{}", afg);
 			let afg_count = afg.subnode_count;
 			let afg_start = afg.subnode_start;
 
@@ -376,7 +376,7 @@ impl IntelHDA {
 					_ => {},
 				}
 
-				log::info!("{}", widget);
+				log::debug!("{}", widget);
 				self.widget_map.insert(widget.addr(), widget);
 			}
 		}
@@ -469,14 +469,14 @@ impl IntelHDA {
 	pub fn configure(&mut self) {
 		let outpin = self.find_best_output_pin().expect("IHDA: No output pins?!");
 
-		log::info!("Best pin: {:01X}:{:02X}", outpin.0, outpin.1);
+		log::debug!("Best pin: {:01X}:{:02X}", outpin.0, outpin.1);
 
 		let path = self.find_path_to_dac(outpin).unwrap();
 
 		let dac = *path.last().unwrap();
 		let pin = *path.first().unwrap();
 
-		log::info!("Path to DAC: {:X?}", path);
+		log::debug!("Path to DAC: {:X?}", path);
 
 		// Set power state 0 (on) for all widgets in path
 		for &addr in &path {
@@ -494,8 +494,8 @@ impl IntelHDA {
 
 		self.update_sound_buffers();
 
-		log::info!("Supported Formats: {:08X}", self.get_supported_formats((0,0x1)));
-		log::info!("Capabilities: {:08X}", self.get_capabilities(path[0]));
+		log::debug!("Supported Formats: {:08X}", self.get_supported_formats((0,0x1)));
+		log::debug!("Capabilities: {:08X}", self.get_capabilities(path[0]));
 
 		// Create output stream
 		let output = self.get_output_stream_descriptor(0).unwrap();
@@ -533,7 +533,7 @@ impl IntelHDA {
 				let output = false;
 				let input = true;
 				self.set_amplifier_gain_mute(addr, output, input, left, right, index, mute, in_gain);
-				log::info!("Set {:X?} input gain to 0x{:X}", addr, in_gain);
+				log::debug!("Set {:X?} input gain to 0x{:X}", addr, in_gain);
 			}
 
 			// Check for output amp
@@ -545,19 +545,19 @@ impl IntelHDA {
 				let output = true;
 				let input = false;
 				self.set_amplifier_gain_mute(addr, output, input, left, right, index, mute, out_gain);
-				log::info!("Set {:X?} output gain to 0x{:X}", addr, out_gain);
+				log::debug!("Set {:X?} output gain to 0x{:X}", addr, out_gain);
 			}
 		}
 
 		//TODO: implement hda-verb?
 
 		output.run();
-		log::info!("Waiting for output 0 to start running...");
+		log::debug!("Waiting for output 0 to start running...");
 		while output.control() & (1 << 1) == 0 {
 			//TODO: relax
 		}
 
-		log::info!("Output 0 CONTROL {:#X} STATUS {:#X} POS {:#X}", output.control(), output.status(), output.link_position());
+		log::debug!("Output 0 CONTROL {:#X} STATUS {:#X} POS {:#X}", output.control(), output.status(), output.link_position());
 	}
 	/*
 
@@ -565,10 +565,10 @@ impl IntelHDA {
 
 		let outpin = self.find_best_output_pin().expect("IHDA: No output pins?!");
 
-		log::info!("Best pin: {:01X}:{:02X}", outpin.0, outpin.1);
+		log::debug!("Best pin: {:01X}:{:02X}", outpin.0, outpin.1);
 
 		let path = self.find_path_to_dac(outpin).unwrap();
-		log::info!("Path to DAC: {:X?}", path);
+		log::debug!("Path to DAC: {:X?}", path);
 
 		// Pin enable
 		self.cmd.cmd12((0,0xC), 0x707, 0x40);
@@ -582,8 +582,8 @@ impl IntelHDA {
 		self.update_sound_buffers();
 
 
-		log::info!("Supported Formats: {:08X}", self.get_supported_formats((0,0x1)));
-		log::info!("Capabilities: {:08X}", self.get_capabilities((0,0x1)));
+		log::debug!("Supported Formats: {:08X}", self.get_supported_formats((0,0x1)));
+		log::debug!("Capabilities: {:08X}", self.get_capabilities((0,0x1)));
 
 		let output = self.get_output_stream_descriptor(0).unwrap();
 
@@ -666,7 +666,7 @@ impl IntelHDA {
 		}
 
 		let statests = self.regs.statests.read();
-		log::info!("Statests: {:04X}", statests);
+		log::debug!("Statests: {:04X}", statests);
 
 		for i in 0..15 {
 			if (statests >> i) & 0x1 == 1 {
@@ -792,7 +792,7 @@ impl IntelHDA {
 		//let sample_size:usize = output.sample_size();
 		let open_block = (output.link_position() as usize) / os.block_size();
 
-		//log::info!("Status: {:02X} Pos: {:08X} Output CTL: {:06X}", output.status(), output.link_position(), output.control());
+		//log::trace!("Status: {:02X} Pos: {:08X} Output CTL: {:06X}", output.status(), output.link_position(), output.control());
 
 		if os.current_block() == (open_block + 3) % NUM_SUB_BUFFS {
 			// Block if we already are 3 buffers ahead
@@ -849,13 +849,13 @@ impl IntelHDA {
 	}
 
 	fn validate_path(&mut self, path: &Vec<&str>) -> bool {
-		log::info!("Path: {:?}", path);
+		log::debug!("Path: {:?}", path);
 		let mut it = path.iter();
 		match it.next() {
 			Some(card_str) if (*card_str).starts_with("card") => {
 				match usize::from_str_radix(&(*card_str)[4..], 10) {
 					Ok(card_num) => {
-						log::info!("Card# {}", card_num);
+						log::debug!("Card# {}", card_num);
 						match it.next() {
 							Some(codec_str) if (*codec_str).starts_with("codec#") => {
 								match usize::from_str_radix(&(*codec_str)[6..], 10) {
@@ -871,7 +871,7 @@ impl IntelHDA {
 							Some(pcmout_str) if (*pcmout_str).starts_with("pcmout") => {
 								match usize::from_str_radix(&(*pcmout_str)[6..], 10) {
 									Ok(pcmout_num) => {
-										log::info!("pcmout {}", pcmout_num);
+										log::debug!("pcmout {}", pcmout_num);
 										true
 									},
 									_ => false,
@@ -880,7 +880,7 @@ impl IntelHDA {
 							Some(pcmin_str) if (*pcmin_str).starts_with("pcmin") => {
 								match usize::from_str_radix(&(*pcmin_str)[6..], 10) {
 									Ok(pcmin_num) => {
-										log::info!("pcmin {}", pcmin_num);
+										log::debug!("pcmin {}", pcmin_num);
 										true
 									},
 									_ => false,

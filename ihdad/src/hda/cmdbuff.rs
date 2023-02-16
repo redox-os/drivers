@@ -147,16 +147,14 @@ impl Corb {
 
             self.stop();
             // Set CORBRPRST to 1
-            log::info!("CORBRP {:X}", self.regs.corbrp.read());
+            log::trace!("CORBRP {:X}", self.regs.corbrp.read());
             self.regs.corbrp.writef(CORBRPRST, true);
-            log::info!("CORBRP {:X}", self.regs.corbrp.read());
-            log::info!("Here!");
+            log::trace!("CORBRP {:X}", self.regs.corbrp.read());
 
             // Wait for it to become 1
             while !self.regs.corbrp.readf(CORBRPRST) {
                 self.regs.corbrp.writef(CORBRPRST, true);
             }
-            log::info!("Here!!");
             // Clear the bit again
             self.regs.corbrp.write(0);
 
@@ -168,7 +166,6 @@ impl Corb {
                 }
                 self.regs.corbrp.write(0);
             }
-            log::info!("Here!!!");
         }
     }
 
@@ -183,7 +180,7 @@ impl Corb {
 
         self.regs.corbwp.write(write_pos as u16);
 
-        log::info!("Corb: {:08X}", cmd);
+        log::trace!("Corb: {:08X}", cmd);
     }
 }
 
@@ -285,7 +282,7 @@ impl Rirb {
             res = *self.rirb_base.offset(read_pos as isize);
         }
         self.rirb_rp = read_pos;
-        log::info!("Rirb: {:08X}", res);
+        log::trace!("Rirb: {:08X}", res);
         res
     }
 }

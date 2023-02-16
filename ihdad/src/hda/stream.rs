@@ -354,7 +354,7 @@ impl StreamBuffer {
 		let len = min(self.block_size(), buf.len());
 
 
-		//log::info!("Phys: {:X} Virt: {:X} Offset: {:X} Len: {:X}", self.phys(), self.addr(), self.current_block() * self.block_size(), len);
+		//log::trace!("Phys: {:X} Virt: {:X} Offset: {:X} Len: {:X}", self.phys(), self.addr(), self.current_block() * self.block_size(), len);
 		unsafe {
 			copy_nonoverlapping(buf.as_ptr(), (self.addr() + self.current_block() * self.block_size()) as * mut u8, len);
 		}
@@ -369,7 +369,7 @@ impl StreamBuffer {
 impl Drop for StreamBuffer {
 	fn drop(&mut self) {
 		unsafe {
-			log::info!("IHDA: Deallocating buffer.");
+			log::debug!("IHDA: Deallocating buffer.");
 			if syscall::physunmap(self.addr).is_ok() {
 				let _ = syscall::physfree(self.phys, self.block_len * self.block_cnt);
 			}
