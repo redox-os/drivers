@@ -14,7 +14,9 @@ use syscall::scheme::SchemeMut;
 use syscall::data::{Event, Packet};
 use syscall::flag::{EventFlags, O_NONBLOCK};
 
+#[cfg(target_arch = "x86_64")] // TODO: https://github.com/rust-osdev/acpi/issues/146
 mod acpi;
+#[cfg(target_arch = "x86_64")] // TODO: https://github.com/rust-osdev/acpi/issues/146
 mod scheme;
 
 fn monotonic() -> (u64, u64) {
@@ -78,6 +80,7 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
     }
 }
 
+#[cfg(target_arch = "x86_64")] // TODO: https://github.com/rust-osdev/acpi/issues/146
 fn daemon(daemon: redox_daemon::Daemon) -> ! {
     setup_logging();
 
@@ -220,5 +223,6 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 }
 
 fn main() {
+    #[cfg(target_arch = "x86_64")] // TODO: https://github.com/rust-osdev/acpi/issues/146
     redox_daemon::Daemon::new(daemon).expect("acpid: failed to daemonize");
 }

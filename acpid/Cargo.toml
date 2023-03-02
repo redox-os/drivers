@@ -16,5 +16,8 @@ redox-daemon = "0.1"
 redox-log = "0.1.1"
 redox_syscall = "0.3"
 thiserror = "1"
-aml = "0.16.2"
 rustc-hash = "1.1.0"
+
+#TODO: https://github.com/rust-osdev/acpi/issues/146
+[target.'cfg(target_arch = "x86_64")'.dependencies]
+aml = "0.16.2"
