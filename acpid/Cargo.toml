@@ -7,6 +7,7 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+aml = "0.16.3"
 log = "0.4"
 num-derive = "0.3"
 num-traits = "0.2"
@@ -15,6 +16,5 @@ plain = "0.2.3"
 redox-daemon = "0.1"
 redox-log = "0.1.1"
 redox_syscall = "0.3"
-thiserror = "1"
-aml = { git = "https://github.com/IsaacWoods/acpi", rev = "8aefcb9c1ef1ff92b50e8c484ef6e8bf448670a9" }
 rustc-hash = "1.1.0"
+thiserror = "1"
