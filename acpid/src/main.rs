@@ -37,8 +37,8 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
     let mut logger = RedoxLogger::new()
         .with_output(
             OutputBuilder::stderr()
-                .with_filter(log::LevelFilter::Warn) // limit global output to important info
-                // .with_ansi_escape_codes()
+                .with_filter(log::LevelFilter::Info) // limit global output to important info
+                .with_ansi_escape_codes()
                 .flush_on_newline(true)
                 .build()
         );
@@ -49,17 +49,16 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
             // TODO: Add a configuration file for this
             b.with_filter(log::LevelFilter::Warn)
                 .flush_on_newline(true)
-                // .with_ansi_escape_codes()
                 .build()
         ),
-        Err(error) => eprintln!("Failed to create xhci.log: {}", error),
+        Err(error) => eprintln!("Failed to create acpid.log: {}", error),
     }
 
     #[cfg(target_os = "redox")]
     match OutputBuilder::in_redox_logging_scheme("misc", "acpi", "acpid.ansi.log") {
         Ok(b) => logger = logger.with_output(
             b.with_filter(log::LevelFilter::Warn)
-                // .with_ansi_escape_codes()
+                .with_ansi_escape_codes()
                 .flush_on_newline(true)
                 .build()
         ),

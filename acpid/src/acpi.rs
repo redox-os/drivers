@@ -253,7 +253,7 @@ impl AmlSymbols {
         let mut value_str = String::with_capacity(256);
         let _ = write!(value_str, "[symbol]\nname = \"{}\"\n\n[value]\n", name);
         let _ = match value {
-            AmlValue::Integer(n) => 
+            AmlValue::Integer(n) =>
                 write!(value_str, "type = \"Integer\"\nvalue = \"{:#x}\"\n", n),
             AmlValue::String(s) =>
                 write!(value_str, "type = \"String\"\nvalue = \"{}\"\n", s),
@@ -425,7 +425,7 @@ impl AcpiContext {
 
         Fadt::init(&mut this);
         //TODO (hangs on real hardware): Dmar::init(&this);
-        
+
 
         this.aml_symbols.write().aml_context = AcpiContext::build_aml_context(&this);
 
@@ -508,7 +508,7 @@ impl AcpiContext {
     }
 
     pub fn aml_symbols(&self) -> Result<RwLockReadGuard<'_, AmlSymbols>, SymbolListError> {
-        
+
         // return the cached value if it exists
         let symbols = self.aml_symbols.read();
         if !symbols.symbols_cache.is_empty() {
@@ -558,7 +558,7 @@ impl AcpiContext {
         for (name, handle) in &symbols_list {
             handle_lookup.insert(handle, name);
         }
-    
+
         let namespace = &aml_symbols.aml_context.namespace;
 
         let mut symbols_cache: FxHashMap<String, String> = FxHashMap::default();
@@ -623,7 +623,7 @@ impl AcpiContext {
             aml::AmlValue::Package(package) => package,
             _ => { log::error!("Cannot set S-state, \\_S5 is not a package"); return; }
         };
-        
+
         let slp_typa = match package[0] {
             aml::AmlValue::Integer(i) => i,
             _ => { log::error!("typa is not an Integer"); return; }
@@ -632,7 +632,7 @@ impl AcpiContext {
             aml::AmlValue::Integer(i) => i,
             _ => { log::error!("typb is not an Integer"); return; }
         };
-        
+
         log::trace!("Shutdown SLP_TYPa {:X}, SLP_TYPb {:X}", slp_typa, slp_typb);
         val |= slp_typa as u16;
 
@@ -876,6 +876,7 @@ impl AmlContainingTable for Ssdt {
 
 struct AmlPhysMemHandler;
 
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 impl aml::Handler for AmlPhysMemHandler {
     fn read_u8(&self, _address: usize) -> u8 {
         log::error!("read u8 {:X}", _address);
@@ -895,42 +896,117 @@ impl aml::Handler for AmlPhysMemHandler {
     }
 
     fn write_u8(&mut self, _address: usize, _value: u8) {
-        log::error!("write u8 {:X}", _address);
+        log::error!("write u8 {:X} = {:X}", _address, _value);
     }
     fn write_u16(&mut self, _address: usize, _value: u16) {
-        log::error!("write u16 {:X}", _address);
+        log::error!("write u16 {:X} = {:X}", _address, _value);
     }
     fn write_u32(&mut self, _address: usize, _value: u32) {
-        log::error!("write u32 {:X}", _address);
+        log::error!("write u32 {:X} = {:X}", _address, _value);
     }
     fn write_u64(&mut self, _address: usize, _value: u64) {
-        log::error!("write u64 {:X}", _address);
+        log::error!("write u64 {:X} = {:X}", _address, _value);
     }
 
-    fn read_io_u8(&self, _port: u16) -> u8 {
-        log::error!("read io u8 {:X}", _port);
+    fn read_io_u8(&self, port: u16) -> u8 {
+        Pio::<u8>::new(port).read()
+    }
+    fn read_io_u16(&self, port: u16) -> u16 {
+        Pio::<u16>::new(port).read()
+    }
+    fn read_io_u32(&self, port: u16) -> u32 {
+        Pio::<u32>::new(port).read()
+    }
+
+    fn write_io_u8(&self, port: u16, value: u8) {
+        Pio::<u8>::new(port).write(value)
+    }
+    fn write_io_u16(&self, port: u16, value: u16) {
+        Pio::<u16>::new(port).write(value)
+    }
+    fn write_io_u32(&self, port: u16, value: u32) {
+        Pio::<u32>::new(port).write(value)
+    }
+
+    fn read_pci_u8(&self, _segment: u16, _bus: u8, _device: u8, _function: u8, _offset: u16) -> u8 {
+        log::error!("read pci u8 {:X}", _device);
 
         0
     }
-    fn read_io_u16(&self, _port: u16) -> u16 {
-        log::error!("read io u16 {:X}", _port);
+    fn read_pci_u16(&self, _segment: u16, _bus: u8, _device: u8, _function: u8, _offset: u16) -> u16 {
+        log::error!("read pci  u8 {:X}", _device);
 
         0
     }
-    fn read_io_u32(&self, _port: u16) -> u32 {
-        log::error!("read io u32 {:X}", _port);
+    fn read_pci_u32(&self, _segment: u16, _bus: u8, _device: u8, _function: u8, _offset: u16) -> u32 {
+        log::error!("read pci u8 {:X}", _device);
 
         0
     }
+    fn write_pci_u8(&self, _segment: u16, _bus: u8, _device: u8, _function: u8, _offset: u16, _value: u8) {
+        log::error!("write pci u8 {:X}", _device);
+    }
+    fn write_pci_u16(&self, _segment: u16, _bus: u8, _device: u8, _function: u8, _offset: u16, _value: u16) {
+        log::error!("write pci u8 {:X}", _device);
+    }
+    fn write_pci_u32(&self, _segment: u16, _bus: u8, _device: u8, _function: u8, _offset: u16, _value: u32) {
+        log::error!("write pci u8 {:X}", _device);
+    }
+}
 
-    fn write_io_u8(&self, _port: u16, _value: u8) {
-        log::error!("write io u8 {:X}", _port);
+#[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+impl aml::Handler for AmlPhysMemHandler {
+    fn read_u8(&self, _address: usize) -> u8 {
+        log::error!("read u8 {:X}", _address);
+        0
     }
-    fn write_io_u16(&self, _port: u16, _value: u16) {
-        log::error!("write io u16 {:X}", _port);
+    fn read_u16(&self, _address: usize) -> u16 {
+        log::error!("read u16 {:X}", _address);
+        0
     }
-    fn write_io_u32(&self, _port: u16, _value: u32) {
-        log::error!("write io u32 {:X}", _port);
+    fn read_u32(&self, _address: usize) -> u32 {
+        log::error!("read u32 {:X}", _address);
+        0
+    }
+    fn read_u64(&self, _address: usize) -> u64 {
+        log::error!("read u64 {:X}", _address);
+        0
+    }
+
+    fn write_u8(&mut self, _address: usize, _value: u8) {
+        log::error!("write u8 {:X} = {:X}", _address, _value);
+    }
+    fn write_u16(&mut self, _address: usize, _value: u16) {
+        log::error!("write u16 {:X} = {:X}", _address, _value);
+    }
+    fn write_u32(&mut self, _address: usize, _value: u32) {
+        log::error!("write u32 {:X} = {:X}", _address, _value);
+    }
+    fn write_u64(&mut self, _address: usize, _value: u64) {
+        log::error!("write u64 {:X} = {:X}", _address, _value);
+    }
+
+    fn read_io_u8(&self, port: u16) -> u8 {
+        log::error!("read io u8 {:X}", port);
+        0
+    }
+    fn read_io_u16(&self, port: u16) -> u16 {
+        log::error!("read io u16 {:X}", port);
+        0
+    }
+    fn read_io_u32(&self, port: u16) -> u32 {
+        log::error!("read io u32 {:X}", port);
+        0
+    }
+
+    fn write_io_u8(&self, port: u16, value: u8) {
+        log::error!("write io u8 {:X} = {:X}", port, value);
+    }
+    fn write_io_u16(&self, port: u16, value: u16) {
+        log::error!("write io u16 {:X} = {:X}", port, value);
+    }
+    fn write_io_u32(&self, port: u16, value: u32) {
+        log::error!("write io u32 {:X} = {:X}", port, value);
     }
 
     fn read_pci_u8(&self, _segment: u16, _bus: u8, _device: u8, _function: u8, _offset: u16) -> u8 {
