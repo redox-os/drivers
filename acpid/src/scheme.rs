@@ -45,7 +45,7 @@ impl HandleKind<'_> {
             Self::TopLevel => TOPLEVEL_CONTENTS.len(),
             Self::Tables => acpi_ctx.tables().len().checked_mul(TABLE_DENTRY_LENGTH).unwrap_or(usize::max_value()),
             Self::Table(signature) => acpi_ctx.sdt_from_signature(signature).ok_or(Error::new(EBADFD))?.length(),
-            Self::Symbols(aml_symbols) => aml_symbols.to_str().len(),
+            Self::Symbols(aml_symbols) => aml_symbols.symbols_str.len(),
             Self::Symbol(description) => description.len(),
         })
     }
@@ -287,7 +287,7 @@ impl SchemeMut for AcpiScheme<'_> {
             }
 
             HandleKind::Symbols(aml_symbols) => {
-                let symbols = aml_symbols.to_str();
+                let symbols = &aml_symbols.symbols_str;
                 let offset = std::cmp::min(symbols.len(), handle.offset);
                 let src_buf = &symbols.as_bytes()[offset..];
 
