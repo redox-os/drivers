@@ -1,9 +1,9 @@
 use rustc_hash::FxHashMap;
 use std::convert::{TryFrom, TryInto};
+use std::fmt::Write;
 use std::ops::Deref;
 use std::sync::Arc;
 use std::{fmt, mem};
-use std::fmt::Write;
 
 use syscall::flag::PhysmapFlags;
 
@@ -13,7 +13,9 @@ use syscall::io::{Io, Pio};
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use thiserror::Error;
 
-use aml::{AmlContext, AmlName, AmlHandle, AmlValue};
+use aml::{AmlContext, AmlError, AmlHandle, AmlName};
+use amlserde::aml_serde_name::aml_to_symbol;
+use amlserde::{AmlHandleLookup, AmlSerde};
 
 pub mod dmar;
 use self::dmar::Dmar;
@@ -52,8 +54,7 @@ impl SdtHeader {
         }
     }
     pub fn length(&self) -> usize {
-        self
-            .length
+        self.length
             .try_into()
             .expect("expected usize to be at least 32 bits")
     }
@@ -68,7 +69,13 @@ pub struct SdtSignature {
 
 impl fmt::Display for SdtSignature {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}-{}-{}", String::from_utf8_lossy(&self.signature), String::from_utf8_lossy(&self.oem_id), String::from_utf8_lossy(&self.oem_table_id))
+        write!(
+            f,
+            "{}-{}-{}",
+            String::from_utf8_lossy(&self.signature),
+            String::from_utf8_lossy(&self.oem_id),
+            String::from_utf8_lossy(&self.oem_table_id)
+        )
     }
 }
 
@@ -112,9 +119,7 @@ impl Deref for PhysmapGuard {
     type Target = [u8];
 
     fn deref(&self) -> &Self::Target {
-        unsafe {
-            std::slice::from_raw_parts(self.virt as *const u8, self.size)
-        }
+        unsafe { std::slice::from_raw_parts(self.virt as *const u8, self.size) }
     }
 }
 impl Drop for PhysmapGuard {
@@ -133,14 +138,19 @@ impl Sdt {
         let header = match plain::from_bytes::<SdtHeader>(&slice) {
             Ok(header) => header,
             Err(plain::Error::TooShort) => return Err(InvalidSdtError::InvalidSize),
-            Err(plain::Error::BadAlignment) => panic!("plain::from_bytes failed due to alignment, but SdtHeader is #[repr(packed)]!"),
+            Err(plain::Error::BadAlignment) => panic!(
+                "plain::from_bytes failed due to alignment, but SdtHeader is #[repr(packed)]!"
+            ),
         };
 
         if header.length() != slice.len() {
             return Err(InvalidSdtError::InvalidSize);
         }
 
-        let checksum = slice.iter().copied().fold(0_u8, |current_sum, item| current_sum.wrapping_add(item));
+        let checksum = slice
+            .iter()
+            .copied()
+            .fold(0_u8, |current_sum, item| current_sum.wrapping_add(item));
 
         if checksum != 0 {
             return Err(InvalidSdtError::BadChecksum);
@@ -154,7 +164,9 @@ impl Sdt {
 
         // Begin by reading and validating the header first. The SDT header is always 36 bytes
         // long, and can thus span either one or two page table frames.
-        let needs_extra_page = (PAGE_SIZE - physaddr_page_offset).checked_sub(mem::size_of::<SdtHeader>()).is_none();
+        let needs_extra_page = (PAGE_SIZE - physaddr_page_offset)
+            .checked_sub(mem::size_of::<SdtHeader>())
+            .is_none();
         let page_table_count = 1 + if needs_extra_page { 1 } else { 0 };
 
         let pages = PhysmapGuard::map(physaddr_start_page, page_table_count)?;
@@ -223,13 +235,6 @@ impl fmt::Debug for Sdt {
 pub struct Dsdt(Sdt);
 pub struct Ssdt(Sdt);
 
-
-#[derive(Debug, Error)]
-pub enum SymbolListError {
-    #[error("Aml Internal Error")]
-    AmlInternalError,
-}
-
 // Current AML implementation builds the aml_context.namespace at startup,
 // but the cache for symbols is lazy-loaded when someone
 // reads from the acpi:/symbols scheme.
@@ -239,137 +244,106 @@ pub enum SymbolListError {
 pub struct AmlSymbols {
     aml_context: AmlContext,
     // k = name, v = description
-    symbols_cache: FxHashMap<String, String>,
-    pub symbols_str: String,
+    cache: FxHashMap<String, String>,
+    list: String,
 }
 
 impl AmlSymbols {
-    pub fn to_str(&self) -> &str {
-        &self.symbols_str
-    }
-
-    /// Format a value as toml, to use as file contents
-    pub fn format_value(name: &str, value: &AmlValue, handle_lookup: &AmlHandleLookup) -> String {
-        let mut value_str = String::with_capacity(256);
-        let _ = write!(value_str, "[symbol]\nname = \"{}\"\n\n[value]\n", name);
-        let _ = match value {
-            AmlValue::Integer(n) =>
-                write!(value_str, "type = \"Integer\"\nvalue = \"{:#x}\"\n", n),
-            AmlValue::String(s) =>
-                write!(value_str, "type = \"String\"\nvalue = \"{}\"\n", s),
-            AmlValue::Processor { id, pblk_address, pblk_len } =>
-                write!(value_str, "type = \"Processor\"\nid = \"{}\"\npblk_address = \"{}\"\npblk_len = \"{}\"\n",
-                    id, pblk_address, pblk_len),
-            AmlValue::Method { flags, code } =>
-                write!(value_str, "type = \"Method\"\nflags = \"{:?}\"\ncode = {}\n", flags, AmlSymbols::code_as_string(code)),
-            AmlValue::OpRegion { region, offset, length, parent_device } =>
-                write!(value_str, "type = \"OpRegion\"\nregion = \"{:?}\"\noffset = \"{:#x}\"\nlength = \"{:#x}\"\ndevice = \"{}\"\n",
-                    region, offset, length, AmlSymbols::device_option_as_string(parent_device)),
-            AmlValue::Field { region, flags, offset, length } =>
-                write!(value_str, "type = \"Field\"\nregion = \"{}\"\nflags = \"{:?}\"\noffset = \"{:#x}\"\nlength = \"{:#x}\"\n",
-                    handle_lookup.get_as_str(region), flags, offset, length),
-            AmlValue::Package(contents) =>
-                write!(value_str, "type = \"Package\"\ncontents = {}\n",
-                    AmlSymbols::contents_as_string(contents)),
-            AmlValue::Device => write!(value_str, "type = \"Device\"\n"),
-            AmlValue::Buffer(_) => write!(value_str, "type = \"Buffer\"\n"),
-            other =>
-                write!(value_str, "type = \"Other\"\ndebug = \"{:.64?}\"\n", other),
-        };
-
-        value_str.shrink_to_fit();
-        value_str
-    }
-
-    fn device_option_as_string(device: &Option<AmlName>) -> String {
-        if let Some(name) = device {
-            format!("\"{}\"", AmlSymbols::pretty_name(name))
-        } else {
-            "\"None\"".to_string()
-        }
-    }
-
-    fn code_as_string(code: &aml::value::MethodCode) -> String {
-        match code {
-            aml::value::MethodCode::Aml(bytes) =>
-                if bytes.len() > 15 {
-                    format!("\"AML({:x?}...)\"", &bytes[..15])
-                } else {
-                    format!("\"AML({:x?})\"", bytes)
-                },
-            aml::value::MethodCode::Native(_) => format!("(native method)"),
-        }
-    }
-
-    fn contents_as_string(contents: &Vec<AmlValue>) -> String {
-        let mut buf = String::with_capacity(128);
-        let _ = write!(buf, "[ ");
-        for value in contents {
-            match value {
-                AmlValue::Integer(n) => { let _ = write!(buf, "{:x}, ", n); },
-                AmlValue::String(s) => { let _ = write!(buf, "\"{}\",", s); }
-                _ => { let _ = write!(buf, "{:?}", value); },
-            }
-            if buf.len() > 58 {
-                let _ = write!(buf, "...");
-                break;
-            }
-        }
-        let _ = write!(buf, "]");
-        buf
-    }
-
-    /// Remove trailing underscores from each name segment
-    pub fn pretty_name(level_aml_name: &AmlName) -> String {
-        let mut name = level_aml_name.as_string();
-        // remove unnecessary underscores
-        while let Some(index) = name.find("_.") {
-            name.remove(index);
-        }
-        while name.len() > 0 && &name[name.len() - 1..] == "_" {
-            name.pop();
-        }
-        name.shrink_to_fit();
-        name
-    }
-
-    pub fn child_symbol(level_name: &str, value_name: &str) -> String {
-        format!("{}.{}", level_name, value_name.trim_end_matches('_'))
-    }
-
-    pub fn root_symbol(value_name: &str) -> String {
-        format!("\\{}", value_name.trim_end_matches('_'))
-    }
-
-}
-
-pub struct AmlHandleLookup {
-    map: FxHashMap<String, String>,
-}
-
-impl AmlHandleLookup {
     pub fn new() -> Self {
-        Self { map: FxHashMap::default() }
-    }
-
-    fn handle_to_key(&self, handle: &AmlHandle) -> String {
-        format!("{:?}", handle)
-    }
-
-    pub fn insert(&mut self, handle: &AmlHandle, name: &String) {
-        self.map.insert(self.handle_to_key(handle), name.to_owned());
-    }
-
-    pub fn get(&self, handle: &AmlHandle) -> Option<&String> {
-        self.map.get(&self.handle_to_key(handle))
-    }
-
-    pub fn get_as_str(&self, handle: &AmlHandle) -> &str {
-        if let Some(name) = self.get(handle) {
-            &name[..]
-        } else {
-            "Unrecognized"
+        Self {
+            aml_context: AmlContext::new(Box::new(AmlPhysMemHandler), aml::DebugVerbosity::None),
+            cache: FxHashMap::default(),
+            list: "".to_string(),
         }
+    }
+
+    pub fn mut_aml_context(&mut self) -> &mut AmlContext {
+        &mut self.aml_context
+    }
+
+    pub fn symbols_str(&self) -> &String {
+        &self.list
+    }
+
+    pub fn symbols_cache(&self) -> &FxHashMap<String, String> {
+        &self.cache
+    }
+
+    pub fn parse_table(&mut self, aml: &[u8]) -> Result<(), AmlError> {
+        self.aml_context.parse_table(aml)
+    }
+
+    pub fn lookup(&self, symbol: &str) -> Option<String> {
+        if let Some(description) = self.cache.get(symbol) {
+            log::trace!("Found symbol in cache, {}, {}", symbol, description);
+            return Some(description.to_owned());
+        }
+        None
+    }
+
+    pub fn build_cache(&mut self) {
+        let mut symbol_list: Vec<(AmlName, String, AmlHandle)> = Vec::with_capacity(5000);
+
+        if self
+            .aml_context
+            .namespace
+            .traverse(|level_aml_name, level| {
+                for (child_seg, handle) in level.values.iter() {
+                    if let Ok(aml_name) =
+                        AmlName::from_name_seg(child_seg.to_owned()).resolve(level_aml_name)
+                    {
+                        let name = aml_to_symbol(&aml_name);
+                        symbol_list.push((aml_name, name, handle.to_owned()));
+                    } else {
+                        log::error!(
+                            "AmlName resolve failed, {:?}:{:?}",
+                            level_aml_name,
+                            child_seg
+                        );
+                    }
+                }
+                Ok(true)
+            })
+            .is_err()
+        {
+            log::error!("Namespace traverse failed");
+            return;
+        }
+
+        let mut symbols_str = String::with_capacity(symbol_list.len() * 10);
+        let mut handle_lookup = AmlHandleLookup::new();
+
+        for (aml_name, name, handle) in &symbol_list {
+            let _ = writeln!(symbols_str, "{}", &name);
+            handle_lookup.insert(handle.to_owned(), aml_name.to_owned());
+        }
+
+        symbols_str.shrink_to_fit();
+
+        let mut symbol_cache: FxHashMap<String, String> = FxHashMap::default();
+
+        for (aml_name, name, handle) in &symbol_list {
+            // create an empty entry, in case something goes wrong with serialization
+            symbol_cache.insert(name.to_owned(), "".to_owned());
+            if let Some(ser_value) = AmlSerde::from_aml(
+                &mut self.aml_context,
+                &handle_lookup,
+                &aml_to_symbol(aml_name),
+                aml_name,
+                handle,
+            ) {
+                if let Ok(ser_string) = serde_json::to_string_pretty(&ser_value) {
+                    // replace the empty entry
+                    symbol_cache.insert(name.to_owned(), ser_string);
+                }
+            }
+        }
+
+        // Cache the new list
+        log::trace!("Updating symbols list");
+
+        self.list = symbols_str;
+        self.cache = symbol_cache;
     }
 }
 
@@ -383,7 +357,6 @@ pub struct AcpiContext {
     // TODO: The kernel ACPI code seemed to use load_table quite ubiquitously, however ACPI 5.1
     // states that DDBHandles can only be obtained when loading XSDT-pointed tables. So, we'll
     // generate an index only for those.
-
     sdt_order: RwLock<Vec<Option<SdtSignature>>>,
 
     pub next_ctx: RwLock<u64>,
@@ -391,16 +364,17 @@ pub struct AcpiContext {
 
 impl AcpiContext {
     pub fn init(rxsdt_physaddrs: impl Iterator<Item = u64>) -> Self {
-        let tables = rxsdt_physaddrs.map(|physaddr| {
-            let physaddr: usize = physaddr
-                .try_into()
-                .expect("expected ACPI addresses to be compatible with the current word size");
+        let tables = rxsdt_physaddrs
+            .map(|physaddr| {
+                let physaddr: usize = physaddr
+                    .try_into()
+                    .expect("expected ACPI addresses to be compatible with the current word size");
 
-            log::trace!("TABLE AT {:#>08X}", physaddr);
+                log::trace!("TABLE AT {:#>08X}", physaddr);
 
-            Sdt::load_from_physical(physaddr)
-                .expect("failed to load physical SDT")
-        }).collect::<Vec<Sdt>>();
+                Sdt::load_from_physical(physaddr).expect("failed to load physical SDT")
+            })
+            .collect::<Vec<Sdt>>();
 
         let mut this = Self {
             tables,
@@ -408,11 +382,7 @@ impl AcpiContext {
             fadt: None,
 
             // Temporary values
-            aml_symbols: RwLock::new(AmlSymbols {
-                aml_context: AmlContext::new(Box::new(AmlPhysMemHandler), aml::DebugVerbosity::None),
-                symbols_cache: FxHashMap::default(),
-                symbols_str: "".to_string(),
-            }),
+            aml_symbols: RwLock::new(AmlSymbols::new()),
 
             next_ctx: RwLock::new(0),
 
@@ -426,17 +396,16 @@ impl AcpiContext {
         Fadt::init(&mut this);
         //TODO (hangs on real hardware): Dmar::init(&this);
 
-
-        this.aml_symbols.write().aml_context = AcpiContext::build_aml_context(&this);
+        AcpiContext::build_aml_context(&this);
 
         this
     }
 
-    fn build_aml_context(acpi: &AcpiContext) -> AmlContext {
-        let mut aml_context = AmlContext::new(Box::new(AmlPhysMemHandler), aml::DebugVerbosity::None);
+    fn build_aml_context(acpi: &AcpiContext) {
+        let mut aml_symbols = acpi.aml_symbols.write();
 
         if let Some(dsdt) = acpi.dsdt() {
-            match aml_context.parse_table(dsdt.aml()) {
+            match aml_symbols.parse_table(dsdt.aml()) {
                 Ok(_) => log::trace!("Parsed DSDT"),
                 Err(e) => {
                     log::error!("DSDT: {:?}", e);
@@ -447,48 +416,69 @@ impl AcpiContext {
         }
 
         for ssdt in acpi.ssdts() {
-            match aml_context.parse_table(ssdt.aml()) {
+            match aml_symbols.parse_table(ssdt.aml()) {
                 Ok(_) => log::trace!("Parsed SSDT"),
                 Err(e) => {
                     log::error!("SSDT: {:?}", e);
                 }
             }
         }
-        aml_context
     }
 
     pub fn dsdt(&self) -> Option<&Dsdt> {
         self.dsdt.as_ref()
     }
     pub fn ssdts(&self) -> impl Iterator<Item = Ssdt> + '_ {
-        self.find_multiple_sdts(*b"SSDT").map(|sdt| Ssdt(sdt.clone()))
+        self.find_multiple_sdts(*b"SSDT")
+            .map(|sdt| Ssdt(sdt.clone()))
     }
     fn find_single_sdt_pos(&self, signature: [u8; 4]) -> Option<usize> {
-        let count = self.tables.iter().filter(|sdt| sdt.signature == signature).count();
+        let count = self
+            .tables
+            .iter()
+            .filter(|sdt| sdt.signature == signature)
+            .count();
 
         if count > 1 {
-            log::warn!("Expected only a single SDT of signature `{}` ({:?}), but there were {}", String::from_utf8_lossy(&signature), signature, count);
+            log::warn!(
+                "Expected only a single SDT of signature `{}` ({:?}), but there were {}",
+                String::from_utf8_lossy(&signature),
+                signature,
+                count
+            );
         }
 
-        self.tables.iter().position(|sdt| sdt.signature == signature)
+        self.tables
+            .iter()
+            .position(|sdt| sdt.signature == signature)
     }
     pub fn find_multiple_sdts<'a>(&'a self, signature: [u8; 4]) -> impl Iterator<Item = &'a Sdt> {
-        self.tables.iter().filter(move |sdt| sdt.signature == signature)
+        self.tables
+            .iter()
+            .filter(move |sdt| sdt.signature == signature)
     }
     pub fn take_single_sdt(&self, signature: [u8; 4]) -> Option<Sdt> {
-        self.find_single_sdt_pos(signature).map(|pos| self.tables[pos].clone())
+        self.find_single_sdt_pos(signature)
+            .map(|pos| self.tables[pos].clone())
     }
     pub fn fadt(&self) -> Option<&Fadt> {
         self.fadt.as_ref()
     }
     pub fn sdt_from_signature(&self, signature: &SdtSignature) -> Option<&Sdt> {
-        self.tables.iter().find(|sdt| sdt.signature == signature.signature && sdt.oem_id == signature.oem_id && sdt.oem_table_id == signature.oem_table_id)
+        self.tables.iter().find(|sdt| {
+            sdt.signature == signature.signature
+                && sdt.oem_id == signature.oem_id
+                && sdt.oem_table_id == signature.oem_table_id
+        })
     }
     pub fn get_signature_from_index(&self, index: usize) -> Option<SdtSignature> {
         self.sdt_order.read().get(index).copied().flatten()
     }
     pub fn get_index_from_signature(&self, signature: &SdtSignature) -> Option<usize> {
-        self.sdt_order.read().iter().rposition(|sig| sig.map_or(false, |sig| &sig == signature))
+        self.sdt_order
+            .read()
+            .iter()
+            .rposition(|sig| sig.map_or(false, |sig| &sig == signature))
     }
     pub fn tables(&self) -> &[Sdt] {
         &self.tables
@@ -499,19 +489,16 @@ impl AcpiContext {
 
     pub fn aml_lookup(&self, symbol: &str) -> Option<String> {
         if let Ok(aml_symbols) = self.aml_symbols() {
-            if let Some(description) = aml_symbols.symbols_cache.get(symbol) {
-                log::trace!("Found symbol in cache, {}, {}", symbol, description);
-                return Some(description.to_owned());
-            }
+            aml_symbols.lookup(symbol)
+        } else {
+            None
         }
-        None
     }
 
-    pub fn aml_symbols(&self) -> Result<RwLockReadGuard<'_, AmlSymbols>, SymbolListError> {
-
+    pub fn aml_symbols(&self) -> Result<RwLockReadGuard<'_, AmlSymbols>, AmlError> {
         // return the cached value if it exists
         let symbols = self.aml_symbols.read();
-        if !symbols.symbols_cache.is_empty() {
+        if !symbols.symbols_cache().is_empty() {
             return Ok(symbols);
         }
         // free the read lock
@@ -520,62 +507,9 @@ impl AcpiContext {
         // List has not been initialized, we have to build it
         log::trace!("Creating symbols list");
 
-        let mut symbols_str: String = String::with_capacity(30000);
-
-        let mut symbols_list: Vec<(String, AmlHandle)> = Vec::with_capacity(3000);
-
         let mut aml_symbols = self.aml_symbols.write();
 
-        let root = aml::AmlName::root();
-        let traverse = aml_symbols.aml_context.namespace
-            .traverse(| level_aml_name, level | {
-                let level_is_root = level_aml_name.eq(&root);
-                let level_name = AmlSymbols::pretty_name(level_aml_name);
-                for (name, handle) in level.values.iter() {
-                    // Create the name of the symbol as "\levelname.symbolname"
-                    let symbol = if level_is_root {
-                        AmlSymbols::root_symbol(name.as_str())
-                    } else {
-                        AmlSymbols::child_symbol(&level_name, name.as_str())
-                    };
-                    symbols_str.push_str(&symbol);
-                    symbols_str.push('\n');
-                    symbols_list.push((symbol, handle.to_owned()));
-                }
-                Ok(true)
-            });
-
-        match traverse {
-            Err(error) => {
-                log::error!("Traverse failed, {:?}", error);
-                return Err(SymbolListError::AmlInternalError);
-            }
-            _ => {}
-        }
-
-        let mut handle_lookup = AmlHandleLookup::new();
-
-        for (name, handle) in &symbols_list {
-            handle_lookup.insert(handle, name);
-        }
-
-        let namespace = &aml_symbols.aml_context.namespace;
-
-        let mut symbols_cache: FxHashMap<String, String> = FxHashMap::default();
-
-        for (name, handle) in symbols_list {
-            if let Ok(value) = namespace.get(handle.to_owned()) {
-                symbols_cache.insert(name.to_owned(), AmlSymbols::format_value(&name, value, &handle_lookup));
-            }
-        }
-
-        symbols_str.shrink_to_fit();
-
-        // Cache the new list
-        log::trace!("Updating symbols list");
-
-        aml_symbols.symbols_str = symbols_str;
-        aml_symbols.symbols_cache = symbols_cache;
+        aml_symbols.build_cache();
 
         // return the cached value
         Ok(RwLockWriteGuard::downgrade(aml_symbols))
@@ -584,8 +518,8 @@ impl AcpiContext {
     /// Discard any cached symbols list. To be called if the AML namespace changes.
     pub fn aml_symbols_reset(&self) {
         let mut aml_symbols = self.aml_symbols.write();
-        aml_symbols.symbols_cache = FxHashMap::default();
-        aml_symbols.symbols_str = "".to_string();
+        aml_symbols.cache = FxHashMap::default();
+        aml_symbols.list = "".to_string();
     }
 
     /// Set Power State
@@ -598,7 +532,7 @@ impl AcpiContext {
         }
         let fadt = match self.fadt() {
             Some(fadt) => fadt,
-            None =>  {
+            None => {
                 log::error!("Cannot set global S-state due to missing FADT.");
                 return;
             }
@@ -611,26 +545,41 @@ impl AcpiContext {
 
         let s5_aml_name = match aml::AmlName::from_str("\\_S5") {
             Ok(aml_name) => aml_name,
-            Err(error) => { log::error!("Could not build AmlName for \\_S5, {:?}", error); return; }
+            Err(error) => {
+                log::error!("Could not build AmlName for \\_S5, {:?}", error);
+                return;
+            }
         };
 
         let s5 = match aml_symbols.aml_context.namespace.get_by_path(&s5_aml_name) {
             Ok(s5) => s5,
-            Err(error) => { log::error!("Cannot set S-state, missing \\_S5, {:?}", error); return; }
+            Err(error) => {
+                log::error!("Cannot set S-state, missing \\_S5, {:?}", error);
+                return;
+            }
         };
 
         let package = match s5 {
             aml::AmlValue::Package(package) => package,
-            _ => { log::error!("Cannot set S-state, \\_S5 is not a package"); return; }
+            _ => {
+                log::error!("Cannot set S-state, \\_S5 is not a package");
+                return;
+            }
         };
 
         let slp_typa = match package[0] {
             aml::AmlValue::Integer(i) => i,
-            _ => { log::error!("typa is not an Integer"); return; }
+            _ => {
+                log::error!("typa is not an Integer");
+                return;
+            }
         };
         let slp_typb = match package[1] {
             aml::AmlValue::Integer(i) => i,
-            _ => { log::error!("typb is not an Integer"); return; }
+            _ => {
+                log::error!("typb is not an Integer");
+                return;
+            }
         };
 
         log::trace!("Shutdown SLP_TYPa {:X}, SLP_TYPb {:X}", slp_typa, slp_typb);
@@ -646,14 +595,17 @@ impl AcpiContext {
 
         #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
         {
-            log::error!("Cannot shutdown with ACPI outw(0x{:X}, 0x{:X}) on this architecture", port, val);
+            log::error!(
+                "Cannot shutdown with ACPI outw(0x{:X}, 0x{:X}) on this architecture",
+                port,
+                val
+            );
         }
 
         loop {
             core::hint::spin_loop();
         }
     }
-
 }
 
 #[repr(packed)]
@@ -746,12 +698,14 @@ pub struct Fadt(Sdt);
 
 impl Fadt {
     pub fn acpi_2_struct(&self) -> Option<&FadtAcpi2Struct> {
-        let bytes = &self.0.0[mem::size_of::<FadtStruct>()..];
+        let bytes = &self.0 .0[mem::size_of::<FadtStruct>()..];
 
         match plain::from_bytes::<FadtAcpi2Struct>(bytes) {
             Ok(fadt2) => Some(fadt2),
             Err(plain::Error::TooShort) => None,
-            Err(plain::Error::BadAlignment) => unreachable!("plain::from_bytes reported bad alignment, but FadtAcpi2Struct is #[repr(packed)]"),
+            Err(plain::Error::BadAlignment) => unreachable!(
+                "plain::from_bytes reported bad alignment, but FadtAcpi2Struct is #[repr(packed)]"
+            ),
         }
     }
 }
@@ -760,7 +714,7 @@ impl Deref for Fadt {
     type Target = FadtStruct;
 
     fn deref(&self) -> &Self::Target {
-        plain::from_bytes::<FadtStruct>(&self.0.0)
+        plain::from_bytes::<FadtStruct>(&self.0 .0)
             .expect("expected FADT struct to already be validated in Deref impl")
     }
 }
@@ -788,14 +742,12 @@ impl Fadt {
 
         let dsdt_ptr = match fadt.acpi_2_struct() {
             Some(fadt2) => usize::try_from(fadt2.x_dsdt).unwrap_or_else(|_| {
-                usize::try_from(fadt.dsdt)
-                    .expect("expected any given u32 to fit within usize")
+                usize::try_from(fadt.dsdt).expect("expected any given u32 to fit within usize")
             }),
-            None => usize::try_from(fadt.dsdt)
-                .expect("expected any given u32 to fit within usize")
+            None => usize::try_from(fadt.dsdt).expect("expected any given u32 to fit within usize"),
         };
 
-        log::debug!("FACP at {:X}", {dsdt_ptr});
+        log::debug!("FACP at {:X}", { dsdt_ptr });
 
         let dsdt_sdt = match Sdt::load_from_physical(fadt.dsdt as usize) {
             Ok(dsdt) => dsdt,
@@ -933,23 +885,61 @@ impl aml::Handler for AmlPhysMemHandler {
 
         0
     }
-    fn read_pci_u16(&self, _segment: u16, _bus: u8, _device: u8, _function: u8, _offset: u16) -> u16 {
+    fn read_pci_u16(
+        &self,
+        _segment: u16,
+        _bus: u8,
+        _device: u8,
+        _function: u8,
+        _offset: u16,
+    ) -> u16 {
         log::error!("read pci  u8 {:X}", _device);
 
         0
     }
-    fn read_pci_u32(&self, _segment: u16, _bus: u8, _device: u8, _function: u8, _offset: u16) -> u32 {
+    fn read_pci_u32(
+        &self,
+        _segment: u16,
+        _bus: u8,
+        _device: u8,
+        _function: u8,
+        _offset: u16,
+    ) -> u32 {
         log::error!("read pci u8 {:X}", _device);
 
         0
     }
-    fn write_pci_u8(&self, _segment: u16, _bus: u8, _device: u8, _function: u8, _offset: u16, _value: u8) {
+    fn write_pci_u8(
+        &self,
+        _segment: u16,
+        _bus: u8,
+        _device: u8,
+        _function: u8,
+        _offset: u16,
+        _value: u8,
+    ) {
         log::error!("write pci u8 {:X}", _device);
     }
-    fn write_pci_u16(&self, _segment: u16, _bus: u8, _device: u8, _function: u8, _offset: u16, _value: u16) {
+    fn write_pci_u16(
+        &self,
+        _segment: u16,
+        _bus: u8,
+        _device: u8,
+        _function: u8,
+        _offset: u16,
+        _value: u16,
+    ) {
         log::error!("write pci u8 {:X}", _device);
     }
-    fn write_pci_u32(&self, _segment: u16, _bus: u8, _device: u8, _function: u8, _offset: u16, _value: u32) {
+    fn write_pci_u32(
+        &self,
+        _segment: u16,
+        _bus: u8,
+        _device: u8,
+        _function: u8,
+        _offset: u16,
+        _value: u32,
+    ) {
         log::error!("write pci u8 {:X}", _device);
     }
 }
@@ -1014,23 +1004,61 @@ impl aml::Handler for AmlPhysMemHandler {
 
         0
     }
-    fn read_pci_u16(&self, _segment: u16, _bus: u8, _device: u8, _function: u8, _offset: u16) -> u16 {
+    fn read_pci_u16(
+        &self,
+        _segment: u16,
+        _bus: u8,
+        _device: u8,
+        _function: u8,
+        _offset: u16,
+    ) -> u16 {
         log::error!("read pci  u8 {:X}", _device);
 
         0
     }
-    fn read_pci_u32(&self, _segment: u16, _bus: u8, _device: u8, _function: u8, _offset: u16) -> u32 {
+    fn read_pci_u32(
+        &self,
+        _segment: u16,
+        _bus: u8,
+        _device: u8,
+        _function: u8,
+        _offset: u16,
+    ) -> u32 {
         log::error!("read pci u8 {:X}", _device);
 
         0
     }
-    fn write_pci_u8(&self, _segment: u16, _bus: u8, _device: u8, _function: u8, _offset: u16, _value: u8) {
+    fn write_pci_u8(
+        &self,
+        _segment: u16,
+        _bus: u8,
+        _device: u8,
+        _function: u8,
+        _offset: u16,
+        _value: u8,
+    ) {
         log::error!("write pci u8 {:X}", _device);
     }
-    fn write_pci_u16(&self, _segment: u16, _bus: u8, _device: u8, _function: u8, _offset: u16, _value: u16) {
+    fn write_pci_u16(
+        &self,
+        _segment: u16,
+        _bus: u8,
+        _device: u8,
+        _function: u8,
+        _offset: u16,
+        _value: u16,
+    ) {
         log::error!("write pci u8 {:X}", _device);
     }
-    fn write_pci_u32(&self, _segment: u16, _bus: u8, _device: u8, _function: u8, _offset: u16, _value: u32) {
+    fn write_pci_u32(
+        &self,
+        _segment: u16,
+        _bus: u8,
+        _device: u8,
+        _function: u8,
+        _offset: u16,
+        _value: u32,
+    ) {
         log::error!("write pci u8 {:X}", _device);
     }
 }
