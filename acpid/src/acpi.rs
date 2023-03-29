@@ -1,10 +1,9 @@
-use amlserde::{AmlHandleLookup, AmlSerde};
 use rustc_hash::FxHashMap;
 use std::convert::{TryFrom, TryInto};
+use std::fmt::Write;
 use std::ops::Deref;
 use std::sync::Arc;
 use std::{fmt, mem};
-use std::fmt::Write;
 
 use syscall::flag::PhysmapFlags;
 
@@ -14,8 +13,9 @@ use syscall::io::{Io, Pio};
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use thiserror::Error;
 
-use aml::{AmlContext, AmlError, AmlHandle, AmlName, AmlValue};
-use amlserde::pretty_name;
+use aml::{AmlContext, AmlError, AmlHandle, AmlName};
+use amlserde::aml_serde_name::aml_to_symbol;
+use amlserde::{AmlHandleLookup, AmlSerde};
 
 pub mod dmar;
 use self::dmar::Dmar;
@@ -54,8 +54,7 @@ impl SdtHeader {
         }
     }
     pub fn length(&self) -> usize {
-        self
-            .length
+        self.length
             .try_into()
             .expect("expected usize to be at least 32 bits")
     }
@@ -120,9 +119,7 @@ impl Deref for PhysmapGuard {
     type Target = [u8];
 
     fn deref(&self) -> &Self::Target {
-        unsafe {
-            std::slice::from_raw_parts(self.virt as *const u8, self.size)
-        }
+        unsafe { std::slice::from_raw_parts(self.virt as *const u8, self.size) }
     }
 }
 impl Drop for PhysmapGuard {
@@ -247,8 +244,107 @@ pub struct Ssdt(Sdt);
 pub struct AmlSymbols {
     aml_context: AmlContext,
     // k = name, v = description
-    symbols_cache: FxHashMap<String, String>,
-    pub symbols_str: String,
+    cache: FxHashMap<String, String>,
+    list: String,
+}
+
+impl AmlSymbols {
+    pub fn new() -> Self {
+        Self {
+            aml_context: AmlContext::new(Box::new(AmlPhysMemHandler), aml::DebugVerbosity::None),
+            cache: FxHashMap::default(),
+            list: "".to_string(),
+        }
+    }
+
+    pub fn mut_aml_context(&mut self) -> &mut AmlContext {
+        &mut self.aml_context
+    }
+
+    pub fn symbols_str(&self) -> &String {
+        &self.list
+    }
+
+    pub fn symbols_cache(&self) -> &FxHashMap<String, String> {
+        &self.cache
+    }
+
+    pub fn parse_table(&mut self, aml: &[u8]) -> Result<(), AmlError> {
+        self.aml_context.parse_table(aml)
+    }
+
+    pub fn lookup(&self, symbol: &str) -> Option<String> {
+        if let Some(description) = self.cache.get(symbol) {
+            log::trace!("Found symbol in cache, {}, {}", symbol, description);
+            return Some(description.to_owned());
+        }
+        None
+    }
+
+    pub fn build_cache(&mut self) {
+        let mut symbol_list: Vec<(AmlName, String, AmlHandle)> = Vec::with_capacity(5000);
+
+        if self
+            .aml_context
+            .namespace
+            .traverse(|level_aml_name, level| {
+                for (child_seg, handle) in level.values.iter() {
+                    if let Ok(aml_name) =
+                        AmlName::from_name_seg(child_seg.to_owned()).resolve(level_aml_name)
+                    {
+                        let name = aml_to_symbol(&aml_name);
+                        symbol_list.push((aml_name, name, handle.to_owned()));
+                    } else {
+                        log::error!(
+                            "AmlName resolve failed, {:?}:{:?}",
+                            level_aml_name,
+                            child_seg
+                        );
+                    }
+                }
+                Ok(true)
+            })
+            .is_err()
+        {
+            log::error!("Namespace traverse failed");
+            return;
+        }
+
+        let mut symbols_str = String::with_capacity(symbol_list.len() * 10);
+        let mut handle_lookup = AmlHandleLookup::new();
+
+        for (aml_name, name, handle) in &symbol_list {
+            let _ = writeln!(symbols_str, "{}", &name);
+            handle_lookup.insert(handle.to_owned(), aml_name.to_owned());
+        }
+
+        symbols_str.shrink_to_fit();
+
+        let mut symbol_cache: FxHashMap<String, String> = FxHashMap::default();
+
+        for (aml_name, name, handle) in &symbol_list {
+            // create an empty entry, in case something goes wrong with serialization
+            symbol_cache.insert(name.to_owned(), "".to_owned());
+            if let Some(ser_value) = AmlSerde::from_aml(
+                &mut self.aml_context,
+                &handle_lookup,
+                &aml_to_symbol(aml_name),
+                aml_name,
+                handle,
+            ) {
+                if let Ok(ser_string) = serde_json::to_string_pretty(&ser_value) {
+                    // replace the empty entry
+                    symbol_cache.insert(name.to_owned(), ser_string);
+                }
+            }
+        }
+
+        // Cache the new list
+        log::trace!("Updating symbols list");
+
+        self.list = symbols_str;
+        self.cache = symbol_cache;
+    }
 }
 
 pub struct AcpiContext {
@@ -286,14 +382,7 @@ impl AcpiContext {
             fadt: None,
 
             // Temporary values
-            aml_symbols: RwLock::new(AmlSymbols {
-                aml_context: AmlContext::new(
-                    Box::new(AmlPhysMemHandler),
-                    aml::DebugVerbosity::None,
-                ),
-                symbols_cache: FxHashMap::default(),
-                symbols_str: "".to_string(),
-            }),
+            aml_symbols: RwLock::new(AmlSymbols::new()),
 
             next_ctx: RwLock::new(0),
 
@@ -307,17 +396,16 @@ impl AcpiContext {
         Fadt::init(&mut this);
         //TODO (hangs on real hardware): Dmar::init(&this);
 
-        this.aml_symbols.write().aml_context = AcpiContext::build_aml_context(&this);
+        AcpiContext::build_aml_context(&this);
 
         this
     }
 
-    fn build_aml_context(acpi: &AcpiContext) -> AmlContext {
-        let mut aml_context =
-            AmlContext::new(Box::new(AmlPhysMemHandler), aml::DebugVerbosity::None);
+    fn build_aml_context(acpi: &AcpiContext) {
+        let mut aml_symbols = acpi.aml_symbols.write();
 
         if let Some(dsdt) = acpi.dsdt() {
-            match aml_context.parse_table(dsdt.aml()) {
+            match aml_symbols.parse_table(dsdt.aml()) {
                 Ok(_) => log::trace!("Parsed DSDT"),
                 Err(e) => {
                     log::error!("DSDT: {:?}", e);
@@ -328,14 +416,13 @@ impl AcpiContext {
         }
 
         for ssdt in acpi.ssdts() {
-            match aml_context.parse_table(ssdt.aml()) {
+            match aml_symbols.parse_table(ssdt.aml()) {
                 Ok(_) => log::trace!("Parsed SSDT"),
                 Err(e) => {
                     log::error!("SSDT: {:?}", e);
                 }
             }
         }
-        aml_context
     }
 
     pub fn dsdt(&self) -> Option<&Dsdt> {
@@ -402,18 +489,16 @@ impl AcpiContext {
 
     pub fn aml_lookup(&self, symbol: &str) -> Option<String> {
         if let Ok(aml_symbols) = self.aml_symbols() {
-            if let Some(description) = aml_symbols.symbols_cache.get(symbol) {
-                log::trace!("Found symbol in cache, {}, {}", symbol, description);
-                return Some(description.to_owned());
-            }
+            aml_symbols.lookup(symbol)
+        } else {
+            None
         }
-        None
     }
 
     pub fn aml_symbols(&self) -> Result<RwLockReadGuard<'_, AmlSymbols>, AmlError> {
         // return the cached value if it exists
         let symbols = self.aml_symbols.read();
-        if !symbols.symbols_cache.is_empty() {
+        if !symbols.symbols_cache().is_empty() {
             return Ok(symbols);
         }
         // free the read lock
@@ -422,57 +507,9 @@ impl AcpiContext {
         // List has not been initialized, we have to build it
         log::trace!("Creating symbols list");
 
-        let mut symbol_list: Vec<(AmlName, String, AmlHandle)> = Vec::with_capacity(5000);
-
         let mut aml_symbols = self.aml_symbols.write();
 
-        aml_symbols
-            .aml_context
-            .namespace
-            .traverse(|level_aml_name, level| {
-                for (child_seg, handle) in level.values.iter() {
-                    if let Ok(aml_name) =
-                        AmlName::from_name_seg(child_seg.to_owned()).resolve(level_aml_name)
-                    {
-                        let name = pretty_name(&aml_name);
-                        symbol_list.push((aml_name, name, handle.to_owned()));
-                    } else {
-                        log::error!(
-                            "AmlName resolve failed, {:?}:{:?}",
-                            level_aml_name,
-                            child_seg
-                        );
-                    }
-                }
-                Ok(true)
-            })?;
-
-        let mut symbols_str = String::with_capacity(symbol_list.len() * 10);
-        let mut handle_lookup = AmlHandleLookup::new();
-
-        for (_aml_name, name, handle) in &symbol_list {
-            let _ = writeln!(symbols_str, "{}", &name);
-            handle_lookup.insert(handle.to_owned(), name.to_owned());
-        }
-
-        symbols_str.shrink_to_fit();
-
-        let mut symbol_cache: FxHashMap<String, String> = FxHashMap::default();
-
-        for (_aml_name, name, handle) in &symbol_list {
-            if let Some(ser_value) = AmlSerde::from_aml(&aml_symbols.aml_context, &handle_lookup, handle) {
-                if let Ok(ser_string) = serde_json::to_string_pretty(&ser_value) {
-                    symbol_cache.insert(name.to_owned(), ser_string);
-                }
-            }
-        }
-
-        
-        // Cache the new list
-        log::trace!("Updating symbols list");
-
-        aml_symbols.symbols_str = symbols_str;
-        aml_symbols.symbols_cache = symbol_cache;
+        aml_symbols.build_cache();
 
         // return the cached value
         Ok(RwLockWriteGuard::downgrade(aml_symbols))
@@ -481,8 +518,8 @@ impl AcpiContext {
     /// Discard any cached symbols list. To be called if the AML namespace changes.
     pub fn aml_symbols_reset(&self) {
         let mut aml_symbols = self.aml_symbols.write();
-        aml_symbols.symbols_cache = FxHashMap::default();
-        aml_symbols.symbols_str = "".to_string();
+        aml_symbols.cache = FxHashMap::default();
+        aml_symbols.list = "".to_string();
     }
 
     /// Set Power State

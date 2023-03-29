@@ -1,7 +1,5 @@
-use aml::{
-    value::{FieldAccessType, FieldUpdateRule, RegionSpace},
-    AmlContext, AmlHandle, AmlName, AmlValue,
-};
+use aml::value::{FieldAccessType, FieldUpdateRule, RegionSpace};
+use aml::{AmlContext, AmlHandle, AmlName, AmlValue};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
@@ -75,9 +73,9 @@ pub enum AmlSerdeRegionSpace {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AmlSerdeFieldFlags {
-    access_type: AmlSerdeFieldAccessType,
-    lock_rule: bool,
-    update_rule: AmlSerdeFieldUpdateRule,
+    pub access_type: AmlSerdeFieldAccessType,
+    pub lock_rule: bool,
+    pub update_rule: AmlSerdeFieldUpdateRule,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -106,16 +104,12 @@ impl AmlSerde {
     }
 
     pub fn from_aml(
-        aml_context: &AmlContext,
+        aml_context: &mut AmlContext,
         aml_lookup: &AmlHandleLookup,
+        name: &String,
+        aml_name: &AmlName,
         handle: &AmlHandle,
     ) -> Option<Self> {
-        let name = if let Some((name, _handle)) = aml_lookup.get(handle) {
-            name.to_owned()
-        } else {
-            return None;
-        };
-
         let aml_value = if let Ok(aml_value) = aml_context.namespace.get(handle.clone()) {
             aml_value
         } else {
@@ -128,7 +122,10 @@ impl AmlSerde {
             return None;
         };
 
-        Some(AmlSerde { name, value })
+        Some(AmlSerde {
+            name: aml_name.to_string(),
+            value,
+        })
     }
 }
 
@@ -167,7 +164,7 @@ impl AmlSerdeValue {
                 offset: offset.to_owned(),
                 length: length.to_owned(),
                 parent_device: if let Some(parent) = parent_device {
-                    Some(pretty_name(parent))
+                    Some(parent.to_string())
                 } else {
                     None
                 },
@@ -180,7 +177,7 @@ impl AmlSerdeValue {
                 length,
             } => AmlSerdeValue::Field {
                 region: if let Some((region, _handle)) = aml_lookup.get(region) {
-                    region.to_owned()
+                    region.to_string()
                 } else {
                     return None;
                 },
@@ -254,8 +251,42 @@ impl AmlSerdeValue {
     }
 }
 
+pub mod aml_serde_name {
+    use aml::AmlName;
+
+    /// Add a leading backslash to make the name a valid
+    /// namespace reference
+    pub fn to_aml_format(pretty_name: &String) -> String {
+        format!("\\{}", pretty_name)
+    }
+
+    /// convert a string from AML namespace style to
+    /// acpi symbol style
+    pub fn to_symbol(aml_style_name: &String) -> String {
+        let mut name = aml_style_name.to_owned();
+
+        // remove leading slash
+        name = name.trim_start_matches("\\").to_owned();
+        // remove unnecessary underscores
+        while let Some(index) = name.find("_.") {
+            name.remove(index);
+        }
+        while name.len() > 0 && &name[name.len() - 1..] == "_" {
+            name.pop();
+        }
+        name.shrink_to_fit();
+        name
+    }
+
+    /// Convert to string and remove
+    /// trailing underscores from each name segment
+    pub fn aml_to_symbol(aml_name: &AmlName) -> String {
+        to_symbol(&aml_name.as_string())
+    }
+}
+
 pub struct AmlHandleLookup {
-    map: FxHashMap<String, (String, AmlHandle)>,
+    map: FxHashMap<String, (AmlName, AmlHandle)>,
 }
 
 impl AmlHandleLookup {
@@ -269,27 +300,12 @@ impl AmlHandleLookup {
         format!("{:?}", handle)
     }
 
-    pub fn insert(&mut self, handle: AmlHandle, name: String) {
-        self.map.insert(self.handle_to_key(&handle), (name, handle));
+    pub fn insert(&mut self, handle: AmlHandle, aml_name: AmlName) {
+        self.map
+            .insert(self.handle_to_key(&handle), (aml_name, handle));
     }
 
-    pub fn get(&self, handle: &AmlHandle) -> Option<&(String, AmlHandle)> {
+    pub fn get(&self, handle: &AmlHandle) -> Option<&(AmlName, AmlHandle)> {
         self.map.get(&self.handle_to_key(handle))
     }
-}
-
-/// Remove trailing underscores from each name segment
-pub fn pretty_name(aml_name: &AmlName) -> String {
-    let mut name = aml_name.as_string();
-    // remove leading slash
-    name = name.trim_start_matches("\\").to_owned();
-    // remove unnecessary underscores
-    while let Some(index) = name.find("_.") {
-        name.remove(index);
-    }
-    while name.len() > 0 && &name[name.len() - 1..] == "_" {
-        name.pop();
-    }
-    name.shrink_to_fit();
-    name
 }
