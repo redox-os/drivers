@@ -2,7 +2,7 @@ use rustc_hash::FxHashMap;
 use std::convert::{TryFrom, TryInto};
 use std::fmt::Write;
 use std::ops::Deref;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::{fmt, mem};
 
 use syscall::flag::PhysmapFlags;
@@ -19,6 +19,7 @@ use amlserde::{AmlHandleLookup, AmlSerde};
 
 pub mod dmar;
 use self::dmar::Dmar;
+use crate::aml_physmem::{AmlPageCache, AmlPhysMemHandler};
 
 #[cfg(target_arch = "aarch64")]
 pub const PAGE_SIZE: usize = 4096;
@@ -244,15 +245,21 @@ pub struct Ssdt(Sdt);
 pub struct AmlSymbols {
     aml_context: AmlContext,
     // k = name, v = description
-    cache: FxHashMap<String, String>,
+    symbol_cache: FxHashMap<String, String>,
+    page_cache: Arc<Mutex<AmlPageCache>>,
     list: String,
 }
 
 impl AmlSymbols {
     pub fn new() -> Self {
+        let page_cache = Arc::new(Mutex::new(AmlPageCache::default()));
         Self {
-            aml_context: AmlContext::new(Box::new(AmlPhysMemHandler), aml::DebugVerbosity::None),
-            cache: FxHashMap::default(),
+            aml_context: AmlContext::new(
+                Box::new(AmlPhysMemHandler::new(Arc::clone(&page_cache))),
+                aml::DebugVerbosity::None,
+            ),
+            symbol_cache: FxHashMap::default(),
+            page_cache,
             list: "".to_string(),
         }
     }
@@ -266,7 +273,7 @@ impl AmlSymbols {
     }
 
     pub fn symbols_cache(&self) -> &FxHashMap<String, String> {
-        &self.cache
+        &self.symbol_cache
     }
 
     pub fn parse_table(&mut self, aml: &[u8]) -> Result<(), AmlError> {
@@ -274,7 +281,7 @@ impl AmlSymbols {
     }
 
     pub fn lookup(&self, symbol: &str) -> Option<String> {
-        if let Some(description) = self.cache.get(symbol) {
+        if let Some(description) = self.symbol_cache.get(symbol) {
             log::trace!("Found symbol in cache, {}, {}", symbol, description);
             return Some(description.to_owned());
         }
@@ -343,7 +350,7 @@ impl AmlSymbols {
         log::trace!("Updating symbols list");
 
         self.list = symbols_str;
-        self.cache = symbol_cache;
+        self.symbol_cache = symbol_cache;
     }
 }
 
@@ -423,6 +430,15 @@ impl AcpiContext {
                 }
             }
         }
+
+        if let Ok(mut page_cache) = aml_symbols.page_cache.lock() {
+            page_cache.clear();
+        } else {
+            log::error!("failed to lock AmlPageCache");
+        }
+
+        // force drop of page_cache from the previous if let
+        {}
     }
 
     pub fn dsdt(&self) -> Option<&Dsdt> {
@@ -518,7 +534,7 @@ impl AcpiContext {
     /// Discard any cached symbols list. To be called if the AML namespace changes.
     pub fn aml_symbols_reset(&self) {
         let mut aml_symbols = self.aml_symbols.write();
-        aml_symbols.cache = FxHashMap::default();
+        aml_symbols.symbol_cache = FxHashMap::default();
         aml_symbols.list = "".to_string();
     }
 
@@ -823,242 +839,5 @@ impl AmlContainingTable for Ssdt {
     }
     fn header(&self) -> &SdtHeader {
         &*self.0
-    }
-}
-
-struct AmlPhysMemHandler;
-
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-impl aml::Handler for AmlPhysMemHandler {
-    fn read_u8(&self, _address: usize) -> u8 {
-        log::error!("read u8 {:X}", _address);
-        0
-    }
-    fn read_u16(&self, _address: usize) -> u16 {
-        log::error!("read u16 {:X}", _address);
-        0
-    }
-    fn read_u32(&self, _address: usize) -> u32 {
-        log::error!("read u32 {:X}", _address);
-        0
-    }
-    fn read_u64(&self, _address: usize) -> u64 {
-        log::error!("read u64 {:X}", _address);
-        0
-    }
-
-    fn write_u8(&mut self, _address: usize, _value: u8) {
-        log::error!("write u8 {:X} = {:X}", _address, _value);
-    }
-    fn write_u16(&mut self, _address: usize, _value: u16) {
-        log::error!("write u16 {:X} = {:X}", _address, _value);
-    }
-    fn write_u32(&mut self, _address: usize, _value: u32) {
-        log::error!("write u32 {:X} = {:X}", _address, _value);
-    }
-    fn write_u64(&mut self, _address: usize, _value: u64) {
-        log::error!("write u64 {:X} = {:X}", _address, _value);
-    }
-
-    fn read_io_u8(&self, port: u16) -> u8 {
-        Pio::<u8>::new(port).read()
-    }
-    fn read_io_u16(&self, port: u16) -> u16 {
-        Pio::<u16>::new(port).read()
-    }
-    fn read_io_u32(&self, port: u16) -> u32 {
-        Pio::<u32>::new(port).read()
-    }
-
-    fn write_io_u8(&self, port: u16, value: u8) {
-        Pio::<u8>::new(port).write(value)
-    }
-    fn write_io_u16(&self, port: u16, value: u16) {
-        Pio::<u16>::new(port).write(value)
-    }
-    fn write_io_u32(&self, port: u16, value: u32) {
-        Pio::<u32>::new(port).write(value)
-    }
-
-    fn read_pci_u8(&self, _segment: u16, _bus: u8, _device: u8, _function: u8, _offset: u16) -> u8 {
-        log::error!("read pci u8 {:X}", _device);
-
-        0
-    }
-    fn read_pci_u16(
-        &self,
-        _segment: u16,
-        _bus: u8,
-        _device: u8,
-        _function: u8,
-        _offset: u16,
-    ) -> u16 {
-        log::error!("read pci  u8 {:X}", _device);
-
-        0
-    }
-    fn read_pci_u32(
-        &self,
-        _segment: u16,
-        _bus: u8,
-        _device: u8,
-        _function: u8,
-        _offset: u16,
-    ) -> u32 {
-        log::error!("read pci u8 {:X}", _device);
-
-        0
-    }
-    fn write_pci_u8(
-        &self,
-        _segment: u16,
-        _bus: u8,
-        _device: u8,
-        _function: u8,
-        _offset: u16,
-        _value: u8,
-    ) {
-        log::error!("write pci u8 {:X}", _device);
-    }
-    fn write_pci_u16(
-        &self,
-        _segment: u16,
-        _bus: u8,
-        _device: u8,
-        _function: u8,
-        _offset: u16,
-        _value: u16,
-    ) {
-        log::error!("write pci u8 {:X}", _device);
-    }
-    fn write_pci_u32(
-        &self,
-        _segment: u16,
-        _bus: u8,
-        _device: u8,
-        _function: u8,
-        _offset: u16,
-        _value: u32,
-    ) {
-        log::error!("write pci u8 {:X}", _device);
-    }
-}
-
-#[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
-impl aml::Handler for AmlPhysMemHandler {
-    fn read_u8(&self, _address: usize) -> u8 {
-        log::error!("read u8 {:X}", _address);
-        0
-    }
-    fn read_u16(&self, _address: usize) -> u16 {
-        log::error!("read u16 {:X}", _address);
-        0
-    }
-    fn read_u32(&self, _address: usize) -> u32 {
-        log::error!("read u32 {:X}", _address);
-        0
-    }
-    fn read_u64(&self, _address: usize) -> u64 {
-        log::error!("read u64 {:X}", _address);
-        0
-    }
-
-    fn write_u8(&mut self, _address: usize, _value: u8) {
-        log::error!("write u8 {:X} = {:X}", _address, _value);
-    }
-    fn write_u16(&mut self, _address: usize, _value: u16) {
-        log::error!("write u16 {:X} = {:X}", _address, _value);
-    }
-    fn write_u32(&mut self, _address: usize, _value: u32) {
-        log::error!("write u32 {:X} = {:X}", _address, _value);
-    }
-    fn write_u64(&mut self, _address: usize, _value: u64) {
-        log::error!("write u64 {:X} = {:X}", _address, _value);
-    }
-
-    fn read_io_u8(&self, port: u16) -> u8 {
-        log::error!("read io u8 {:X}", port);
-        0
-    }
-    fn read_io_u16(&self, port: u16) -> u16 {
-        log::error!("read io u16 {:X}", port);
-        0
-    }
-    fn read_io_u32(&self, port: u16) -> u32 {
-        log::error!("read io u32 {:X}", port);
-        0
-    }
-
-    fn write_io_u8(&self, port: u16, value: u8) {
-        log::error!("write io u8 {:X} = {:X}", port, value);
-    }
-    fn write_io_u16(&self, port: u16, value: u16) {
-        log::error!("write io u16 {:X} = {:X}", port, value);
-    }
-    fn write_io_u32(&self, port: u16, value: u32) {
-        log::error!("write io u32 {:X} = {:X}", port, value);
-    }
-
-    fn read_pci_u8(&self, _segment: u16, _bus: u8, _device: u8, _function: u8, _offset: u16) -> u8 {
-        log::error!("read pci u8 {:X}", _device);
-
-        0
-    }
-    fn read_pci_u16(
-        &self,
-        _segment: u16,
-        _bus: u8,
-        _device: u8,
-        _function: u8,
-        _offset: u16,
-    ) -> u16 {
-        log::error!("read pci  u8 {:X}", _device);
-
-        0
-    }
-    fn read_pci_u32(
-        &self,
-        _segment: u16,
-        _bus: u8,
-        _device: u8,
-        _function: u8,
-        _offset: u16,
-    ) -> u32 {
-        log::error!("read pci u8 {:X}", _device);
-
-        0
-    }
-    fn write_pci_u8(
-        &self,
-        _segment: u16,
-        _bus: u8,
-        _device: u8,
-        _function: u8,
-        _offset: u16,
-        _value: u8,
-    ) {
-        log::error!("write pci u8 {:X}", _device);
-    }
-    fn write_pci_u16(
-        &self,
-        _segment: u16,
-        _bus: u8,
-        _device: u8,
-        _function: u8,
-        _offset: u16,
-        _value: u16,
-    ) {
-        log::error!("write pci u8 {:X}", _device);
-    }
-    fn write_pci_u32(
-        &self,
-        _segment: u16,
-        _bus: u8,
-        _device: u8,
-        _function: u8,
-        _offset: u16,
-        _value: u32,
-    ) {
-        log::error!("write pci u8 {:X}", _device);
     }
 }

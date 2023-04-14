@@ -16,6 +16,7 @@ use syscall::flag::{EventFlags, O_NONBLOCK};
 
 mod acpi;
 mod scheme;
+mod aml_physmem;
 
 fn monotonic() -> (u64, u64) {
     use syscall::call::clock_gettime;
