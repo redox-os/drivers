@@ -6,7 +6,7 @@ use std::{
     io::{ErrorKind, Read, Write},
     os::unix::io::{FromRawFd, RawFd},
     sync::{Arc, Mutex},
-    thread::sleep,
+    thread::{self, sleep},
     time::Duration,
 };
 use syscall::{
@@ -18,12 +18,10 @@ use syscall::{
 };
 
 use crate::{
-    ata::AtaCommand,
-    ide::{AtaDisk, Channel, Disk},
+    ide::{AtaCommand, AtaDisk, Channel, Disk},
     scheme::DiskScheme,
 };
 
-pub mod ata;
 pub mod ide;
 pub mod scheme;
 
@@ -148,6 +146,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
                     // Not busy and data ready
                     break false;
                 }
+                thread::yield_now();
             };
 
             //TODO: probe ATAPI

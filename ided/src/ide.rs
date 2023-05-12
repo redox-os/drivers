@@ -2,13 +2,31 @@ use std::{
     convert::TryInto,
     sync::{Arc, Mutex},
     thread,
+    time::{Duration, Instant},
 };
 use syscall::{
     error::{Error, Result, EIO},
     io::{Dma, Io, Pio, PhysBox, ReadOnly, WriteOnly},
 };
 
-use crate::ata::AtaCommand;
+static TIMEOUT: Duration = Duration::new(1, 0);
+
+#[repr(u8)]
+pub enum AtaCommand {
+    ReadPio = 0x20,
+    ReadPioExt = 0x24,
+    ReadDma = 0xC8,
+    ReadDmaExt = 0x25,
+    WritePio = 0x30,
+    WritePioExt = 0x34,
+    WriteDma = 0xCA,
+    WriteDmaExt = 0x35,
+    CacheFlush = 0xE7,
+    CacheFlushExt = 0xEA,
+    Packet = 0xA0,
+    IdentifyPacket = 0xA1,
+    Identify = 0xEC,
+}
 
 #[repr(packed)]
 struct PrdtEntry {
@@ -98,7 +116,7 @@ impl Channel {
         Ok(status)
     }
 
-    fn polling(&mut self, read: bool) -> Result<()> {
+    fn polling(&mut self, read: bool, line: u32) -> Result<()> {
         /*
         #define ATA_SR_BSY     0x80    // Busy
         #define ATA_SR_DRDY    0x40    // Drive ready
@@ -115,17 +133,21 @@ impl Channel {
             self.alt_status.read();
         }
 
+        let start = Instant::now();
         loop {
             let status = self.check_status()?;
-            if status & 0x80 != 0 {
-                thread::yield_now();
-            } else {
+            if status & 0x80 == 0 {
                 if read && status & 0x08 == 0 {
-                    log::error!("IDE data not ready");
+                    log::error!("IDE read data not ready");
                     return Err(Error::new(EIO));
                 }
                 break;
             }
+            if start.elapsed() >= TIMEOUT {
+                log::error!("line {} polling {} timeout with status 0x{:02X}", line, if read { "read" } else { "write" }, status);
+                return Err(Error::new(EIO));
+            }
+            thread::yield_now();
         }
 
         Ok(())
@@ -238,9 +260,10 @@ impl Disk for AtaDisk {
                 chan.busmaster_command.writef(1, true);
 
                 // Wait for transaction to finish
-                chan.polling(false)?;
+                chan.polling(false, line!())?;
 
                 // Wait for bus master to finish
+                let start = Instant::now();
                 let error = loop {
                     let status = chan.busmaster_status.read();
                     if status & 1 << 1 != 0 {
@@ -251,6 +274,11 @@ impl Disk for AtaDisk {
                         // Break when not busy and no error
                         break false;
                     }
+                    if start.elapsed() >= TIMEOUT {
+                        log::error!("busmaster read timeout with status 0x{:02X}", status);
+                        return Err(Error::new(EIO));
+                    }
+                    thread::yield_now();
                 };
 
                 // Stop bus master
@@ -268,7 +296,7 @@ impl Disk for AtaDisk {
                 chunk.copy_from_slice(&chan.buf[..chunk.len()]);
             } else {
                 for sector in 0..sectors {
-                    chan.polling(true)?;
+                    chan.polling(true, line!())?;
 
                     for i in 0..128 {
                         let data = chan.data32.read();
@@ -369,9 +397,10 @@ impl Disk for AtaDisk {
                 chan.busmaster_command.writef(1, true);
 
                 // Wait for transaction to finish
-                chan.polling(false)?;
+                chan.polling(false, line!())?;
 
                 // Wait for bus master to finish
+                let start = Instant::now();
                 let error = loop {
                     let status = chan.busmaster_status.read();
                     if status & 1 << 1 != 0 {
@@ -382,6 +411,11 @@ impl Disk for AtaDisk {
                         // Break when not busy and no error
                         break false;
                     }
+                    if start.elapsed() >= TIMEOUT {
+                        log::error!("busmaster write timeout with status 0x{:02X}", status);
+                        return Err(Error::new(EIO));
+                    }
+                    thread::yield_now();
                 };
 
                 // Stop bus master
@@ -396,7 +430,7 @@ impl Disk for AtaDisk {
                 }
             } else {
                 for sector in 0..sectors {
-                    chan.polling(false)?;
+                    chan.polling(false, line!())?;
 
                     for i in 0..128 {
                         chan.data32.write(
@@ -414,7 +448,7 @@ impl Disk for AtaDisk {
             } else {
                 AtaCommand::CacheFlush as u8
             });
-            chan.polling(false)?;
+            chan.polling(false, line!())?;
 
             count += chunk.len();
         }
