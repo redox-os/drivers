@@ -1,8 +1,8 @@
 #[cfg(feature="rusttype")]
 extern crate rusttype;
 
-use std::alloc::{Allocator, Global, Layout};
-use std::{cmp, ptr, slice};
+use std::alloc::{self, Layout};
+use std::{cmp, ptr};
 use std::ptr::NonNull;
 
 #[cfg(feature="rusttype")]
@@ -20,11 +20,49 @@ static FONT_BOLD_ITALIC: &'static [u8] = include_bytes!("../res/DejaVuSansMono-B
 #[cfg(feature="rusttype")]
 static FONT_ITALIC: &'static [u8] = include_bytes!("../res/DejaVuSansMono-Oblique.ttf");
 
+pub struct OffscreenBuffer {
+    ptr: NonNull<[u32]>,
+}
+
+impl OffscreenBuffer {
+    #[inline]
+    fn layout(len: usize) -> Layout {
+        // optimizes to an integer mul
+        Layout::array::<u32>(len).unwrap().align_to(4096).unwrap()
+    }
+
+    #[inline]
+    fn new(len: usize) -> Self {
+        let layout = Self::layout(len);
+        let ptr = unsafe { alloc::alloc_zeroed(layout) };
+        let ptr = ptr::slice_from_raw_parts_mut(ptr.cast(), len);
+        let ptr = NonNull::new(ptr).unwrap_or_else(|| alloc::handle_alloc_error(layout));
+        OffscreenBuffer { ptr }
+    }
+}
+impl Drop for OffscreenBuffer {
+    fn drop(&mut self) {
+        let layout = Self::layout(self.ptr.len());
+        unsafe { alloc::dealloc(self.ptr.as_ptr().cast(), layout) };
+    }
+}
+impl std::ops::Deref for OffscreenBuffer {
+    type Target = [u32];
+    fn deref(&self) -> &[u32] {
+        unsafe { self.ptr.as_ref() }
+    }
+}
+impl std::ops::DerefMut for OffscreenBuffer {
+    fn deref_mut(&mut self) -> &mut [u32] {
+        unsafe { self.ptr.as_mut() }
+    }
+}
+
 /// A display
 pub struct Display {
     pub width: usize,
     pub height: usize,
-    pub offscreen: &'static mut [u32],
+    pub offscreen: OffscreenBuffer,
     #[cfg(feature="rusttype")]
     pub font: Font<'static>,
     #[cfg(feature="rusttype")]
@@ -39,33 +77,22 @@ impl Display {
     #[cfg(not(feature="rusttype"))]
     pub fn new(width: usize, height: usize) -> Display {
         let size = width * height;
-
-        let offscreen = unsafe {
-            Global
-                .allocate_zeroed(Layout::from_size_align_unchecked(size * 4, 4096))
-                .expect("failed to allocate offscreen memory")
-                .as_ptr()
-        };
+        let offscreen = OffscreenBuffer::new(size);
         Display {
             width,
             height,
-            offscreen: unsafe { slice::from_raw_parts_mut(offscreen as *mut u32, size) }
+            offscreen,
         }
     }
 
     #[cfg(feature="rusttype")]
     pub fn new(width: usize, height: usize) -> Display {
         let size = width * height;
-        let offscreen = unsafe {
-            Global
-                .allocate_zeroed(Layout::from_size_align_unchecked(size * 4, 4096))
-                .expect("failed to allocate offscreen memory")
-                .as_ptr()
-        };
+        let offscreen = OffscreenBuffer::new(size);
         Display {
             width,
             height,
-            offscreen: unsafe { slice::from_raw_parts_mut(offscreen as *mut u32, size) },
+            offscreen,
             font: FontCollection::from_bytes(FONT).into_font().unwrap(),
             font_bold: FontCollection::from_bytes(FONT_BOLD).into_font().unwrap(),
             font_bold_italic: FontCollection::from_bytes(FONT_BOLD_ITALIC).into_font().unwrap(),
@@ -78,16 +105,11 @@ impl Display {
             println!("Resize display to {}, {}", width, height);
 
             let size = width * height;
-            let offscreen = unsafe {
-                Global
-                    .allocate_zeroed(Layout::from_size_align_unchecked(size * 4, 4096))
-                    .expect("failed to allocate offscreen memory when resizing")
-                    .as_ptr()
-            };
+            let mut offscreen = OffscreenBuffer::new(size);
 
             {
                 let mut old_ptr = self.offscreen.as_ptr();
-                let mut new_ptr = offscreen as *mut u32;
+                let mut new_ptr = offscreen.as_mut_ptr();
 
                 for _y in 0..cmp::min(height, self.height) {
                     unsafe {
@@ -121,8 +143,7 @@ impl Display {
             self.width = width;
             self.height = height;
 
-            unsafe { Global.deallocate(NonNull::new_unchecked(self.offscreen.as_mut_ptr() as *mut u8), Layout::from_size_align_unchecked(self.offscreen.len() * 4, 4096)) };
-            self.offscreen = unsafe { slice::from_raw_parts_mut(offscreen as *mut u32, size) };
+            self.offscreen = offscreen;
         } else {
             println!("Display is already {}, {}", width, height);
         }
@@ -287,22 +308,6 @@ impl Display {
             offscreen_ptr += self.width * 4;
             onscreen_ptr += stride * 4;
             rows -= 1;
-        }
-    }
-}
-
-impl Drop for Display {
-    #[cold]
-    fn drop(&mut self) {
-        unsafe {
-            let offscreen = std::mem::replace(&mut self.offscreen, &mut []);
-
-            let layout = Layout::from_size_align(offscreen.len() * 4, 4096).unwrap();
-
-            Global.deallocate(
-                NonNull::from(offscreen).cast::<u8>(),
-                layout,
-            );
         }
     }
 }

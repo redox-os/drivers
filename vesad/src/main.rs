@@ -1,5 +1,3 @@
-#![feature(allocator_api)]
-
 extern crate orbclient;
 extern crate syscall;
 
