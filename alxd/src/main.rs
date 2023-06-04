@@ -141,7 +141,6 @@ fn main() {
                 }).expect("alxd: failed to write event");
             }
         }
-        unsafe { let _ = syscall::physunmap(address); }
         std::process::exit(0);
     }).expect("alxd: failed to daemonize");
 }

@@ -193,9 +193,6 @@ fn main() {
                 send_events(event_count);
             }
         }
-        unsafe {
-            let _ = syscall::physunmap(address);
-        }
         process::exit(0);
     }).expect("e1000d: failed to create daemon");
 }

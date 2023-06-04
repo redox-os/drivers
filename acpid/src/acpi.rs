@@ -126,7 +126,7 @@ impl Deref for PhysmapGuard {
 impl Drop for PhysmapGuard {
     fn drop(&mut self) {
         unsafe {
-            let _ = syscall::physunmap(self.virt as usize);
+            let _ = syscall::funmap(self.virt as usize, self.size);
         }
     }
 }

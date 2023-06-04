@@ -2,6 +2,7 @@ use std::{fmt, fs, io, mem, ptr, slice};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
+use syscall::PAGE_SIZE;
 use syscall::flag::PhysmapFlags;
 
 use smallvec::SmallVec;
@@ -172,7 +173,7 @@ impl Pcie {
         };
         let mut maps_lock = self.maps.lock().unwrap();
         let virt_pointer = maps_lock.entry((bus, dev, func)).or_insert_with(|| {
-            syscall::physmap(base_address_phys as usize + Self::addr_offset_in_bytes(starting_bus, bus, dev, func, 0), 4096, PhysmapFlags::PHYSMAP_NO_CACHE | PhysmapFlags::PHYSMAP_WRITE).unwrap_or_else(|error| panic!("failed to physmap pcie configuration space for {:2x}:{:2x}.{:2x}: {:?}", bus, dev, func, error)) as *mut u32
+            syscall::physmap(base_address_phys as usize + Self::addr_offset_in_bytes(starting_bus, bus, dev, func, 0), PAGE_SIZE, PhysmapFlags::PHYSMAP_NO_CACHE | PhysmapFlags::PHYSMAP_WRITE).unwrap_or_else(|error| panic!("failed to physmap pcie configuration space for {:2x}:{:2x}.{:2x}: {:?}", bus, dev, func, error)) as *mut u32
         });
         f(Some(&mut *virt_pointer.offset((offset as usize / mem::size_of::<u32>()) as isize)))
     }
@@ -207,7 +208,7 @@ impl CfgAccess for Pcie {
 impl Drop for Pcie {
     fn drop(&mut self) {
         for address in self.maps.lock().unwrap().values().copied() {
-            let _ = unsafe { syscall::physunmap(address as usize) };
+            let _ = unsafe { syscall::funmap(address as usize, PAGE_SIZE) };
         }
     }
 }

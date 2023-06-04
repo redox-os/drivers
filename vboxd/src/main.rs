@@ -296,7 +296,6 @@ fn main() {
 
             event_queue.run().expect("vboxd: failed to run event loop");
         }
-        unsafe { let _ = syscall::physunmap(address); }
 
         std::process::exit(0);
     }).expect("vboxd: failed to daemonize");

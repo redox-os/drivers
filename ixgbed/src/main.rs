@@ -195,9 +195,6 @@ fn main() {
                 send_events(event_count);
             }
         }
-        unsafe {
-            let _ = syscall::physunmap(address);
-        }
         std::process::exit(0);
     }).expect("ixgbed: failed to daemonize");
 
