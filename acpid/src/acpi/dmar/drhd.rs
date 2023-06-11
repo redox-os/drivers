@@ -35,7 +35,7 @@ impl DerefMut for DrhdPage {
 impl Drop for DrhdPage {
     fn drop(&mut self) {
         unsafe {
-            let _ = syscall::physunmap(self.virt as usize);
+            let _ = syscall::funmap(self.virt as usize, crate::acpi::PAGE_SIZE);
         }
     }
 }

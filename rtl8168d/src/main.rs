@@ -459,9 +459,6 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
             send_events(event_count);
         }
     }
-    unsafe {
-        let _ = syscall::physunmap(address);
-    }
     process::exit(0);
 }
 

@@ -1,4 +1,5 @@
 #![cfg_attr(target_arch = "aarch64", feature(stdsimd))] // Required for yield instruction
+#![feature(int_roundings)]
 
 use std::convert::TryInto;
 use std::fs::File;
@@ -11,7 +12,7 @@ use std::{slice, usize};
 use pcid_interface::{PciBar, PciFeature, PciFeatureInfo, PciFunction, PcidServerHandle};
 use syscall::{
     Event, Mmio, Packet, Result, SchemeBlockMut, PHYSMAP_NO_CACHE,
-    PHYSMAP_WRITE,
+    PHYSMAP_WRITE, PAGE_SIZE,
 };
 use redox_log::{OutputBuilder, RedoxLogger};
 
@@ -42,7 +43,7 @@ impl Bar {
 
 impl Drop for Bar {
     fn drop(&mut self) {
-        let _ = unsafe { syscall::physunmap(self.physical) };
+        let _ = unsafe { syscall::funmap(self.physical, self.bar_size.next_multiple_of(PAGE_SIZE)) };
     }
 }
 

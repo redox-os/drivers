@@ -1,4 +1,5 @@
 //#![deny(warnings)]
+#![feature(int_roundings)]
 
 extern crate bitflags;
 extern crate spin;
@@ -300,7 +301,6 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 		}
 	}
 
-	unsafe { let _ = syscall::physunmap(address); }
     std::process::exit(0);
 }
 

@@ -1,4 +1,5 @@
 #![cfg_attr(target_arch = "aarch64", feature(stdsimd))] // Required for yield instruction
+#![feature(int_roundings)]
 
 extern crate syscall;
 extern crate byteorder;
@@ -8,6 +9,7 @@ use std::fs::File;
 use std::io::{ErrorKind, Read, Write};
 use std::os::unix::io::{FromRawFd, RawFd};
 
+use syscall::PAGE_SIZE;
 use syscall::error::{Error, ENODEV};
 use syscall::data::{Event, Packet};
 use syscall::flag::{EVENT_READ, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
@@ -89,7 +91,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     info!(" + AHCI {} on: {:X} size: {} IRQ: {}", name, bar, bar_size, irq);
 
     let address = unsafe {
-        syscall::physmap(bar, (bar_size+4095)/4096*4096, PHYSMAP_WRITE | PHYSMAP_NO_CACHE)
+        syscall::physmap(bar, bar_size.next_multiple_of(PAGE_SIZE), PHYSMAP_WRITE | PHYSMAP_NO_CACHE)
             .expect("ahcid: failed to map address")
     };
     {
@@ -200,7 +202,6 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
             }
         }
     }
-    unsafe { let _ = syscall::physunmap(address); }
 
     std::process::exit(0);
 }

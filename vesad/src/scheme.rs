@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::{mem, ptr, slice, str};
 
 use orbclient::{Event, EventOption};
-use syscall::{Error, EventFlags, EACCES, EBADF, EINVAL, ENOENT, Map, O_NONBLOCK, physmap, physunmap, PHYSMAP_WRITE, PHYSMAP_WRITE_COMBINE, Result, SchemeMut};
+use syscall::{Error, EventFlags, EACCES, EBADF, EINVAL, ENOENT, Map, O_NONBLOCK, physmap, PHYSMAP_WRITE, PHYSMAP_WRITE_COMBINE, Result, SchemeMut, PAGE_SIZE};
 
 use crate::{
     display::Display,
@@ -102,7 +102,8 @@ impl DisplayScheme {
 
         // Unmap old onscreen
         unsafe {
-            physunmap(self.onscreens[fb_i].as_mut_ptr() as usize).expect("vesad: failed to unmap framebuffer");
+            let slice = mem::take(&mut self.onscreens[fb_i]);
+            syscall::funmap(slice.as_mut_ptr() as usize, (slice.len() * 4).next_multiple_of(PAGE_SIZE)).expect("vesad: failed to unmap framebuffer");
         }
 
         // Map new onscreen

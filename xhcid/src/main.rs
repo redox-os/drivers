@@ -333,8 +333,5 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     event_queue.run().expect("xhcid: failed to handle events");
 
-    unsafe {
-        let _ = syscall::physunmap(address);
-    }
     std::process::exit(0);
 }

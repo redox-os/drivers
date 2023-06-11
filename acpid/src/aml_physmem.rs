@@ -29,8 +29,8 @@ impl MappedPage {
 impl Drop for MappedPage {
     fn drop(&mut self) {
         log::trace!("Drop page {:#x}", self.phys_page);
-        if let Err(e) = unsafe { syscall::physunmap(self.virt_page) } {
-            log::error!("physunmap: {:?}", e);
+        if let Err(e) = unsafe { syscall::funmap(self.virt_page, PAGE_SIZE) } {
+            log::error!("funmap (phys): {:?}", e);
         }
     }
 }

@@ -1,4 +1,4 @@
-use syscall::{PHYSMAP_WRITE, PHYSMAP_NO_CACHE};
+use syscall::{PHYSMAP_WRITE, PHYSMAP_NO_CACHE, PAGE_SIZE};
 use syscall::error::{Error, EIO, Result};
 use syscall::io::{Mmio, Io};
 use std::result;
@@ -289,8 +289,10 @@ pub struct StreamBuffer {
 
 impl StreamBuffer {
 	pub fn new(block_length: usize, block_count: usize) -> result::Result<StreamBuffer, &'static str> {
+    let page_aligned_size = (block_length * block_count).next_multiple_of(PAGE_SIZE);
+
 		let phys = match unsafe {
-			syscall::physalloc(block_length * block_count)
+			syscall::physalloc(page_aligned_size)
 		} {
 			Ok(phys) => phys,
 			Err(_err) => {
@@ -299,17 +301,18 @@ impl StreamBuffer {
 		};
 
 		let addr = match unsafe {
-			syscall::physmap(phys, block_length * block_count, PHYSMAP_WRITE | PHYSMAP_NO_CACHE)
+			syscall::physmap(phys, page_aligned_size, PHYSMAP_WRITE | PHYSMAP_NO_CACHE)
 		} {
 			Ok(addr) => addr,
 			Err(_err) => {
 				unsafe {
-					syscall::physfree(phys, block_length * block_count);
+					syscall::physfree(phys, page_aligned_size);
 				}
 				return Err("Could not map physical memory for buffer.");
 			}
 		};
 
+    // TODO: Already zeroed by kernel?
 		unsafe {
 			ptr::write_bytes(addr as *mut u8, 0, block_length * block_count);
 		}
@@ -370,8 +373,10 @@ impl Drop for StreamBuffer {
 	fn drop(&mut self) {
 		unsafe {
 			log::debug!("IHDA: Deallocating buffer.");
-			if syscall::physunmap(self.addr).is_ok() {
-				let _ = syscall::physfree(self.phys, self.block_len * self.block_cnt);
+      let page_aligned_size = (self.block_len * self.block_cnt).next_multiple_of(PAGE_SIZE);
+
+			if syscall::funmap(self.addr, page_aligned_size).is_ok() {
+				let _ = syscall::physfree(self.phys, page_aligned_size);
 			}
 		}
 	}
