@@ -2,6 +2,8 @@ use core::ptr::NonNull;
 
 use static_assertions::const_assert_eq;
 use thiserror::Error;
+
+use virtiod::transport::StandardTransport;
 use virtiod::*;
 
 use pcid_interface::irq_helpers::{allocate_single_interrupt_vector, read_bsp_apic_id};
@@ -14,11 +16,14 @@ use syscall::{Io, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
 
 // TODO(andypython):
 //
-//  cc 3.1.1 Driver Requirements: Device Initialization
-// Reset the device.
-// Set the ACKNOWLEDGE status bit: the guest OS has noticed the device. [done]
-// Set the DRIVER status bit: the guest OS knows how to drive the device. [done]
-// setup interrupts [done]
+//           cc 3.1.1 Driver Requirements: Device Initialization
+//
+// ================ Generic =================
+//          * Reset the device. [done]
+//          * Set the ACKNOWLEDGE status bit: the guest OS has noticed the device. [done]
+//          * Set the DRIVER status bit: the guest OS knows how to drive the device. [done]
+//          * setup interrupts [done]
+// =============== Driver Specific===============
 // Read device feature bits, and write the subset of feature bits understood by the OS and driver to the device. During this step the driver MAY read (but MUST NOT write) the device-specific configuration fields to check that it can support the device before accepting it.
 // Set the FEATURES_OK status bit. The driver MUST NOT accept new feature bits after this step.
 // Re-read device status to ensure the FEATURES_OK bit is still set: otherwise, the device does not support our subset of features and the device is unusable.
@@ -313,7 +318,12 @@ fn deamon(_deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
 
     log::info!("virtio: using standard PCI transport");
 
-    let _transport = StandardTransport::new();
+    let mut transport = StandardTransport::new(pci_header, common);
+
+    // Check VirtIO version 1 compliance.
+    assert!(transport.check_device_feature(VIRTIO_F_VERSION_1));
+    transport.ack_driver_feature(VIRTIO_F_VERSION_1);
+
     loop {}
 }
 

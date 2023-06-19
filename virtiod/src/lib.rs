@@ -3,6 +3,8 @@
 use core::cell::UnsafeCell;
 use static_assertions::const_assert_eq;
 
+pub mod transport;
+
 #[derive(Debug, Copy, Clone)]
 #[repr(u8)]
 pub enum CfgType {
@@ -116,15 +118,13 @@ pub struct Descriptor {
 
 const_assert_eq!(core::mem::size_of::<Descriptor>(), 16);
 
+/// This indicates compliance with the version 1 VirtIO specification.
+///
+/// See `6.1 Driver Requirements: Reserved Feature Bits` section of the VirtIO
+/// specification for more information.
+pub const VIRTIO_F_VERSION_1: u32 = 32;
+
 pub struct VirtQueue {}
-
-pub struct StandardTransport {}
-
-impl StandardTransport {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
 
 #[derive(Debug)]
 #[repr(transparent)]
@@ -141,7 +141,7 @@ impl<T: Copy> VolatileCell<T> {
 
     /// Sets the contained value.
     #[inline]
-    pub fn set(&self, value: T) {
+    pub fn set(&mut self, value: T) {
         unsafe { core::ptr::write_volatile(self.value.get(), value) }
     }
 }
