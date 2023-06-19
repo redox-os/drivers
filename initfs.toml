@@ -22,3 +22,13 @@ class = 1
 subclass = 8
 command = ["nvmed"]
 use_channel = true
+
+# virtiod
+[[drivers]]
+name = "VirtIO block storage"
+class = 1
+subclass = 0
+# VirtIO PCI vendor identifier.
+vendor = 6900
+command = ["virtiod"]
+use_channel = true
