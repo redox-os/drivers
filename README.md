@@ -24,6 +24,7 @@ These are the currently implemented devices/hardware interfaces.
 - usbctl - USB control (incomplete).
 - usbhidd - USB HID (incomplete).
 - usbscsid - USB SCSI (incomplete).
+- virtiod - VirtIO (incomplete) (`virtio-blk`).
 
 ## Contributing to Drivers
 
