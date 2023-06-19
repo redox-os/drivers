@@ -66,6 +66,9 @@ impl DriverHandler {
         use crate::pci::cap::{MsiCapability, MsixCapability};
 
         match request {
+            PcidClientRequest::RequestCapabilities => {
+                PcidClientResponse::Capabilities(self.capabilities.iter().map(|(_, capability)| capability.clone()).collect::<Vec<_>>())
+            }
             PcidClientRequest::RequestConfig => {
                 PcidClientResponse::Config(args.clone())
             }

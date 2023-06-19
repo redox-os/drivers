@@ -7,8 +7,9 @@ use std::os::unix::io::{FromRawFd, RawFd};
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use thiserror::Error;
 
-pub use crate::pci::{PciBar, PciHeader};
+pub use crate::pci::cap::Capability;
 pub use crate::pci::msi;
+pub use crate::pci::{PciBar, PciHeader};
 
 pub mod irq_helpers;
 
@@ -171,6 +172,7 @@ pub enum PcidClientRequest {
     RequestConfig,
     RequestHeader,
     RequestFeatures,
+    RequestCapabilities,
     EnableFeature(PciFeature),
     FeatureStatus(PciFeature),
     FeatureInfo(PciFeature),
@@ -189,6 +191,7 @@ pub enum PcidServerResponseError {
 #[derive(Debug, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum PcidClientResponse {
+    Capabilities(Vec<Capability>),
     Config(SubdriverArguments),
     Header(PciHeader),
     AllFeatures(Vec<(PciFeature, FeatureStatus)>),
@@ -258,6 +261,16 @@ impl PcidServerHandle {
             other => Err(PcidClientHandleError::InvalidResponse(other)),
         }
     }
+
+    pub fn get_capabilities(&mut self) -> Result<Vec<Capability>> {
+        self.send(&PcidClientRequest::RequestCapabilities)?;
+
+        match self.recv()? {
+            PcidClientResponse::Capabilities(a) => Ok(a),
+            other => Err(PcidClientHandleError::InvalidResponse(other)),
+        }
+    }
+
     pub fn fetch_header(&mut self) -> Result<PciHeader> {
         self.send(&PcidClientRequest::RequestHeader)?;
         match self.recv()? {
