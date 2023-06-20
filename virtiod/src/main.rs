@@ -121,6 +121,90 @@ enum Error {
     ExhaustedInt,
 }
 
+fn enable_msix(pcid_handle: &mut PcidServerHandle) -> anyhow::Result<()> {
+    let pci_config = pcid_handle.fetch_config()?;
+
+    // Extended message signaled interrupts.
+    let capability = match pcid_handle.feature_info(PciFeature::MsiX)? {
+        PciFeatureInfo::MsiX(capability) => capability,
+        _ => unreachable!(),
+    };
+
+    let table_size = capability.table_size();
+    let table_base = capability.table_base_pointer(pci_config.func.bars);
+    let table_min_length = table_size * 16;
+    let pba_min_length = div_round_up(table_size, 8);
+
+    let pba_base = capability.pba_base_pointer(pci_config.func.bars);
+
+    let bir = capability.table_bir() as usize;
+    let bar = pci_config.func.bars[bir];
+    let bar_size = pci_config.func.bar_sizes[bir] as u64;
+
+    let bar_ptr = match bar {
+        PciBar::Memory32(ptr) => ptr.into(),
+        PciBar::Memory64(ptr) => ptr,
+        _ => unreachable!(),
+    };
+
+    let address = unsafe {
+        syscall::physmap(
+            bar_ptr as usize,
+            bar_size as usize,
+            PHYSMAP_WRITE | PHYSMAP_NO_CACHE,
+        )
+        .map_err(|_| Error::Physmap)?
+    };
+
+    // Ensure that the table and PBA are be within the BAR.
+    {
+        let bar_range = bar_ptr..bar_ptr + bar_size;
+        assert!(bar_range.contains(&(table_base as u64 + table_min_length as u64)));
+        assert!(bar_range.contains(&(pba_base as u64 + pba_min_length as u64)));
+    }
+
+    let virt_table_base = ((table_base - bar_ptr as usize) + address) as *mut MsixTableEntry;
+    let virt_pba_base = ((pba_base - bar_ptr as usize) + address) as *mut u64;
+
+    let mut info = MsixInfo {
+        virt_table_base: NonNull::new(virt_table_base).unwrap(),
+        virt_pba_base: NonNull::new(virt_pba_base).unwrap(),
+        capability,
+    };
+
+    // Allocate the primary MSI vector.
+    let (vector, interrupt_handle) = {
+        let k = 0;
+        let table_entry_pointer = info.table_entry_pointer(k);
+
+        let destination_id = read_bsp_apic_id()?;
+        let lapic_id = u8::try_from(destination_id).unwrap();
+
+        let rh = false;
+        let dm = false;
+        let addr = x86_64_msix::message_address(lapic_id, rh, dm);
+
+        let (vector, interrupt_handle) =
+            allocate_single_interrupt_vector(destination_id)?.ok_or(Error::ExhaustedInt)?;
+
+        let msg_data = x86_64_msix::message_data_edge_triggered(DeliveryMode::Fixed, vector);
+
+        table_entry_pointer.addr_lo.write(addr);
+        table_entry_pointer.addr_hi.write(0);
+        table_entry_pointer.msg_data.write(msg_data);
+        table_entry_pointer
+            .vec_ctl
+            .writef(MsixTableEntry::VEC_CTL_MASK_BIT, false);
+
+        (vector, interrupt_handle)
+    };
+
+    pcid_handle.enable_feature(PciFeature::MsiX)?;
+
+    log::info!("virtio: using MSI-X (vector={vector}, interrupt_handle={interrupt_handle:?})");
+    Ok(())
+}
+
 fn deamon(_deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
     let mut pcid_handle = PcidServerHandle::connect_default()?;
     let pci_config = pcid_handle.fetch_config()?;
@@ -225,96 +309,13 @@ fn deamon(_deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
 
     // Setup interrupts.
     let all_pci_features = pcid_handle.fetch_all_features()?;
-
-    let has_msi = all_pci_features.iter().any(|(feature, _)| feature.is_msi());
     let has_msix = all_pci_features
         .iter()
         .any(|(feature, _)| feature.is_msix());
 
-    if has_msi {
-        // TODO(andypython)
-        todo!()
-    } else if has_msix {
-        // Extended message signaled interrupts.
-        let capability = match pcid_handle.feature_info(PciFeature::MsiX)? {
-            PciFeatureInfo::MsiX(capability) => capability,
-            _ => unreachable!(),
-        };
-
-        let table_size = capability.table_size();
-        let table_base = capability.table_base_pointer(pci_config.func.bars);
-        let table_min_length = table_size * 16;
-        let pba_min_length = div_round_up(table_size, 8);
-
-        let pba_base = capability.pba_base_pointer(pci_config.func.bars);
-
-        let bir = capability.table_bir() as usize;
-        let bar = pci_config.func.bars[bir];
-        let bar_size = pci_config.func.bar_sizes[bir] as u64;
-
-        let bar_ptr = match bar {
-            PciBar::Memory32(ptr) => ptr.into(),
-            PciBar::Memory64(ptr) => ptr,
-            _ => unreachable!(),
-        };
-
-        let address = unsafe {
-            syscall::physmap(
-                bar_ptr as usize,
-                bar_size as usize,
-                PHYSMAP_WRITE | PHYSMAP_NO_CACHE,
-            )
-            .map_err(|_| Error::Physmap)?
-        };
-
-        // Ensure that the table and PBA are be within the BAR.
-        {
-            let bar_range = bar_ptr..bar_ptr + bar_size;
-            assert!(bar_range.contains(&(table_base as u64 + table_min_length as u64)));
-            assert!(bar_range.contains(&(pba_base as u64 + pba_min_length as u64)));
-        }
-
-        let virt_table_base = ((table_base - bar_ptr as usize) + address) as *mut MsixTableEntry;
-        let virt_pba_base = ((pba_base - bar_ptr as usize) + address) as *mut u64;
-
-        let mut info = MsixInfo {
-            virt_table_base: NonNull::new(virt_table_base).unwrap(),
-            virt_pba_base: NonNull::new(virt_pba_base).unwrap(),
-            capability,
-        };
-
-        // Allocate the primary MSI vector.
-        let (vector, interrupt_handle) = {
-            let k = 0;
-            let table_entry_pointer = info.table_entry_pointer(k);
-
-            let destination_id = read_bsp_apic_id()?;
-            let lapic_id = u8::try_from(destination_id).unwrap();
-
-            let rh = false;
-            let dm = false;
-            let addr = x86_64_msix::message_address(lapic_id, rh, dm);
-
-            let (vector, interrupt_handle) =
-                allocate_single_interrupt_vector(destination_id)?.ok_or(Error::ExhaustedInt)?;
-
-            let msg_data = x86_64_msix::message_data_edge_triggered(DeliveryMode::Fixed, vector);
-
-            table_entry_pointer.addr_lo.write(addr);
-            table_entry_pointer.addr_hi.write(0);
-            table_entry_pointer.msg_data.write(msg_data);
-            table_entry_pointer
-                .vec_ctl
-                .writef(MsixTableEntry::VEC_CTL_MASK_BIT, false);
-
-            (vector, interrupt_handle)
-        };
-
-        pcid_handle.enable_feature(PciFeature::MsiX)?;
-        log::info!("virtio: using MSI-X (vector={vector}, interrupt_handle={interrupt_handle:?})");
-    } else {
-        unimplemented!()
-    }
+    // According to the virtio specification, the device REQUIRED to support MSI-X.
+    assert!(has_msix, "virtio: device does not support MSI-X");
+    enable_msix(&mut pcid_handle)?;
 
     log::info!("virtio: using standard PCI transport");
 
