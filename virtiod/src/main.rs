@@ -181,6 +181,22 @@ fn enable_msix(pcid_handle: &mut PcidServerHandle) -> anyhow::Result<u8> {
     Ok(vector)
 }
 
+#[repr(C)]
+pub struct BlockGeometry {
+    pub cylinders: VolatileCell<u16>,
+    pub heads: VolatileCell<u8>,
+    pub sectors: VolatileCell<u8>,
+}
+
+#[repr(C)]
+pub struct BlkDeviceConfig {
+    pub capacity: VolatileCell<u64>,
+    pub size_max: VolatileCell<u32>,
+    pub seq_max: VolatileCell<u32>,
+    pub geometry: BlockGeometry,
+    pub blk_size: VolatileCell<u32>,
+}
+
 fn deamon(_deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
     let mut pcid_handle = PcidServerHandle::connect_default()?;
     let pci_config = pcid_handle.fetch_config()?;
@@ -266,6 +282,7 @@ fn deamon(_deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
     let device_addr = device_addr.ok_or(Error::InCapable(CfgType::Device))?;
 
     let common = unsafe { &mut *(common_addr as *mut CommonCfg) };
+    let device_space = unsafe { &mut *(device_addr as *mut BlkDeviceConfig) };
 
     // Reset the device.
     common.device_status.set(DeviceStatusFlags::empty());
@@ -299,6 +316,13 @@ fn deamon(_deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
     transport.finalize_features();
 
     let queue = transport.setup_queue(msix_vector.into())?;
+
+    log::info!(
+        "virtio-blk: disk size: {} sectors and block size of {} bytes",
+        device_space.capacity.get(),
+        device_space.blk_size.get()
+    );
+
     loop {}
 }
 
