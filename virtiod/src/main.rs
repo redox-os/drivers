@@ -1,7 +1,8 @@
+#![deny(trivial_numeric_casts, unused_allocation)]
+
 use core::ptr::NonNull;
 
 use static_assertions::const_assert_eq;
-use thiserror::Error;
 
 use virtiod::transport::StandardTransport;
 use virtiod::*;
@@ -13,6 +14,7 @@ use pcid_interface::msi::{MsixCapability, MsixTableEntry};
 use pcid_interface::*;
 
 use syscall::{Io, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
+use virtiod::utils::VolatileCell;
 
 use std::ops::{Add, Div, Rem};
 
@@ -95,17 +97,7 @@ impl MsixInfo {
 
 const_assert_eq!(std::mem::size_of::<MsixTableEntry>(), 16);
 
-#[derive(Debug, Copy, Clone, Error)]
-enum Error {
-    #[error("capability {0:?} not found")]
-    InCapable(CfgType),
-    #[error("failed to map memory")]
-    Physmap,
-    #[error("failed to allocate an interrupt vector")]
-    ExhaustedInt,
-}
-
-fn enable_msix(pcid_handle: &mut PcidServerHandle) -> anyhow::Result<()> {
+fn enable_msix(pcid_handle: &mut PcidServerHandle) -> anyhow::Result<u8> {
     let pci_config = pcid_handle.fetch_config()?;
 
     // Extended message signaled interrupts.
@@ -186,7 +178,7 @@ fn enable_msix(pcid_handle: &mut PcidServerHandle) -> anyhow::Result<()> {
     pcid_handle.enable_feature(PciFeature::MsiX)?;
 
     log::info!("virtio: using MSI-X (vector={vector}, interrupt_handle={interrupt_handle:?})");
-    Ok(())
+    Ok(vector)
 }
 
 fn deamon(_deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
@@ -282,7 +274,7 @@ fn deamon(_deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
     log::info!("virtio: successfully reseted the device");
 
     // XXX: According to the virtio specification v1.2, setting the ACKNOWLEDGE and DRIVER bits
-    //      in `device_status` are required to be done in two steps.
+    //      in `device_status` is required to be done in two steps.
     common
         .device_status
         .set(common.device_status.get() | DeviceStatusFlags::ACKNOWLEDGE);
@@ -299,13 +291,14 @@ fn deamon(_deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
 
     // According to the virtio specification, the device REQUIRED to support MSI-X.
     assert!(has_msix, "virtio: device does not support MSI-X");
-    enable_msix(&mut pcid_handle)?;
+    let msix_vector = enable_msix(&mut pcid_handle)?;
 
     log::info!("virtio: using standard PCI transport");
 
     let mut transport = StandardTransport::new(pci_header, common);
     transport.finalize_features();
 
+    let queue = transport.setup_queue(msix_vector.into())?;
     loop {}
 }
 

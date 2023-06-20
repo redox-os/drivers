@@ -1,9 +1,25 @@
 //! https://docs.oasis-open.org/virtio/virtio/v1.1/virtio-v1.1.html
 
-use core::cell::UnsafeCell;
 use static_assertions::const_assert_eq;
 
 pub mod transport;
+pub mod utils;
+
+use utils::{IncompleteArrayField, VolatileCell};
+
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum Error {
+    #[error("capability {0:?} not found")]
+    InCapable(CfgType),
+    #[error("failed to map memory")]
+    Physmap,
+    #[error("failed to allocate an interrupt vector")]
+    ExhaustedInt,
+    #[error("syscall error")]
+    SyscallError(syscall::Error),
+}
 
 #[derive(Debug, Copy, Clone)]
 #[repr(u8)]
@@ -124,24 +140,50 @@ const_assert_eq!(core::mem::size_of::<Descriptor>(), 16);
 /// specification for more information.
 pub const VIRTIO_F_VERSION_1: u32 = 32;
 
-pub struct VirtQueue {}
-
-#[derive(Debug)]
-#[repr(transparent)]
-pub struct VolatileCell<T> {
-    value: UnsafeCell<T>,
+// ======== Available Ring ========
+#[repr(C)]
+pub struct AvailableRingElement {
+    pub table_index: VolatileCell<u16>,
 }
 
-impl<T: Copy> VolatileCell<T> {
-    /// Returns a copy of the contained value.
-    #[inline]
-    pub fn get(&self) -> T {
-        unsafe { core::ptr::read_volatile(self.value.get()) }
-    }
+const_assert_eq!(core::mem::size_of::<AvailableRingElement>(), 2);
 
-    /// Sets the contained value.
-    #[inline]
-    pub fn set(&mut self, value: T) {
-        unsafe { core::ptr::write_volatile(self.value.get(), value) }
-    }
+/// Virtqueue Available Ring
+#[repr(C)]
+pub struct AvailableRing {
+    pub flags: VolatileCell<u16>,
+    pub head_index: VolatileCell<u16>,
+    pub elements: IncompleteArrayField<AvailableRingElement>,
+}
+
+const_assert_eq!(core::mem::size_of::<AvailableRing>(), 4);
+
+#[repr(C)]
+pub struct AvailableRingExtra {
+    pub avail_event: VolatileCell<u16>, // Only if `VIRTIO_F_EVENT_IDX`
+}
+
+const_assert_eq!(core::mem::size_of::<AvailableRingExtra>(), 2);
+
+// ======== Used Ring ========
+#[repr(C)]
+pub struct UsedRingElement {
+    pub table_index: VolatileCell<u32>,
+    pub written: VolatileCell<u32>,
+}
+
+const_assert_eq!(core::mem::size_of::<UsedRingElement>(), 8);
+
+#[repr(C)]
+pub struct UsedRing {
+    pub flags: VolatileCell<u16>,
+    pub head_index: VolatileCell<u16>,
+    pub elements: IncompleteArrayField<UsedRingElement>,
+}
+
+const_assert_eq!(core::mem::size_of::<UsedRing>(), 4);
+
+#[repr(C)]
+pub struct UsedRingExtra {
+    pub event_index: VolatileCell<u16>,
 }
