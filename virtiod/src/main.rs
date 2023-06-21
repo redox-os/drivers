@@ -2,6 +2,12 @@
 
 use core::ptr::NonNull;
 
+use std::fs::File;
+use std::io::{self, ErrorKind};
+use std::io::{Read, Write};
+use std::ops::{Add, Div, Rem};
+use std::os::fd::{AsRawFd, FromRawFd, RawFd};
+
 use static_assertions::const_assert_eq;
 
 use virtiod::transport::StandardTransport;
@@ -13,10 +19,12 @@ use pcid_interface::msi::x86_64::DeliveryMode;
 use pcid_interface::msi::{MsixCapability, MsixTableEntry};
 use pcid_interface::*;
 
-use syscall::{Io, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
+use event::EventQueue;
+use syscall::{Io, Packet, SchemeBlockMut, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
+
 use virtiod::utils::VolatileCell;
 
-use std::ops::{Add, Div, Rem};
+mod scheme;
 
 fn div_round_up<T>(a: T, b: T) -> T
 where
@@ -42,8 +50,7 @@ fn setup_logging() {
 
     let mut logger = RedoxLogger::new().with_output(
         OutputBuilder::stderr()
-            // limit global output to important info
-            .with_filter(log::LevelFilter::Info)
+            .with_filter(log::LevelFilter::Trace)
             .with_ansi_escape_codes()
             .flush_on_newline(true)
             .build(),
@@ -53,7 +60,7 @@ fn setup_logging() {
         Ok(builder) => {
             logger = logger.with_output(
                 builder
-                    .with_filter(log::LevelFilter::Info)
+                    .with_filter(log::LevelFilter::Trace)
                     .flush_on_newline(true)
                     .build(),
             )
@@ -65,7 +72,7 @@ fn setup_logging() {
         Ok(builder) => {
             logger = logger.with_output(
                 builder
-                    .with_filter(log::LevelFilter::Info)
+                    .with_filter(log::LevelFilter::Trace)
                     .with_ansi_escape_codes()
                     .flush_on_newline(true)
                     .build(),
@@ -86,7 +93,7 @@ struct MsixInfo {
 
 impl MsixInfo {
     pub unsafe fn table_entry_pointer_unchecked(&mut self, k: usize) -> &mut MsixTableEntry {
-        &mut *self.virt_table_base.as_ptr().offset(k as isize)
+        &mut *self.virt_table_base.as_ptr().add(k)
     }
 
     pub fn table_entry_pointer(&mut self, k: usize) -> &mut MsixTableEntry {
@@ -97,7 +104,9 @@ impl MsixInfo {
 
 const_assert_eq!(std::mem::size_of::<MsixTableEntry>(), 16);
 
-fn enable_msix(pcid_handle: &mut PcidServerHandle) -> anyhow::Result<u8> {
+const MSIX_PRIMARY_VECTOR: u16 = 0;
+
+fn enable_msix(pcid_handle: &mut PcidServerHandle) -> anyhow::Result<File> {
     let pci_config = pcid_handle.fetch_config()?;
 
     // Extended message signaled interrupts.
@@ -149,9 +158,8 @@ fn enable_msix(pcid_handle: &mut PcidServerHandle) -> anyhow::Result<u8> {
     };
 
     // Allocate the primary MSI vector.
-    let (vector, interrupt_handle) = {
-        let k = 0;
-        let table_entry_pointer = info.table_entry_pointer(k);
+    let interrupt_handle = {
+        let table_entry_pointer = info.table_entry_pointer(MSIX_PRIMARY_VECTOR as usize);
 
         let destination_id = read_bsp_apic_id()?;
         let lapic_id = u8::try_from(destination_id).unwrap();
@@ -172,13 +180,13 @@ fn enable_msix(pcid_handle: &mut PcidServerHandle) -> anyhow::Result<u8> {
             .vec_ctl
             .writef(MsixTableEntry::VEC_CTL_MASK_BIT, false);
 
-        (vector, interrupt_handle)
+        interrupt_handle
     };
 
     pcid_handle.enable_feature(PciFeature::MsiX)?;
 
-    log::info!("virtio: using MSI-X (vector={vector}, interrupt_handle={interrupt_handle:?})");
-    Ok(vector)
+    log::info!("virtio: using MSI-X (interrupt_handle={interrupt_handle:?})");
+    Ok(interrupt_handle)
 }
 
 #[repr(C)]
@@ -189,15 +197,43 @@ pub struct BlockGeometry {
 }
 
 #[repr(C)]
-pub struct BlkDeviceConfig {
-    pub capacity: VolatileCell<u64>,
+pub struct BlockDeviceConfig {
+    capacity: VolatileCell<u64>,
     pub size_max: VolatileCell<u32>,
     pub seq_max: VolatileCell<u32>,
     pub geometry: BlockGeometry,
-    pub blk_size: VolatileCell<u32>,
+    blk_size: VolatileCell<u32>,
 }
 
-fn deamon(_deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
+impl BlockDeviceConfig {
+    /// Returns the capacity of the block device in bytes.
+    pub fn capacity(&self) -> u64 {
+        self.capacity.get()
+    }
+
+    pub fn block_size(&self) -> u32 {
+        self.blk_size.get()
+    }
+}
+
+#[repr(u32)]
+pub enum BlockRequestTy {
+    In = 0,
+    Out = 1,
+}
+
+const_assert_eq!(core::mem::size_of::<BlockRequestTy>(), 4);
+
+#[repr(C)]
+pub struct BlockVirtRequest {
+    pub ty: BlockRequestTy,
+    pub reserved: u32,
+    pub sector: u64,
+}
+
+const_assert_eq!(core::mem::size_of::<BlockVirtRequest>(), 16);
+
+fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
     let mut pcid_handle = PcidServerHandle::connect_default()?;
     let pci_config = pcid_handle.fetch_config()?;
     let pci_header = pcid_handle.fetch_header()?;
@@ -222,8 +258,6 @@ fn deamon(_deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
             }
         })
     {
-        assert!(capability.data.len() >= core::mem::size_of::<PciCapability>());
-
         // SAFETY: We have verified that the length of the data is correct.
         let capability = unsafe { &*(capability.data.as_ptr() as *const PciCapability) };
 
@@ -257,7 +291,11 @@ fn deamon(_deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
 
             CfgType::Notify => {
                 debug_assert!(notify_addr.is_none());
-                notify_addr = Some(address);
+
+                // SAFETY: The capability type is `Notify`, so its safe to access
+                //         the `notify_multiplier` field.
+                let multiplier = unsafe { capability.notify_multiplier() };
+                notify_addr = Some((address, multiplier));
             }
 
             CfgType::Isr => {
@@ -277,12 +315,18 @@ fn deamon(_deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
     }
 
     let common_addr = common_addr.ok_or(Error::InCapable(CfgType::Common))?;
-    let notify_addr = notify_addr.ok_or(Error::InCapable(CfgType::Notify))?;
+    let (notify_addr, notify_multiplier) = notify_addr.ok_or(Error::InCapable(CfgType::Notify))?;
     let isr_addr = isr_addr.ok_or(Error::InCapable(CfgType::Isr))?;
     let device_addr = device_addr.ok_or(Error::InCapable(CfgType::Device))?;
 
+    assert!(
+        notify_multiplier != 0,
+        "virtio: device uses the same Queue Notify addresses for all queues"
+    );
+
     let common = unsafe { &mut *(common_addr as *mut CommonCfg) };
-    let device_space = unsafe { &mut *(device_addr as *mut BlkDeviceConfig) };
+    let device_space = unsafe { &mut *(device_addr as *mut BlockDeviceConfig) };
+    let isr = unsafe { &*(isr_addr as *mut VolatileCell<u32>) };
 
     // Reset the device.
     common.device_status.set(DeviceStatusFlags::empty());
@@ -308,14 +352,71 @@ fn deamon(_deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
 
     // According to the virtio specification, the device REQUIRED to support MSI-X.
     assert!(has_msix, "virtio: device does not support MSI-X");
-    let msix_vector = enable_msix(&mut pcid_handle)?;
+    let mut irq_handle = enable_msix(&mut pcid_handle)?;
 
     log::info!("virtio: using standard PCI transport");
 
-    let mut transport = StandardTransport::new(pci_header, common);
+    let transport = StandardTransport::new(
+        pci_header,
+        common,
+        notify_addr as *const u8,
+        notify_multiplier,
+    );
     transport.finalize_features();
 
-    let queue = transport.setup_queue(msix_vector.into())?;
+    let queue = transport.setup_queue(MSIX_PRIMARY_VECTOR)?;
+    let queue_copy = queue.clone();
+
+    std::thread::spawn(move || {
+        let mut event_queue = EventQueue::<usize>::new().unwrap();
+        let mut progress_head = 0;
+
+        event_queue
+            .add(
+                irq_handle.as_raw_fd(),
+                move |_| -> Result<Option<usize>, io::Error> {
+                    let isr = isr.get() as usize;
+
+                    let mut inner = queue_copy.inner.lock().unwrap();
+                    let used_head = inner.used.head_index();
+
+                    if progress_head == used_head {
+                        return Ok(None);
+                    }
+
+                    let used = inner.used.get_element_at((used_head - 1) as usize);
+                    let mut desc_idx = used.table_index.get();
+                    inner.descriptor_stack.push_back(desc_idx as u16);
+
+                    loop {
+                        let desc = &inner.descriptor[desc_idx as usize];
+                        if !desc.flags.contains(DescriptorFlags::NEXT) {
+                            break;
+                        }
+
+                        desc_idx = desc.next.into();
+                        inner.descriptor_stack.push_back(desc_idx as u16);
+                    }
+
+                    progress_head = used_head;
+                    drop(inner);
+
+                    let mut buf = [0u8; 8];
+                    irq_handle.read(&mut buf)?;
+                    // Acknowledge the interrupt.
+                    // irq_handle.write(&buf)?;
+                    Ok(Some(isr))
+                },
+            )
+            .unwrap();
+
+        loop {
+            event_queue.run().unwrap();
+        }
+    });
+
+    // At this point the device is alive!
+    transport.run_device();
 
     log::info!(
         "virtio-blk: disk size: {} sectors and block size of {} bytes",
@@ -323,7 +424,58 @@ fn deamon(_deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
         device_space.blk_size.get()
     );
 
-    loop {}
+    let mut name = pci_config.func.name();
+    name.push_str("_virtio_blk");
+
+    let scheme_name = format!("disk/{}", name);
+
+    let socket_fd = syscall::open(
+        &format!(":{}", scheme_name),
+        syscall::O_RDWR | syscall::O_CREAT | syscall::O_CLOEXEC,
+    )
+    .map_err(Error::SyscallError)?;
+
+    let mut socket_file = unsafe { File::from_raw_fd(socket_fd as RawFd) };
+
+    let mut scheme = scheme::DiskScheme::new(scheme_name, queue, device_space);
+
+    deamon.ready().expect("virtio: failed to deamonize");
+
+    loop {
+        let mut packet = Packet::default();
+        socket_file
+            .read(&mut packet)
+            .expect("ahcid: failed to read disk scheme");
+        let packey = scheme.handle(&mut packet);
+        packet.a = packey.unwrap();
+        socket_file
+            .write(&mut packet)
+            .expect("ahcid: failed to read disk scheme");
+    }
+
+    // for _ in 0..3 {
+    //     let req = syscall::Dma::new(BlockVirtRequest {
+    //         ty: BlockRequestTy::In,
+    //         reserved: 0,
+    //         sector: 0,
+    //     })
+    //     .unwrap();
+
+    //     let result = syscall::Dma::new([0u8; 512]).unwrap();
+    //     let status = syscall::Dma::new(u8::MAX).unwrap();
+
+    //     let chain = ChainBuilder::new()
+    //         .chain(Buffer::new(&req).flags(DescriptorFlags::NEXT))
+    //         .chain(Buffer::new(&result).flags(DescriptorFlags::WRITE_ONLY | DescriptorFlags::NEXT))
+    //         .chain(Buffer::new(&status).flags(DescriptorFlags::WRITE_ONLY))
+    //         .build();
+
+    //     queue.send(chain);
+
+    //     log::info!("{}", event_queue.run()?);
+    //     log::info!("command status: {}", *status);
+    //     log::info!("data: {:?}", result.as_ref());
+    // }
 }
 
 fn daemon_runner(redox_daemon: redox_daemon::Daemon) -> ! {

@@ -1910,10 +1910,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bitflags 2.3.2",
+ "block-io-wrapper",
  "log",
+ "partitionlib",
  "pcid",
  "redox-daemon",
  "redox-log",
+ "redox_event",
  "redox_syscall 0.3.5",
  "static_assertions",
  "thiserror",

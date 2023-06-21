@@ -14,5 +14,8 @@ thiserror = "1.0.40"
 redox-daemon = "0.1"
 redox-log = "0.1"
 redox_syscall = "0.3"
+redox_event = { git = "https://gitlab.redox-os.org/redox-os/event.git" }
+partitionlib = { git = "https://gitlab.redox-os.org/redox-os/partitionlib.git" }
 
+block-io-wrapper = { path = "../block-io-wrapper" }
 pcid = { path = "../pcid" }

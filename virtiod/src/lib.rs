@@ -55,11 +55,20 @@ pub struct PciCapability {
     pub offset: u32,
     /// Length of the structure, in bytes.
     pub length: u32,
+    notify_multiplier: u32,
 }
 
-// The size of `PciCapability` is 13 bytes since
-// the generic PCI fields are *not* included.
-const_assert_eq!(core::mem::size_of::<PciCapability>(), 13);
+// The size of `PciCapability` is 13 bytes since the generic
+// PCI fields are *not* included.
+const_assert_eq!(core::mem::size_of::<PciCapability>(), 17);
+
+impl PciCapability {
+    /// ## Safety
+    /// Undefined if accessed from a capability type other than [`CfgType::Notify`].
+    pub unsafe fn notify_multiplier(&self) -> u32 {
+        self.notify_multiplier
+    }
+}
 
 bitflags::bitflags! {
     #[derive(Debug, Copy, Clone, PartialEq)]
@@ -110,26 +119,27 @@ pub struct CommonCfg {
 const_assert_eq!(core::mem::size_of::<CommonCfg>(), 56);
 
 bitflags::bitflags! {
+    #[derive(Debug, Copy, Clone)]
     #[repr(transparent)]
     pub struct DescriptorFlags: u16 {
         /// The next field contains linked buffer index.
-        const NEXT       = 1 << 0;
+        const NEXT = 1 << 0;
         /// The buffer is write-only (otherwise read-only).
         const WRITE_ONLY = 1 << 1;
         /// The buffer contains a list of buffer descriptors.
-        const INDIRECT   = 1 << 2;
+        const INDIRECT = 1 << 2;
     }
 }
 
 #[repr(C)]
 pub struct Descriptor {
     /// Address (guest-physical).
-    address: u64,
+    pub address: u64,
     /// Size of the descriptor.
-    size: u32,
-    flags: DescriptorFlags,
+    pub size: u32,
+    pub flags: DescriptorFlags,
     /// Index of next desciptor in chain.
-    next: u16,
+    pub next: u16,
 }
 
 const_assert_eq!(core::mem::size_of::<Descriptor>(), 16);
@@ -141,6 +151,10 @@ const_assert_eq!(core::mem::size_of::<Descriptor>(), 16);
 pub const VIRTIO_F_VERSION_1: u32 = 32;
 
 // ======== Available Ring ========
+//
+// XXX: The driver uses the available ring to offer buffers to the
+//      device. Each ring entry refers to the head of a descriptor
+//      chain.
 #[repr(C)]
 pub struct AvailableRingElement {
     pub table_index: VolatileCell<u16>,
@@ -148,7 +162,6 @@ pub struct AvailableRingElement {
 
 const_assert_eq!(core::mem::size_of::<AvailableRingElement>(), 2);
 
-/// Virtqueue Available Ring
 #[repr(C)]
 pub struct AvailableRing {
     pub flags: VolatileCell<u16>,
@@ -157,6 +170,16 @@ pub struct AvailableRing {
 }
 
 const_assert_eq!(core::mem::size_of::<AvailableRing>(), 4);
+
+impl Default for AvailableRing {
+    fn default() -> Self {
+        Self {
+            flags: VolatileCell::new(0),
+            head_index: VolatileCell::new(0),
+            elements: IncompleteArrayField::new(),
+        }
+    }
+}
 
 #[repr(C)]
 pub struct AvailableRingExtra {
@@ -183,7 +206,60 @@ pub struct UsedRing {
 
 const_assert_eq!(core::mem::size_of::<UsedRing>(), 4);
 
+impl Default for UsedRing {
+    fn default() -> Self {
+        Self {
+            flags: VolatileCell::new(0),
+            head_index: VolatileCell::new(0),
+            elements: IncompleteArrayField::new(),
+        }
+    }
+}
+
 #[repr(C)]
 pub struct UsedRingExtra {
     pub event_index: VolatileCell<u16>,
+}
+
+// ======== Utils ========
+pub struct Buffer {
+    buffer: usize,
+    size: usize,
+    flags: DescriptorFlags,
+}
+
+impl Buffer {
+    pub fn new<T>(val: &syscall::Dma<T>) -> Self {
+        Self {
+            buffer: val.physical(),
+            size: core::mem::size_of::<T>(),
+            flags: DescriptorFlags::empty(),
+        }
+    }
+
+    pub fn flags(mut self, flags: DescriptorFlags) -> Self {
+        self.flags = flags;
+        self
+    }
+}
+
+pub struct ChainBuilder {
+    buffers: Vec<Buffer>,
+}
+
+impl ChainBuilder {
+    pub fn new() -> Self {
+        Self {
+            buffers: Vec::new(),
+        }
+    }
+
+    pub fn chain(mut self, buffer: Buffer) -> Self {
+        self.buffers.push(buffer);
+        self
+    }
+
+    pub fn build(self) -> Vec<Buffer> {
+        self.buffers
+    }
 }
