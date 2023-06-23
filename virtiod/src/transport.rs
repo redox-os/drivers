@@ -136,10 +136,23 @@ impl<'a> Queue<'a> {
     }
 
     fn alloc_descriptor(&self) -> usize {
-        if let Some(index) = self.inner.lock().unwrap().descriptor_stack.pop_front() {
+        let mut inner = self.inner.lock().unwrap();
+
+        if let Some(index) = inner.descriptor_stack.pop_front() {
             index as usize
         } else {
-            panic!("virtio: descriptor exhaustion");
+            log::warn!("virtiod: descriptors exhausted, waiting on garabage collector");
+            drop(inner);
+
+            // Wait for the garbage collector thread to release some descriptors.
+            //
+            // TODO(andypython): Instead of just yielding, we should have a proper notificiation
+            //                   mechanism. I am not aware whats the standard way redox applications
+            //                   or drivers implement basically a WaitQueue which you can use to wake
+            //                   up a thread. The descripts really should NEVER run out, but if they
+            //                   do, have a proper way to handle them.
+            std::thread::yield_now();
+            self.alloc_descriptor()
         }
     }
 }

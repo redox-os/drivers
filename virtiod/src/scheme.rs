@@ -24,11 +24,23 @@ const BLK_SIZE: u64 = 512;
 trait BlkExtension {
     /// XXX: Reads only one block despite the size of the output buffer. Use [`BlkExtension::read`] instead.
     fn read_block(&self, block: u64, block_bytes: &mut [u8]) -> usize;
+
+    /// XXX: Reads only one block despite the size of the output buffer. Use [`BlkExtension::write`] instead.
+    fn write_block(&self, block: u64, block_bytes: &[u8]) -> usize;
+
     fn read(&self, block: u64, block_bytes: &mut [u8]) -> usize {
         let sectors = block_bytes.len() / BLK_SIZE as usize;
 
         (0..sectors)
             .map(|i| self.read_block(block + i as u64, &mut block_bytes[i * BLK_SIZE as usize..]))
+            .sum()
+    }
+
+    fn write(&self, block: u64, block_bytes: &[u8]) -> usize {
+        let sectors = block_bytes.len() / BLK_SIZE as usize;
+
+        (0..sectors)
+            .map(|i| self.write_block(block + i as u64, &block_bytes[i * BLK_SIZE as usize..]))
             .sum()
     }
 }
@@ -64,6 +76,36 @@ impl BlkExtension for Queue<'_> {
 
         size
     }
+
+    fn write_block(&self, block: u64, block_bytes: &[u8]) -> usize {
+        let req = syscall::Dma::new(BlockVirtRequest {
+            ty: BlockRequestTy::Out,
+            reserved: 0,
+            sector: block,
+        })
+        .unwrap();
+
+        let mut result = syscall::Dma::new([0u8; 512]).unwrap();
+        result.copy_from_slice(&block_bytes[..512]);
+
+        let status = syscall::Dma::new(u8::MAX).unwrap();
+
+        let chain = ChainBuilder::new()
+            .chain(Buffer::new(&req).flags(DescriptorFlags::NEXT))
+            .chain(Buffer::new(&result).flags(DescriptorFlags::NEXT))
+            .chain(Buffer::new(&status).flags(DescriptorFlags::WRITE_ONLY))
+            .build();
+
+        self.send(chain);
+
+        // FIXME: interrupts are for a reason
+        while *status != 0 {
+            core::hint::spin_loop();
+        }
+
+        std::thread::yield_now();
+        block_bytes.len()
+    }
 }
 
 pub enum Handle {
@@ -85,7 +127,6 @@ pub enum Handle {
 }
 
 pub struct DiskScheme<'a> {
-    name: String,
     queue: Arc<Queue<'a>>,
     next_id: usize,
     cfg: &'a mut BlockDeviceConfig,
@@ -94,9 +135,8 @@ pub struct DiskScheme<'a> {
 }
 
 impl<'a> DiskScheme<'a> {
-    pub fn new(name: String, queue: Arc<Queue<'a>>, cfg: &'a mut BlockDeviceConfig) -> Self {
+    pub fn new(queue: Arc<Queue<'a>>, cfg: &'a mut BlockDeviceConfig) -> Self {
         let mut this = Self {
-            name,
             queue,
             next_id: 0,
             cfg,
@@ -197,10 +237,10 @@ impl<'a> SchemeBlockMut for DiskScheme<'a> {
         &mut self,
         path: &str,
         flags: usize,
-        uid: u32,
-        gid: u32,
+        _uid: u32,
+        _gid: u32,
     ) -> syscall::Result<Option<usize>> {
-        log::info!("virtioo: open: {}", path);
+        log::info!("virtiod: open: {}", path);
 
         let path_str = path.trim_matches('/');
         if path_str.is_empty() {
@@ -264,28 +304,6 @@ impl<'a> SchemeBlockMut for DiskScheme<'a> {
         }
     }
 
-    fn chmod(
-        &mut self,
-        path: &str,
-        mode: u16,
-        uid: u32,
-        gid: u32,
-    ) -> syscall::Result<Option<usize>> {
-        todo!()
-    }
-
-    fn rmdir(&mut self, path: &str, uid: u32, gid: u32) -> syscall::Result<Option<usize>> {
-        todo!()
-    }
-
-    fn unlink(&mut self, path: &str, uid: u32, gid: u32) -> syscall::Result<Option<usize>> {
-        todo!()
-    }
-
-    fn dup(&mut self, old_id: usize, buf: &[u8]) -> syscall::Result<Option<usize>> {
-        todo!()
-    }
-
     fn read(&mut self, id: usize, buf: &mut [u8]) -> syscall::Result<Option<usize>> {
         match *self.handles.get_mut(&id).ok_or(Error::new(EBADF))? {
             Handle::List {
@@ -323,7 +341,7 @@ impl<'a> SchemeBlockMut for DiskScheme<'a> {
             Handle::Disk { ref mut offset } => {
                 let block_size = self.cfg.block_size();
 
-                let count = self.queue.read((*offset as u64) / 512, buf);
+                let count = self.queue.read((*offset as u64) / block_size as u64, buf);
                 *offset += count;
                 Ok(Some(count))
             }
@@ -331,8 +349,17 @@ impl<'a> SchemeBlockMut for DiskScheme<'a> {
     }
 
     fn write(&mut self, id: usize, buf: &[u8]) -> syscall::Result<Option<usize>> {
-        // lets assume this worked
-        Ok(Some(buf.len()))
+        match *self.handles.get_mut(&id).ok_or(Error::new(EBADF))? {
+            Handle::Disk { ref mut offset } => {
+                let block_size = self.cfg.block_size();
+                let count = self.queue.write((*offset as u64) / block_size as u64, buf);
+
+                *offset += count;
+                Ok(Some(count))
+            }
+
+            _ => unimplemented!(),
+        }
     }
 
     fn seek(&mut self, id: usize, pos: isize, whence: usize) -> syscall::Result<Option<isize>> {
@@ -394,91 +421,15 @@ impl<'a> SchemeBlockMut for DiskScheme<'a> {
         }
     }
 
-    fn fchmod(&mut self, id: usize, mode: u16) -> syscall::Result<Option<usize>> {
+    fn fpath(&mut self, _id: usize, _buf: &mut [u8]) -> syscall::Result<Option<usize>> {
         todo!()
     }
 
-    fn fchown(&mut self, id: usize, uid: u32, gid: u32) -> syscall::Result<Option<usize>> {
+    fn fstat(&mut self, _id: usize, _stat: &mut syscall::Stat) -> syscall::Result<Option<usize>> {
         todo!()
     }
 
-    fn fcntl(&mut self, id: usize, cmd: usize, arg: usize) -> syscall::Result<Option<usize>> {
-        todo!()
-    }
-
-    fn fevent(
-        &mut self,
-        id: usize,
-        flags: syscall::EventFlags,
-    ) -> syscall::Result<Option<syscall::EventFlags>> {
-        todo!()
-    }
-
-    fn fmap_old(&mut self, id: usize, map: &syscall::OldMap) -> syscall::Result<Option<usize>> {
-        todo!()
-    }
-
-    fn fmap(&mut self, id: usize, map: &syscall::Map) -> syscall::Result<Option<usize>> {
-        if map.flags.contains(syscall::MapFlags::MAP_FIXED) {
-            return Err(syscall::Error::new(syscall::EINVAL));
-        }
-        self.fmap_old(
-            id,
-            &syscall::OldMap {
-                offset: map.offset,
-                size: map.size,
-                flags: map.flags,
-            },
-        )
-    }
-
-    fn funmap_old(&mut self, address: usize) -> syscall::Result<Option<usize>> {
-        todo!()
-    }
-
-    fn funmap(&mut self, address: usize, length: usize) -> syscall::Result<Option<usize>> {
-        todo!()
-    }
-
-    fn fpath(&mut self, id: usize, buf: &mut [u8]) -> syscall::Result<Option<usize>> {
-        todo!()
-    }
-
-    fn frename(
-        &mut self,
-        id: usize,
-        path: &str,
-        uid: u32,
-        gid: u32,
-    ) -> syscall::Result<Option<usize>> {
-        todo!()
-    }
-
-    fn fstat(&mut self, id: usize, stat: &mut syscall::Stat) -> syscall::Result<Option<usize>> {
-        todo!()
-    }
-
-    fn fstatvfs(
-        &mut self,
-        id: usize,
-        stat: &mut syscall::StatVfs,
-    ) -> syscall::Result<Option<usize>> {
-        todo!()
-    }
-
-    fn fsync(&mut self, id: usize) -> syscall::Result<Option<usize>> {
-        todo!()
-    }
-
-    fn ftruncate(&mut self, id: usize, len: usize) -> syscall::Result<Option<usize>> {
-        todo!()
-    }
-
-    fn futimens(
-        &mut self,
-        id: usize,
-        times: &[syscall::TimeSpec],
-    ) -> syscall::Result<Option<usize>> {
+    fn dup(&mut self, _old_id: usize, _buf: &[u8]) -> Result<Option<usize>> {
         todo!()
     }
 

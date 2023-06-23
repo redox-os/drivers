@@ -3,7 +3,7 @@
 use core::ptr::NonNull;
 
 use std::fs::File;
-use std::io::{self, ErrorKind};
+use std::io;
 use std::io::{Read, Write};
 use std::ops::{Add, Div, Rem};
 use std::os::fd::{AsRawFd, FromRawFd, RawFd};
@@ -375,7 +375,8 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
             .add(
                 irq_handle.as_raw_fd(),
                 move |_| -> Result<Option<usize>, io::Error> {
-                    let isr = isr.get() as usize;
+                    // Read from ISR to acknowledge the interrupt.
+                    let _isr = isr.get() as usize;
 
                     let mut inner = queue_copy.inner.lock().unwrap();
                     let used_head = inner.used.head_index();
@@ -384,18 +385,20 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
                         return Ok(None);
                     }
 
-                    let used = inner.used.get_element_at((used_head - 1) as usize);
-                    let mut desc_idx = used.table_index.get();
-                    inner.descriptor_stack.push_back(desc_idx as u16);
-
-                    loop {
-                        let desc = &inner.descriptor[desc_idx as usize];
-                        if !desc.flags.contains(DescriptorFlags::NEXT) {
-                            break;
-                        }
-
-                        desc_idx = desc.next.into();
+                    for i in progress_head..used_head {
+                        let used = inner.used.get_element_at(i as usize);
+                        let mut desc_idx = used.table_index.get();
                         inner.descriptor_stack.push_back(desc_idx as u16);
+
+                        loop {
+                            let desc = &inner.descriptor[desc_idx as usize];
+                            if !desc.flags.contains(DescriptorFlags::NEXT) {
+                                break;
+                            }
+
+                            desc_idx = desc.next.into();
+                            inner.descriptor_stack.push_back(desc_idx as u16);
+                        }
                     }
 
                     progress_head = used_head;
@@ -405,7 +408,7 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
                     irq_handle.read(&mut buf)?;
                     // Acknowledge the interrupt.
                     // irq_handle.write(&buf)?;
-                    Ok(Some(isr))
+                    Ok(None)
                 },
             )
             .unwrap();
@@ -437,7 +440,7 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
 
     let mut socket_file = unsafe { File::from_raw_fd(socket_fd as RawFd) };
 
-    let mut scheme = scheme::DiskScheme::new(scheme_name, queue, device_space);
+    let mut scheme = scheme::DiskScheme::new(queue, device_space);
 
     deamon.ready().expect("virtio: failed to deamonize");
 
