@@ -63,10 +63,3 @@ impl<T> IncompleteArrayField<T> {
 pub const fn align(val: usize, align: usize) -> usize {
     (val + align) & !align
 }
-
-// From the syscall crate; the function is private.
-//
-// TODO(andypython): make it public
-pub const fn round_up(x: usize) -> usize {
-    (x + syscall::PAGE_SIZE - 1) / syscall::PAGE_SIZE * syscall::PAGE_SIZE
-}

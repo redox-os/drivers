@@ -1,4 +1,4 @@
-use crate::utils::{align, round_up};
+use crate::utils::align;
 use crate::*;
 
 use pcid_interface::PciHeader;
@@ -169,8 +169,8 @@ pub struct Available<'a> {
 impl<'a> Available<'a> {
     pub fn new(queue_size: usize) -> anyhow::Result<Self> {
         let (_, size, _) = queue_part_sizes(queue_size);
+        let size = size.next_multiple_of(syscall::PAGE_SIZE); // align to page size
 
-        let size = round_up(size);
         let addr = unsafe { syscall::physalloc(size) }.map_err(Error::SyscallError)?;
         let virt =
             unsafe { syscall::physmap(addr, size, PHYSMAP_WRITE) }.map_err(Error::SyscallError)?;
@@ -231,8 +231,8 @@ pub struct Used<'a> {
 impl<'a> Used<'a> {
     pub fn new(queue_size: usize) -> anyhow::Result<Self> {
         let (_, _, size) = queue_part_sizes(queue_size);
+        let size = size.next_multiple_of(syscall::PAGE_SIZE); // align to page size
 
-        let size = round_up(size);
         let addr = unsafe { syscall::physalloc(size) }.map_err(Error::SyscallError)?;
         let virt =
             unsafe { syscall::physmap(addr, size, PHYSMAP_WRITE) }.map_err(Error::SyscallError)?;

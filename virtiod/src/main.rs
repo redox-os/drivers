@@ -1,11 +1,11 @@
 #![deny(trivial_numeric_casts, unused_allocation)]
+#![feature(int_roundings)]
 
 use core::ptr::NonNull;
 
 use std::fs::File;
 use std::io;
 use std::io::{Read, Write};
-use std::ops::{Add, Div, Rem};
 use std::os::fd::{AsRawFd, FromRawFd, RawFd};
 
 use static_assertions::const_assert_eq;
@@ -25,17 +25,6 @@ use syscall::{Io, Packet, SchemeBlockMut, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
 use virtiod::utils::VolatileCell;
 
 mod scheme;
-
-fn div_round_up<T>(a: T, b: T) -> T
-where
-    T: Add<Output = T> + Div<Output = T> + Rem<Output = T> + PartialEq + From<u8> + Copy,
-{
-    if a % b != T::from(0u8) {
-        a / b + T::from(1u8)
-    } else {
-        a / b
-    }
-}
 
 pub fn main() -> anyhow::Result<()> {
     #[cfg(target_os = "redox")]
@@ -118,7 +107,7 @@ fn enable_msix(pcid_handle: &mut PcidServerHandle) -> anyhow::Result<File> {
     let table_size = capability.table_size();
     let table_base = capability.table_base_pointer(pci_config.func.bars);
     let table_min_length = table_size * 16;
-    let pba_min_length = div_round_up(table_size, 8);
+    let pba_min_length = table_size.div_ceil(8);
 
     let pba_base = capability.pba_base_pointer(pci_config.func.bars);
 

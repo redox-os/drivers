@@ -1,5 +1,7 @@
 //! https://docs.oasis-open.org/virtio/virtio/v1.1/virtio-v1.1.html
 
+#![feature(int_roundings)]
+
 use static_assertions::const_assert_eq;
 
 pub mod transport;
