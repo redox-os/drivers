@@ -1,27 +1,7 @@
 //! https://docs.oasis-open.org/virtio/virtio/v1.1/virtio-v1.1.html
 
-#![feature(int_roundings)]
-
+use crate::utils::{IncompleteArrayField, VolatileCell};
 use static_assertions::const_assert_eq;
-
-pub mod transport;
-pub mod utils;
-
-use utils::{IncompleteArrayField, VolatileCell};
-
-use thiserror::Error;
-
-#[derive(Debug, Error)]
-pub enum Error {
-    #[error("capability {0:?} not found")]
-    InCapable(CfgType),
-    #[error("failed to map memory")]
-    Physmap,
-    #[error("failed to allocate an interrupt vector")]
-    ExhaustedInt,
-    #[error("syscall error")]
-    SyscallError(syscall::Error),
-}
 
 #[derive(Debug, Copy, Clone)]
 #[repr(u8)]
@@ -225,9 +205,9 @@ pub struct UsedRingExtra {
 
 // ======== Utils ========
 pub struct Buffer {
-    buffer: usize,
-    size: usize,
-    flags: DescriptorFlags,
+    pub(crate) buffer: usize,
+    pub(crate) size: usize,
+    pub(crate) flags: DescriptorFlags,
 }
 
 impl Buffer {

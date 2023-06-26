@@ -1905,11 +1905,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "virtio-core"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.3.2",
+ "log",
+ "pcid",
+ "redox_syscall 0.3.5",
+ "static_assertions",
+ "thiserror",
+]
+
+[[package]]
 name = "virtiod"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bitflags 2.3.2",
  "block-io-wrapper",
  "log",
  "partitionlib",
@@ -1920,6 +1931,7 @@ dependencies = [
  "redox_syscall 0.3.5",
  "static_assertions",
  "thiserror",
+ "virtio-core",
 ]
 
 [[package]]

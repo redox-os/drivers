@@ -1,7 +1,6 @@
-use crate::utils::align;
-use crate::*;
+use crate::spec::*;
+use crate::utils::{align, VolatileCell};
 
-use pcid_interface::PciHeader;
 use syscall::{Dma, PHYSMAP_WRITE};
 
 use core::mem::size_of;
@@ -9,6 +8,28 @@ use core::sync::atomic::{fence, AtomicU16, Ordering};
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, Weak};
+
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error("syscall failed")]
+    SyscallError(syscall::Error),
+    #[error("pcid client handle error")]
+    PcidClientHandle(pcid_interface::PcidClientHandleError),
+    #[error("the device is incapable of {0:?}")]
+    InCapable(CfgType),
+}
+
+impl From<pcid_interface::PcidClientHandleError> for Error {
+    fn from(value: pcid_interface::PcidClientHandleError) -> Self {
+        Self::PcidClientHandle(value)
+    }
+}
+
+impl From<syscall::Error> for Error {
+    fn from(value: syscall::Error) -> Self {
+        Self::SyscallError(value)
+    }
+}
 
 /// Returns the queue part sizes in bytes.
 ///
@@ -167,7 +188,7 @@ pub struct Available<'a> {
 }
 
 impl<'a> Available<'a> {
-    pub fn new(queue_size: usize) -> anyhow::Result<Self> {
+    pub fn new(queue_size: usize) -> Result<Self, Error> {
         let (_, size, _) = queue_part_sizes(queue_size);
         let size = size.next_multiple_of(syscall::PAGE_SIZE); // align to page size
 
@@ -229,7 +250,7 @@ pub struct Used<'a> {
 }
 
 impl<'a> Used<'a> {
-    pub fn new(queue_size: usize) -> anyhow::Result<Self> {
+    pub fn new(queue_size: usize) -> Result<Self, Error> {
         let (_, _, size) = queue_part_sizes(queue_size);
         let size = size.next_multiple_of(syscall::PAGE_SIZE); // align to page size
 
@@ -286,7 +307,6 @@ impl Drop for Used<'_> {
 }
 
 pub struct StandardTransport<'a> {
-    header: PciHeader,
     common: Mutex<&'a mut CommonCfg>,
     notify: *const u8,
     notify_mul: u32,
@@ -296,14 +316,8 @@ pub struct StandardTransport<'a> {
 }
 
 impl<'a> StandardTransport<'a> {
-    pub fn new(
-        header: PciHeader,
-        common: &'a mut CommonCfg,
-        notify: *const u8,
-        notify_mul: u32,
-    ) -> Arc<Self> {
+    pub fn new(common: &'a mut CommonCfg, notify: *const u8, notify_mul: u32) -> Arc<Self> {
         Arc::new_cyclic(|sref| Self {
-            header,
             common: Mutex::new(common),
             notify,
             notify_mul,
@@ -362,7 +376,7 @@ impl<'a> StandardTransport<'a> {
             .set(status | DeviceStatusFlags::DRIVER_OK);
     }
 
-    pub fn setup_queue(&self, vector: u16) -> anyhow::Result<Arc<Queue<'a>>> {
+    pub fn setup_queue(&self, vector: u16) -> Result<Arc<Queue<'a>>, Error> {
         let mut common = self.common.lock().unwrap();
 
         let queue_index = self.queue_index.fetch_add(1, Ordering::SeqCst);

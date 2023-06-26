@@ -5,11 +5,10 @@ edition = "2021"
 authors = ["Anhad Singh <andypython@protonmail.com>"]
 
 [dependencies]
-static_assertions = "1.1.0"
-bitflags = "2.3.2"
 anyhow = "1.0.71"
 log = "0.4"
 thiserror = "1.0.40"
+static_assertions = "1.1.0"
 
 redox-daemon = "0.1"
 redox-log = "0.1"
@@ -19,3 +18,4 @@ partitionlib = { git = "https://gitlab.redox-os.org/redox-os/partitionlib.git" }
 
 block-io-wrapper = { path = "../block-io-wrapper" }
 pcid = { path = "../pcid" }
+virtio-core = { path = "../virtio-core" }

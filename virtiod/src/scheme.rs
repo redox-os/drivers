@@ -10,10 +10,9 @@ use std::sync::Arc;
 use partitionlib::LogicalBlockSize;
 use partitionlib::PartitionTable;
 use syscall::*;
-use virtiod::transport::Queue;
-use virtiod::Buffer;
-use virtiod::ChainBuilder;
-use virtiod::DescriptorFlags;
+
+use virtio_core::spec::{Buffer, ChainBuilder, DescriptorFlags};
+use virtio_core::transport::Queue;
 
 use crate::BlockDeviceConfig;
 use crate::BlockRequestTy;
@@ -28,6 +27,8 @@ trait BlkExtension {
     /// XXX: Reads only one block despite the size of the output buffer. Use [`BlkExtension::write`] instead.
     fn write_block(&self, block: u64, block_bytes: &[u8]) -> usize;
 
+    // FIXME(andypython): The following two methods can be done asynchronously (i.e, send all of the commands at once
+    //                    and wait for the result in the end).
     fn read(&self, block: u64, block_bytes: &mut [u8]) -> usize {
         let sectors = block_bytes.len() / BLK_SIZE as usize;
 
@@ -72,8 +73,6 @@ impl BlkExtension for Queue<'_> {
 
         let size = core::cmp::min(block_bytes.len(), result.len());
         block_bytes[..size].copy_from_slice(&result.as_slice()[..size]);
-        std::thread::yield_now();
-
         size
     }
 
@@ -103,7 +102,6 @@ impl BlkExtension for Queue<'_> {
             core::hint::spin_loop();
         }
 
-        std::thread::yield_now();
         block_bytes.len()
     }
 }

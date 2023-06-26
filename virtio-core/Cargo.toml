@@ -1,0 +1,14 @@
+[package]
+name = "virtio-core"
+version = "0.1.0"
+edition = "2021"
+authors = ["Anhad Singh <andypython@protonmail.com>"]
+
+[dependencies]
+static_assertions = "1.1.0"
+bitflags = "2.3.2"
+redox_syscall = "0.3"
+log = "0.4"
+thiserror = "1.0.40"
+
+pcid = { path = "../pcid" }
