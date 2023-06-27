@@ -23,7 +23,9 @@ members = [
     "usbhidd",
     "usbscsid",
 
-    "virtiod",
+    "virtio-blkd",
+    "virtio-netd",
+    "virtio-core",
 ]
 
 [profile.release]

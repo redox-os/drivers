@@ -128,11 +128,12 @@ fn enable_msix(pcid_handle: &mut PcidServerHandle) -> Result<File, Error> {
 /// VirtIO Device Probe
 ///
 /// ## Device State
-/// After this function, the device has been successfully reseted and is ready for use.
+/// After this function, the device will have been successfully reseted and is ready for use.
 ///
 /// The caller is required to do the following:
 /// * Negotiate the device and driver supported features (finialize via [`StandardTransport::finalize_features`])
-/// * Create the device specific virtio queues (via [`StandardTransport::setup_queue`])
+/// * Create the device specific virtio queues (via [`StandardTransport::setup_queue`]). This is *required* to be done
+///   before starting the device.
 /// * Finally start the device (via [`StandardTransport::run_device`]). At this point, the device
 ///   is alive.
 ///
@@ -215,7 +216,7 @@ pub fn probe_device<'a>(pcid_handle: &mut PcidServerHandle) -> Result<Device<'a>
             _ => unreachable!(),
         }
 
-        log::info!("virtio: {capability:?}");
+        log::trace!("virtio-core::device-probe: {capability:?}");
     }
 
     let common_addr = common_addr.ok_or(Error::InCapable(CfgType::Common))?;

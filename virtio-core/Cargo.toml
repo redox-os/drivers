@@ -11,4 +11,6 @@ redox_syscall = "0.3"
 log = "0.4"
 thiserror = "1.0.40"
 
+redox-log = "0.1"
+
 pcid = { path = "../pcid" }

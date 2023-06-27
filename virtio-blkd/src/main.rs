@@ -34,50 +34,8 @@ pub enum Error {
 
 pub fn main() -> anyhow::Result<()> {
     #[cfg(target_os = "redox")]
-    setup_logging();
-
+    virtio_core::utils::setup_logging(log::LevelFilter::Trace, "virtio-blkd");
     redox_daemon::Daemon::new(daemon_runner).expect("virtio-core: failed to daemonize");
-}
-
-#[cfg(target_os = "redox")]
-fn setup_logging() {
-    use redox_log::{OutputBuilder, RedoxLogger};
-
-    let mut logger = RedoxLogger::new().with_output(
-        OutputBuilder::stderr()
-            .with_filter(log::LevelFilter::Trace)
-            .with_ansi_escape_codes()
-            .flush_on_newline(true)
-            .build(),
-    );
-
-    match OutputBuilder::in_redox_logging_scheme("disk", "pcie", "virtiod.log") {
-        Ok(builder) => {
-            logger = logger.with_output(
-                builder
-                    .with_filter(log::LevelFilter::Trace)
-                    .flush_on_newline(true)
-                    .build(),
-            )
-        }
-        Err(err) => eprintln!("virtiod: failed to create log: {}", err),
-    }
-
-    match OutputBuilder::in_redox_logging_scheme("disk", "pcie", "virtiod.ansi.log") {
-        Ok(builder) => {
-            logger = logger.with_output(
-                builder
-                    .with_filter(log::LevelFilter::Trace)
-                    .with_ansi_escape_codes()
-                    .flush_on_newline(true)
-                    .build(),
-            )
-        }
-        Err(err) => eprintln!("virtiod: failed to create ansi log: {}", err),
-    }
-
-    logger.enable().unwrap();
-    log::info!("virtiod: enabled logger");
 }
 
 #[repr(C)]
@@ -133,7 +91,7 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
     let pci_config = pcid_handle.fetch_config()?;
 
     assert_eq!(pci_config.func.devid, 0x1001);
-    log::info!("virtiod: found `virtio-blk` device");
+    log::info!("virtio-blk: initiating startup sequence :^)");
 
     let mut device = virtio_core::probe_device(&mut pcid_handle)?;
     device.transport.finalize_features();

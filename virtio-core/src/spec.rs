@@ -131,6 +131,7 @@ const_assert_eq!(core::mem::size_of::<Descriptor>(), 16);
 /// See `6.1 Driver Requirements: Reserved Feature Bits` section of the VirtIO
 /// specification for more information.
 pub const VIRTIO_F_VERSION_1: u32 = 32;
+pub const VIRTIO_NET_F_MAC: u32 = 5;
 
 // ======== Available Ring ========
 //

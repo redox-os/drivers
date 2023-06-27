@@ -81,6 +81,7 @@ unsafe impl Send for QueueInner<'_> {}
 
 pub struct Queue<'a> {
     pub inner: Mutex<QueueInner<'a>>,
+    pub queue_index: u16,
     sref: Weak<Self>,
 }
 
@@ -91,6 +92,7 @@ impl<'a> Queue<'a> {
         used: Used<'a>,
 
         notification_bell: &'a mut VolatileCell<u16>,
+        queue_index: u16,
     ) -> Arc<Self> {
         Arc::new_cyclic(|sref| Self {
             inner: Mutex::new(QueueInner {
@@ -104,6 +106,7 @@ impl<'a> Queue<'a> {
                 notification_bell,
             }),
 
+            queue_index,
             sref: sref.clone(),
         })
     }
@@ -153,7 +156,7 @@ impl<'a> Queue<'a> {
         inner.head_index += 1;
 
         assert_eq!(inner.used.flags(), 0);
-        inner.notification_bell.set(0); // FIXME: This corresponds to the queue index.
+        inner.notification_bell.set(self.queue_index);
     }
 
     fn alloc_descriptor(&self) -> usize {
@@ -162,7 +165,7 @@ impl<'a> Queue<'a> {
         if let Some(index) = inner.descriptor_stack.pop_front() {
             index as usize
         } else {
-            log::warn!("virtiod: descriptors exhausted, waiting on garabage collector");
+            log::warn!("virtiod-core: descriptors exhausted, waiting on garabage collector");
             drop(inner);
 
             // Wait for the garbage collector thread to release some descriptors.
@@ -216,7 +219,7 @@ impl<'a> Available<'a> {
                 .elements
                 .as_mut_slice(self.queue_size)
                 .get_mut(index % 256)
-                .expect("virtio::available: index out of bounds")
+                .expect("virtio-core::available: index out of bounds")
         }
     }
 
@@ -231,7 +234,7 @@ impl<'a> Available<'a> {
 
 impl Drop for Available<'_> {
     fn drop(&mut self) {
-        log::warn!("virtio: dropping 'available' ring at {:#x}", self.addr);
+        log::warn!("virtio-core: dropping 'available' ring at {:#x}", self.addr);
 
         unsafe {
             syscall::physunmap(self.addr).unwrap();
@@ -278,7 +281,7 @@ impl<'a> Used<'a> {
                 .elements
                 .as_mut_slice(self.queue_size)
                 .get_mut(index % 256)
-                .expect("virtio::used: index out of bounds")
+                .expect("virtio-core::used: index out of bounds")
         }
     }
 
@@ -297,7 +300,7 @@ impl<'a> Used<'a> {
 
 impl Drop for Used<'_> {
     fn drop(&mut self) {
-        log::warn!("virtio: dropping 'used' ring at {:#x}", self.addr);
+        log::warn!("virtio-core: dropping 'used' ring at {:#x}", self.addr);
 
         unsafe {
             syscall::physunmap(self.addr).unwrap();
@@ -385,8 +388,6 @@ impl<'a> StandardTransport<'a> {
         let queue_size = common.queue_size.get() as usize;
         let queue_notify_idx = common.queue_notify_off.get();
 
-        log::info!("notify_idx: {}", queue_notify_idx);
-
         // Allocate memory for the queue structues.
         let descriptor = unsafe {
             Dma::<[Descriptor]>::zeroed_unsized(queue_size).map_err(Error::SyscallError)?
@@ -418,7 +419,13 @@ impl<'a> StandardTransport<'a> {
             &mut *(self.notify.add(offset as usize) as *mut VolatileCell<u16>)
         };
 
-        log::info!("virtio: enabled queue #{queue_index} (size={queue_size})");
-        Ok(Queue::new(descriptor, avail, used, notification_bell))
+        log::info!("virtio-core: enabled queue #{queue_index} (size={queue_size})");
+        Ok(Queue::new(
+            descriptor,
+            avail,
+            used,
+            notification_bell,
+            queue_index,
+        ))
     }
 }

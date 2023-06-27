@@ -6,4 +6,4 @@ pub mod utils;
 
 mod probe;
 
-pub use probe::{probe_device, MSIX_PRIMARY_VECTOR, Device};
+pub use probe::{probe_device, Device, MSIX_PRIMARY_VECTOR};
