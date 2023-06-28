@@ -220,6 +220,14 @@ impl Buffer {
         }
     }
 
+    pub fn new_unsized<T>(val: &syscall::Dma<[T]>) -> Self {
+        Self {
+            buffer: val.physical(),
+            size: core::mem::size_of::<T>() * val.len(),
+            flags: DescriptorFlags::empty(),
+        }
+    }
+
     pub fn flags(mut self, flags: DescriptorFlags) -> Self {
         self.flags = flags;
         self

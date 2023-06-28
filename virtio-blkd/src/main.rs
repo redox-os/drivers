@@ -175,21 +175,20 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
     .map_err(Error::SyscallError)?;
 
     let mut socket_file = unsafe { File::from_raw_fd(socket_fd as RawFd) };
-
     let mut scheme = scheme::DiskScheme::new(queue, device_space);
 
-    deamon.ready().expect("virtio: failed to deamonize");
+    deamon.ready().expect("virtio-blkd: failed to deamonize");
 
     loop {
         let mut packet = Packet::default();
         socket_file
             .read(&mut packet)
-            .expect("ahcid: failed to read disk scheme");
+            .expect("virtio-blkd: failed to read disk scheme");
         let packey = scheme.handle(&mut packet);
         packet.a = packey.unwrap();
         socket_file
             .write(&mut packet)
-            .expect("ahcid: failed to read disk scheme");
+            .expect("virtio-blkd: failed to read disk scheme");
     }
 }
 

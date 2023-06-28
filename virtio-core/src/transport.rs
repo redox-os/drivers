@@ -97,7 +97,7 @@ impl<'a> Queue<'a> {
         Arc::new_cyclic(|sref| Self {
             inner: Mutex::new(QueueInner {
                 head_index: 0,
-                descriptor_stack: (0..(descriptor.len() - 1) as u16).rev().collect(),
+                descriptor_stack: (0..descriptor.len() as u16).collect(),
 
                 descriptor,
                 available,
@@ -178,6 +178,11 @@ impl<'a> Queue<'a> {
             std::thread::yield_now();
             self.alloc_descriptor()
         }
+    }
+
+    /// Returns the number of descriptors in the descriptor table of this queue.
+    pub fn descriptor_len(&self) -> usize {
+        self.inner.lock().unwrap().descriptor.len()
     }
 }
 
