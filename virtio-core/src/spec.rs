@@ -234,6 +234,7 @@ impl Buffer {
     }
 }
 
+/// XXX: The [`DescriptorFlags::NEXT`] flag is set automatically.
 pub struct ChainBuilder {
     buffers: Vec<Buffer>,
 }
@@ -245,12 +246,16 @@ impl ChainBuilder {
         }
     }
 
-    pub fn chain(mut self, buffer: Buffer) -> Self {
+    pub fn chain(mut self, mut buffer: Buffer) -> Self {
+        buffer.flags |= DescriptorFlags::NEXT;
         self.buffers.push(buffer);
         self
     }
 
-    pub fn build(self) -> Vec<Buffer> {
+    pub fn build(mut self) -> Vec<Buffer> {
+        let last_buffer = self.buffers.last_mut().expect("virtio-core: empty chain");
+        last_buffer.flags.remove(DescriptorFlags::NEXT);
+
         self.buffers
     }
 }

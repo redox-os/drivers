@@ -59,8 +59,8 @@ impl BlkExtension for Queue<'_> {
         let status = syscall::Dma::new(u8::MAX).unwrap();
 
         let chain = ChainBuilder::new()
-            .chain(Buffer::new(&req).flags(DescriptorFlags::NEXT))
-            .chain(Buffer::new(&result).flags(DescriptorFlags::WRITE_ONLY | DescriptorFlags::NEXT))
+            .chain(Buffer::new(&req))
+            .chain(Buffer::new(&result).flags(DescriptorFlags::WRITE_ONLY))
             .chain(Buffer::new(&status).flags(DescriptorFlags::WRITE_ONLY))
             .build();
 
@@ -90,8 +90,8 @@ impl BlkExtension for Queue<'_> {
         let status = syscall::Dma::new(u8::MAX).unwrap();
 
         let chain = ChainBuilder::new()
-            .chain(Buffer::new(&req).flags(DescriptorFlags::NEXT))
-            .chain(Buffer::new(&result).flags(DescriptorFlags::NEXT))
+            .chain(Buffer::new(&req))
+            .chain(Buffer::new(&result))
             .chain(Buffer::new(&status).flags(DescriptorFlags::WRITE_ONLY))
             .build();
 
@@ -162,11 +162,8 @@ impl<'a> DiskScheme<'a> {
                     let status = syscall::Dma::new(u8::MAX).unwrap();
 
                     let chain = ChainBuilder::new()
-                        .chain(Buffer::new(&req).flags(DescriptorFlags::NEXT))
-                        .chain(
-                            Buffer::new(&result)
-                                .flags(DescriptorFlags::WRITE_ONLY | DescriptorFlags::NEXT),
-                        )
+                        .chain(Buffer::new(&req))
+                        .chain(Buffer::new(&result).flags(DescriptorFlags::WRITE_ONLY))
                         .chain(Buffer::new(&status).flags(DescriptorFlags::WRITE_ONLY))
                         .build();
 

@@ -128,7 +128,7 @@ impl<'a> SchemeBlockMut for NetworkScheme<'a> {
         payload.copy_from_slice(buffer);
 
         let chain = ChainBuilder::new()
-            .chain(Buffer::new(&header).flags(DescriptorFlags::NEXT))
+            .chain(Buffer::new(&header))
             .chain(Buffer::new_unsized(&payload))
             .build();
 
