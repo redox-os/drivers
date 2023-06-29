@@ -25,6 +25,7 @@ members = [
 
     "virtio-blkd",
     "virtio-netd",
+    "virtio-gpud",
     "virtio-core",
 ]
 

@@ -1949,6 +1949,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "virtio-gpud"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "pcid",
+ "redox-daemon",
+ "virtio-core",
+]
+
+[[package]]
 name = "virtio-netd"
 version = "0.1.0"
 dependencies = [

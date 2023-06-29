@@ -64,6 +64,10 @@ pub const fn align(val: usize, align: usize) -> usize {
     (val + align) & !align
 }
 
+pub const fn align_down(addr: usize) -> usize {
+    addr & !(syscall::PAGE_SIZE - 1)
+}
+
 #[cfg(target_os = "redox")]
 pub fn setup_logging(level: log::LevelFilter, name: &str) {
     use redox_log::{OutputBuilder, RedoxLogger};
