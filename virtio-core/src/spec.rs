@@ -1,5 +1,7 @@
 //! https://docs.oasis-open.org/virtio/virtio/v1.1/virtio-v1.1.html
 
+use std::sync::atomic::{AtomicU16, AtomicU32, AtomicU64, Ordering};
+
 use crate::utils::{IncompleteArrayField, VolatileCell};
 use static_assertions::const_assert_eq;
 
@@ -116,15 +118,41 @@ bitflags::bitflags! {
 #[repr(C)]
 pub struct Descriptor {
     /// Address (guest-physical).
-    pub address: u64,
+    pub address: AtomicU64,
     /// Size of the descriptor.
-    pub size: u32,
-    pub flags: DescriptorFlags,
+    pub size: AtomicU32,
+    flags: AtomicU16,
     /// Index of next desciptor in chain.
-    pub next: u16,
+    pub next: AtomicU16,
 }
 
 const_assert_eq!(core::mem::size_of::<Descriptor>(), 16);
+
+impl Descriptor {
+    pub fn set_addr(&self, addr: u64) {
+        self.address.store(addr, Ordering::SeqCst)
+    }
+
+    pub fn set_size(&self, size: u32) {
+        self.size.store(size, Ordering::SeqCst)
+    }
+
+    pub fn set_next(&self, next: Option<u16>) {
+        self.next.store(next.unwrap_or_default(), Ordering::SeqCst)
+    }
+
+    pub fn set_flags(&self, flags: DescriptorFlags) {
+        self.flags.store(flags.bits(), Ordering::SeqCst)
+    }
+
+    pub fn next(&self) -> u16 {
+        self.next.load(Ordering::SeqCst)
+    }
+
+    pub fn flags(&self) -> DescriptorFlags {
+        DescriptorFlags::from_bits_truncate(self.flags.load(Ordering::SeqCst))
+    }
+}
 
 /// This indicates compliance with the version 1 VirtIO specification.
 ///
@@ -140,7 +168,13 @@ pub const VIRTIO_NET_F_MAC: u32 = 5;
 //      chain.
 #[repr(C)]
 pub struct AvailableRingElement {
-    pub table_index: VolatileCell<u16>,
+    pub table_index: AtomicU16,
+}
+
+impl AvailableRingElement {
+    pub fn set_table_index(&self, index: u16) {
+        self.table_index.store(index, Ordering::SeqCst)
+    }
 }
 
 const_assert_eq!(core::mem::size_of::<AvailableRingElement>(), 2);
@@ -148,7 +182,7 @@ const_assert_eq!(core::mem::size_of::<AvailableRingElement>(), 2);
 #[repr(C)]
 pub struct AvailableRing {
     pub flags: VolatileCell<u16>,
-    pub head_index: VolatileCell<u16>,
+    pub head_index: AtomicU16,
     pub elements: IncompleteArrayField<AvailableRingElement>,
 }
 
@@ -158,7 +192,7 @@ impl Default for AvailableRing {
     fn default() -> Self {
         Self {
             flags: VolatileCell::new(0),
-            head_index: VolatileCell::new(0),
+            head_index: AtomicU16::new(0),
             elements: IncompleteArrayField::new(),
         }
     }
@@ -224,6 +258,14 @@ impl Buffer {
         Self {
             buffer: val.physical(),
             size: core::mem::size_of::<T>() * val.len(),
+            flags: DescriptorFlags::empty(),
+        }
+    }
+
+    pub fn new_sized<T>(val: &syscall::Dma<[T]>, size: usize) -> Self {
+        Self {
+            buffer: val.physical(),
+            size,
             flags: DescriptorFlags::empty(),
         }
     }

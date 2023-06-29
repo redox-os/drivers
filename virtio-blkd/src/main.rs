@@ -1,17 +1,15 @@
 #![deny(trivial_numeric_casts, unused_allocation)]
-#![feature(int_roundings)]
+#![feature(int_roundings, async_fn_in_trait)]
 
 use std::fs::File;
-use std::io;
 use std::io::{Read, Write};
-use std::os::fd::{AsRawFd, FromRawFd, RawFd};
+use std::os::fd::{FromRawFd, RawFd};
 
 use static_assertions::const_assert_eq;
 
 use pcid_interface::*;
 use virtio_core::spec::*;
 
-use event::EventQueue;
 use syscall::{Packet, SchemeBlockMut};
 
 use virtio_core::utils::VolatileCell;
@@ -93,66 +91,14 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
     assert_eq!(pci_config.func.devid, 0x1001);
     log::info!("virtio-blk: initiating startup sequence :^)");
 
-    let mut device = virtio_core::probe_device(&mut pcid_handle)?;
+    let device = virtio_core::probe_device(&mut pcid_handle)?;
     device.transport.finalize_features();
 
     let queue = device
         .transport
-        .setup_queue(virtio_core::MSIX_PRIMARY_VECTOR)?;
-    let queue_copy = queue.clone();
+        .setup_queue(virtio_core::MSIX_PRIMARY_VECTOR, &device.irq_handle)?;
 
     let device_space = unsafe { &mut *(device.device_space as *mut BlockDeviceConfig) };
-
-    std::thread::spawn(move || {
-        let mut event_queue = EventQueue::<usize>::new().unwrap();
-        let mut progress_head = 0;
-
-        event_queue
-            .add(
-                device.irq_handle.as_raw_fd(),
-                move |_| -> Result<Option<usize>, io::Error> {
-                    // Read from ISR to acknowledge the interrupt.
-                    let _isr = device.isr.get() as usize;
-
-                    let mut inner = queue_copy.inner.lock().unwrap();
-                    let used_head = inner.used.head_index();
-
-                    if progress_head == used_head {
-                        return Ok(None);
-                    }
-
-                    for i in progress_head..used_head {
-                        let used = inner.used.get_element_at(i as usize);
-                        let mut desc_idx = used.table_index.get();
-                        inner.descriptor_stack.push_back(desc_idx as u16);
-
-                        loop {
-                            let desc = &inner.descriptor[desc_idx as usize];
-                            if !desc.flags.contains(DescriptorFlags::NEXT) {
-                                break;
-                            }
-
-                            desc_idx = desc.next.into();
-                            inner.descriptor_stack.push_back(desc_idx as u16);
-                        }
-                    }
-
-                    progress_head = used_head;
-                    drop(inner);
-
-                    let mut buf = [0u8; 8];
-                    device.irq_handle.read(&mut buf)?;
-                    // Acknowledge the interrupt.
-                    // irq_handle.write(&buf)?;
-                    Ok(None)
-                },
-            )
-            .unwrap();
-
-        loop {
-            event_queue.run().unwrap();
-        }
-    });
 
     // At this point the device is alive!
     device.transport.run_device();

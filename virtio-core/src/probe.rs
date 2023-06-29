@@ -23,7 +23,6 @@ pub struct Device<'a> {
 
 struct MsixInfo {
     pub virt_table_base: NonNull<MsixTableEntry>,
-    pub virt_pba_base: NonNull<u64>,
     pub capability: MsixCapability,
 }
 
@@ -84,11 +83,9 @@ fn enable_msix(pcid_handle: &mut PcidServerHandle) -> Result<File, Error> {
     }
 
     let virt_table_base = ((table_base - bar_ptr as usize) + address) as *mut MsixTableEntry;
-    let virt_pba_base = ((pba_base - bar_ptr as usize) + address) as *mut u64;
 
     let mut info = MsixInfo {
         virt_table_base: NonNull::new(virt_table_base).unwrap(),
-        virt_pba_base: NonNull::new(virt_pba_base).unwrap(),
         capability,
     };
 

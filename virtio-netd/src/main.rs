@@ -73,11 +73,11 @@ fn deamon(deamon: redox_daemon::Daemon) -> Result<(), Error> {
     // TODO(andypython): Should we use the same IRQ vector for both?
     let rx_queue = device
         .transport
-        .setup_queue(virtio_core::MSIX_PRIMARY_VECTOR)?;
+        .setup_queue(virtio_core::MSIX_PRIMARY_VECTOR, &device.irq_handle)?;
 
     let tx_queue = device
         .transport
-        .setup_queue(virtio_core::MSIX_PRIMARY_VECTOR)?;
+        .setup_queue(virtio_core::MSIX_PRIMARY_VECTOR, &device.irq_handle)?;
 
     device.transport.run_device();
 

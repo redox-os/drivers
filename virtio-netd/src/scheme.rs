@@ -35,7 +35,7 @@ impl<'a> NetworkScheme<'a> {
                 .chain(Buffer::new_unsized(&rx_buffers[i]).flags(DescriptorFlags::WRITE_ONLY))
                 .build();
 
-            rx.send(chain);
+            let _ = rx.send(chain);
         }
 
         Self {
@@ -54,15 +54,13 @@ impl<'a> NetworkScheme<'a> {
     fn try_recv(&mut self, target: &mut [u8]) -> usize {
         let header_size = core::mem::size_of::<VirtHeader>();
 
-        let mut queue = self.rx.inner.lock().unwrap();
-
-        if self.recv_head == queue.used.head_index() {
+        if self.recv_head == self.rx.used.head_index() {
             // The read would block.
             return 0;
         }
 
-        let idx = queue.used.head_index() as usize;
-        let element = queue.used.get_element_at(idx - 1);
+        let idx = self.rx.used.head_index() as usize;
+        let element = self.rx.used.get_element_at(idx - 1);
 
         let descriptor_idx = element.table_index.get();
         let payload_size = element.written.get() as usize - header_size;
@@ -77,7 +75,7 @@ impl<'a> NetworkScheme<'a> {
         // Copy the packet into the buffer.
         target[..payload_size].copy_from_slice(&packet);
 
-        self.recv_head = queue.used.head_index();
+        self.recv_head = self.rx.used.head_index();
         payload_size
     }
 }
@@ -123,7 +121,6 @@ impl<'a> SchemeBlockMut for NetworkScheme<'a> {
 
         let header = unsafe { Dma::<VirtHeader>::zeroed()?.assume_init() };
 
-        // TODO: Does the payload actually need to be a DMA buffer?
         let mut payload = unsafe { Dma::<[u8]>::zeroed_unsized(buffer.len())? };
         payload.copy_from_slice(buffer);
 
@@ -132,9 +129,7 @@ impl<'a> SchemeBlockMut for NetworkScheme<'a> {
             .chain(Buffer::new_unsized(&payload))
             .build();
 
-        self.tx.send(chain);
-        core::mem::forget(payload);
-
+        futures::executor::block_on(self.tx.send(chain));
         Ok(Some(buffer.len()))
     }
 
@@ -147,7 +142,10 @@ impl<'a> SchemeBlockMut for NetworkScheme<'a> {
         id: usize,
         _flags: syscall::EventFlags,
     ) -> syscall::Result<Option<syscall::EventFlags>> {
-        let _flags = self.handles.get(&id).ok_or(SysError::new(EBADF))?;
+        if self.handles.get(&id).is_none() {
+            return Err(SysError::new(EBADF));
+        }
+
         Ok(Some(syscall::EventFlags::empty()))
     }
 

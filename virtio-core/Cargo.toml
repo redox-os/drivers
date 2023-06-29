@@ -10,7 +10,10 @@ bitflags = "2.3.2"
 redox_syscall = "0.3"
 log = "0.4"
 thiserror = "1.0.40"
+futures = { version = "0.3.28", features = ["executor"] }
+crossbeam-queue = "0.3.8"
 
 redox-log = "0.1"
+redox_event = { git = "https://gitlab.redox-os.org/redox-os/event.git" }
 
 pcid = { path = "../pcid" }

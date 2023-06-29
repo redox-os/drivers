@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 log = "0.4"
 static_assertions = "1.1.0"
+futures = { version = "0.3.28", features = ["executor"] }
 
 virtio-core = { path = "../virtio-core" }
 pcid = { path = "../pcid" }
