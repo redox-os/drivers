@@ -12,7 +12,7 @@ use syscall::{Io, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
 
 use crate::spec::*;
 use crate::transport::{Error, StandardTransport};
-use crate::utils::VolatileCell;
+use crate::utils::{VolatileCell, align_down};
 
 pub struct Device<'a> {
     pub transport: Arc<StandardTransport<'a>>,
@@ -178,11 +178,21 @@ pub fn probe_device<'a>(pcid_handle: &mut PcidServerHandle) -> Result<Device<'a>
         };
 
         let address = unsafe {
-            syscall::physmap(
-                addr + capability.offset as usize,
-                capability.length as usize,
+            let addr = addr + capability.offset as usize;
+
+            // XXX: physmap() requires the address to be page aligned.
+            let aligned_addr = align_down(addr);
+            let offset = addr - aligned_addr;
+
+            let size = offset + capability.length as usize;
+
+            let addr = syscall::physmap(
+                aligned_addr,
+                size,
                 PHYSMAP_WRITE | PHYSMAP_NO_CACHE,
-            )?
+            )?;
+
+            addr + offset
         };
 
         match capability.cfg_type {
