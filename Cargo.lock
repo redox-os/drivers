@@ -6,7 +6,7 @@ version = 3
 name = "ac97d"
 version = "0.1.0"
 dependencies = [
- "bitflags",
+ "bitflags 1.2.1",
  "log",
  "redox-daemon",
  "redox-log",
@@ -38,7 +38,7 @@ dependencies = [
 name = "ahcid"
 version = "0.1.0"
 dependencies = [
- "bitflags",
+ "bitflags 1.2.1",
  "block-io-wrapper",
  "byteorder 1.4.3",
  "log",
@@ -52,7 +52,7 @@ dependencies = [
 name = "alxd"
 version = "0.1.0"
 dependencies = [
- "bitflags",
+ "bitflags 1.2.1",
  "netutils",
  "redox-daemon",
  "redox_event",
@@ -98,6 +98,12 @@ checksum = "d52a9bb7ec0cf484c551830a7ce27bd20d67eac647e1befb56b0be4ee39a55d2"
 dependencies = [
  "winapi 0.3.9",
 ]
+
+[[package]]
+name = "anyhow"
+version = "1.0.71"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9c7d0618f0e0b7e8ff11427422b64564d5fb0be1940354bfe2e0529b18a9d9b8"
 
 [[package]]
 name = "arg_parser"
@@ -180,6 +186,12 @@ name = "bitflags"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf1de2fe8c75bc145a2f577add951f8134889b4795d47466a54a5c846d691693"
+
+[[package]]
+name = "bitflags"
+version = "2.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6dbe3c979c178231552ecba20214a8272df4e09f232a87aef4320cf06539aded"
 
 [[package]]
 name = "bitvec"
@@ -272,7 +284,7 @@ checksum = "a0610544180c38b88101fecf2dd634b174a62eef6946f84dfc6a7127512b381c"
 dependencies = [
  "ansi_term",
  "atty",
- "bitflags",
+ "bitflags 1.2.1",
  "strsim",
  "textwrap",
  "unicode-width",
@@ -285,7 +297,7 @@ version = "0.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ddfc5b9aa5d4507acaf872de71051dfd0e309860e88966e1051e462a077aac4f"
 dependencies = [
- "bitflags",
+ "bitflags 1.2.1",
 ]
 
 [[package]]
@@ -416,7 +428,7 @@ dependencies = [
 name = "e1000d"
 version = "0.1.0"
 dependencies = [
- "bitflags",
+ "bitflags 1.2.1",
  "netutils",
  "redox-daemon",
  "redox_event",
@@ -440,7 +452,7 @@ version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2e9763c69ebaae630ba35f74888db465e49e259ba1bc0eda7d06f4a067615d82"
 dependencies = [
- "bitflags",
+ "bitflags 1.2.1",
  "fuchsia-zircon-sys",
 ]
 
@@ -550,7 +562,7 @@ name = "gpt"
 version = "0.6.3"
 source = "git+https://gitlab.redox-os.org/redox-os/gpt#4d800981c5dfae60ae183dbddaa3e026f80a5e5c"
 dependencies = [
- "bitflags",
+ "bitflags 1.2.1",
  "crc",
  "log",
  "uuid",
@@ -632,7 +644,7 @@ dependencies = [
 name = "ihdad"
 version = "0.1.0"
 dependencies = [
- "bitflags",
+ "bitflags 1.2.1",
  "log",
  "pcid",
  "redox-daemon",
@@ -680,7 +692,7 @@ checksum = "453ad9f582a441959e5f0d088b02ce04cfe8d51a8eaf077f12ac6d3e94164ca6"
 name = "ixgbed"
 version = "1.0.0"
 dependencies = [
- "bitflags",
+ "bitflags 1.2.1",
  "netutils",
  "redox-daemon",
  "redox_event",
@@ -892,7 +904,7 @@ name = "nvmed"
 version = "0.1.0"
 dependencies = [
  "arrayvec 0.5.2",
- "bitflags",
+ "bitflags 1.2.1",
  "block-io-wrapper",
  "crossbeam-channel 0.4.4",
  "futures",
@@ -1035,7 +1047,7 @@ name = "pcid"
 version = "0.1.0"
 dependencies = [
  "bincode",
- "bitflags",
+ "bitflags 1.2.1",
  "byteorder 1.4.3",
  "libc",
  "log",
@@ -1120,7 +1132,7 @@ dependencies = [
 name = "ps2d"
 version = "0.1.0"
 dependencies = [
- "bitflags",
+ "bitflags 1.2.1",
  "orbclient",
  "redox-daemon",
  "redox_syscall 0.3.5",
@@ -1334,7 +1346,7 @@ version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fb5a58c1855b4b6819d59012155603f0b22ad30cad752600aadfcb695265519a"
 dependencies = [
- "bitflags",
+ "bitflags 1.2.1",
 ]
 
 [[package]]
@@ -1343,7 +1355,7 @@ version = "0.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "567664f262709473930a4bf9e51bf2ebf3348f2e748ccc50dea20646858f8f29"
 dependencies = [
- "bitflags",
+ "bitflags 1.2.1",
 ]
 
 [[package]]
@@ -1359,7 +1371,7 @@ dependencies = [
 name = "rtl8168d"
 version = "0.1.0"
 dependencies = [
- "bitflags",
+ "bitflags 1.2.1",
  "log",
  "netutils",
  "pcid",
@@ -1396,7 +1408,7 @@ checksum = "f91339c0467de62360649f8d3e185ca8de4224ff281f66000de5eb2a77a79041"
 name = "sb16d"
 version = "0.1.0"
 dependencies = [
- "bitflags",
+ "bitflags 1.2.1",
  "log",
  "redox-daemon",
  "redox-log",
@@ -1443,7 +1455,7 @@ version = "0.35.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f7959277b623f1fb9e04aea73686c3ca52f01b2145f8ea16f4ff30d8b7623b1a"
 dependencies = [
- "bitflags",
+ "bitflags 1.2.1",
  "lazy_static",
  "libc",
  "raw-window-handle 0.4.3",
@@ -1552,6 +1564,12 @@ name = "stable_deref_trait"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a8f112729512f8e442d81f95a8a7ddf2b7c6b8a1a6f509a95864142b30cab2d3"
+
+[[package]]
+name = "static_assertions"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "stb_truetype"
@@ -1805,7 +1823,7 @@ dependencies = [
 name = "usbhidd"
 version = "0.1.0"
 dependencies = [
- "bitflags",
+ "bitflags 1.2.1",
  "log",
  "orbclient",
  "redox-log",
@@ -1884,6 +1902,24 @@ dependencies = [
  "redox-daemon",
  "redox_syscall 0.3.5",
  "rusttype",
+]
+
+[[package]]
+name = "virtiod"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bitflags 2.3.2",
+ "block-io-wrapper",
+ "log",
+ "partitionlib",
+ "pcid",
+ "redox-daemon",
+ "redox-log",
+ "redox_event",
+ "redox_syscall 0.3.5",
+ "static_assertions",
+ "thiserror",
 ]
 
 [[package]]
@@ -2106,7 +2142,7 @@ dependencies = [
 name = "xhcid"
 version = "0.1.0"
 dependencies = [
- "bitflags",
+ "bitflags 1.2.1",
  "chashmap",
  "crossbeam-channel 0.4.4",
  "futures",

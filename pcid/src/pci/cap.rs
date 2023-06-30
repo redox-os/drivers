@@ -80,7 +80,7 @@ pub enum MsiCapability {
 }
 
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct PcieCapability {
     pub pcie_caps: u32,
     pub dev_caps: u32,
@@ -117,7 +117,7 @@ pub struct VendorSpecificCapability {
     pub data: Vec<u8>,
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub enum Capability {
     Msi(MsiCapability),
     MsiX(MsixCapability),

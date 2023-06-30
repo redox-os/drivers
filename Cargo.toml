@@ -22,6 +22,8 @@ members = [
     "usbctl",
     "usbhidd",
     "usbscsid",
+
+    "virtiod",
 ]
 
 [profile.release]

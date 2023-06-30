@@ -1,1 +1,4 @@
 target/
+
+# editor configs:
+.vscode
