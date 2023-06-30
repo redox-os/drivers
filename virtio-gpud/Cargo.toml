@@ -1,0 +1,13 @@
+[package]
+name = "virtio-gpud"
+version = "0.1.0"
+edition = "2021"
+authors = ["Anhad Singh <andypython@protonmail.com>"]
+
+[dependencies]
+log = "0.4"
+
+virtio-core = { path = "../virtio-core" }
+pcid = { path = "../pcid" }
+
+redox-daemon = "0.1"

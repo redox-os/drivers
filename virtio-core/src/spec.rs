@@ -1,27 +1,9 @@
 //! https://docs.oasis-open.org/virtio/virtio/v1.1/virtio-v1.1.html
 
-#![feature(int_roundings)]
+use std::sync::atomic::{AtomicU16, AtomicU32, AtomicU64, Ordering};
 
+use crate::utils::{IncompleteArrayField, VolatileCell};
 use static_assertions::const_assert_eq;
-
-pub mod transport;
-pub mod utils;
-
-use utils::{IncompleteArrayField, VolatileCell};
-
-use thiserror::Error;
-
-#[derive(Debug, Error)]
-pub enum Error {
-    #[error("capability {0:?} not found")]
-    InCapable(CfgType),
-    #[error("failed to map memory")]
-    Physmap,
-    #[error("failed to allocate an interrupt vector")]
-    ExhaustedInt,
-    #[error("syscall error")]
-    SyscallError(syscall::Error),
-}
 
 #[derive(Debug, Copy, Clone)]
 #[repr(u8)]
@@ -136,21 +118,48 @@ bitflags::bitflags! {
 #[repr(C)]
 pub struct Descriptor {
     /// Address (guest-physical).
-    pub address: u64,
+    pub address: AtomicU64,
     /// Size of the descriptor.
-    pub size: u32,
-    pub flags: DescriptorFlags,
+    pub size: AtomicU32,
+    flags: AtomicU16,
     /// Index of next desciptor in chain.
-    pub next: u16,
+    pub next: AtomicU16,
 }
 
 const_assert_eq!(core::mem::size_of::<Descriptor>(), 16);
+
+impl Descriptor {
+    pub fn set_addr(&self, addr: u64) {
+        self.address.store(addr, Ordering::SeqCst)
+    }
+
+    pub fn set_size(&self, size: u32) {
+        self.size.store(size, Ordering::SeqCst)
+    }
+
+    pub fn set_next(&self, next: Option<u16>) {
+        self.next.store(next.unwrap_or_default(), Ordering::SeqCst)
+    }
+
+    pub fn set_flags(&self, flags: DescriptorFlags) {
+        self.flags.store(flags.bits(), Ordering::SeqCst)
+    }
+
+    pub fn next(&self) -> u16 {
+        self.next.load(Ordering::SeqCst)
+    }
+
+    pub fn flags(&self) -> DescriptorFlags {
+        DescriptorFlags::from_bits_truncate(self.flags.load(Ordering::SeqCst))
+    }
+}
 
 /// This indicates compliance with the version 1 VirtIO specification.
 ///
 /// See `6.1 Driver Requirements: Reserved Feature Bits` section of the VirtIO
 /// specification for more information.
 pub const VIRTIO_F_VERSION_1: u32 = 32;
+pub const VIRTIO_NET_F_MAC: u32 = 5;
 
 // ======== Available Ring ========
 //
@@ -159,7 +168,13 @@ pub const VIRTIO_F_VERSION_1: u32 = 32;
 //      chain.
 #[repr(C)]
 pub struct AvailableRingElement {
-    pub table_index: VolatileCell<u16>,
+    pub table_index: AtomicU16,
+}
+
+impl AvailableRingElement {
+    pub fn set_table_index(&self, index: u16) {
+        self.table_index.store(index, Ordering::SeqCst)
+    }
 }
 
 const_assert_eq!(core::mem::size_of::<AvailableRingElement>(), 2);
@@ -167,7 +182,7 @@ const_assert_eq!(core::mem::size_of::<AvailableRingElement>(), 2);
 #[repr(C)]
 pub struct AvailableRing {
     pub flags: VolatileCell<u16>,
-    pub head_index: VolatileCell<u16>,
+    pub head_index: AtomicU16,
     pub elements: IncompleteArrayField<AvailableRingElement>,
 }
 
@@ -177,7 +192,7 @@ impl Default for AvailableRing {
     fn default() -> Self {
         Self {
             flags: VolatileCell::new(0),
-            head_index: VolatileCell::new(0),
+            head_index: AtomicU16::new(0),
             elements: IncompleteArrayField::new(),
         }
     }
@@ -225,9 +240,9 @@ pub struct UsedRingExtra {
 
 // ======== Utils ========
 pub struct Buffer {
-    buffer: usize,
-    size: usize,
-    flags: DescriptorFlags,
+    pub(crate) buffer: usize,
+    pub(crate) size: usize,
+    pub(crate) flags: DescriptorFlags,
 }
 
 impl Buffer {
@@ -239,12 +254,29 @@ impl Buffer {
         }
     }
 
+    pub fn new_unsized<T>(val: &syscall::Dma<[T]>) -> Self {
+        Self {
+            buffer: val.physical(),
+            size: core::mem::size_of::<T>() * val.len(),
+            flags: DescriptorFlags::empty(),
+        }
+    }
+
+    pub fn new_sized<T>(val: &syscall::Dma<[T]>, size: usize) -> Self {
+        Self {
+            buffer: val.physical(),
+            size,
+            flags: DescriptorFlags::empty(),
+        }
+    }
+
     pub fn flags(mut self, flags: DescriptorFlags) -> Self {
         self.flags = flags;
         self
     }
 }
 
+/// XXX: The [`DescriptorFlags::NEXT`] flag is set automatically.
 pub struct ChainBuilder {
     buffers: Vec<Buffer>,
 }
@@ -256,12 +288,16 @@ impl ChainBuilder {
         }
     }
 
-    pub fn chain(mut self, buffer: Buffer) -> Self {
+    pub fn chain(mut self, mut buffer: Buffer) -> Self {
+        buffer.flags |= DescriptorFlags::NEXT;
         self.buffers.push(buffer);
         self
     }
 
-    pub fn build(self) -> Vec<Buffer> {
+    pub fn build(mut self) -> Vec<Buffer> {
+        let last_buffer = self.buffers.last_mut().expect("virtio-core: empty chain");
+        last_buffer.flags.remove(DescriptorFlags::NEXT);
+
         self.buffers
     }
 }

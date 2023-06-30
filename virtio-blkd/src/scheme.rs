@@ -10,10 +10,9 @@ use std::sync::Arc;
 use partitionlib::LogicalBlockSize;
 use partitionlib::PartitionTable;
 use syscall::*;
-use virtiod::transport::Queue;
-use virtiod::Buffer;
-use virtiod::ChainBuilder;
-use virtiod::DescriptorFlags;
+
+use virtio_core::spec::{Buffer, ChainBuilder, DescriptorFlags};
+use virtio_core::transport::Queue;
 
 use crate::BlockDeviceConfig;
 use crate::BlockRequestTy;
@@ -22,31 +21,12 @@ use crate::BlockVirtRequest;
 const BLK_SIZE: u64 = 512;
 
 trait BlkExtension {
-    /// XXX: Reads only one block despite the size of the output buffer. Use [`BlkExtension::read`] instead.
-    fn read_block(&self, block: u64, block_bytes: &mut [u8]) -> usize;
-
-    /// XXX: Reads only one block despite the size of the output buffer. Use [`BlkExtension::write`] instead.
-    fn write_block(&self, block: u64, block_bytes: &[u8]) -> usize;
-
-    fn read(&self, block: u64, block_bytes: &mut [u8]) -> usize {
-        let sectors = block_bytes.len() / BLK_SIZE as usize;
-
-        (0..sectors)
-            .map(|i| self.read_block(block + i as u64, &mut block_bytes[i * BLK_SIZE as usize..]))
-            .sum()
-    }
-
-    fn write(&self, block: u64, block_bytes: &[u8]) -> usize {
-        let sectors = block_bytes.len() / BLK_SIZE as usize;
-
-        (0..sectors)
-            .map(|i| self.write_block(block + i as u64, &block_bytes[i * BLK_SIZE as usize..]))
-            .sum()
-    }
+    async fn read(&self, block: u64, target: &mut [u8]) -> usize;
+    async fn write(&self, block: u64, target: &[u8]) -> usize;
 }
 
 impl BlkExtension for Queue<'_> {
-    fn read_block(&self, block: u64, block_bytes: &mut [u8]) -> usize {
+    async fn read(&self, block: u64, target: &mut [u8]) -> usize {
         let req = syscall::Dma::new(BlockVirtRequest {
             ty: BlockRequestTy::In,
             reserved: 0,
@@ -54,30 +34,24 @@ impl BlkExtension for Queue<'_> {
         })
         .unwrap();
 
-        let result = syscall::Dma::new([0u8; 512]).unwrap();
+        let result = unsafe { syscall::Dma::<[u8]>::zeroed_unsized(target.len()) }.unwrap();
         let status = syscall::Dma::new(u8::MAX).unwrap();
 
         let chain = ChainBuilder::new()
-            .chain(Buffer::new(&req).flags(DescriptorFlags::NEXT))
-            .chain(Buffer::new(&result).flags(DescriptorFlags::WRITE_ONLY | DescriptorFlags::NEXT))
+            .chain(Buffer::new(&req))
+            .chain(Buffer::new_unsized(&result).flags(DescriptorFlags::WRITE_ONLY))
             .chain(Buffer::new(&status).flags(DescriptorFlags::WRITE_ONLY))
             .build();
 
-        self.send(chain);
+        // XXX: Subtract 1 because the of status byte.
+        let written = self.send(chain).await as usize - 1;
+        assert_eq!(*status, 0);
 
-        // FIXME: interrupts are for a reason
-        while *status != 0 {
-            core::hint::spin_loop();
-        }
-
-        let size = core::cmp::min(block_bytes.len(), result.len());
-        block_bytes[..size].copy_from_slice(&result.as_slice()[..size]);
-        std::thread::yield_now();
-
-        size
+        target[..written].copy_from_slice(&result);
+        written
     }
 
-    fn write_block(&self, block: u64, block_bytes: &[u8]) -> usize {
+    async fn write(&self, block: u64, target: &[u8]) -> usize {
         let req = syscall::Dma::new(BlockVirtRequest {
             ty: BlockRequestTy::Out,
             reserved: 0,
@@ -85,26 +59,21 @@ impl BlkExtension for Queue<'_> {
         })
         .unwrap();
 
-        let mut result = syscall::Dma::new([0u8; 512]).unwrap();
-        result.copy_from_slice(&block_bytes[..512]);
+        let mut result = unsafe { syscall::Dma::<[u8]>::zeroed_unsized(target.len()) }.unwrap();
+        result.copy_from_slice(target.as_ref());
 
         let status = syscall::Dma::new(u8::MAX).unwrap();
 
         let chain = ChainBuilder::new()
-            .chain(Buffer::new(&req).flags(DescriptorFlags::NEXT))
-            .chain(Buffer::new(&result).flags(DescriptorFlags::NEXT))
+            .chain(Buffer::new(&req))
+            .chain(Buffer::new_sized(&result, target.len()))
             .chain(Buffer::new(&status).flags(DescriptorFlags::WRITE_ONLY))
             .build();
 
-        self.send(chain);
+        self.send(chain).await as usize;
+        assert_eq!(*status, 0);
 
-        // FIXME: interrupts are for a reason
-        while *status != 0 {
-            core::hint::spin_loop();
-        }
-
-        std::thread::yield_now();
-        block_bytes.len()
+        target.len()
     }
 }
 
@@ -164,26 +133,16 @@ impl<'a> DiskScheme<'a> {
                     let status = syscall::Dma::new(u8::MAX).unwrap();
 
                     let chain = ChainBuilder::new()
-                        .chain(Buffer::new(&req).flags(DescriptorFlags::NEXT))
-                        .chain(
-                            Buffer::new(&result)
-                                .flags(DescriptorFlags::WRITE_ONLY | DescriptorFlags::NEXT),
-                        )
+                        .chain(Buffer::new(&req))
+                        .chain(Buffer::new(&result).flags(DescriptorFlags::WRITE_ONLY))
                         .chain(Buffer::new(&status).flags(DescriptorFlags::WRITE_ONLY))
                         .build();
 
-                    self.scheme.queue.send(chain);
-
-                    // FIXME: interrupts are for a reason
-                    while *status != 0 {
-                        core::hint::spin_loop();
-                    }
+                    futures::executor::block_on(self.scheme.queue.send(chain));
+                    assert_eq!(*status, 0);
 
                     let size = core::cmp::min(block_bytes.len(), result.len());
                     block_bytes[..size].copy_from_slice(&result.as_slice()[..size]);
-
-                    std::thread::yield_now();
-
                     Ok(())
                 };
 
@@ -333,7 +292,7 @@ impl<'a> SchemeBlockMut for DiskScheme<'a> {
 
                 let abs_block = part.start_lba + rel_block;
 
-                let count = self.queue.read(abs_block, buf);
+                let count = futures::executor::block_on(self.queue.read(abs_block, buf));
                 *offset += count;
                 Ok(Some(count))
             }
@@ -341,7 +300,9 @@ impl<'a> SchemeBlockMut for DiskScheme<'a> {
             Handle::Disk { ref mut offset } => {
                 let block_size = self.cfg.block_size();
 
-                let count = self.queue.read((*offset as u64) / block_size as u64, buf);
+                let count = futures::executor::block_on(
+                    self.queue.read((*offset as u64) / block_size as u64, buf),
+                );
                 *offset += count;
                 Ok(Some(count))
             }
@@ -352,7 +313,9 @@ impl<'a> SchemeBlockMut for DiskScheme<'a> {
         match *self.handles.get_mut(&id).ok_or(Error::new(EBADF))? {
             Handle::Disk { ref mut offset } => {
                 let block_size = self.cfg.block_size();
-                let count = self.queue.write((*offset as u64) / block_size as u64, buf);
+                let count = futures::executor::block_on(
+                    self.queue.write((*offset as u64) / block_size as u64, buf),
+                );
 
                 *offset += count;
                 Ok(Some(count))

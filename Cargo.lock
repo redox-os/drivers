@@ -355,6 +355,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "crossbeam-queue"
+version = "0.3.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1cfb3ea8a53f37c40dea2c7bedcbd88bdfae54f5e2175d6ecaff1c988353add"
+dependencies = [
+ "cfg-if 1.0.0",
+ "crossbeam-utils 0.8.15",
+]
+
+[[package]]
 name = "crossbeam-utils"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1905,21 +1915,61 @@ dependencies = [
 ]
 
 [[package]]
-name = "virtiod"
+name = "virtio-blkd"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bitflags 2.3.2",
  "block-io-wrapper",
+ "futures",
  "log",
  "partitionlib",
  "pcid",
  "redox-daemon",
  "redox-log",
+ "redox_syscall 0.3.5",
+ "static_assertions",
+ "thiserror",
+ "virtio-core",
+]
+
+[[package]]
+name = "virtio-core"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.3.2",
+ "crossbeam-queue",
+ "futures",
+ "log",
+ "pcid",
+ "redox-log",
  "redox_event",
  "redox_syscall 0.3.5",
  "static_assertions",
  "thiserror",
+]
+
+[[package]]
+name = "virtio-gpud"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "pcid",
+ "redox-daemon",
+ "virtio-core",
+]
+
+[[package]]
+name = "virtio-netd"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "log",
+ "netutils",
+ "pcid",
+ "redox-daemon",
+ "redox_syscall 0.3.5",
+ "static_assertions",
+ "virtio-core",
 ]
 
 [[package]]
