@@ -6,8 +6,13 @@ authors = ["Anhad Singh <andypython@protonmail.com>"]
 
 [dependencies]
 log = "0.4"
+static_assertions = "1.1.0"
+futures = { version = "0.3.28", features = ["executor"] }
+anyhow = "1.0.71"
 
 virtio-core = { path = "../virtio-core" }
 pcid = { path = "../pcid" }
 
 redox-daemon = "0.1"
+redox_syscall = "0.3"
+orbclient = "0.3.27"

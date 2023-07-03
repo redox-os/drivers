@@ -45,7 +45,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     let input = OpenOptions::new()
         .write(true)
-        .open("display:input")
+        .open("display/vesa:input")
         .expect("ps2d: failed to open display:input");
 
     let mut event_file = OpenOptions::new()

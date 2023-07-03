@@ -38,7 +38,7 @@ fn main() {
 
         let mut scheme = BgaScheme {
             bga: bga,
-            display: File::open("display:input").ok()
+            display: File::open("display/vesa:input").ok()
         };
 
         scheme.update_size();

@@ -86,6 +86,12 @@ impl<'a> Future for PendingRequest<'a> {
             .insert(self.first_descriptor, cx.waker().clone());
 
         let used_head = self.queue.used.head_index();
+
+        if used_head == self.queue.used_head.load(Ordering::SeqCst) {
+            // No new requests have been completed.
+            return Poll::Pending;
+        }
+
         let used_element = self.queue.used.get_element_at((used_head - 1) as usize);
         let written = used_element.written.get();
 
@@ -109,6 +115,8 @@ impl<'a> Future for PendingRequest<'a> {
                 .lock()
                 .unwrap()
                 .remove(&self.first_descriptor);
+
+            self.queue.used_head.store(used_head, Ordering::SeqCst);
             return Poll::Ready(written);
         } else {
             return Poll::Pending;
@@ -122,6 +130,7 @@ pub struct Queue<'a> {
     pub used: Used<'a>,
     pub descriptor: Dma<[Descriptor]>,
     pub available: Available<'a>,
+    pub used_head: AtomicU16,
 
     notification_bell: &'a mut AtomicU16,
     descriptor_stack: crossbeam_queue::SegQueue<u16>,
@@ -148,6 +157,7 @@ impl<'a> Queue<'a> {
             waker: Mutex::new(std::collections::HashMap::new()),
             queue_index,
             descriptor_stack,
+            used_head: AtomicU16::new(0),
             sref: sref.clone(),
         })
     }
@@ -189,8 +199,6 @@ impl<'a> Queue<'a> {
         self.available.set_head_idx(index as u16 + 1);
         self.notification_bell
             .store(self.queue_index, Ordering::SeqCst);
-
-        assert_eq!(self.used.flags(), 0);
 
         PendingRequest {
             queue: self.sref.upgrade().unwrap(),
@@ -470,6 +478,7 @@ impl<'a> StandardTransport<'a> {
 
             event_queue
                 .add(irq_fd, move |_| -> Result<Option<usize>, std::io::Error> {
+                    // Wake up the tasks waiting on the queue.
                     for (_, task) in queue_copy.waker.lock().unwrap().iter() {
                         task.wake_by_ref();
                     }

@@ -11,3 +11,7 @@ popd
 pushd virtio-blkd
 cargo fmt
 popd
+
+pushd virtio-gpud
+cargo fmt
+popd

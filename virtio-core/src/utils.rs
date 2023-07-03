@@ -1,7 +1,7 @@
 use core::cell::UnsafeCell;
+use core::fmt::Debug;
 use core::marker::PhantomData;
 
-#[derive(Debug)]
 #[repr(C)]
 pub struct VolatileCell<T> {
     value: UnsafeCell<T>,
@@ -25,6 +25,17 @@ impl<T: Copy> VolatileCell<T> {
     #[inline]
     pub fn set(&mut self, value: T) {
         unsafe { core::ptr::write_volatile(self.value.get(), value) }
+    }
+}
+
+impl<T> Debug for VolatileCell<T>
+where
+    T: Debug + Copy,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VolatileCell")
+            .field("value", &self.get())
+            .finish()
     }
 }
 
