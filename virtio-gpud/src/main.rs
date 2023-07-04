@@ -3,7 +3,7 @@
 //! XXX: 3D mode will offload rendering ops to the host gpu and therefore requires a GPU with 3D support
 //! on the host machine.
 
-#![feature(async_closure)]
+#![feature(int_roundings)]
 
 use std::fs::File;
 use std::io::{Read, Write};
@@ -18,6 +18,28 @@ mod scheme;
 
 // const VIRTIO_GPU_EVENT_DISPLAY: u32 = 1 << 0;
 const VIRTIO_GPU_MAX_SCANOUTS: usize = 16;
+
+macro_rules! make_getter_setter {
+    ($($field:ident: $return_ty:ty),*) => {
+        $(
+            pub fn $field(&self) -> $return_ty {
+                self.$field.get()
+            }
+
+            paste::item! {
+                pub fn [<set_ $field>](&mut self, value: $return_ty) {
+                    self.$field.set(value)
+                }
+            }
+        )*
+    };
+
+    (@$field:ident: $return_ty:ty) => {
+        pub fn $field(&mut self, value: $return_ty) {
+            self.$field.set(value)
+        }
+    };
+}
 
 #[repr(C)]
 pub struct GpuConfig {
@@ -120,6 +142,28 @@ pub struct GpuRect {
     pub height: VolatileCell<u32>,
 }
 
+impl GpuRect {
+    pub fn new(x: u32, y: u32, width: u32, height: u32) -> Self {
+        Self {
+            x: VolatileCell::new(x),
+            y: VolatileCell::new(y),
+            width: VolatileCell::new(width),
+            height: VolatileCell::new(height),
+        }
+    }
+
+    #[inline]
+    pub fn width(&self) -> u32 {
+        self.width.get()
+    }
+
+    #[inline]
+    pub fn height(&self) -> u32 {
+        self.height.get()
+    }
+}
+
+
 #[derive(Debug)]
 #[repr(C)]
 pub struct DisplayInfo {
@@ -144,6 +188,150 @@ impl Default for GetDisplayInfo {
             },
 
             display_info: unsafe { core::mem::zeroed() },
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
+#[repr(u32)]
+pub enum ResourceFormat {
+    Unknown = 0,
+
+    Bgrx = 2,
+    Xrgb = 4,
+}
+
+#[derive(Debug)]
+#[repr(C)]
+pub struct ResourceCreate2d {
+    pub header: ControlHeader,
+
+    resource_id: VolatileCell<u32>,
+    format: VolatileCell<ResourceFormat>,
+    width: VolatileCell<u32>,
+    height: VolatileCell<u32>,
+}
+
+impl ResourceCreate2d {
+    make_getter_setter!(resource_id: u32, format: ResourceFormat, width: u32, height: u32);
+}
+
+impl Default for ResourceCreate2d {
+    fn default() -> Self {
+        Self {
+            header: ControlHeader {
+                ty: VolatileCell::new(CommandTy::ResourceCreate2d),
+                ..Default::default()
+            },
+
+            resource_id: VolatileCell::new(0),
+            format: VolatileCell::new(ResourceFormat::Unknown),
+            width: VolatileCell::new(0),
+            height: VolatileCell::new(0),
+        }
+    }
+}
+
+#[derive(Debug)]
+#[repr(C)]
+pub struct  MemEntry {
+        pub address: u64,
+        pub length: u32,
+        pub padding: u32    
+}
+
+#[derive(Debug)]
+#[repr(C)]
+pub struct AttachBacking {
+    pub header: ControlHeader,
+    pub resource_id: u32,
+    pub num_entries: u32
+}
+
+impl AttachBacking {
+    pub fn new(resource_id: u32, num_entries: u32) -> Self {
+        Self {
+            header: ControlHeader {
+                ty: VolatileCell::new(CommandTy::ResourceAttachBacking),
+                ..Default::default()
+            },
+            resource_id,
+            num_entries
+        }
+    }
+}
+
+#[derive(Debug)]
+#[repr(C)]
+pub struct ResourceFlush {
+    pub header: ControlHeader,
+    pub rect: GpuRect,
+    pub resource_id: u32,
+    pub padding: u32
+}
+
+impl ResourceFlush {
+    pub fn new(resource_id: u32, rect: GpuRect) -> Self {
+        Self {
+            header: ControlHeader {
+                ty: VolatileCell::new(CommandTy::ResourceFlush),
+                ..Default::default()
+            },
+            
+            rect,
+            resource_id,
+            padding: 0
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct SetScanout {
+    pub header: ControlHeader,
+    pub rect: GpuRect,
+    pub scanout_id: u32,
+    pub resource_id: u32,
+}
+
+impl SetScanout {
+    pub fn new(scanout_id: u32, resource_id: u32, rect: GpuRect) -> Self {
+        Self {
+            header: ControlHeader {
+                ty: VolatileCell::new(CommandTy::SetScanout),
+                ..Default::default()
+            },
+
+            rect,
+            scanout_id,
+            resource_id,
+        }
+    }
+}
+
+
+#[derive(Debug)]
+#[repr(C)]
+pub struct XferToHost2d {
+    pub header: ControlHeader,
+    pub rect: GpuRect,
+    pub offset: u64,
+    pub resource_id: u32,
+    pub padding: u32,
+}
+
+impl XferToHost2d {
+    pub fn new(resource_id: u32, rect: GpuRect) -> Self {
+        Self {
+            header: ControlHeader {
+                ty: VolatileCell::new(CommandTy::TransferToHost2d),
+                ..Default::default()
+            },
+
+            rect,
+            resource_id,
+            offset: 0,
+            padding: 0,
         }
     }
 }

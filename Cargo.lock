@@ -1012,6 +1012,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "paste"
+version = "1.0.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4b27ab7be369122c218afc2079489cdcb4b517c0a3fc386ff11e1fedfcc2b35"
+
+[[package]]
 name = "paw"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1953,6 +1959,7 @@ dependencies = [
  "futures",
  "log",
  "orbclient",
+ "paste",
  "pcid",
  "redox-daemon",
  "redox_syscall 0.3.5",
