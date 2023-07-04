@@ -163,7 +163,6 @@ impl GpuRect {
     }
 }
 
-
 #[derive(Debug)]
 #[repr(C)]
 pub struct DisplayInfo {
@@ -234,10 +233,10 @@ impl Default for ResourceCreate2d {
 
 #[derive(Debug)]
 #[repr(C)]
-pub struct  MemEntry {
-        pub address: u64,
-        pub length: u32,
-        pub padding: u32    
+pub struct MemEntry {
+    pub address: u64,
+    pub length: u32,
+    pub padding: u32,
 }
 
 #[derive(Debug)]
@@ -245,7 +244,7 @@ pub struct  MemEntry {
 pub struct AttachBacking {
     pub header: ControlHeader,
     pub resource_id: u32,
-    pub num_entries: u32
+    pub num_entries: u32,
 }
 
 impl AttachBacking {
@@ -256,7 +255,7 @@ impl AttachBacking {
                 ..Default::default()
             },
             resource_id,
-            num_entries
+            num_entries,
         }
     }
 }
@@ -267,7 +266,7 @@ pub struct ResourceFlush {
     pub header: ControlHeader,
     pub rect: GpuRect,
     pub resource_id: u32,
-    pub padding: u32
+    pub padding: u32,
 }
 
 impl ResourceFlush {
@@ -277,10 +276,10 @@ impl ResourceFlush {
                 ty: VolatileCell::new(CommandTy::ResourceFlush),
                 ..Default::default()
             },
-            
+
             rect,
             resource_id,
-            padding: 0
+            padding: 0,
         }
     }
 }
@@ -308,7 +307,6 @@ impl SetScanout {
         }
     }
 }
-
 
 #[derive(Debug)]
 #[repr(C)]
