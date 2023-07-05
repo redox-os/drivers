@@ -1,17 +1,17 @@
 #!/usr/bin/bash
 
-pushd virtio-core
-cargo fmt
-popd
+function fmt() {
+    for dir in "$@"
+    do
+        pushd $dir
+        printf "\e[1;32mFormatting\e[0m $dir\n"
+        cargo fmt
+        popd
+    done
+}
 
-pushd virtio-netd
-cargo fmt
-popd
-
-pushd virtio-blkd
-cargo fmt
-popd
-
-pushd virtio-gpud
-cargo fmt
-popd
+fmt virtio-core \
+    virtio-netd \
+    virtio-blkd \
+    virtio-gpud \
+    inputd

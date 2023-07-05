@@ -252,7 +252,7 @@ impl<'a> Available<'a> {
             self.ring
                 .elements
                 .as_slice(self.queue_size)
-                .get(index % 256)
+                .get(index % self.queue_size)
                 .expect("virtio-core::available: index out of bounds")
         }
     }
@@ -318,7 +318,7 @@ impl<'a> Used<'a> {
             self.ring
                 .elements
                 .as_slice(self.queue_size)
-                .get(index % 256)
+                .get(index % self.queue_size)
                 .expect("virtio-core::used: index out of bounds")
         }
     }
