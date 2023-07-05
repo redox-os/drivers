@@ -1,12 +1,12 @@
 //! `:input`
-//! 
+//!
 //! A seperate scheme is required since all of the input from different input devices is required
 //! to be combined into a single stream which is later going to be processed by the "consumer"
 //! which usually is Orbital.
-//! 
+//!
 //! ## Input Device ("producer")
 //! Write events to `input:producer`.
-//! 
+//!
 //! ## Input Consumer ("consumer")
 //! Read events from `input:consumer`. Optionally, set the `EVENT_READ` flag to be notified when
 //! events are available.
@@ -24,7 +24,7 @@ enum Handle {
     Consumer {
         events: EventFlags,
         pending: Vec<u8>,
-        notified: bool
+        notified: bool,
     },
 }
 
@@ -55,7 +55,7 @@ impl SchemeMut for InputScheme {
             "consumer" => Handle::Consumer {
                 events: EventFlags::empty(),
                 pending: Vec::new(),
-                notified: false
+                notified: false,
             },
 
             _ => unreachable!("inputd: invalid path {path}"),
@@ -97,11 +97,13 @@ impl SchemeMut for InputScheme {
         for handle in self.handles.values_mut() {
             match handle {
                 Handle::Consumer {
-                    ref mut pending, ref mut notified, ..
+                    ref mut pending,
+                    ref mut notified,
+                    ..
                 } => {
                     pending.extend_from_slice(buf);
                     *notified = false;
-                },
+                }
                 _ => continue,
             }
         }
@@ -117,9 +119,14 @@ impl SchemeMut for InputScheme {
         let handle = self.handles.get_mut(&id).ok_or(SysError::new(EINVAL))?;
 
         match handle {
-            Handle::Consumer { ref mut events, ref mut notified, .. } => {
+            Handle::Consumer {
+                ref mut events,
+                ref mut notified,
+                ..
+            } => {
                 *events = flags;
-            *notified = false;},
+                *notified = false;
+            }
             _ => unreachable!(),
         }
 
@@ -156,7 +163,12 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
         }
 
         for (id, handle) in scheme.handles.iter_mut() {
-            if let Handle::Consumer { events, pending, ref mut notified } = handle {
+            if let Handle::Consumer {
+                events,
+                pending,
+                ref mut notified,
+            } = handle
+            {
                 if pending.is_empty() || *notified || !events.contains(EventFlags::EVENT_READ) {
                     continue;
                 }
@@ -167,7 +179,7 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
                 event_packet.b = *id;
                 event_packet.c = EventFlags::EVENT_READ.bits();
                 // Specifies the number of bytes that can be read non-blocking.
-                event_packet.d = pending.len(); 
+                event_packet.d = pending.len();
                 socket_file.write(&event_packet)?;
 
                 *notified = true;
