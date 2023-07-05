@@ -48,8 +48,15 @@ pub struct GpuConfig {
     /// Clears pending events in the device (write-to-clear).
     pub events_clear: VolatileCell<u32>, // write-only
 
-    pub min_scanouts: VolatileCell<u32>,
+    pub num_scanouts: VolatileCell<u32>,
     pub num_capsets: VolatileCell<u32>,
+}
+
+impl GpuConfig {
+    #[inline]
+    pub fn num_scanouts(&self) -> u32 {
+        self.num_scanouts.get()
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -346,6 +353,7 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
     log::info!("virtio-gpu: initiating startup sequence :^)");
 
     let device = virtio_core::probe_device(&mut pcid_handle)?;
+    let config = unsafe { &mut *(device.device_space as *mut GpuConfig) };
 
     // Negotiate features.
     device.transport.finalize_features();
@@ -363,8 +371,9 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
     device.transport.run_device();
     deamon.ready().unwrap();
 
+
     let mut socket_file = File::create(":display/virtio-gpu")?;
-    let mut scheme = scheme::Display::new(control_queue, cursor_queue);
+    let mut scheme = scheme::Scheme::new(config, control_queue.clone(), cursor_queue.clone())?;
 
     loop {
         let mut packet = Packet::default();

@@ -1,12 +1,12 @@
 use std::{
     collections::BTreeMap,
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicUsize, Ordering, AtomicU32},
         Arc,
     },
 };
 
-use syscall::{Dma, Error as SysError, SchemeMut, EINVAL, EPERM};
+use syscall::{Dma, Error as SysError, SchemeMut, EINVAL};
 use virtio_core::{
     spec::{Buffer, ChainBuilder, DescriptorFlags},
     transport::{Error, Queue},
@@ -15,67 +15,41 @@ use virtio_core::{
 
 use crate::*;
 
-pub enum Handle {
-    Screen { id: usize },
-}
+static RESOURCE_ALLOC: AtomicU32 = AtomicU32::new(1);
 
 pub struct Display<'a> {
     control_queue: Arc<Queue<'a>>,
     cursor_queue: Arc<Queue<'a>>,
 
-    display_id: usize,
-    handles: BTreeMap<usize, Handle>,
-    next_id: AtomicUsize,
     mapped: Option<usize>,
+
+    width: u32,
+    height: u32,
+
+    resource_id: u32,
+    id: usize,
 }
 
 impl<'a> Display<'a> {
-    pub fn new(control_queue: Arc<Queue<'a>>, cursor_queue: Arc<Queue<'a>>) -> Self {
+    pub fn new(control_queue: Arc<Queue<'a>>, cursor_queue: Arc<Queue<'a>>, display_info: & mut DisplayInfo, id: usize) -> Self {
+        display_info.enabled.set(1);
+
         Self {
             control_queue,
             cursor_queue,
 
-            display_id: 0,
-            handles: BTreeMap::new(),
-            next_id: AtomicUsize::new(0),
             mapped: None,
+
+            width: 1920,
+            height: 1080,
+
+            id,
+            resource_id: RESOURCE_ALLOC.fetch_add(1, Ordering::SeqCst)
         }
     }
 
-    async fn get_display_info(&self) -> Result<Dma<GetDisplayInfo>, Error> {
-        let header = Dma::new(ControlHeader {
-            ty: VolatileCell::new(CommandTy::GetDisplayInfo),
-            ..Default::default()
-        })?;
-
-        let response = Dma::new(GetDisplayInfo::default())?;
-        let command = ChainBuilder::new()
-            .chain(Buffer::new(&header))
-            .chain(Buffer::new(&response).flags(DescriptorFlags::WRITE_ONLY))
-            .build();
-
-        self.control_queue.send(command).await;
-        assert!(response.header.ty.get() == CommandTy::RespOkDisplayInfo);
-
-        Ok(response)
-    }
-
-    async fn get_resolution(&self) -> Result<(u32, u32), Error> {
-        let display_info = self.get_display_info().await?;
-
-        let width = display_info.display_info[self.display_id].rect.width();
-        let height = display_info.display_info[self.display_id].rect.height();
-
-        Ok((width, height))
-    }
-
-    async fn get_fpath(&mut self, buffer: &mut [u8]) -> syscall::Result<usize> {
-        let display_info = self.get_display_info().await.unwrap();
-
-        let width = display_info.display_info[self.display_id].rect.width();
-        let height = display_info.display_info[self.display_id].rect.height();
-
-        let path = format!("display:3.0/{}/{}", width, height);
+    async fn get_fpath(&mut self, buffer: &mut [u8]) -> Result<usize, Error> {
+        let path = format!("display/virtio-gpu:3.0/{}/{}", self.width, self.height);
 
         // Copy the path into the target buffer.
         buffer[..path.len()].copy_from_slice(path.as_bytes());
@@ -101,14 +75,17 @@ impl<'a> Display<'a> {
     }
 
     async fn map_screen(&mut self, offset: usize) -> Result<usize, Error> {
+        if let Some(mapped) = self.mapped {
+            return Ok(mapped + offset);
+        }
+
         // Create a host resource using `VIRTIO_GPU_CMD_RESOURCE_CREATE_2D`.
-        let (width, height) = self.get_resolution().await?;
         let mut request = Dma::new(ResourceCreate2d::default())?;
 
-        request.set_width(width);
-        request.set_height(height);
+        request.set_width(self.width);
+        request.set_height(self.height);
         request.set_format(ResourceFormat::Bgrx);
-        request.set_resource_id(1); // FIXME(andypython): dynamically allocate resource identifiers
+        request.set_resource_id(self.resource_id);
 
         self.send_request(request).await?;
 
@@ -118,7 +95,7 @@ impl<'a> Display<'a> {
         // physical memory.
         let bpp = 32;
         let fb_size =
-            (width as usize * height as usize * bpp / 8).next_multiple_of(syscall::PAGE_SIZE);
+            (self.width as usize * self.height as usize * bpp / 8).next_multiple_of(syscall::PAGE_SIZE);
         let address = unsafe { syscall::physalloc(fb_size) }? as u64;
         let mapped = unsafe {
             syscall::physmap(
@@ -138,7 +115,7 @@ impl<'a> Display<'a> {
             padding: 0,
         })?;
 
-        let attach_request = Dma::new(AttachBacking::new(1, 1))?;
+        let attach_request = Dma::new(AttachBacking::new(self.resource_id, 1))?;
         let header = Dma::new(ControlHeader::default())?;
         let command = ChainBuilder::new()
             .chain(Buffer::new(&attach_request))
@@ -154,50 +131,96 @@ impl<'a> Display<'a> {
     }
 
     async fn flush(&mut self) -> Result<(), Error> {
-        let (width, height) = self.get_resolution().await?;
-
-        let rect = GpuRect::new(0, 0, width, height);
-        let scanout_request = Dma::new(SetScanout::new(0, 1, rect))?;
+        let rect = GpuRect::new(0, 0, self.width, self.height);
+        let scanout_request = Dma::new(SetScanout::new(self.id as u32, self.resource_id, rect))?;
         let header = self.send_request(scanout_request).await?;
         assert_eq!(header.ty.get(), CommandTy::RespOkNodata);
 
-        let rect = GpuRect::new(0, 0, width, height);
-        let req = Dma::new(XferToHost2d::new(1, rect))?;
+        let rect = GpuRect::new(0, 0, self.width, self.height);
+        let req = Dma::new(XferToHost2d::new(self.resource_id, rect))?;
         let header = self.send_request(req).await?;
         assert_eq!(header.ty.get(), CommandTy::RespOkNodata);
 
-        let rect = GpuRect::new(0, 0, width, height);
-        self.flush_resource(ResourceFlush::new(1, rect)).await?;
+        let rect = GpuRect::new(0, 0, self.width, self.height);
+        self.flush_resource(ResourceFlush::new(self.resource_id, rect)).await?;
         Ok(())
     }
 }
 
-impl<'a> SchemeMut for Display<'a> {
-    fn open(&mut self, path: &str, _flags: usize, uid: u32, _gid: u32) -> syscall::Result<usize> {
-        if path == "input" {
-            if uid != 0 {
-                return Err(SysError::new(EPERM));
+pub struct Scheme<'a> {
+    control_queue: Arc<Queue<'a>>,
+    cursor_queue: Arc<Queue<'a>>,
+    config: &'a mut GpuConfig,
+    /// File descriptor allocator.
+    next_id: AtomicUsize,
+    handles: BTreeMap<usize /* file descriptor */, Display<'a>>
+}
+
+impl<'a> Scheme<'a> {
+    pub fn new(config: &'a mut GpuConfig, control_queue: Arc<Queue<'a>>, cursor_queue: Arc<Queue<'a>>) -> Result<Self, Error> {
+        Ok(
+            Self {
+                control_queue,
+                cursor_queue,
+                config,
+                next_id: AtomicUsize::new(0),
+                handles: BTreeMap::new()
             }
+        )
+    }
 
-            unimplemented!("input is only supported via `display/vesa:input`")
-        } else {
-            let mut parts = path.split('/');
-            let mut screen = parts.next().unwrap_or("").split('.');
+    async fn open_display(&self, id: usize) -> Result<Display<'a>, Error> {
+        let mut display_info = self.get_display_info().await?;
+        let displays = &mut display_info.display_info[..self.config.num_scanouts() as usize];
 
-            let vt_index = screen.next().unwrap_or("").parse::<usize>().unwrap_or(1);
-            let id = screen.next().unwrap_or("").parse::<usize>().unwrap_or(0);
+        let display = displays.get_mut (id).ok_or(SysError::new(syscall::ENOENT))?;
 
-            if id != self.display_id {
-                return Err(SysError::new(syscall::ENOENT));
-            }
-
-            dbg!(&vt_index, &id);
-
-            let fd = self.next_id.fetch_add(1, Ordering::SeqCst);
-            self.handles.insert(fd, Handle::Screen { id });
-
-            Ok(fd)
+        log::info!("virtio-gpu: opening display ({}x{}px)", display.rect.width(), display.rect.height());
+       let mut d = Display::new(self.control_queue.clone(), self.cursor_queue.clone(), display, id);
+       
+        if id != 0 {
+            d.map_screen(0).await?;
         }
+
+       Ok( d)
+    }
+
+    async fn get_display_info(&self) -> Result<Dma<GetDisplayInfo>, Error> {
+        let header = Dma::new(ControlHeader {
+            ty: VolatileCell::new(CommandTy::GetDisplayInfo),
+            ..Default::default()
+        })?;
+
+        let response = Dma::new(GetDisplayInfo::default())?;
+        let command = ChainBuilder::new()
+            .chain(Buffer::new(&header))
+            .chain(Buffer::new(&response).flags(DescriptorFlags::WRITE_ONLY))
+            .build();
+
+        self.control_queue.send(command).await;
+        assert!(response.header.ty.get() == CommandTy::RespOkDisplayInfo);
+
+        Ok(response)
+    }
+}
+
+impl<'a> SchemeMut for Scheme<'a> {
+    fn open(&mut self, path: &str, _flags: usize, _uid: u32, _gid: u32) -> syscall::Result<usize> {
+        dbg!(&path);
+        
+        let mut parts = path.split('/');
+        let mut screen = parts.next().unwrap_or("").split('.');
+
+        let vt_index = screen.next().unwrap_or("").parse::<usize>().unwrap_or(1);
+        let id = screen.next().unwrap_or("").parse::<usize>().unwrap_or(0);
+
+        dbg!(&vt_index, &id);
+
+        let fd = self.next_id.fetch_add(1, Ordering::SeqCst);
+        let display = futures::executor::block_on(self.open_display(id)).map_err(|_| SysError::new(syscall::ENOENT))?;
+
+        self.handles.insert(fd, display);
+        Ok(fd)
     }
 
     fn dup(&mut self, _old_id: usize, _buf: &[u8]) -> syscall::Result<usize> {
@@ -215,9 +238,7 @@ impl<'a> SchemeMut for Display<'a> {
 
     fn fpath(&mut self, id: usize, buf: &mut [u8]) -> syscall::Result<usize> {
         let handle = self.handles.get_mut(&id).ok_or(SysError::new(EINVAL))?;
-        let bytes_copied = match handle {
-            Handle::Screen { .. } => futures::executor::block_on(self.get_fpath(buf))?,
-        };
+        let bytes_copied = futures::executor::block_on(handle.get_fpath(buf)).unwrap();
 
         Ok(bytes_copied)
     }
@@ -236,25 +257,12 @@ impl<'a> SchemeMut for Display<'a> {
 
     fn fmap(&mut self, id: usize, map: &syscall::Map) -> syscall::Result<usize> {
         let handle = self.handles.get_mut(&id).ok_or(SysError::new(EINVAL))?;
-
-        let a = match handle {
-            Handle::Screen { .. } => {
-                if let Some(mapped) = self.mapped {
-                    // already mapped
-                    mapped + map.offset
-                } else {
-                    // create the resource
-                    futures::executor::block_on(self.map_screen(map.offset)).unwrap()
-                }
-            }
-        };
-        Ok(a)
+        Ok(futures::executor::block_on(handle.map_screen(map.offset)).unwrap())
     }
 
     fn fsync(&mut self, id: usize) -> syscall::Result<usize> {
-        let _handle = self.handles.get_mut(&id).ok_or(SysError::new(EINVAL))?;
-        futures::executor::block_on(self.flush()).unwrap();
-
+        let handle = self.handles.get_mut(&id).ok_or(SysError::new(EINVAL))?;
+        futures::executor::block_on(handle.flush()).unwrap();
         Ok(0)
     }
 
@@ -264,29 +272,19 @@ impl<'a> SchemeMut for Display<'a> {
         Ok(0)
     }
 
-    fn write(&mut self, _id: usize, buf: &[u8]) -> syscall::Result<usize> {
-        // let handle = self.handles.get_mut(&id).ok_or(SysError::new(EINVAL))?;
-
-        // match handle {
-        //     Handle::Screen { .. } => {
-        //         let size = buf.len() / core::mem::size_of::<Event>();
-        //         let events =
-        //             unsafe { core::slice::from_raw_parts(buf.as_ptr().cast::<Event>(), size) };
-
-        //         dbg!(events);
-        //         todo!()
-        //     }
-        // }
+    fn write(&mut self, id: usize, buf: &[u8]) -> syscall::Result<usize> {
+        let handle = self.handles.get_mut(&id).ok_or(SysError::new(EINVAL))?;
 
         // SAFETY: lmao
         unsafe {
             core::ptr::copy_nonoverlapping(
                 buf.as_ptr(),
-                self.mapped.unwrap() as *mut u8,
+                handle.mapped.unwrap() as *mut u8,
                 buf.len(),
             );
-            futures::executor::block_on(self.flush()).unwrap();
         }
+
+        futures::executor::block_on(handle.flush()).unwrap();
         Ok(buf.len())
     }
 
