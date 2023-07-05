@@ -6,7 +6,6 @@ use std::{
     },
 };
 
-use orbclient::Event;
 use syscall::{Dma, Error as SysError, SchemeMut, EINVAL, EPERM};
 use virtio_core::{
     spec::{Buffer, ChainBuilder, DescriptorFlags},
