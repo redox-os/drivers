@@ -15,7 +15,7 @@ use virtio_core::{
 
 use crate::*;
 
-static RESOURCE_ALLOC: AtomicU32 = AtomicU32::new(1);
+static RESOURCE_ALLOC: AtomicU32 = AtomicU32::new(1); // XXX: 0 is reserved for whatever that takes `resource_id`.
 
 pub struct Display<'a> {
     control_queue: Arc<Queue<'a>>,
