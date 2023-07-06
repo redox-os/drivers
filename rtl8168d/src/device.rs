@@ -6,7 +6,7 @@ use std::convert::TryInto;
 use std::collections::BTreeMap;
 
 use netutils::setcfg;
-use syscall::error::{Error, EACCES, EBADF, EINVAL, EWOULDBLOCK, Result};
+use syscall::error::{Error, EACCES, EBADF, EINVAL, EMSGSIZE, EWOULDBLOCK, Result};
 use syscall::flag::{EventFlags, O_NONBLOCK};
 use syscall::io::{Dma, Mmio, Io, ReadOnly};
 use syscall::scheme::SchemeBlockMut;
@@ -151,6 +151,10 @@ impl SchemeBlockMut for Rtl8168 {
             let td = &mut self.transmit_ring[self.transmit_i];
             if ! td.ctrl.readf(OWN) {
                 let data = &mut self.transmit_buffer[self.transmit_i];
+
+                if buf.len() > data.len() {
+                    return Err(Error::new(EMSGSIZE));
+                }
 
                 let mut i = 0;
                 while i < buf.len() && i < data.len() {

@@ -1,0 +1,6 @@
+[[drivers]]
+name = "RTL8139 NIC"
+class = 2
+ids = { 0x10ec = [0x8139] }
+command = ["rtl8139d"]
+use_channel = true

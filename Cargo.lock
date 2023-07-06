@@ -1378,6 +1378,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "rtl8139d"
+version = "0.1.0"
+dependencies = [
+ "bitflags 1.2.1",
+ "log",
+ "netutils",
+ "pcid",
+ "redox-daemon",
+ "redox-log",
+ "redox_event",
+ "redox_syscall 0.3.5",
+]
+
+[[package]]
 name = "rtl8168d"
 version = "0.1.0"
 dependencies = [
