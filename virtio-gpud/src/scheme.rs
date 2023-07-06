@@ -1,17 +1,13 @@
-use std::{
-    collections::BTreeMap,
-    sync::{
-        atomic::{AtomicUsize, Ordering, AtomicU32},
-        Arc,
-    },
-};
+use std::collections::BTreeMap;
+
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use syscall::{Dma, Error as SysError, SchemeMut, EINVAL};
-use virtio_core::{
-    spec::{Buffer, ChainBuilder, DescriptorFlags},
-    transport::{Error, Queue},
-    utils::VolatileCell,
-};
+
+use virtio_core::spec::{Buffer, ChainBuilder, DescriptorFlags};
+use virtio_core::transport::{Error, Queue};
+use virtio_core::utils::VolatileCell;
 
 use crate::*;
 
@@ -31,9 +27,12 @@ pub struct Display<'a> {
 }
 
 impl<'a> Display<'a> {
-    pub fn new(control_queue: Arc<Queue<'a>>, cursor_queue: Arc<Queue<'a>>, display_info: & mut DisplayInfo, id: usize) -> Self {
-        display_info.enabled.set(1);
-
+    pub fn new(
+        control_queue: Arc<Queue<'a>>,
+        cursor_queue: Arc<Queue<'a>>,
+        _display_info: &mut DisplayInfo,
+        id: usize,
+    ) -> Self {
         Self {
             control_queue,
             cursor_queue,
@@ -44,7 +43,7 @@ impl<'a> Display<'a> {
             height: 1080,
 
             id,
-            resource_id: RESOURCE_ALLOC.fetch_add(1, Ordering::SeqCst)
+            resource_id: RESOURCE_ALLOC.fetch_add(1, Ordering::SeqCst),
         }
     }
 
@@ -94,8 +93,8 @@ impl<'a> Display<'a> {
         // lists are supported, so the framebuffer doesn’t need to be contignous in guest
         // physical memory.
         let bpp = 32;
-        let fb_size =
-            (self.width as usize * self.height as usize * bpp / 8).next_multiple_of(syscall::PAGE_SIZE);
+        let fb_size = (self.width as usize * self.height as usize * bpp / 8)
+            .next_multiple_of(syscall::PAGE_SIZE);
         let address = unsafe { syscall::physalloc(fb_size) }? as u64;
         let mapped = unsafe {
             syscall::physmap(
@@ -142,7 +141,8 @@ impl<'a> Display<'a> {
         assert_eq!(header.ty.get(), CommandTy::RespOkNodata);
 
         let rect = GpuRect::new(0, 0, self.width, self.height);
-        self.flush_resource(ResourceFlush::new(self.resource_id, rect)).await?;
+        self.flush_resource(ResourceFlush::new(self.resource_id, rect))
+            .await?;
         Ok(())
     }
 }
@@ -153,36 +153,42 @@ pub struct Scheme<'a> {
     config: &'a mut GpuConfig,
     /// File descriptor allocator.
     next_id: AtomicUsize,
-    handles: BTreeMap<usize /* file descriptor */, Display<'a>>
+    handles: BTreeMap<usize /* file descriptor */, Display<'a>>,
 }
 
 impl<'a> Scheme<'a> {
-    pub fn new(config: &'a mut GpuConfig, control_queue: Arc<Queue<'a>>, cursor_queue: Arc<Queue<'a>>) -> Result<Self, Error> {
-        Ok(
-            Self {
-                control_queue,
-                cursor_queue,
-                config,
-                next_id: AtomicUsize::new(0),
-                handles: BTreeMap::new()
-            }
-        )
+    pub fn new(
+        config: &'a mut GpuConfig,
+        control_queue: Arc<Queue<'a>>,
+        cursor_queue: Arc<Queue<'a>>,
+    ) -> Result<Self, Error> {
+        Ok(Self {
+            control_queue,
+            cursor_queue,
+            config,
+            next_id: AtomicUsize::new(0),
+            handles: BTreeMap::new(),
+        })
     }
 
     async fn open_display(&self, id: usize) -> Result<Display<'a>, Error> {
         let mut display_info = self.get_display_info().await?;
         let displays = &mut display_info.display_info[..self.config.num_scanouts() as usize];
 
-        let display = displays.get_mut (id).ok_or(SysError::new(syscall::ENOENT))?;
+        let display = displays.get_mut(id).ok_or(SysError::new(syscall::ENOENT))?;
 
-        log::info!("virtio-gpu: opening display ({}x{}px)", display.rect.width(), display.rect.height());
-       let mut d = Display::new(self.control_queue.clone(), self.cursor_queue.clone(), display, id);
-       
-        if id != 0 {
-            d.map_screen(0).await?;
-        }
+        log::info!(
+            "virtio-gpu: opening display ({}x{}px)",
+            display.rect.width(),
+            display.rect.height()
+        );
 
-       Ok( d)
+        Ok(Display::new(
+            self.control_queue.clone(),
+            self.cursor_queue.clone(),
+            display,
+            id,
+        ))
     }
 
     async fn get_display_info(&self) -> Result<Dma<GetDisplayInfo>, Error> {
@@ -207,7 +213,7 @@ impl<'a> Scheme<'a> {
 impl<'a> SchemeMut for Scheme<'a> {
     fn open(&mut self, path: &str, _flags: usize, _uid: u32, _gid: u32) -> syscall::Result<usize> {
         dbg!(&path);
-        
+
         let mut parts = path.split('/');
         let mut screen = parts.next().unwrap_or("").split('.');
 
@@ -217,7 +223,8 @@ impl<'a> SchemeMut for Scheme<'a> {
         dbg!(&vt_index, &id);
 
         let fd = self.next_id.fetch_add(1, Ordering::SeqCst);
-        let display = futures::executor::block_on(self.open_display(id)).map_err(|_| SysError::new(syscall::ENOENT))?;
+        let display = futures::executor::block_on(self.open_display(id))
+            .map_err(|_| SysError::new(syscall::ENOENT))?;
 
         self.handles.insert(fd, display);
         Ok(fd)

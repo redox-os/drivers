@@ -3,6 +3,23 @@
 //! XXX: 3D mode will offload rendering ops to the host gpu and therefore requires a GPU with 3D support
 //! on the host machine.
 
+// Notes for the future:
+//
+// `virtio-gpu` 2D acceleration is just blitting. 3D acceleration has 2 kinds:
+//      - virgl - OpenGL
+//      - venus - Vulkan
+//
+// The Venus driver requires support for the following from the `virtio-gpu` kernel driver:
+//     - VIRTGPU_PARAM_3D_FEATURES
+//     - VIRTGPU_PARAM_CAPSET_QUERY_FIX
+//     - VIRTGPU_PARAM_RESOURCE_BLOB
+//     - VIRTGPU_PARAM_HOST_VISIBLE
+//     - VIRTGPU_PARAM_CROSS_DEVICE
+//     - VIRTGPU_PARAM_CONTEXT_INIT
+//
+// cc https://docs.mesa3d.org/drivers/venus.html
+// cc https://docs.mesa3d.org/drivers/virgl.html
+
 #![feature(int_roundings)]
 
 use std::fs::File;
@@ -370,7 +387,6 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
 
     device.transport.run_device();
     deamon.ready().unwrap();
-
 
     let mut socket_file = File::create(":display/virtio-gpu")?;
     let mut scheme = scheme::Scheme::new(config, control_queue.clone(), cursor_queue.clone())?;
