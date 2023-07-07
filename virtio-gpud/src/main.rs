@@ -22,6 +22,7 @@
 
 #![feature(int_roundings)]
 
+use std::cell::UnsafeCell;
 use std::fs::File;
 use std::io::{Read, Write};
 
@@ -144,6 +145,15 @@ pub struct ControlHeader {
     padding: [u8; 3],
 }
 
+impl ControlHeader {
+    pub fn with_ty(ty: CommandTy) -> Self {
+        Self {
+            ty: VolatileCell::new(ty),
+            ..Default::default()
+        }
+    }
+}
+
 impl Default for ControlHeader {
     fn default() -> Self {
         Self {
@@ -157,42 +167,39 @@ impl Default for ControlHeader {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[repr(C)]
 pub struct GpuRect {
-    pub x: VolatileCell<u32>,
-    pub y: VolatileCell<u32>,
-    pub width: VolatileCell<u32>,
-    pub height: VolatileCell<u32>,
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
 }
 
 impl GpuRect {
     pub fn new(x: u32, y: u32, width: u32, height: u32) -> Self {
         Self {
-            x: VolatileCell::new(x),
-            y: VolatileCell::new(y),
-            width: VolatileCell::new(width),
-            height: VolatileCell::new(height),
+            x,
+            y,
+            width,
+            height,
         }
-    }
-
-    #[inline]
-    pub fn width(&self) -> u32 {
-        self.width.get()
-    }
-
-    #[inline]
-    pub fn height(&self) -> u32 {
-        self.height.get()
     }
 }
 
 #[derive(Debug)]
 #[repr(C)]
 pub struct DisplayInfo {
-    pub rect: GpuRect,
+    rect: UnsafeCell<GpuRect>,
     pub enabled: VolatileCell<u32>,
     pub flags: VolatileCell<u32>,
+}
+
+impl DisplayInfo {
+    pub fn rect(&self) -> &GpuRect {
+        // SAFETY: We never give out mutable references to `self.rect`.
+        unsafe { &*self.rect.get() }
+    }
 }
 
 #[derive(Debug)]
@@ -274,12 +281,27 @@ pub struct AttachBacking {
 impl AttachBacking {
     pub fn new(resource_id: u32, num_entries: u32) -> Self {
         Self {
-            header: ControlHeader {
-                ty: VolatileCell::new(CommandTy::ResourceAttachBacking),
-                ..Default::default()
-            },
+            header: ControlHeader::with_ty(CommandTy::ResourceAttachBacking),
             resource_id,
             num_entries,
+        }
+    }
+}
+
+#[derive(Debug)]
+#[repr(C)]
+pub struct DetachBacking {
+    pub header: ControlHeader,
+    pub resource_id: u32,
+    pub padding: u32,
+}
+
+impl DetachBacking {
+    pub fn new(resource_id: u32) -> Self {
+        Self {
+            header: ControlHeader::with_ty(CommandTy::ResourceDetachBacking),
+            resource_id,
+            padding: 0,
         }
     }
 }
@@ -296,12 +318,26 @@ pub struct ResourceFlush {
 impl ResourceFlush {
     pub fn new(resource_id: u32, rect: GpuRect) -> Self {
         Self {
-            header: ControlHeader {
-                ty: VolatileCell::new(CommandTy::ResourceFlush),
-                ..Default::default()
-            },
-
+            header: ControlHeader::with_ty(CommandTy::ResourceFlush),
             rect,
+            resource_id,
+            padding: 0,
+        }
+    }
+}
+
+#[derive(Debug)]
+#[repr(C)]
+pub struct ResourceUnref {
+    pub header: ControlHeader,
+    pub resource_id: u32,
+    pub padding: u32,
+}
+
+impl ResourceUnref {
+    pub fn new(resource_id: u32) -> Self {
+        Self {
+            header: ControlHeader::with_ty(CommandTy::ResourceUnref),
             resource_id,
             padding: 0,
         }
@@ -389,7 +425,12 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
     deamon.ready().unwrap();
 
     let mut socket_file = File::create(":display/virtio-gpu")?;
-    let mut scheme = scheme::Scheme::new(config, control_queue.clone(), cursor_queue.clone())?;
+    let mut scheme = futures::executor::block_on(scheme::Scheme::new(
+        config,
+        control_queue.clone(),
+        cursor_queue.clone(),
+        device.transport.clone(),
+    ))?;
 
     loop {
         let mut packet = Packet::default();

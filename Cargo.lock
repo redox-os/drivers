@@ -680,6 +680,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "log",
+ "orbclient",
  "redox-daemon",
  "redox-log",
  "redox_syscall 0.3.5",
@@ -1921,6 +1922,7 @@ checksum = "49874b5167b65d7193b8aba1567f5c7d93d001cafc34600cee003eda787e483f"
 name = "vesad"
 version = "0.1.0"
 dependencies = [
+ "inputd",
  "orbclient",
  "ransid",
  "redox-daemon",
@@ -1968,12 +1970,14 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures",
+ "inputd",
  "log",
  "orbclient",
  "paste",
  "pcid",
  "redox-daemon",
  "redox_syscall 0.3.5",
+ "spin",
  "static_assertions",
  "virtio-core",
 ]

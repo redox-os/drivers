@@ -380,6 +380,11 @@ impl<'a> StandardTransport<'a> {
         })
     }
 
+    pub fn reset(&self) {
+        let mut common = self.common.lock().unwrap();
+        common.device_status.set(DeviceStatusFlags::empty());
+    }
+
     pub fn check_device_feature(&self, feature: u32) -> bool {
         let mut common = self.common.lock().unwrap();
 

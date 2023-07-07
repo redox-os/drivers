@@ -15,10 +15,11 @@ use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
+use orbclient::{Event, EventOption};
 use syscall::{Error as SysError, EventFlags, Packet, SchemeMut, EINVAL};
 
-#[derive(Debug)]
 enum Handle {
     Producer,
     Consumer {
@@ -26,6 +27,7 @@ enum Handle {
         pending: Vec<u8>,
         notified: bool,
     },
+    Device(Arc<String>),
 }
 
 impl Handle {
@@ -36,27 +38,46 @@ impl Handle {
 
 struct InputScheme {
     handles: BTreeMap<usize, Handle>,
+
     next_id: AtomicUsize,
+    next_vt_id: AtomicUsize,
+
+    vts: BTreeMap<usize, Arc<String>>,
+    super_key: bool,
+    active_vt: Option<(Arc<String>, File)>,
 }
 
 impl InputScheme {
     pub fn new() -> Self {
         Self {
             next_id: AtomicUsize::new(0),
+            next_vt_id: AtomicUsize::new(1),
+
             handles: BTreeMap::new(),
+            vts: BTreeMap::new(),
+            super_key: false,
+            active_vt: None,
         }
     }
 }
 
 impl SchemeMut for InputScheme {
     fn open(&mut self, path: &str, _flags: usize, _uid: u32, _gid: u32) -> syscall::Result<usize> {
-        let handle_ty = match path {
+        let mut path_parts = path.split('/');
+
+        let command = path_parts.next().ok_or(SysError::new(EINVAL))?;
+
+        let handle_ty = match command {
             "producer" => Handle::Producer,
             "consumer" => Handle::Consumer {
                 events: EventFlags::empty(),
                 pending: Vec::new(),
                 notified: false,
             },
+            "handle" => {
+                let value = path_parts.next().ok_or(SysError::new(EINVAL))?;
+                Handle::Device(Arc::new(value.to_string()))
+            }
 
             _ => unreachable!("inputd: invalid path {path}"),
         };
@@ -72,23 +93,98 @@ impl SchemeMut for InputScheme {
     fn read(&mut self, id: usize, buf: &mut [u8]) -> syscall::Result<usize> {
         let handle = self.handles.get_mut(&id).ok_or(SysError::new(EINVAL))?;
 
-        if let Handle::Consumer { pending, .. } = handle {
-            let copy = core::cmp::min(pending.len(), buf.len());
+        match handle {
+            Handle::Consumer { pending, .. } => {
+                let copy = core::cmp::min(pending.len(), buf.len());
 
-            for (i, byte) in pending.drain(..copy).enumerate() {
-                buf[i] = byte;
+                for (i, byte) in pending.drain(..copy).enumerate() {
+                    buf[i] = byte;
+                }
+
+                Ok(copy)
             }
 
-            Ok(copy)
-        } else {
-            // A producer cannot read from the channel.
-            unreachable!()
+            Handle::Device(device) => {
+                let vt = self.next_vt_id.fetch_add(1, Ordering::SeqCst);
+                self.vts.insert(vt, device.clone());
+                Ok(vt)
+            }
+
+            _ => unreachable!(),
         }
     }
 
     fn write(&mut self, id: usize, buf: &[u8]) -> syscall::Result<usize> {
         if buf.len() == 1 && buf[0] > 0xf4 {
             return Ok(1);
+        }
+
+        let events = unsafe {
+            core::slice::from_raw_parts(
+                buf.as_ptr() as *const Event,
+                buf.len() / core::mem::size_of::<Event>(),
+            )
+        };
+
+        for event in events.iter() {
+            let mut new_active_opt = None;
+            match event.to_option() {
+                EventOption::Key(key_event) => match key_event.scancode {
+                    f @ 0x3B..=0x44 if self.super_key => {
+                        // F1 through F10
+                        new_active_opt = Some((f - 0x3A) as usize);
+                    }
+
+                    0x57 if self.super_key => {
+                        // F11
+                        new_active_opt = Some(11);
+                    }
+
+                    0x58 if self.super_key => {
+                        // F12
+                        new_active_opt = Some(12);
+                    }
+
+                    0x5B => {
+                        // Super
+                        self.super_key = key_event.pressed;
+                    }
+
+                    _ => (),
+                },
+
+                _ => continue,
+            }
+
+            if let Some(new_active) = new_active_opt {
+                if let Some(vt) = self.vts.get(&new_active) {
+                    // Result: display/virtio-gpu:3/acvtivate
+                    let activate = format!("display/{vt}:{new_active}/activate");
+                    log::info!("inputd: switching to VT #{new_active} ({activate})");
+
+                    let file = File::open(&activate).unwrap();
+                    // Drop the old active VT first.
+                    //
+                    // TODO(andypython): This can be drastically improved by introducting something
+                    //                   like ioctl() to the display scheme.
+                    for (vt, device) in self.vts.iter() {
+                        if vt == &new_active {
+                            continue;
+                        }
+
+                        let deactivate = format!("display/{device}:{}/deactivate", vt);
+                        let _ = File::open(&deactivate);
+
+                        if device.contains("virtio") {
+                            break;
+                        }
+                    }
+
+                    self.active_vt = Some((vt.clone(), file));
+                } else {
+                    log::warn!("inputd: switch to non-existent VT #{new_active} was requested");
+                }
+            }
         }
 
         let handle = self.handles.get_mut(&id).ok_or(SysError::new(EINVAL))?;

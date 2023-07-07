@@ -38,10 +38,13 @@ pub struct DisplayScheme {
     next_id: usize,
     pub handles: BTreeMap<usize, Handle>,
     super_key: bool,
+    inputd_handle: inputd::Handle,
 }
 
 impl DisplayScheme {
     pub fn new(mut framebuffers: Vec<FrameBuffer>, spec: &[bool]) -> DisplayScheme {
+        let mut inputd_handle  = inputd::Handle::new("vesa").unwrap();
+
         let mut onscreens = Vec::new();
         for fb in framebuffers.iter_mut() {
             onscreens.push(unsafe {
@@ -51,7 +54,6 @@ impl DisplayScheme {
 
         let mut vts = BTreeMap::<VtIndex, BTreeMap<ScreenIndex, Box<dyn Screen>>>::new();
 
-        let mut vt_i = 1;
         for &vt_type in spec.iter() {
             let mut screens = BTreeMap::<ScreenIndex, Box<dyn Screen>>::new();
             for fb_i in 0..framebuffers.len() {
@@ -62,8 +64,7 @@ impl DisplayScheme {
                     Box::new(TextScreen::new(Display::new(fb.width, fb.height)))
                 });
             }
-            vts.insert(VtIndex(vt_i), screens);
-            vt_i += 1;
+            vts.insert(VtIndex(inputd_handle.register().unwrap()), screens);
         }
 
         DisplayScheme {
@@ -74,6 +75,7 @@ impl DisplayScheme {
             next_id: 0,
             handles: BTreeMap::new(),
             super_key: false,
+            inputd_handle
         }
     }
 
@@ -168,11 +170,15 @@ impl SchemeMut for DisplayScheme {
             let screen_i = ScreenIndex(
                 vt_screen.next().unwrap_or("").parse::<usize>().unwrap_or(0)
             );
-            if let Some(screens) = self.vts.get(&vt_i) {
-                if screens.contains_key(&screen_i) {
+            if let Some(screens) = self.vts.get_mut(&vt_i) {
+                if let Some(screen) = screens.get_mut(&screen_i) {
                     for cmd in parts {
                         if cmd == "activate" {
                             self.active = vt_i;
+                            screen.redraw(
+                                self.onscreens[screen_i.0],
+                                self.framebuffers[screen_i.0].stride
+                            );
                         }
                     }
 
