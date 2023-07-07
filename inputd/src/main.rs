@@ -158,11 +158,17 @@ impl SchemeMut for InputScheme {
 
             if let Some(new_active) = new_active_opt {
                 if let Some(vt) = self.vts.get(&new_active) {
+                    // If the VT is already active, don't do anything.
+                    if let Some(current) = self.active_vt.as_ref() {
+                        if vt == &current.0 {
+                            continue;
+                        }
+                    }
+                    
                     // Result: display/virtio-gpu:3/acvtivate
                     let activate = format!("display/{vt}:{new_active}/activate");
                     log::info!("inputd: switching to VT #{new_active} ({activate})");
 
-                    let file = File::open(&activate).unwrap();
                     // Drop the old active VT first.
                     //
                     // TODO(andypython): This can be drastically improved by introducting something
@@ -180,6 +186,7 @@ impl SchemeMut for InputScheme {
                         }
                     }
 
+                    let file = File::open(&activate).unwrap();
                     self.active_vt = Some((vt.clone(), file));
                 } else {
                     log::warn!("inputd: switch to non-existent VT #{new_active} was requested");
