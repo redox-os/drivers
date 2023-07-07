@@ -9,6 +9,7 @@ ransid = "0.4"
 rusttype = { version = "0.2", optional = true }
 redox_syscall = "0.3"
 redox-daemon = "0.1"
+inputd = { path = "../inputd" }
 
 [features]
 default = []

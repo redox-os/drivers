@@ -382,7 +382,7 @@ fn main() {
         let report_ty = ReportTy::Input;
         let report_id = 0;
 
-        let mut display = File::open("display:input").expect("Failed to open orbital input socket");
+        let mut display = File::open("display/vesa:input").expect("Failed to open orbital input socket");
 
         //TODO: get dynamically
         let mut display_width = 0;

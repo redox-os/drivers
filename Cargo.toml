@@ -23,6 +23,7 @@ members = [
     "usbctl",
     "usbhidd",
     "usbscsid",
+    "inputd",
 
     "virtio-blkd",
     "virtio-netd",

@@ -23,7 +23,6 @@ subclass = 8
 command = ["nvmed"]
 use_channel = true
 
-# -------------- virtio -------------- #
 [[drivers]]
 name = "virtio-blk"
 class = 1
@@ -34,18 +33,8 @@ command = ["virtio-blkd"]
 use_channel = true
 
 [[drivers]]
-name = "virtio-net"
-class = 2
-subclass = 0
-vendor = 6900
-device = 4096
-command = ["virtio-netd"]
-use_channel = true
-
-[[drivers]]
 name = "virtio-gpu"
 class = 3
-subclass = 0
 vendor = 6900
 device = 4176
 command = ["virtio-gpud"]

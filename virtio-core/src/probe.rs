@@ -12,7 +12,7 @@ use syscall::{Io, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
 
 use crate::spec::*;
 use crate::transport::{Error, StandardTransport};
-use crate::utils::{VolatileCell, align_down};
+use crate::utils::{align_down, VolatileCell};
 
 pub struct Device<'a> {
     pub transport: Arc<StandardTransport<'a>>,
@@ -186,11 +186,7 @@ pub fn probe_device<'a>(pcid_handle: &mut PcidServerHandle) -> Result<Device<'a>
 
             let size = offset + capability.length as usize;
 
-            let addr = syscall::physmap(
-                aligned_addr,
-                size,
-                PHYSMAP_WRITE | PHYSMAP_NO_CACHE,
-            )?;
+            let addr = syscall::physmap(aligned_addr, size, PHYSMAP_WRITE | PHYSMAP_NO_CACHE)?;
 
             addr + offset
         };
