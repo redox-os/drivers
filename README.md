@@ -3,28 +3,52 @@
 These are the currently implemented devices/hardware interfaces.
 
 - ac97d - Realtek audio chipsets.
-- acpid - ACPI.
+- acpid - ACPI (incomplete).
+
+Lack of drivers for devices defined in AML.
+
 - ahcid - SATA.
 - alxd - Atheros ethernet (incomplete).
+
+Lack of datasheet to finish.
+
+- amlserde - a library to provide serialization/deserialization of the AML symbol table from ACPI (incomplete).
 - bgad - Bochs emulator/debugger.
 - block-io-wrapper - Library used by other drivers.
 - e1000d - Intel Gigabit ethernet.
 - ided - IDE.
 - ihdad - Intel HD Audio chipsets.
+- inputd - Multiplexes input from multiple input drivers and provides that to Orbital.
 - ixgbed - Intel 10 Gigabit ethernet.
 - nvmed - NVMe.
 - pcid - PCI.
 - pcspkrd - PC speaker
 - ps2d - PS/2
+- rtl8139d - Realtek ethernet.
 - rtl8168d - Realtek ethernet.
 - sb16d - Sound Blaster audio (incomplete).
+
+Still need to determine a way to allocate memory under 16MiB for use in ISA DMA.
+
+- usbctl - USB control (incomplete).
+
+Missing class drivers for various classes.
+
+- usbhidd - USB HID (incomplete).
+
+Has tons of descriptors that are possible, not all are supported.
+
+- usbscsid - USB SCSI (incomplete).
+
+Missing class drivers for various classes.
+
 - vboxd - VirtualBox guest.
 - vesad - VESA.
+- virtio-blkd - VirtIO block device (incomplete).
+- virtio-core - VirtIO core.
+- virtio-gpud - VirtIO GPU device (incomplete).
+- virtio-netd - VirtIO net device (incomplete).
 - xhcid - xHCI (incomplete).
-- usbctl - USB control (incomplete).
-- usbhidd - USB HID (incomplete).
-- usbscsid - USB SCSI (incomplete).
-- virtio-* - VirtIO (incomplete) (`virtio-blk`, `virtio-net`, `virtio-gpu`).
 
 ## Contributing to Drivers
 
