@@ -5,7 +5,13 @@ These are the currently implemented devices/hardware interfaces.
 - ac97d - Realtek audio chipsets.
 - acpid - ACPI (incomplete).
 
-Lack of drivers for devices defined in AML.
+Lack of drivers for devices controlled using AML.
+
+The AML parser does not work on real hardware.
+
+It doesn't use any ACPI functionality other than S5 shutdown.
+
+Needs to implement something like "determine the battery status" on real hardware (hard).
 
 - ahcid - SATA.
 - alxd - Atheros ethernet (incomplete).
