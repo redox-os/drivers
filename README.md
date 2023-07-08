@@ -7,6 +7,12 @@ These are the currently implemented devices/hardware interfaces.
 
 Lack of drivers for devices defined in AML.
 
+The AML parser does not work on real hardware.
+
+It don't use any ACPI functionality other than S5 shutdown.
+
+Needs to implement something like "determine the battery status" on real hardware (hard).
+
 - ahcid - SATA.
 - alxd - Atheros ethernet (incomplete).
 
