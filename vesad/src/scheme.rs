@@ -377,42 +377,7 @@ impl SchemeMut for DisplayScheme {
         self.handles.remove(&id).ok_or(Error::new(EBADF))?;
         Ok(0)
     }
-}
-impl DisplayScheme {
-    pub fn do_handle(&mut self, packet: &mut Packet) {
-        match packet.a {
-            KSMSG_MMAP | KSMSG_MMAP_PREP => {
-                let off_lo = packet.uid;
-                let off_hi = packet.gid;
-                let req_off = u64::from(off_lo) | (u64::from(off_hi) << 32);
-                let req_flags = MapFlags::from_bits_truncate(packet.c);
-                let req_file_id = packet.b;
-                let req_page_count = packet.d;
-
-                let is_lazy_mmap = packet.a == KSMSG_MMAP || req_flags.contains(MapFlags::MAP_LAZY);
-
-                match self.mmap(req_file_id, req_flags, req_page_count * PAGE_SIZE, req_off) {
-                    Ok(res) => if is_lazy_mmap {
-                        packet.a = Error::mux(Err(Error::new(ESKMSG)));
-                        packet.b = SKMSG_PROVIDE_MMAP;
-                        packet.c = res;
-                        packet.d = req_page_count;
-
-                        packet.uid = off_lo;
-                        packet.gid = off_hi;
-                    } else {
-                        packet.a = Error::mux(Ok(res));
-                    },
-                    Err(err) => {
-                        packet.a = Error::mux(Err(err));
-                    }
-                };
-
-            }
-            _ => self.handle(packet),
-        }
-    }
-    pub fn mmap(&mut self, id: usize, _flags: MapFlags, size: usize, off: u64) -> Result<usize> {
+    fn mmap_prep(&mut self, id: usize, _flags: MapFlags, size: usize, off: u64) -> Result<usize> {
         let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
         if let HandleKind::Screen(vt_i, screen_i) = handle.kind {

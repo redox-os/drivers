@@ -112,7 +112,7 @@ fn inner(daemon: redox_daemon::Daemon, framebuffers: Vec<FrameBuffer>, spec: &[b
         if packet.a == syscall::number::SYS_READ && packet.d > 0 && scheme.can_read(packet.b).is_none() {
             blocked.push(packet);
         } else {
-            scheme.do_handle(&mut packet);
+            scheme.handle(&mut packet);
             socket.write(&packet).expect("vesad: failed to write display scheme");
         }
 
@@ -122,7 +122,7 @@ fn inner(daemon: redox_daemon::Daemon, framebuffers: Vec<FrameBuffer>, spec: &[b
             while i < blocked.len() {
                 if scheme.can_read(blocked[i].b).is_some() {
                     let mut packet = blocked.remove(i);
-                    scheme.do_handle(&mut packet);
+                    scheme.handle(&mut packet);
                     socket.write(&packet).expect("vesad: failed to write display scheme");
                 } else {
                     i += 1;
