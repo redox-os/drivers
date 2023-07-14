@@ -27,3 +27,5 @@ smallvec = "1"
 structopt = { version = "0.3", default-features = false, features = [ "paw" ] }
 thiserror = "1"
 toml = "0.5"
+
+common = { path = "../common" }
