@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::{mem, ptr, slice, str};
 
 use orbclient::{Event, EventOption};
-use syscall::{Error, EventFlags, EACCES, EBADF, EINVAL, ENOENT, Map, O_NONBLOCK, physmap, PHYSMAP_WRITE, PHYSMAP_WRITE_COMBINE, Result, SchemeMut, PAGE_SIZE};
+use syscall::{Error, EventFlags, EACCES, EBADF, EINVAL, ENOENT, Map, O_NONBLOCK, Result, SchemeMut, PAGE_SIZE};
 
 use crate::{
     display::Display,
@@ -111,10 +111,11 @@ impl DisplayScheme {
         // Map new onscreen
         self.onscreens[fb_i] = unsafe {
             let size = stride * height;
-            let onscreen_ptr = physmap(
+            let onscreen_ptr = common::physmap(
                 self.framebuffers[fb_i].phys,
                 size * 4,
-                PHYSMAP_WRITE | PHYSMAP_WRITE_COMBINE
+                common::Prot { read: true, write: true },
+                common::MemoryType::WriteCombining,
             ).expect("vesad: failed to map framebuffer") as *mut u32;
             ptr::write_bytes(onscreen_ptr, 0, size);
 
