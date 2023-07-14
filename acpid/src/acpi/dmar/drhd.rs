@@ -14,7 +14,7 @@ impl DrhdPage {
 
         // TODO: Uncachable? Can reads have side-effects?
         let virt = unsafe {
-            syscall::physmap(base_phys, crate::acpi::PAGE_SIZE, syscall::PhysmapFlags::PHYSMAP_WRITE)?
+            common::physmap(base_phys, crate::acpi::PAGE_SIZE, common::Prot::RO, common::MemoryType::default())?
         } as *mut Drhd;
 
         Ok(Self { virt })

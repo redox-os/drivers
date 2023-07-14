@@ -5,8 +5,6 @@ use std::ops::Deref;
 use std::sync::{Arc, Mutex};
 use std::{fmt, mem};
 
-use syscall::flag::PhysmapFlags;
-
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use syscall::io::{Io, Pio};
 
@@ -106,7 +104,7 @@ impl PhysmapGuard {
     fn map(page: usize, page_count: usize) -> std::io::Result<Self> {
         let size = page_count * PAGE_SIZE;
         let virt = unsafe {
-            syscall::call::physmap(page, size, PhysmapFlags::empty())
+            common::physmap(page, size, common::Prot::RO, common::MemoryType::default())
                 .map_err(|error| std::io::Error::from_raw_os_error(error.errno))?
         };
 
