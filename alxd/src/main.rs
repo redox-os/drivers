@@ -15,7 +15,7 @@ use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::sync::Arc;
 
 use event::EventQueue;
-use syscall::{EventFlags, Packet, SchemeMut, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
+use syscall::{EventFlags, Packet, SchemeMut};
 use syscall::error::EWOULDBLOCK;
 
 pub mod device;
@@ -43,7 +43,7 @@ fn main() {
 
         let mut irq_file = File::open(format!("irq:{}", irq)).expect("alxd: failed to open IRQ file");
 
-        let address = unsafe { syscall::physmap(bar, 128*1024, PHYSMAP_WRITE | PHYSMAP_NO_CACHE).expect("alxd: failed to map address") };
+        let address = unsafe { common::physmap(bar, 128*1024, common::Prot::RW, common::MemoryType::Uncacheable).expect("alxd: failed to map address") as usize };
         {
             let device = Arc::new(RefCell::new(unsafe { device::Alx::new(address).expect("alxd: failed to allocate device") }));
 

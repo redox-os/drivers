@@ -10,7 +10,7 @@ use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::sync::Arc;
 
 use event::EventQueue;
-use syscall::{EventFlags, Packet, SchemeBlockMut, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
+use syscall::{EventFlags, Packet, SchemeBlockMut};
 
 pub mod device;
 
@@ -91,9 +91,9 @@ fn main() {
         let mut irq_file = unsafe { File::from_raw_fd(irq_fd as RawFd) };
 
         let address = unsafe {
-            syscall::physmap(bar, bar_size, PHYSMAP_WRITE | PHYSMAP_NO_CACHE)
+            common::physmap(bar, bar_size, common::Prot::RW, common::MemoryType::Uncacheable)
                 .expect("e1000d: failed to map address")
-        };
+        } as usize;
         {
             let device = Arc::new(RefCell::new(unsafe {
                 device::Intel8254x::new(address).expect("e1000d: failed to allocate device")

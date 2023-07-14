@@ -11,7 +11,7 @@ use std::{env, thread};
 
 use event::EventQueue;
 use std::time::Duration;
-use syscall::{EventFlags, Packet, SchemeBlockMut, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
+use syscall::{EventFlags, Packet, SchemeBlockMut};
 
 pub mod device;
 #[rustfmt::skip]
@@ -92,8 +92,8 @@ fn main() {
             File::open(format!("irq:{}", irq)).expect("ixgbed: failed to open IRQ file");
 
         let address = unsafe {
-            syscall::physmap(bar, IXGBE_MMIO_SIZE, PHYSMAP_WRITE | PHYSMAP_NO_CACHE)
-                .expect("ixgbed: failed to map address")
+            common::physmap(bar, IXGBE_MMIO_SIZE, common::Prot::RW, common::MemoryType::Uncacheable)
+                .expect("ixgbed: failed to map address") as usize
         };
         {
             let device = Arc::new(RefCell::new(

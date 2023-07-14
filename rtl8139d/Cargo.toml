@@ -12,4 +12,5 @@ redox_syscall = "0.3"
 redox-daemon = "0.1"
 redox-log = "0.1"
 
+common = { path = "../common" }
 pcid = { path = "../pcid" }

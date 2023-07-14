@@ -11,7 +11,7 @@ use std::usize;
 use std::fs::File;
 use std::io::{ErrorKind, Read, Write, Result};
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
-use syscall::{PHYSMAP_NO_CACHE, PHYSMAP_WRITE, Packet, SchemeBlockMut, EventFlags};
+use syscall::{Packet, SchemeBlockMut, EventFlags};
 use std::cell::RefCell;
 use std::sync::Arc;
 
@@ -177,8 +177,8 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     log::info!(" + IHDA {} on: {:#X} size: {}", name, bar_ptr, bar_size);
 
 	let address = unsafe {
-		syscall::physmap(bar_ptr as usize, bar_size as usize, PHYSMAP_WRITE | PHYSMAP_NO_CACHE)
-			.expect("ihdad: failed to map address")
+		common::physmap(bar_ptr as usize, bar_size as usize, common::Prot::RW, common::MemoryType::Uncacheable)
+			.expect("ihdad: failed to map address") as usize
 	};
 
     //TODO: MSI-X

@@ -29,4 +29,5 @@ smallvec = { version = "1", features = ["serde"] }
 thiserror = "1"
 toml = "0.5"
 
+common = { path = "../common" }
 pcid = { path = "../pcid" }
