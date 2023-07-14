@@ -2,7 +2,7 @@ use crate::spec::*;
 use crate::utils::align;
 
 use event::EventQueue;
-use syscall::{Dma, PHYSMAP_WRITE};
+use syscall::Dma;
 
 use core::mem::size_of;
 use core::sync::atomic::{AtomicU16, Ordering};
@@ -230,8 +230,9 @@ impl<'a> Available<'a> {
         let size = size.next_multiple_of(syscall::PAGE_SIZE); // align to page size
 
         let addr = unsafe { syscall::physalloc(size) }.map_err(Error::SyscallError)?;
-        let virt =
-            unsafe { syscall::physmap(addr, size, PHYSMAP_WRITE) }.map_err(Error::SyscallError)?;
+        let virt = unsafe {
+            common::physmap(addr, size, common::Prot::RW, common::MemoryType::default())
+        }.map_err(Error::SyscallError)?;
 
         let ring = unsafe { &mut *(virt as *mut AvailableRing) };
 
@@ -275,7 +276,7 @@ impl Drop for Available<'_> {
         log::warn!("virtio-core: dropping 'available' ring at {:#x}", self.addr);
 
         unsafe {
-            syscall::physunmap(self.addr).unwrap();
+            syscall::funmap(self.addr, self.size).unwrap();
             syscall::physfree(self.addr, self.size).unwrap();
         }
     }
@@ -297,7 +298,7 @@ impl<'a> Used<'a> {
 
         let addr = unsafe { syscall::physalloc(size) }.map_err(Error::SyscallError)?;
         let virt =
-            unsafe { syscall::physmap(addr, size, PHYSMAP_WRITE) }.map_err(Error::SyscallError)?;
+            unsafe { common::physmap(addr, size, common::Prot::RW, common::MemoryType::default()) }.map_err(Error::SyscallError)?;
 
         let ring = unsafe { &mut *(virt as *mut UsedRing) };
 
@@ -355,7 +356,7 @@ impl Drop for Used<'_> {
         log::warn!("virtio-core: dropping 'used' ring at {:#x}", self.addr);
 
         unsafe {
-            syscall::physunmap(self.addr).unwrap();
+            syscall::funmap(self.addr, self.size).unwrap();
             syscall::physfree(self.addr, self.size).unwrap();
         }
     }

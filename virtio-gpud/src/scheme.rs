@@ -113,12 +113,13 @@ impl<'a> Display<'a> {
             .next_multiple_of(syscall::PAGE_SIZE);
         let address = unsafe { syscall::physalloc(fb_size) }? as u64;
         let mapped = unsafe {
-            syscall::physmap(
+            common::physmap(
                 address as usize,
                 fb_size,
-                syscall::PhysmapFlags::PHYSMAP_WRITE,
+                common::Prot::RW,
+                common::MemoryType::default(),
             )
-        }?;
+        }? as usize;
 
         unsafe {
             core::ptr::write_bytes(mapped as *mut u8, 255, fb_size);
