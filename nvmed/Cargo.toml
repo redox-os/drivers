@@ -14,8 +14,9 @@ redox-log = "0.1"
 redox_syscall = "0.3"
 partitionlib = { git = "https://gitlab.redox-os.org/redox-os/partitionlib.git" }
 smallvec = "1"
-block-io-wrapper = { path = "../block-io-wrapper" }
 
+block-io-wrapper = { path = "../block-io-wrapper" }
+common = { path = "../common" }
 pcid = { path = "../pcid" }
 
 [features]

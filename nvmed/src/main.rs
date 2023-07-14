@@ -11,8 +11,8 @@ use std::{slice, usize};
 
 use pcid_interface::{PciBar, PciFeature, PciFeatureInfo, PciFunction, PcidServerHandle};
 use syscall::{
-    Event, Mmio, Packet, Result, SchemeBlockMut, PHYSMAP_NO_CACHE,
-    PHYSMAP_WRITE, PAGE_SIZE,
+    Event, Mmio, Packet, Result, SchemeBlockMut, 
+    PAGE_SIZE,
 };
 use redox_log::{OutputBuilder, RedoxLogger};
 
@@ -32,7 +32,12 @@ impl Bar {
     pub fn allocate(bar: usize, bar_size: usize) -> Result<Self> {
         Ok(Self {
             ptr: NonNull::new(
-                unsafe { syscall::physmap(bar, bar_size, PHYSMAP_NO_CACHE | PHYSMAP_WRITE)? as *mut u8 },
+                unsafe { common::physmap(
+                    bar,
+                    bar_size,
+                    common::Prot { read: true, write: true },
+                    common::MemoryType::Uncacheable,
+                )? as *mut u8 },
             )
             .expect("Mapping a BAR resulted in a nullptr"),
             physical: bar,
@@ -318,13 +323,14 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let allocated_bars = AllocatedBars::default();
 
     let address = unsafe {
-        syscall::physmap(
+        common::physmap(
             bar as usize,
             bar_size as usize,
-            PHYSMAP_WRITE | PHYSMAP_NO_CACHE,
+            common::Prot { read: true, write: true },
+            common::MemoryType::Uncacheable,
         )
         .expect("nvmed: failed to map address")
-    };
+    } as usize;
     *allocated_bars.0[0].lock().unwrap() = Some(Bar {
         physical: bar as usize,
         bar_size: bar_size as usize,
