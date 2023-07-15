@@ -10,10 +10,10 @@ use crate::{
     screen::{Screen, GraphicScreen, TextScreen},
 };
 
-#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd, Debug)]
 pub struct VtIndex(usize);
 
-#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd, Debug)]
 pub struct ScreenIndex(usize);
 
 #[derive(Clone)]
@@ -144,61 +144,43 @@ impl DisplayScheme {
 }
 
 impl SchemeMut for DisplayScheme {
-    fn open(&mut self, path_str: &str, flags: usize, uid: u32, _gid: u32) -> Result<usize> {
-        if path_str == "input" {
-            if uid == 0 {
+    fn open(&mut self, path_str: &str, flags: usize, _uid: u32, _gid: u32) -> Result<usize> {
+        let mut parts = path_str.split('/');
+        let mut vt_screen = parts.next().unwrap_or("").split('.');
+        let vt_i = VtIndex(
+            vt_screen.next().unwrap_or("").parse::<usize>().unwrap_or(1)
+        );
+        let screen_i = ScreenIndex(
+            vt_screen.next().unwrap_or("").parse::<usize>().unwrap_or(0)
+        );
+        if let Some(screens) = self.vts.get_mut(&vt_i) {
+            if let Some(screen) = screens.get_mut(&screen_i) {
+                for cmd in parts {
+                    if cmd == "activate" {
+                        self.active = vt_i;
+                        screen.redraw(
+                            self.onscreens[screen_i.0],
+                            self.framebuffers[screen_i.0].stride
+                        );
+                    }
+                }
+
                 let id = self.next_id;
                 self.next_id += 1;
 
                 self.handles.insert(id, Handle {
-                    kind: HandleKind::Input,
-                    flags: flags,
+                    kind: HandleKind::Screen(vt_i, screen_i),
+                    flags,
                     events: EventFlags::empty(),
                     notified_read: false
                 });
 
                 Ok(id)
             } else {
-                Err(Error::new(EACCES))
-            }
-        } else {
-            let mut parts = path_str.split('/');
-            let mut vt_screen = parts.next().unwrap_or("").split('.');
-            let vt_i = VtIndex(
-                vt_screen.next().unwrap_or("").parse::<usize>().unwrap_or(1)
-            );
-            let screen_i = ScreenIndex(
-                vt_screen.next().unwrap_or("").parse::<usize>().unwrap_or(0)
-            );
-            if let Some(screens) = self.vts.get_mut(&vt_i) {
-                if let Some(screen) = screens.get_mut(&screen_i) {
-                    for cmd in parts {
-                        if cmd == "activate" {
-                            self.active = vt_i;
-                            screen.redraw(
-                                self.onscreens[screen_i.0],
-                                self.framebuffers[screen_i.0].stride
-                            );
-                        }
-                    }
-
-                    let id = self.next_id;
-                    self.next_id += 1;
-
-                    self.handles.insert(id, Handle {
-                        kind: HandleKind::Screen(vt_i, screen_i),
-                        flags: flags,
-                        events: EventFlags::empty(),
-                        notified_read: false
-                    });
-
-                    Ok(id)
-                } else {
-                    Err(Error::new(ENOENT))
-                }
-            } else {
                 Err(Error::new(ENOENT))
             }
+        } else {
+            Err(Error::new(ENOENT))
         }
     }
 
