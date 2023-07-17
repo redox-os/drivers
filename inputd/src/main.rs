@@ -44,7 +44,7 @@ struct InputScheme {
 
     vts: BTreeMap<usize, Arc<String>>,
     super_key: bool,
-    active_vt: Option<(Arc<String>, File)>,
+    active_vt: Option<(Arc<String>, File, usize /* VT index */)>,
 }
 
 impl InputScheme {
@@ -156,38 +156,37 @@ impl SchemeMut for InputScheme {
                 _ => continue,
             }
 
+            let deactivate = |vt, current| {
+                // Drop the old active VT first.
+                //
+                // TODO(andypython): This can be drastically improved by introducting something
+                //                   like ioctl() to the display scheme.
+                let deactivate = format!("display/{}:{current}/deactivate", vt);
+                let _ = File::open(&deactivate);
+            };
+
             if let Some(new_active) = new_active_opt {
                 if let Some(vt) = self.vts.get(&new_active) {
                     // If the VT is already active, don't do anything.
-                    if let Some(current) = self.active_vt.as_ref() {
-                        if vt == &current.0 {
+                    if let Some((vt, _, current)) = self.active_vt.as_ref() {
+                        if new_active == *current {
                             continue;
                         }
+
+                        deactivate(vt, *current);
+                    } else {
+                        let id = self.next_vt_id.load(Ordering::SeqCst) - 1;
+                        let vt = self.vts.get(&id).unwrap();
+
+                        deactivate(vt, id);
                     }
-                    
+
                     // Result: display/virtio-gpu:3/acvtivate
                     let activate = format!("display/{vt}:{new_active}/activate");
-                    log::info!("inputd: switching to VT #{new_active} ({activate})");
-
-                    // Drop the old active VT first.
-                    //
-                    // TODO(andypython): This can be drastically improved by introducting something
-                    //                   like ioctl() to the display scheme.
-                    for (vt, device) in self.vts.iter() {
-                        if vt == &new_active {
-                            continue;
-                        }
-
-                        let deactivate = format!("display/{device}:{}/deactivate", vt);
-                        let _ = File::open(&deactivate);
-
-                        if device.contains("virtio") {
-                            break;
-                        }
-                    }
+                    log::info!("inputd: switching to VT #{new_active} (`{activate}`)");
 
                     let file = File::open(&activate).unwrap();
-                    self.active_vt = Some((vt.clone(), file));
+                    self.active_vt = Some((vt.clone(), file, new_active));
                 } else {
                     log::warn!("inputd: switch to non-existent VT #{new_active} was requested");
                 }
