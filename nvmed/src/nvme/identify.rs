@@ -1,6 +1,6 @@
-use syscall::Dma;
-
 use super::{Nvme, NvmeCmd, NvmeNamespace};
+
+use common::dma::Dma;
 
 /// See NVME spec section 5.15.2.2.
 #[derive(Clone, Copy)]
