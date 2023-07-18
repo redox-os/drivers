@@ -1,6 +1,5 @@
 use std::convert::TryInto;
 use std::ptr;
-use std::thread;
 
 use syscall::io::Dma;
 use syscall::error::Result;
@@ -66,8 +65,6 @@ impl DiskATA {
             BufferKind::Write(ref buffer) => (true, buffer.as_ptr() as usize, buffer.len()/512),
         };
 
-        //TODO: Go back to interrupt magic
-        let use_interrupts = false;
         loop {
             let mut request = match self.request_opt.take() {
                 Some(request) => if address == request.address && total_sectors == request.total_sectors {
@@ -95,12 +92,7 @@ impl DiskATA {
                     // Continue waiting for request
                     request.running_opt = Some(running);
                     self.request_opt = Some(request);
-                    if use_interrupts {
-                        return Ok(None);
-                    } else {
-                        thread::yield_now();
-                        continue;
-                    }
+                    return Ok(None);
                 }
 
                 self.port.ata_stop(running.0)?;
@@ -130,12 +122,7 @@ impl DiskATA {
 
                 self.request_opt = Some(request);
 
-                if use_interrupts {
-                    return Ok(None);
-                } else {
-                    thread::yield_now();
-                    continue;
-                }
+                return Ok(None);
             } else {
                 // Done
                 return Ok(Some(request.sector * 512));
