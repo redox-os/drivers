@@ -4,6 +4,8 @@ use syscall::PAGE_SIZE;
 use syscall::error::{Error, Result, EINVAL};
 use syscall::flag::{MapFlags, O_CLOEXEC, O_RDONLY, O_RDWR, O_WRONLY};
 
+pub mod dma;
+
 #[derive(Clone, Copy, Debug)]
 pub enum MemoryType {
     Writeback,
