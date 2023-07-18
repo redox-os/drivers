@@ -12,7 +12,9 @@ use std::io::{Result, Read, Write};
 
 use syscall::call::iopl;
 use syscall::flag::EventFlags;
-use syscall::io::{Dma, Io, Mmio, Pio};
+use syscall::io::{Io, Mmio, Pio};
+
+use common::dma::Dma;
 
 use crate::bga::Bga;
 

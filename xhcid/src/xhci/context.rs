@@ -2,7 +2,9 @@ use std::collections::BTreeMap;
 
 use log::debug;
 use syscall::error::Result;
-use syscall::io::{Dma, Io, Mmio};
+use syscall::io::{Io, Mmio};
+
+use common::dma::Dma;
 
 use super::Xhci;
 use super::ring::Ring;

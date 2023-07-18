@@ -2,6 +2,9 @@ extern crate event;
 extern crate netutils;
 extern crate syscall;
 
+// TODO: Migrate to Rust 2018/2021
+extern crate common;
+
 use std::cell::RefCell;
 use std::fs::File;
 use std::io::{ErrorKind, Read, Result, Write};
