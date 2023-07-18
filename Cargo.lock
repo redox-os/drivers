@@ -7,6 +7,7 @@ name = "ac97d"
 version = "0.1.0"
 dependencies = [
  "bitflags 1.2.1",
+ "common",
  "log",
  "redox-daemon",
  "redox-log",
@@ -584,6 +585,7 @@ name = "ided"
 version = "0.1.0"
 dependencies = [
  "block-io-wrapper",
+ "common",
  "log",
  "partitionlib",
  "pcid",
@@ -1365,6 +1367,7 @@ name = "sb16d"
 version = "0.1.0"
 dependencies = [
  "bitflags 1.2.1",
+ "common",
  "log",
  "redox-daemon",
  "redox-log",
@@ -1852,6 +1855,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "block-io-wrapper",
+ "common",
  "futures",
  "log",
  "partitionlib",
