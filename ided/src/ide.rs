@@ -4,10 +4,13 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+
 use syscall::{
     error::{Error, Result, EIO},
-    io::{Dma, Io, Pio, PhysBox, ReadOnly, WriteOnly},
+    io::{Io, Pio, ReadOnly, WriteOnly},
 };
+
+use common::dma::{Dma, PhysBox};
 
 static TIMEOUT: Duration = Duration::new(1, 0);
 
