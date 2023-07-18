@@ -10,6 +10,7 @@ futures = { version = "0.3.28", features = ["executor"] }
 
 virtio-core = { path = "../virtio-core" }
 pcid = { path = "../pcid" }
+common = { path = "../common" }
 
 redox-daemon = "0.1"
 redox_syscall = "0.3"

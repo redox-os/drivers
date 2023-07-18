@@ -25,10 +25,12 @@
 use std::cell::UnsafeCell;
 use std::fs::File;
 use std::io::{Read, Write};
+use std::sync::Arc;
 
 use pcid_interface::PcidServerHandle;
 
 use syscall::{Packet, SchemeMut};
+use virtio_core::transport::{Queue, self};
 use virtio_core::utils::VolatileCell;
 use virtio_core::MSIX_PRIMARY_VECTOR;
 
@@ -356,10 +358,7 @@ pub struct SetScanout {
 impl SetScanout {
     pub fn new(scanout_id: u32, resource_id: u32, rect: GpuRect) -> Self {
         Self {
-            header: ControlHeader {
-                ty: VolatileCell::new(CommandTy::SetScanout),
-                ..Default::default()
-            },
+            header: ControlHeader::with_ty(CommandTy::SetScanout),
 
             rect,
             scanout_id,
@@ -394,6 +393,21 @@ impl XferToHost2d {
     }
 }
 
+static DEVICE: spin::Once<virtio_core::Device> = spin::Once::new();
+
+fn reinit(control_queue: Arc<Queue>, cursor_queue: Arc<Queue>) -> Result<(), transport::Error> {
+    let device = DEVICE.get().unwrap();
+
+    virtio_core::reinit(device)?;
+    device.transport.finalize_features();
+
+    device.transport.reinit_queue(control_queue.clone());
+    device.transport.reinit_queue(cursor_queue.clone());
+
+    device.transport.run_device();
+    Ok(())
+}
+
 fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
     let mut pcid_handle = PcidServerHandle::connect_default()?;
 
@@ -405,7 +419,7 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
     assert_eq!(pci_config.func.devid, 0x1050);
     log::info!("virtio-gpu: initiating startup sequence :^)");
 
-    let device = virtio_core::probe_device(&mut pcid_handle)?;
+    let device = DEVICE.try_call_once(|| virtio_core::probe_device(&mut pcid_handle))?;
     let config = unsafe { &mut *(device.device_space as *mut GpuConfig) };
 
     // Negotiate features.

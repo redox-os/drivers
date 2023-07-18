@@ -13,10 +13,11 @@
 
 use std::collections::BTreeMap;
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
+use inputd::{Command, CommandTy};
 use orbclient::{Event, EventOption};
 use syscall::{Error as SysError, EventFlags, Packet, SchemeMut, EINVAL};
 
@@ -26,6 +27,7 @@ enum Handle {
         events: EventFlags,
         pending: Vec<u8>,
         notified: bool,
+        vt: usize,
     },
     Device(Arc<String>),
 }
@@ -66,17 +68,30 @@ impl SchemeMut for InputScheme {
         let mut path_parts = path.split('/');
 
         let command = path_parts.next().ok_or(SysError::new(EINVAL))?;
+        let fd = self.next_id.fetch_add(1, Ordering::SeqCst);
 
         let handle_ty = match command {
             "producer" => Handle::Producer,
-            "consumer" => Handle::Consumer {
-                events: EventFlags::empty(),
-                pending: Vec::new(),
-                notified: false,
-            },
+            "consumer" => {
+                let vt = if let Some((_, _, vt)) = self.active_vt {
+                    vt
+                } else {
+                    // No one is currently set as active, so we assume that the last allocated
+                    // one will be willing to take this consumer.
+                    self.next_vt_id.load(Ordering::SeqCst) - 1
+                };
+
+                dbg!(vt);
+                Handle::Consumer {
+                    events: EventFlags::empty(),
+                    pending: Vec::new(),
+                    notified: false,
+                    vt,
+                }
+            }
             "handle" => {
-                let value = path_parts.next().ok_or(SysError::new(EINVAL))?;
-                Handle::Device(Arc::new(value.to_string()))
+                let value = path_parts.collect::<Vec<_>>().join("/");
+                Handle::Device(Arc::new(value))
             }
 
             _ => unreachable!("inputd: invalid path {path}"),
@@ -84,9 +99,7 @@ impl SchemeMut for InputScheme {
 
         log::info!("inputd: {path} channel has been opened");
 
-        let fd = self.next_id.fetch_add(1, Ordering::SeqCst);
         self.handles.insert(fd, handle_ty);
-
         Ok(fd)
     }
 
@@ -156,36 +169,34 @@ impl SchemeMut for InputScheme {
                 _ => continue,
             }
 
-            let deactivate = |vt, current| {
-                // Drop the old active VT first.
-                //
-                // TODO(andypython): This can be drastically improved by introducting something
-                //                   like ioctl() to the display scheme.
-                let deactivate = format!("display/{}:{current}/deactivate", vt);
-                let _ = File::open(&deactivate);
+            let deactivate = |file: &mut File, id: usize| -> io::Result<()> {
+                let command = Command::new(CommandTy::Deactivate, id).into_bytes();
+                file.write(&command)?;
+                Ok(())
             };
 
             if let Some(new_active) = new_active_opt {
-                if let Some(vt) = self.vts.get(&new_active) {
-                    // If the VT is already active, don't do anything.
-                    if let Some((vt, _, current)) = self.active_vt.as_ref() {
+                if let Some(vt) = self.vts.get(&new_active).cloned() {
+                    if let Some((_, file, current)) = self.active_vt.as_mut() {
+                        // If the VT is already active, don't do anything.
                         if new_active == *current {
                             continue;
                         }
 
-                        deactivate(vt, *current);
+                        deactivate(file, *current).unwrap();
                     } else {
                         let id = self.next_vt_id.load(Ordering::SeqCst) - 1;
-                        let vt = self.vts.get(&id).unwrap();
+                        let mut vt = File::open(self.vts.get_mut(&id).unwrap().as_ref()).unwrap();
 
-                        deactivate(vt, id);
+                        deactivate(&mut vt, id).unwrap();
                     }
 
-                    // Result: display/virtio-gpu:3/acvtivate
-                    let activate = format!("display/{vt}:{new_active}/activate");
-                    log::info!("inputd: switching to VT #{new_active} (`{activate}`)");
+                    log::info!("inputd: switching to VT #{new_active} (`{vt}`)");
 
-                    let file = File::open(&activate).unwrap();
+                    let mut file = File::open(vt.as_ref()).unwrap();
+                    file.write(&Command::new(CommandTy::Activate, new_active).into_bytes())
+                        .unwrap();
+
                     self.active_vt = Some((vt.clone(), file, new_active));
                 } else {
                     log::warn!("inputd: switch to non-existent VT #{new_active} was requested");
@@ -269,9 +280,23 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
                 events,
                 pending,
                 ref mut notified,
+                vt,
             } = handle
             {
                 if pending.is_empty() || *notified || !events.contains(EventFlags::EVENT_READ) {
+                    continue;
+                }
+
+                let should_notify = if let Some((_, _, active_vt)) = scheme.active_vt {
+                    active_vt == *vt
+                } else {
+                    let last_allocated = scheme.next_vt_id.load(Ordering::SeqCst) - 1;
+                    last_allocated == *vt
+                };
+
+                // The activate VT is not the same as the VT that the consumer is listening to 
+                // for events.
+                if !should_notify {
                     continue;
                 }
 
