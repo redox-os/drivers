@@ -246,7 +246,7 @@ pub struct Buffer {
 }
 
 impl Buffer {
-    pub fn new<T>(val: &syscall::Dma<T>) -> Self {
+    pub fn new<T>(val: &common::dma::Dma<T>) -> Self {
         Self {
             buffer: val.physical(),
             size: core::mem::size_of::<T>(),
@@ -254,7 +254,7 @@ impl Buffer {
         }
     }
 
-    pub fn new_unsized<T>(val: &syscall::Dma<[T]>) -> Self {
+    pub fn new_unsized<T>(val: &common::dma::Dma<[T]>) -> Self {
         Self {
             buffer: val.physical(),
             size: core::mem::size_of::<T>() * val.len(),
@@ -262,7 +262,7 @@ impl Buffer {
         }
     }
 
-    pub fn new_sized<T>(val: &syscall::Dma<[T]>, size: usize) -> Self {
+    pub fn new_sized<T>(val: &common::dma::Dma<[T]>, size: usize) -> Self {
         Self {
             buffer: val.physical(),
             size,

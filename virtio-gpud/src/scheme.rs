@@ -3,8 +3,9 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
+use common::dma::Dma;
 use inputd::Damage;
-use syscall::{Dma, Error as SysError, SchemeMut, EINVAL};
+use syscall::{Error as SysError, SchemeMut, EINVAL};
 
 use virtio_core::spec::{Buffer, ChainBuilder, DescriptorFlags};
 use virtio_core::transport::{Error, Queue, StandardTransport};

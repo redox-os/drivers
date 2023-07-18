@@ -1,8 +1,8 @@
 use crate::spec::*;
 use crate::utils::align;
 
+use common::dma::Dma;
 use event::EventQueue;
-use syscall::Dma;
 
 use core::mem::size_of;
 use core::sync::atomic::{AtomicU16, Ordering};
