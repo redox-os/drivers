@@ -19,5 +19,5 @@ block-io-wrapper = { path = "../block-io-wrapper" }
 pcid = { path = "../pcid" }
 
 [features]
-default = []
+default = ["async"]
 async = []
