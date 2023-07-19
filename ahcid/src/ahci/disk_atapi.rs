@@ -5,8 +5,9 @@ use std::ptr;
 
 use byteorder::{ByteOrder, BigEndian};
 
-use syscall::io::Dma;
 use syscall::error::{Result, EBADF, Error};
+
+use common::dma::Dma;
 
 use super::hba::{HbaPort, HbaCmdTable, HbaCmdHeader};
 use super::Disk;

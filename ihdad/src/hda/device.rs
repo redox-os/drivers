@@ -7,7 +7,6 @@ use std::str;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use syscall::{PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
 use syscall::error::{Error, EACCES, EBADF, Result, EINVAL};
 use syscall::flag::{SEEK_SET, SEEK_CUR, SEEK_END};
 use syscall::io::{Mmio, Io};
@@ -159,8 +158,8 @@ impl IntelHDA {
 				.expect("Could not allocate physical memory for buffer descriptor list.");
 
 		let buff_desc_virt =
-			syscall::physmap(buff_desc_phys, 0x1000, PHYSMAP_WRITE | PHYSMAP_NO_CACHE)
-				.expect("ihdad: failed to map address for buffer descriptor list.");
+			common::physmap(buff_desc_phys, 0x1000, common::Prot::RW, common::MemoryType::Uncacheable)
+				.expect("ihdad: failed to map address for buffer descriptor list.") as usize;
 
 		log::debug!("Virt: {:016X}, Phys: {:016X}", buff_desc_virt, buff_desc_phys);
 
@@ -170,7 +169,7 @@ impl IntelHDA {
 			syscall::physalloc(0x1000)
 				.expect("Could not allocate physical memory for CORB and RIRB.");
 
-		let cmd_buff_virt = syscall::physmap(cmd_buff_address, 0x1000, PHYSMAP_WRITE | PHYSMAP_NO_CACHE).expect("ihdad: failed to map address for CORB/RIRB buff");
+		let cmd_buff_virt = common::physmap(cmd_buff_address, 0x1000, common::Prot::RW, common::MemoryType::Uncacheable).expect("ihdad: failed to map address for CORB/RIRB buff") as usize;
 
 		log::debug!("Virt: {:016X}, Phys: {:016X}", cmd_buff_virt, cmd_buff_address);
 		let mut module = IntelHDA {

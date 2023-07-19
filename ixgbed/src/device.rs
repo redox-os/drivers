@@ -3,11 +3,12 @@ use std::convert::TryInto;
 use std::time::{Duration, Instant};
 use std::{cmp, mem, ptr, slice, thread};
 
-use netutils::setcfg;
 use syscall::error::{Error, Result, EACCES, EBADF, EINVAL, EWOULDBLOCK};
 use syscall::flag::{EventFlags, O_NONBLOCK};
-use syscall::io::Dma;
 use syscall::scheme::SchemeBlockMut;
+
+use common::dma::Dma;
+use netutils::setcfg;
 
 use ixgbe::*;
 

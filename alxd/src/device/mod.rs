@@ -1,11 +1,13 @@
 use std::{ptr, thread, time};
 use std::convert::TryInto;
 
-use netutils::setcfg;
 use syscall::error::{Error, EACCES, EINVAL, EIO, EWOULDBLOCK, Result};
 use syscall::flag::{EventFlags, O_NONBLOCK};
-use syscall::io::{Dma, Io, Mmio};
+use syscall::io::{Io, Mmio};
 use syscall::scheme;
+
+use common::dma::Dma;
+use netutils::setcfg;
 
 use self::regs::*;
 

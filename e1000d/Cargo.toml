@@ -9,3 +9,5 @@ netutils = { git = "https://gitlab.redox-os.org/redox-os/netutils.git", branch =
 redox-daemon = "0.1"
 redox_event = { git = "https://gitlab.redox-os.org/redox-os/event.git" }
 redox_syscall = "0.3"
+
+common = { path = "../common" }

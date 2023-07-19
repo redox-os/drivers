@@ -1,5 +1,7 @@
 use std::ptr;
-use syscall::{Dma, Result};
+use syscall::Result;
+
+use common::dma::Dma;
 
 /// A submission queue entry.
 #[derive(Clone, Copy, Debug, Default)]

@@ -18,7 +18,7 @@ use pcid_interface::{MsiSetFeatureInfo, PcidServerHandle, PciFeature, PciFeature
 use pcid_interface::irq_helpers::{read_bsp_apic_id, allocate_single_interrupt_vector};
 use pcid_interface::msi::{MsixCapability, MsixTableEntry};
 use redox_log::{RedoxLogger, OutputBuilder};
-use syscall::{EventFlags, Packet, SchemeBlockMut, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
+use syscall::{EventFlags, Packet, SchemeBlockMut};
 use syscall::io::Io;
 
 pub mod device;
@@ -187,8 +187,8 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle) -> Option<File> {
         };
 
         let address = unsafe {
-            syscall::physmap(bar_ptr as usize, bar_size as usize, PHYSMAP_WRITE | PHYSMAP_NO_CACHE)
-                .expect("rtl8139d: failed to map address")
+            common::physmap(bar_ptr as usize, bar_size as usize, common::Prot::RW, common::MemoryType::Uncacheable)
+                .expect("rtl8139d: failed to map address") as usize
         };
 
         if !(bar_ptr..bar_ptr + bar_size).contains(&(table_base as u64 + table_min_length as u64)) {
@@ -345,8 +345,8 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     log::info!(" + RTL8139 {} on: {:#X} size: {}", name, bar_ptr, bar_size);
 
     let address = unsafe {
-        syscall::physmap(bar_ptr, bar_size, PHYSMAP_WRITE | PHYSMAP_NO_CACHE)
-            .expect("rtl8139d: failed to map address")
+        common::physmap(bar_ptr, bar_size, common::Prot::RW, common::MemoryType::Uncacheable)
+            .expect("rtl8139d: failed to map address") as usize
     };
 
     let socket_fd = syscall::open(

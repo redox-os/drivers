@@ -9,10 +9,9 @@ use std::fs::File;
 use std::io::{ErrorKind, Read, Write};
 use std::os::unix::io::{FromRawFd, RawFd};
 
-use syscall::PAGE_SIZE;
 use syscall::error::{Error, ENODEV};
 use syscall::data::{Event, Packet};
-use syscall::flag::{EVENT_READ, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
+use syscall::flag::EVENT_READ;
 use syscall::scheme::SchemeBlockMut;
 
 use log::{error, info};
@@ -91,8 +90,12 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     info!(" + AHCI {} on: {:X} size: {} IRQ: {}", name, bar, bar_size, irq);
 
     let address = unsafe {
-        syscall::physmap(bar, bar_size.next_multiple_of(PAGE_SIZE), PHYSMAP_WRITE | PHYSMAP_NO_CACHE)
-            .expect("ahcid: failed to map address")
+        common::physmap(
+            bar,
+            bar_size,
+            common::Prot { read: true, write: true },
+            common::MemoryType::Uncacheable,
+        ).expect("ahcid: failed to map address")
     };
     {
         let scheme_name = format!("disk/{}", name);
@@ -126,7 +129,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
             data: 0
         }).expect("ahcid: failed to event irq scheme");
 
-        let (hba_mem, disks) = ahci::disks(address, &name);
+        let (hba_mem, disks) = ahci::disks(address as usize, &name);
         let mut scheme = DiskScheme::new(scheme_name, hba_mem, disks);
 
         let mut mounted = true;

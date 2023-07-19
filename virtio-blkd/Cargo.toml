@@ -17,5 +17,6 @@ redox_syscall = "0.3"
 partitionlib = { git = "https://gitlab.redox-os.org/redox-os/partitionlib.git" }
 
 block-io-wrapper = { path = "../block-io-wrapper" }
+common = { path = "../common" }
 pcid = { path = "../pcid" }
 virtio-core = { path = "../virtio-core" }

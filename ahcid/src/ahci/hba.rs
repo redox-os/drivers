@@ -3,10 +3,12 @@ use std::mem::size_of;
 use std::ops::DerefMut;
 use std::{ptr, u32};
 
-use syscall::io::{Dma, Io, Mmio};
+use syscall::io::{Io, Mmio};
 use syscall::error::{Error, Result, EIO};
 
 use super::fis::{FisType, FisRegH2D};
+
+use common::dma::Dma;
 
 const ATA_CMD_READ_DMA_EXT: u8 = 0x25;
 const ATA_CMD_WRITE_DMA_EXT: u8 = 0x35;

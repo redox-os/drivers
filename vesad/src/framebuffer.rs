@@ -46,10 +46,11 @@ impl FrameBuffer {
 
     pub unsafe fn map(&mut self) -> syscall::Result<&'static mut [u32]> {
         let size = self.stride * self.height;
-        let virt = syscall::physmap(
+        let virt = common::physmap(
             self.phys,
             size * 4,
-            syscall::PHYSMAP_WRITE | syscall::PHYSMAP_WRITE_COMBINE
+            common::Prot { read: true, write: true },
+            common::MemoryType::WriteCombining,
         )? as *mut u32;
         //TODO: should we clear the framebuffer here?
         ptr::write_bytes(virt, 0, size);

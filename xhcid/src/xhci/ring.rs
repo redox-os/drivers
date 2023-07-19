@@ -1,7 +1,8 @@
 use std::mem;
 
 use syscall::error::Result;
-use syscall::io::Dma;
+
+use common::dma::Dma;
 
 use super::Xhci;
 use super::trb::Trb;

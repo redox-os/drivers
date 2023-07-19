@@ -4,12 +4,13 @@ use std::ops::Deref;
 use std::sync::atomic;
 use std::{cmp, fmt, io, mem, path, str};
 
+use common::dma::Dma;
 use futures::executor::block_on;
 use log::{debug, error, info, warn, trace};
 use serde::{Deserialize, Serialize};
 use smallvec::{smallvec, SmallVec};
 
-use syscall::io::{Dma, Io};
+use syscall::io::Io;
 use syscall::scheme::Scheme;
 use syscall::{
     Error, Result, Stat, EACCES, EBADF, EBADFD, EBADMSG, EEXIST, EINVAL, EIO, EISDIR, ENOENT,

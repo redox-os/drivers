@@ -8,3 +8,5 @@ orbclient = "0.3.27"
 redox_event = { git = "https://gitlab.redox-os.org/redox-os/event.git" }
 redox_syscall = "0.3"
 redox-daemon = "0.1"
+
+common = { path = "../common" }

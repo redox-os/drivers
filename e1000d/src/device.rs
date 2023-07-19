@@ -6,8 +6,9 @@ use netutils::setcfg;
 
 use syscall::error::{Error, Result, EACCES, EBADF, EINVAL, EWOULDBLOCK};
 use syscall::flag::{EventFlags, O_NONBLOCK};
-use syscall::io::Dma;
 use syscall::scheme::SchemeBlockMut;
+
+use common::dma::Dma;
 
 const CTRL: u32 = 0x00;
 const CTRL_LRST: u32 = 1 << 3;

@@ -10,7 +10,9 @@ use crossbeam_channel::Sender;
 use smallvec::{smallvec, SmallVec};
 
 use syscall::error::{Error, Result, EINVAL, EIO};
-use syscall::io::{Dma, Io, Mmio};
+use syscall::io::{Io, Mmio};
+
+use common::dma::Dma;
 
 pub mod cmd;
 pub mod cq_reactor;

@@ -8,7 +8,7 @@ use pcid_interface::msi::x86_64::DeliveryMode;
 use pcid_interface::msi::{MsixCapability, MsixTableEntry};
 use pcid_interface::*;
 
-use syscall::{Io, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
+use syscall::Io;
 
 use crate::spec::*;
 use crate::transport::{Error, StandardTransport};
@@ -68,11 +68,12 @@ fn enable_msix(pcid_handle: &mut PcidServerHandle) -> Result<File, Error> {
     };
 
     let address = unsafe {
-        syscall::physmap(
+        common::physmap(
             bar_ptr as usize,
             bar_size as usize,
-            PHYSMAP_WRITE | PHYSMAP_NO_CACHE,
-        )?
+            common::Prot::RW,
+            common::MemoryType::Uncacheable,
+        )? as usize
     };
 
     // Ensure that the table and PBA are be within the BAR.
@@ -186,7 +187,7 @@ pub fn probe_device<'a>(pcid_handle: &mut PcidServerHandle) -> Result<Device<'a>
 
             let size = offset + capability.length as usize;
 
-            let addr = syscall::physmap(aligned_addr, size, PHYSMAP_WRITE | PHYSMAP_NO_CACHE)?;
+            let addr = common::physmap(aligned_addr, size, common::Prot::RW, common::MemoryType::Uncacheable)? as usize;
 
             addr + offset
         };

@@ -19,7 +19,7 @@ use event::{Event, EventQueue};
 use redox_log::{RedoxLogger, OutputBuilder};
 use syscall::data::Packet;
 use syscall::error::EWOULDBLOCK;
-use syscall::flag::{EventFlags, PHYSMAP_NO_CACHE, PHYSMAP_WRITE};
+use syscall::flag::EventFlags;
 use syscall::scheme::Scheme;
 use syscall::io::Io;
 
@@ -264,8 +264,8 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     };
 
     let address = unsafe {
-        syscall::physmap(bar_ptr as usize, bar_size as usize, PHYSMAP_WRITE | PHYSMAP_NO_CACHE)
-            .expect("xhcid: failed to map address")
+        common::physmap(bar_ptr as usize, bar_size as usize, common::Prot::RW, common::MemoryType::Uncacheable)
+            .expect("xhcid: failed to map address") as usize
     };
 
     let (mut irq_file, interrupt_method) = get_int_method(&mut pcid_handle, address);

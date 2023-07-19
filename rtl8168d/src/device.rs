@@ -5,11 +5,13 @@ use std::mem;
 use std::convert::TryInto;
 use std::collections::BTreeMap;
 
-use netutils::setcfg;
 use syscall::error::{Error, EACCES, EBADF, EINVAL, EMSGSIZE, EWOULDBLOCK, Result};
 use syscall::flag::{EventFlags, O_NONBLOCK};
-use syscall::io::{Dma, Mmio, Io, ReadOnly};
+use syscall::io::{Mmio, Io, ReadOnly};
 use syscall::scheme::SchemeBlockMut;
+
+use common::dma::Dma;
+use netutils::setcfg;
 
 #[repr(packed)]
 struct Regs {

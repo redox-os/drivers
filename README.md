@@ -56,14 +56,18 @@ Missing class drivers for various classes.
 - virtio-netd - VirtIO net device (incomplete).
 - xhcid - xHCI (incomplete).
 
-## Kernel Functions
+## Kernel Interfaces
 
-These are the most used kernel functions by Redox drivers.
+These are the most used kernel interfaces by Redox drivers.
 
 - `iopl` - syscall that sets the I/O privilege level. x86 has four privilege rings (0/1/2/3), of which the kernel runs in ring 0 and userspace in ring 3. IOPL can only be changed by the kernel, for obvious security reasons, and therefore the Redox kernel needs root to set it. It is unique for each process. Processes with IOPL=3 can access I/O ports, and the kernel can access them as well.
 - `physalloc` - allocates physical memory frames.
 - `physfree` - frees memory frames.
-- `physmap` - maps physical memory frames to driver-accessible virtual memory pages.
+- `memory:physical` - allows mapping physical memory frames to driver-accessible virtual memory pages, with various available memory types:
+    - `memory:physical`: default memory type (currently writeback)
+    - `memory:physical@wb` writeback cached memory
+    - `memory:physical@uc`: uncacheable memory
+    - `memory:physical@wc`: write-combining memory
 - `irq:` - allows getting events from interrupts. It is used primarily by listening for its file descriptors using the `event:` scheme.
 
 ## Contributing to Drivers

@@ -1,4 +1,4 @@
-use syscall::{PHYSMAP_WRITE, PHYSMAP_NO_CACHE, PAGE_SIZE};
+use syscall::PAGE_SIZE;
 use syscall::error::{Error, EIO, Result};
 use syscall::io::{Mmio, Io};
 use std::result;
@@ -301,9 +301,9 @@ impl StreamBuffer {
 		};
 
 		let addr = match unsafe {
-			syscall::physmap(phys, page_aligned_size, PHYSMAP_WRITE | PHYSMAP_NO_CACHE)
+			common::physmap(phys, page_aligned_size, common::Prot::RW, common::MemoryType::Uncacheable)
 		} {
-			Ok(addr) => addr,
+			Ok(ptr) => ptr as usize,
 			Err(_err) => {
 				unsafe {
 					syscall::physfree(phys, page_aligned_size);

@@ -7,6 +7,7 @@ use std::io::Seek;
 use std::fmt::Write;
 use std::sync::Arc;
 
+use common::dma::Dma;
 use partitionlib::LogicalBlockSize;
 use partitionlib::PartitionTable;
 use syscall::*;
@@ -27,15 +28,15 @@ trait BlkExtension {
 
 impl BlkExtension for Queue<'_> {
     async fn read(&self, block: u64, target: &mut [u8]) -> usize {
-        let req = syscall::Dma::new(BlockVirtRequest {
+        let req = Dma::new(BlockVirtRequest {
             ty: BlockRequestTy::In,
             reserved: 0,
             sector: block,
         })
         .unwrap();
 
-        let result = unsafe { syscall::Dma::<[u8]>::zeroed_unsized(target.len()) }.unwrap();
-        let status = syscall::Dma::new(u8::MAX).unwrap();
+        let result = unsafe { Dma::<[u8]>::zeroed_unsized(target.len()) }.unwrap();
+        let status = Dma::new(u8::MAX).unwrap();
 
         let chain = ChainBuilder::new()
             .chain(Buffer::new(&req))
@@ -52,17 +53,17 @@ impl BlkExtension for Queue<'_> {
     }
 
     async fn write(&self, block: u64, target: &[u8]) -> usize {
-        let req = syscall::Dma::new(BlockVirtRequest {
+        let req = Dma::new(BlockVirtRequest {
             ty: BlockRequestTy::Out,
             reserved: 0,
             sector: block,
         })
         .unwrap();
 
-        let mut result = unsafe { syscall::Dma::<[u8]>::zeroed_unsized(target.len()) }.unwrap();
+        let mut result = unsafe { Dma::<[u8]>::zeroed_unsized(target.len()) }.unwrap();
         result.copy_from_slice(target.as_ref());
 
-        let status = syscall::Dma::new(u8::MAX).unwrap();
+        let status = Dma::new(u8::MAX).unwrap();
 
         let chain = ChainBuilder::new()
             .chain(Buffer::new(&req))
@@ -122,15 +123,15 @@ impl<'a> DiskScheme<'a> {
         impl<'a, 'b> Read for VirtioShim<'a, 'b> {
             fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
                 let read_block = |block: u64, block_bytes: &mut [u8]| -> Result<(), ()> {
-                    let req = syscall::Dma::new(BlockVirtRequest {
+                    let req = Dma::new(BlockVirtRequest {
                         ty: BlockRequestTy::In,
                         reserved: 0,
                         sector: block,
                     })
                     .unwrap();
 
-                    let result = syscall::Dma::new([0u8; 512]).unwrap();
-                    let status = syscall::Dma::new(u8::MAX).unwrap();
+                    let result = Dma::new([0u8; 512]).unwrap();
+                    let status = Dma::new(u8::MAX).unwrap();
 
                     let chain = ChainBuilder::new()
                         .chain(Buffer::new(&req))

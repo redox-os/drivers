@@ -9,13 +9,15 @@ use std::sync::atomic::{AtomicBool, AtomicUsize};
 
 use std::{mem, process, slice, sync::atomic, task, thread};
 
+use syscall::error::{Error, Result, EBADF, EBADMSG, ENOENT, EIO};
+use syscall::flag::{O_RDONLY, PhysallocFlags};
+use syscall::io::Io;
+
 use chashmap::CHashMap;
+use common::dma::{Dma, PhysBox};
 use crossbeam_channel::{Receiver, Sender};
 use log::{debug, error, info, trace, warn};
 use serde::Deserialize;
-use syscall::error::{Error, Result, EBADF, EBADMSG, ENOENT, EIO};
-use syscall::flag::{O_RDONLY, PhysallocFlags};
-use syscall::io::{Dma, Io, PhysBox};
 
 use crate::usb;
 

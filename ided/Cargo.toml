@@ -5,6 +5,7 @@ edition = "2018"
 
 [dependencies]
 block-io-wrapper = { path = "../block-io-wrapper" }
+common = { path = "../common" }
 log = "0.4"
 partitionlib = { git = "https://gitlab.redox-os.org/redox-os/partitionlib.git" }
 pcid = { path = "../pcid" }
