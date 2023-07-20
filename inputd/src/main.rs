@@ -19,6 +19,8 @@ use std::sync::Arc;
 
 use inputd::Cmd;
 
+use spin::Mutex;
+
 use orbclient::{Event, EventOption};
 use syscall::{Error as SysError, EventFlags, Packet, SchemeMut, EINVAL};
 
@@ -30,12 +32,49 @@ enum Handle {
         notified: bool,
         vt: usize,
     },
-    Device(Arc<String>),
+    Device {
+        device: String,
+    },
 }
 
 impl Handle {
     pub fn is_producer(&self) -> bool {
         matches!(self, Handle::Producer)
+    }
+}
+
+/// VT Inner State
+///
+/// This is *required* to be lazily initialized since opening the handle to the display
+/// requires the system call to return first. Otherwise, it will block indefinitely.
+struct VtInner {
+    handle_file: File,
+}
+
+struct Vt {
+    display: String,
+    index: usize,
+    inner: spin::Once<Mutex<VtInner>>,
+}
+
+impl Vt {
+    pub fn new<D>(display: D, index: usize) -> Arc<Self>
+    where
+        D: Into<String>,
+    {
+        Arc::new(Self {
+            display: display.into(),
+            inner: spin::Once::new(),
+            index,
+        })
+    }
+
+    pub fn inner(&self) -> &Mutex<VtInner> {
+        self.inner.call_once(|| {
+            let handle_file = File::open(format!("{}:handle", self.display)).unwrap();
+
+            Mutex::new(VtInner { handle_file })
+        })
     }
 }
 
@@ -45,9 +84,11 @@ struct InputScheme {
     next_id: AtomicUsize,
     next_vt_id: AtomicUsize,
 
-    vts: BTreeMap<usize, Arc<String>>,
+    vts: BTreeMap<usize, Arc<Vt>>,
     super_key: bool,
-    active_vt: Option<(Arc<String>, File, usize /* VT index */)>,
+    active_vt: Option<Arc<Vt>>,
+
+    todo: Vec<usize>,
 }
 
 impl InputScheme {
@@ -60,6 +101,8 @@ impl InputScheme {
             vts: BTreeMap::new(),
             super_key: false,
             active_vt: None,
+
+            todo: vec![],
         }
     }
 }
@@ -74,25 +117,18 @@ impl SchemeMut for InputScheme {
         let handle_ty = match command {
             "producer" => Handle::Producer,
             "consumer" => {
-                let vt = if let Some((_, _, vt)) = self.active_vt {
-                    vt
-                } else {
-                    // No one is currently set as active, so we assume that the last allocated
-                    // one will be willing to take this consumer.
-                    self.next_vt_id.load(Ordering::SeqCst) - 1
-                };
+                let target = path_parts.next().unwrap().parse::<usize>().unwrap();
 
-                dbg!(vt);
                 Handle::Consumer {
                     events: EventFlags::empty(),
                     pending: Vec::new(),
                     notified: false,
-                    vt,
+                    vt: target,
                 }
             }
             "handle" => {
-                let value = path_parts.collect::<Vec<_>>().join("/");
-                Handle::Device(Arc::new(value))
+                let display = path_parts.collect::<Vec<_>>().join("/");
+                Handle::Device { device: display }
             }
 
             _ => unreachable!("inputd: invalid path {path}"),
@@ -102,6 +138,22 @@ impl SchemeMut for InputScheme {
 
         self.handles.insert(fd, handle_ty);
         Ok(fd)
+    }
+
+    fn fpath(&mut self, id: usize, buf: &mut [u8]) -> syscall::Result<usize> {
+        let handle = self.handles.get(&id).ok_or(SysError::new(EINVAL))?;
+
+        if let Handle::Consumer { vt, .. } = handle {
+            let display = self.vts.get(vt).ok_or(SysError::new(EINVAL))?;
+            let vt = format!("{}:{vt}", display.display);
+
+            let size = core::cmp::min(vt.len(), buf.len());
+            buf[..size].copy_from_slice(&vt.as_bytes()[..size]);
+
+            Ok(size)
+        } else {
+            Err(SysError::new(EINVAL))
+        }
     }
 
     fn read(&mut self, id: usize, buf: &mut [u8]) -> syscall::Result<usize> {
@@ -118,9 +170,11 @@ impl SchemeMut for InputScheme {
                 Ok(copy)
             }
 
-            Handle::Device(device) => {
+            Handle::Device { device } => {
+                assert!(buf.is_empty());
+
                 let vt = self.next_vt_id.fetch_add(1, Ordering::SeqCst);
-                self.vts.insert(vt, device.clone());
+                self.vts.insert(vt, Vt::new(device.clone(), vt));
                 Ok(vt)
             }
 
@@ -129,6 +183,25 @@ impl SchemeMut for InputScheme {
     }
 
     fn write(&mut self, id: usize, buf: &[u8]) -> syscall::Result<usize> {
+        let handle = self.handles.get_mut(&id).ok_or(SysError::new(EINVAL))?;
+
+        match handle {
+            Handle::Device { .. } | Handle::Consumer { .. } => {
+                if buf.len() == core::mem::size_of::<usize>() {
+                    // The device is requesting to activate a VT.
+                    let vt =
+                        usize::from_le_bytes(buf.try_into().map_err(|_| SysError::new(EINVAL))?);
+
+                    self.todo.push(vt);
+                    return Ok(buf.len());
+                } else {
+                    unreachable!()
+                }
+            }
+
+            _ => {}
+        }
+
         if buf.len() == 1 && buf[0] > 0xf4 {
             return Ok(1);
         }
@@ -168,62 +241,65 @@ impl SchemeMut for InputScheme {
                 },
 
                 EventOption::Resize(resize_event) => {
-                    if let Some((_, file, current)) = self.active_vt.as_mut() {
-                        inputd::send_comand(
-                            file,
-                            Cmd::Resize {
-                                vt: current.clone(),
-                                width: resize_event.width,
-                                height: resize_event.height,
+                    let active_vt = self.active_vt.as_ref().unwrap();
+                    let mut vt_inner = active_vt.inner().lock();
 
-                                // TODO(andypython): Figure out how to get the stride.
-                                stride: resize_event.width,
-                            },
-                        )?;
-                    }
+                    inputd::send_comand(
+                        &mut vt_inner.handle_file,
+                        Cmd::Resize {
+                            vt: active_vt.index,
+                            width: resize_event.width,
+                            height: resize_event.height,
+
+                            // TODO(andypython): Figure out how to get the stride.
+                            stride: resize_event.width,
+                        },
+                    )?;
                 }
 
                 _ => continue,
             }
 
             if let Some(new_active) = new_active_opt {
-                if let Some(vt) = self.vts.get(&new_active).cloned() {
-                    if let Some((_, file, current)) = self.active_vt.as_mut() {
-                        // If the VT is already active, don't do anything.
-                        if new_active == *current {
-                            continue;
-                        }
+                if let Some(new_active) = self.vts.get(&new_active).cloned() {
+                    {
+                        let active_vt = self.active_vt.as_ref().unwrap();
+                        let mut vt_inner = active_vt.inner().lock();
 
-                        inputd::send_comand(file, Cmd::Deactivate(*current))?;
-                    } else {
-                        let id = self.next_vt_id.load(Ordering::SeqCst) - 1;
-                        let mut vt = File::open(self.vts.get_mut(&id).unwrap().as_ref()).unwrap();
-
-                        inputd::send_comand(&mut vt, Cmd::Deactivate(id))?;
+                        inputd::send_comand(
+                            &mut vt_inner.handle_file,
+                            Cmd::Deactivate(active_vt.index),
+                        )?;
                     }
 
-                    log::info!("inputd: switching to VT #{new_active} (`{vt}`)");
+                    let mut vt_inner = new_active.inner().lock();
 
-                    let mut file = File::open(vt.as_ref()).unwrap();
-
-                    inputd::send_comand(&mut file, Cmd::Activate(new_active))?;
-                    self.active_vt = Some((vt.clone(), file, new_active));
+                    inputd::send_comand(
+                        &mut vt_inner.handle_file,
+                        Cmd::Activate(new_active.index),
+                    )?;
+                    self.active_vt = Some(new_active.clone());
                 } else {
                     log::warn!("inputd: switch to non-existent VT #{new_active} was requested");
                 }
             }
         }
 
-        let handle = self.handles.get_mut(&id).ok_or(SysError::new(EINVAL))?;
         assert!(handle.is_producer());
 
+        let active_vt  = self.active_vt.as_ref().unwrap();
         for handle in self.handles.values_mut() {
             match handle {
                 Handle::Consumer {
-                    ref mut pending,
-                    ref mut notified,
+                    pending,
+                    notified,
+                    vt,
                     ..
                 } => {
+                    if *vt != active_vt.index {
+                        continue;
+                    }
+
                     pending.extend_from_slice(buf);
                     *notified = false;
                 }
@@ -257,7 +333,7 @@ impl SchemeMut for InputScheme {
     }
 
     fn close(&mut self, _id: usize) -> syscall::Result<usize> {
-        todo!()
+        Ok(0)
     }
 }
 
@@ -281,6 +357,20 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
         scheme.handle(&mut packet);
         socket_file.write(&packet)?;
 
+        while let Some(vt) = scheme.todo.pop() {
+            let vt = scheme.vts.get_mut(&vt).unwrap();
+            let mut vt_inner = vt.inner().lock();
+
+            // Failing to activate a VT is not a fatal error.
+            if let Err(err) =
+                inputd::send_comand(&mut vt_inner.handle_file, Cmd::Activate(vt.index))
+            {
+                log::error!("inputd: failed to activate VT #{}: {err}", vt.index)
+            }
+
+            scheme.active_vt = Some(vt.clone());
+        }
+
         if !should_handle {
             continue;
         }
@@ -297,16 +387,11 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
                     continue;
                 }
 
-                let should_notify = if let Some((_, _, active_vt)) = scheme.active_vt {
-                    active_vt == *vt
-                } else {
-                    let last_allocated = scheme.next_vt_id.load(Ordering::SeqCst) - 1;
-                    last_allocated == *vt
-                };
+                let active_vt = scheme.active_vt.as_ref().unwrap();
 
                 // The activate VT is not the same as the VT that the consumer is listening to
                 // for events.
-                if !should_notify {
+                if active_vt.index != *vt {
                     continue;
                 }
 

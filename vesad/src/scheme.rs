@@ -36,12 +36,12 @@ pub struct DisplayScheme {
     pub vts: BTreeMap<VtIndex, BTreeMap<ScreenIndex, Box<dyn Screen>>>,
     next_id: usize,
     pub handles: BTreeMap<usize, Handle>,
-    inputd_handle: inputd::Handle,
+    pub inputd_handle: inputd::Handle,
 }
 
 impl DisplayScheme {
     pub fn new(mut framebuffers: Vec<FrameBuffer>, spec: &[bool]) -> DisplayScheme {
-        let mut inputd_handle  = inputd::Handle::new("vesa:handle").unwrap();
+        let mut inputd_handle  = inputd::Handle::new("vesa").unwrap();
 
         let mut onscreens = Vec::new();
         for fb in framebuffers.iter_mut() {
@@ -185,7 +185,7 @@ impl SchemeMut for DisplayScheme {
     }
 
     fn dup(&mut self, id: usize, buf: &[u8]) -> Result<usize> {
-        if ! buf.is_empty() {
+        if !buf.is_empty() {
             return Err(Error::new(EINVAL));
         }
 

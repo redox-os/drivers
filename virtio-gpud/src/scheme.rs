@@ -259,8 +259,10 @@ pub struct Scheme<'a> {
     handles: BTreeMap<usize /* file descriptor */, Handle>,
     /// Counter used for file descriptor allocation.
     next_id: AtomicUsize,
-    inputd_handle: inputd::Handle,
     displays: Vec<Arc<Display<'a>>>,
+
+    pub(crate) inputd_handle: inputd::Handle,
+    pub(crate) main_vt: usize,
 }
 
 impl<'a> Scheme<'a> {
@@ -278,10 +280,11 @@ impl<'a> Scheme<'a> {
         )
         .await?;
 
-        let mut inputd_handle = inputd::Handle::new("virtio-gpu:handle").unwrap();
+        let mut inputd_handle = inputd::Handle::new("virtio-gpu").unwrap();
 
         let mut vts = BTreeMap::new();
-        vts.insert(inputd_handle.register().unwrap(), displays[0].clone());
+        let main_vt = inputd_handle.register().unwrap();
+        vts.insert(main_vt, displays[0].clone());
 
         Ok(Self {
             vts,
@@ -289,6 +292,7 @@ impl<'a> Scheme<'a> {
             next_id: AtomicUsize::new(0),
             inputd_handle,
             displays,
+            main_vt,
         })
     }
 
@@ -370,9 +374,9 @@ impl<'a> SchemeMut for Scheme<'a> {
     }
 
     fn fpath(&mut self, id: usize, buf: &mut [u8]) -> syscall::Result<usize> {
-        match self.handles.get(&id).ok_or(SysError::new(EINVAL))? {
+        match self.handles.get(&id).unwrap() {
             Handle::Vt(id) => {
-                let handle = self.vts.get_mut(&id).ok_or(SysError::new(EINVAL))?;
+                let handle = self.vts.get_mut(&(id - 1)).ok_or(SysError::new(EINVAL))?;
                 let bytes_copied = futures::executor::block_on(handle.get_fpath(buf)).unwrap();
 
                 Ok(bytes_copied)
@@ -397,7 +401,7 @@ impl<'a> SchemeMut for Scheme<'a> {
     fn fmap(&mut self, id: usize, map: &syscall::Map) -> syscall::Result<usize> {
         match self.handles.get(&id).ok_or(SysError::new(EINVAL))? {
             Handle::Vt(id) => {
-                let handle = self.vts.get_mut(&id).ok_or(SysError::new(EINVAL))?;
+                let handle = self.vts.get_mut(&(id - 1)).ok_or(SysError::new(EINVAL))?;
                 Ok(futures::executor::block_on(handle.map_screen(map.offset)).unwrap())
             }
             _ => unreachable!(),
@@ -425,7 +429,7 @@ impl<'a> SchemeMut for Scheme<'a> {
     fn write(&mut self, id: usize, buf: &[u8]) -> syscall::Result<usize> {
         match self.handles.get(&id).ok_or(SysError::new(EINVAL))? {
             Handle::Vt(id) => {
-                let handle = self.vts.get_mut(&id).ok_or(SysError::new(EINVAL))?;
+                let handle = self.vts.get_mut(&(id - 1)).ok_or(SysError::new(EINVAL))?;
 
                 // The VT is not active and the device is reseted. Ask them to try
                 // again later.

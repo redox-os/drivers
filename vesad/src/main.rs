@@ -98,6 +98,8 @@ fn inner(daemon: redox_daemon::Daemon, framebuffers: Vec<FrameBuffer>, spec: &[b
 
     daemon.ready().expect("failed to notify parent");
 
+    scheme.inputd_handle.activate(1).unwrap();
+
     let mut blocked = Vec::new();
     loop {
         let mut packet = Packet::default();

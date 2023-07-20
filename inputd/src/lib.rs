@@ -1,7 +1,7 @@
 #![feature(iter_next_chunk)]
 
 use std::fs::File;
-use std::io::{Error, Read};
+use std::io::{Error, Read, Write};
 
 pub struct Handle(File);
 
@@ -15,6 +15,10 @@ impl Handle {
     // identify the display on activation events.
     pub fn register(&mut self) -> Result<usize, Error> {
         Ok(dbg!(self.0.read(&mut [])?))
+    }
+
+    pub fn activate(&mut self, vt: usize) -> Result<usize, Error> {
+        Ok(dbg!(self.0.write(&vt.to_le_bytes())?))
     }
 }
 
