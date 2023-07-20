@@ -30,7 +30,7 @@ use std::sync::Arc;
 use pcid_interface::PcidServerHandle;
 
 use syscall::{Packet, SchemeMut};
-use virtio_core::transport::{Queue, self};
+use virtio_core::transport::{self, Queue};
 use virtio_core::utils::VolatileCell;
 use virtio_core::MSIX_PRIMARY_VECTOR;
 

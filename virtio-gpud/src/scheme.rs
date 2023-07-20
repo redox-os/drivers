@@ -6,7 +6,7 @@ use std::sync::Arc;
 use inputd::Damage;
 
 use common::dma::Dma;
-use syscall::{Error as SysError, SchemeMut, EINVAL, EAGAIN};
+use syscall::{Error as SysError, SchemeMut, EAGAIN, EINVAL};
 
 use virtio_core::spec::{Buffer, ChainBuilder, DescriptorFlags};
 use virtio_core::transport::{Error, Queue, StandardTransport};
@@ -117,8 +117,8 @@ impl<'a> Display<'a> {
             .next_multiple_of(syscall::PAGE_SIZE);
 
         let mapped = *self.mapped.get().unwrap();
-        let address = unsafe {syscall::virttophys(mapped)}?;
-    
+        let address = unsafe { syscall::virttophys(mapped) }?;
+
         self.map_screen_with(0, address, fb_size, mapped).await
     }
 
@@ -130,7 +130,7 @@ impl<'a> Display<'a> {
         let bpp = 32;
         let fb_size = (self.width as usize * self.height as usize * bpp / 8)
             .next_multiple_of(syscall::PAGE_SIZE);
-        let address = unsafe { syscall::physalloc(fb_size) }? ;
+        let address = unsafe { syscall::physalloc(fb_size) }?;
         let mapped = unsafe {
             common::physmap(
                 address as usize,
@@ -147,7 +147,13 @@ impl<'a> Display<'a> {
         self.map_screen_with(offset, address, fb_size, mapped).await
     }
 
-    async fn map_screen_with(&self, offset: usize, address: usize, size: usize, mapped: usize) -> Result<usize, Error> {
+    async fn map_screen_with(
+        &self,
+        offset: usize,
+        address: usize,
+        size: usize,
+        mapped: usize,
+    ) -> Result<usize, Error> {
         // Create a host resource using `VIRTIO_GPU_CMD_RESOURCE_CREATE_2D`.
         let mut request = Dma::new(ResourceCreate2d::default())?;
 
@@ -158,10 +164,10 @@ impl<'a> Display<'a> {
 
         self.send_request(request).await?;
 
-        // Use the allocated framebuffer from tthe guest ram, and attach it as backing 
-        // storage to the resource just created, using `VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING`. 
+        // Use the allocated framebuffer from tthe guest ram, and attach it as backing
+        // storage to the resource just created, using `VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING`.
         //
-        // TODO(andypython): Scatter lists are supported, so the framebuffer doesn’t need to be 
+        // TODO(andypython): Scatter lists are supported, so the framebuffer doesn’t need to be
         // contignous in guest physical memory.
         let entry = Dma::new(MemEntry {
             address: address as u64,
@@ -421,7 +427,7 @@ impl<'a> SchemeMut for Scheme<'a> {
             Handle::Vt(id) => {
                 let handle = self.vts.get_mut(&id).ok_or(SysError::new(EINVAL))?;
 
-                // The VT is not active and the device is reseted. Ask them to try 
+                // The VT is not active and the device is reseted. Ask them to try
                 // again later.
                 if handle.is_reseted.load(Ordering::SeqCst) {
                     return Err(SysError::new(EAGAIN));
@@ -442,24 +448,24 @@ impl<'a> SchemeMut for Scheme<'a> {
             }
 
             Handle::Input => {
-                let command = inputd::Command::parse(buf);
+                use inputd::Cmd as DisplayCommand;
 
-                match command.ty {
-                    inputd::CommandTy::Activate => {
-                        let vt = command.value;
+                let command = inputd::parse_command(buf).unwrap();
 
+                match command {
+                    DisplayCommand::Activate(vt) => {
                         let display = self.vts.get(&vt).unwrap();
                         futures::executor::block_on(display.init()).unwrap();
-                    },
+                    }
 
-                    inputd::CommandTy::Deactivate => {
-                        let vt = command.value;
-
+                    DisplayCommand::Deactivate(vt) => {
                         let display = self.vts.get(&vt).ok_or(SysError::new(EINVAL))?;
                         futures::executor::block_on(display.detach()).unwrap();
                     }
 
-                    _ => unreachable!(),
+                    DisplayCommand::Resize { .. } => {
+                        log::warn!("virtio-gpu: resize is not implemented yet")
+                    }
                 }
 
                 Ok(buf.len())

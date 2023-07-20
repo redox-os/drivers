@@ -1,8 +1,7 @@
 use std::collections::BTreeMap;
 use std::{mem, ptr, slice, str};
 
-use orbclient::{Event, EventOption};
-use syscall::{Error, EventFlags, EACCES, EBADF, EINVAL, ENOENT, Map, O_NONBLOCK, Result, SchemeMut, PAGE_SIZE};
+use syscall::{Error, EventFlags, EBADF, EINVAL, ENOENT, Map, O_NONBLOCK, Result, SchemeMut, PAGE_SIZE};
 
 use crate::{
     display::Display,
@@ -37,7 +36,6 @@ pub struct DisplayScheme {
     pub vts: BTreeMap<VtIndex, BTreeMap<ScreenIndex, Box<dyn Screen>>>,
     next_id: usize,
     pub handles: BTreeMap<usize, Handle>,
-    super_key: bool,
     inputd_handle: inputd::Handle,
 }
 
@@ -74,7 +72,6 @@ impl DisplayScheme {
             vts,
             next_id: 0,
             handles: BTreeMap::new(),
-            super_key: false,
             inputd_handle
         }
     }
@@ -306,11 +303,13 @@ impl SchemeMut for DisplayScheme {
 
         match handle.kind {
             HandleKind::Input => {
-                let command = inputd::Command::parse(buf);
+                use inputd::Cmd as DisplayCommand;
+    
+                let command = inputd::parse_command(buf).unwrap();
 
-                match command.ty {
-                    inputd::CommandTy::Activate => {
-                        let vt_i = VtIndex(command.value);
+                match command {
+                    DisplayCommand::Activate(vt) => {
+                        let vt_i = VtIndex(vt);
 
                         if let Some(screens) = self.vts.get_mut(&vt_i) {
                             for (screen_i, screen) in screens.iter_mut() {
@@ -323,12 +322,13 @@ impl SchemeMut for DisplayScheme {
 
                         self.active = vt_i;
                     },
-                    
-                    inputd::CommandTy::Deactivate => {
-                        // Nothing :)
-                    },
 
-                    _ => unreachable!()
+                    DisplayCommand::Resize { width, height, stride, .. } => {
+                        self.resize(width as usize, height as usize, stride as usize);
+                    }
+
+                    // Nothing to do for deactivate :)
+                    DisplayCommand::Deactivate(_) => {},
                 }
 
                 Ok(buf.len())

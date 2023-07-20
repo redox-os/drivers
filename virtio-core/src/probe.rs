@@ -11,7 +11,7 @@ use pcid_interface::*;
 use syscall::Io;
 
 use crate::spec::*;
-use crate::transport::{Error, StandardTransport, Queue};
+use crate::transport::{Error, Queue, StandardTransport};
 use crate::utils::{align_down, VolatileCell};
 
 pub struct Device<'a> {
@@ -190,7 +190,12 @@ pub fn probe_device<'a>(pcid_handle: &mut PcidServerHandle) -> Result<Device<'a>
 
             let size = offset + capability.length as usize;
 
-            let addr = common::physmap(aligned_addr, size, common::Prot::RW, common::MemoryType::Uncacheable)? as usize;
+            let addr = common::physmap(
+                aligned_addr,
+                size,
+                common::Prot::RW,
+                common::MemoryType::Uncacheable,
+            )? as usize;
 
             addr + offset
         };
@@ -262,12 +267,12 @@ pub fn probe_device<'a>(pcid_handle: &mut PcidServerHandle) -> Result<Device<'a>
     };
 
     device.transport.reset();
-    reinit(& device)?;
+    reinit(&device)?;
 
     Ok(device)
 }
 
-pub fn reinit<'a>(device: & Device<'a>) -> Result<(), Error> {
+pub fn reinit<'a>(device: &Device<'a>) -> Result<(), Error> {
     // XXX: According to the virtio specification v1.2, setting the ACKNOWLEDGE and DRIVER bits
     //      in `device_status` is required to be done in two steps.
     let mut common = device.transport.common.lock().unwrap();
@@ -279,8 +284,6 @@ pub fn reinit<'a>(device: & Device<'a>) -> Result<(), Error> {
 
     let old = common.device_status.get();
     common.device_status.set(old | DeviceStatusFlags::DRIVER);
-
- 
 
     Ok(())
 }

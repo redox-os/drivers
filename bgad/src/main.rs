@@ -37,8 +37,8 @@ fn main() {
         print!("{}", format!("   - BGA {}x{}\n", bga.width(), bga.height()));
 
         let mut scheme = BgaScheme {
-            bga: bga,
-            display: File::open("display/vesa:input").ok()
+            bga,
+            display: File::open("input:producer").ok()
         };
 
         scheme.update_size();

@@ -13,11 +13,12 @@
 
 use std::collections::BTreeMap;
 use std::fs::File;
-use std::io::{self, Read, Write};
+use std::io::{Read, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use inputd::{Command, CommandTy};
+use inputd::Cmd;
+
 use orbclient::{Event, EventOption};
 use syscall::{Error as SysError, EventFlags, Packet, SchemeMut, EINVAL};
 
@@ -166,14 +167,24 @@ impl SchemeMut for InputScheme {
                     _ => (),
                 },
 
+                EventOption::Resize(resize_event) => {
+                    if let Some((_, file, current)) = self.active_vt.as_mut() {
+                        inputd::send_comand(
+                            file,
+                            Cmd::Resize {
+                                vt: current.clone(),
+                                width: resize_event.width,
+                                height: resize_event.height,
+
+                                // TODO(andypython): Figure out how to get the stride.
+                                stride: resize_event.width,
+                            },
+                        )?;
+                    }
+                }
+
                 _ => continue,
             }
-
-            let deactivate = |file: &mut File, id: usize| -> io::Result<()> {
-                let command = Command::new(CommandTy::Deactivate, id).into_bytes();
-                file.write(&command)?;
-                Ok(())
-            };
 
             if let Some(new_active) = new_active_opt {
                 if let Some(vt) = self.vts.get(&new_active).cloned() {
@@ -183,20 +194,19 @@ impl SchemeMut for InputScheme {
                             continue;
                         }
 
-                        deactivate(file, *current).unwrap();
+                        inputd::send_comand(file, Cmd::Deactivate(*current))?;
                     } else {
                         let id = self.next_vt_id.load(Ordering::SeqCst) - 1;
                         let mut vt = File::open(self.vts.get_mut(&id).unwrap().as_ref()).unwrap();
 
-                        deactivate(&mut vt, id).unwrap();
+                        inputd::send_comand(&mut vt, Cmd::Deactivate(id))?;
                     }
 
                     log::info!("inputd: switching to VT #{new_active} (`{vt}`)");
 
                     let mut file = File::open(vt.as_ref()).unwrap();
-                    file.write(&Command::new(CommandTy::Activate, new_active).into_bytes())
-                        .unwrap();
 
+                    inputd::send_comand(&mut file, Cmd::Activate(new_active))?;
                     self.active_vt = Some((vt.clone(), file, new_active));
                 } else {
                     log::warn!("inputd: switch to non-existent VT #{new_active} was requested");
@@ -294,7 +304,7 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
                     last_allocated == *vt
                 };
 
-                // The activate VT is not the same as the VT that the consumer is listening to 
+                // The activate VT is not the same as the VT that the consumer is listening to
                 // for events.
                 if !should_notify {
                     continue;

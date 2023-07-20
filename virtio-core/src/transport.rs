@@ -161,7 +161,7 @@ impl<'a> Queue<'a> {
             descriptor_stack,
             used_head: AtomicU16::new(0),
             sref: sref.clone(),
-            vector
+            vector,
         })
     }
 
@@ -171,7 +171,7 @@ impl<'a> Queue<'a> {
 
         // Drain all of the available descriptors.
         while let Some(_) = self.descriptor_stack.pop() {}
-    
+
         // Refill the descriptor stack.
         (0..self.descriptor.len() as u16).for_each(|i| self.descriptor_stack.push(i));
     }
@@ -244,9 +244,9 @@ impl<'a> Available<'a> {
         let size = size.next_multiple_of(syscall::PAGE_SIZE); // align to page size
 
         let addr = unsafe { syscall::physalloc(size) }.map_err(Error::SyscallError)?;
-        let virt = unsafe {
-            common::physmap(addr, size, common::Prot::RW, common::MemoryType::default())
-        }.map_err(Error::SyscallError)?;
+        let virt =
+            unsafe { common::physmap(addr, size, common::Prot::RW, common::MemoryType::default()) }
+                .map_err(Error::SyscallError)?;
 
         let ring = unsafe { &mut *(virt as *mut AvailableRing) };
 
@@ -312,7 +312,8 @@ impl<'a> Used<'a> {
 
         let addr = unsafe { syscall::physalloc(size) }.map_err(Error::SyscallError)?;
         let virt =
-            unsafe { common::physmap(addr, size, common::Prot::RW, common::MemoryType::default()) }.map_err(Error::SyscallError)?;
+            unsafe { common::physmap(addr, size, common::Prot::RW, common::MemoryType::default()) }
+                .map_err(Error::SyscallError)?;
 
         let ring = unsafe { &mut *(virt as *mut UsedRing) };
 
@@ -493,7 +494,14 @@ impl<'a> StandardTransport<'a> {
 
         log::info!("virtio-core: enabled queue #{queue_index} (size={queue_size})");
 
-        let queue = Queue::new(descriptor, avail, used, notification_bell, queue_index, vector);
+        let queue = Queue::new(
+            descriptor,
+            avail,
+            used,
+            notification_bell,
+            queue_index,
+            vector,
+        );
 
         let queue_copy = queue.clone();
         let irq_fd = irq_handle.as_raw_fd();
