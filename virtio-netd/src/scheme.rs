@@ -8,6 +8,8 @@ use syscall::*;
 use virtio_core::spec::{Buffer, ChainBuilder, DescriptorFlags};
 use virtio_core::transport::Queue;
 
+use common::dma::Dma;
+
 use crate::{VirtHeader, MAX_BUFFER_LEN};
 
 pub struct NetworkScheme<'a> {
