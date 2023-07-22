@@ -463,7 +463,7 @@ impl<'a> SchemeMut for Scheme<'a> {
     fn close(&mut self, _id: usize) -> syscall::Result<usize> {
         Ok(0)
     }
-    fn mmap_prep(&mut self, id: usize, flags: MapFlags, size: usize, offset: u64) -> syscall::Result<usize> {
+    fn mmap_prep(&mut self, id: usize, offset: u64, size: usize, flags: MapFlags) -> syscall::Result<usize> {
         log::info!("KSMSG MMAP {} {:?} {} {}", id, flags, offset, size);
         match self.handles.get(&id).ok_or(SysError::new(EINVAL))? {
             Handle::Vt { display, .. } => {

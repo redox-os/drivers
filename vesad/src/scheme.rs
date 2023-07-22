@@ -377,7 +377,7 @@ impl SchemeMut for DisplayScheme {
         self.handles.remove(&id).ok_or(Error::new(EBADF))?;
         Ok(0)
     }
-    fn mmap_prep(&mut self, id: usize, _flags: MapFlags, size: usize, off: u64) -> Result<usize> {
+    fn mmap_prep(&mut self, id: usize, off: u64, size: usize, _flags: MapFlags) -> Result<usize> {
         let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
         if let HandleKind::Screen(vt_i, screen_i) = handle.kind {
