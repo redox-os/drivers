@@ -1,4 +1,4 @@
-#![feature(if_let_guard)]
+#![feature(if_let_guard, int_roundings)]
 
 use std::convert::TryFrom;
 use std::io::{self, prelude::*};
