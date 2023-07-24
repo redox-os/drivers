@@ -79,3 +79,5 @@ If you don't have datasheets, we recommend you to do reverse-engineering of avai
 We recommend BSDs drivers because BSD license is compatible with MIT (permissive), that way we can reuse the code in other drivers.
 
 You can see this [example](https://gitlab.redox-os.org/redox-os/exampled) driver, read the code of the existent ones or the most close driver type for your device.
+
+Before testing your changes be aware of [this](https://doc.redox-os.org/book/ch09-02-coding-and-building.html#a-note-about-drivers).
