@@ -191,7 +191,7 @@ impl Sdt {
 
         while left > 0 {
             let to_copy = std::cmp::min(left, length_per_iteration);
-            let additional_pages = PhysmapGuard::map(offset, length_per_iteration)?;
+            let additional_pages = PhysmapGuard::map(offset, length_per_iteration.div_ceil(PAGE_SIZE))?;
 
             loaded.extend(&additional_pages[..to_copy]);
 
