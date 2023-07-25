@@ -14,6 +14,7 @@
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{Read, Write};
+use std::os::fd::AsRawFd;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -473,48 +474,70 @@ pub fn main() {
     let mut args = std::env::args().skip(1);
 
     if let Some(val) = args.next() {
-        if val != "-G" {
-            panic!("inputd: invalid argument: {}", val);
-        }
+        match val.as_ref() {
+            // Sets the VT mode of the specified VT to [`VtMode::Graphic`].
+            "-G" => {
+                let vt = args.next().unwrap().parse::<usize>().unwrap();
 
-        let vt = args.next().unwrap().parse::<usize>().unwrap();
-
-        // On startup, the VESA display driver is started which basically makes use of the framebuffer
-        // provided by the firmware. The GPU device are latter started by `pcid` (such as `virtio-gpu`).
-        let mut devices = vec![];
-        let schemes = std::fs::read_dir(":").unwrap();
-
-        for entry in schemes {
-            let path = entry.unwrap().path();
-            let path_str = path
-                .into_os_string()
-                .into_string()
-                .expect("inputd: failed to convert path to string");
-
-            if path_str.contains("display") {
-                println!("inputd: found display scheme {}", path_str);
-                devices.push(path_str);
+                // On startup, the VESA display driver is started which basically makes use of the framebuffer
+                // provided by the firmware. The GPU devices are latter started by `pcid` (such as `virtio-gpu`).
+                let mut devices = vec![];
+                let schemes = std::fs::read_dir(":").unwrap();
+        
+                for entry in schemes {
+                    let path = entry.unwrap().path();
+                    let path_str = path
+                        .into_os_string()
+                        .into_string()
+                        .expect("inputd: failed to convert path to string");
+        
+                    if path_str.contains("display") {
+                        println!("inputd: found display scheme {}", path_str);
+                        devices.push(path_str);
+                    }
+                }
+        
+                let device = devices
+                    .iter()
+                    .filter(|d| !d.contains("vesa"))
+                    .collect::<Vec<_>>();
+                let device = if device.is_empty() {
+                    "vesa"
+                } else {
+                    // TODO: What should we do when there are multiple display devices?
+                    device[0].split('/').nth(2).unwrap()
+                };
+        
+                let mut handle =
+                    inputd::Handle::new(device).expect("inputd: failed to open display handle");
+        
+                handle
+                    .activate(vt, VtMode::Graphic)
+                    .expect("inputd: failed to activate VT in graphic mode");
             }
+
+            // Activates a VT.
+            "-A" => {
+                let vt = args.next().unwrap().parse::<usize>().unwrap();
+
+                let handle = File::open(format!("input:consumer/{vt}")).expect("inputd: failed to open consumer handle");
+                let mut display_path = [0; 4096];
+
+                let written = syscall::fpath(handle.as_raw_fd() as usize, &mut display_path).expect("inputd: fpath() failed");
+
+                assert!(written <= display_path.len());
+                drop(handle);
+
+                let display_path = std::str::from_utf8(&display_path[..written]).expect("inputd: display path UTF-8 validation failed");
+                let display_name = display_path.split('/').skip(1).next().expect("inputd: invalid display path");
+                let display_scheme = display_name.split(':').next().expect("inputd: invalid display path");
+
+                let mut handle = inputd::Handle::new(display_scheme).expect("inputd: failed to open display handle");
+                handle.activate(vt, VtMode::Default).expect("inputd: failed to activate VT");
+            }
+
+            _ => panic!("inputd: invalid argument: {}", val),
         }
-
-        let device = devices
-            .iter()
-            .filter(|d| !d.contains("vesa"))
-            .collect::<Vec<_>>();
-        let device = if device.is_empty() {
-            "vesa"
-        } else {
-            // TODO: What should we do when there are multiple display devices?
-            device[0].split('/').nth(2).unwrap()
-        };
-
-        dbg!(&device);
-        let mut handle =
-            inputd::Handle::new(device).expect("inputd: failed to open display handle");
-
-        handle
-            .activate(vt, VtMode::Graphic)
-            .expect("inputd: failed to activate VT in graphic mode");
     } else {
         redox_daemon::Daemon::new(daemon_runner).expect("virtio-core: failed to daemonize");
     }

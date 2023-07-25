@@ -307,7 +307,6 @@ impl SchemeMut for DisplayScheme {
                 use inputd::{Cmd as DisplayCommand, VtMode};
     
                 let command = inputd::parse_command(buf).unwrap();
-                dbg!(&command);
 
                 match command {
                     DisplayCommand::Activate { vt, mode } => {
@@ -317,12 +316,10 @@ impl SchemeMut for DisplayScheme {
                             for (screen_i, screen) in screens.iter_mut() {
                                 match mode {
                                     VtMode::Graphic => {
-                                        dbg!("yes");
                                         *screen = Box::new(GraphicScreen::new(Display::new(screen.width(), screen.height())));
                                     }
 
                                     VtMode::Default => {
-                                        dbg!("x", &mode);
                                         screen.redraw(
                                             self.onscreens[screen_i.0],
                                             self.framebuffers[screen_i.0].stride
