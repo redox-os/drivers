@@ -216,7 +216,7 @@ impl SchemeMut for InputScheme {
             )
         };
 
-        for event in events.iter() {
+        'out: for event in events.iter() {
             let mut new_active_opt = None;
             match event.to_option() {
                 EventOption::Key(key_event) => match key_event.scancode {
@@ -264,6 +264,10 @@ impl SchemeMut for InputScheme {
             }
 
             if let Some(new_active) = new_active_opt {
+                if new_active == self.active_vt.as_ref().unwrap().index {
+                    continue 'out;
+                }
+
                 if let Some(new_active) = self.vts.get(&new_active).cloned() {
                     {
                         let active_vt = self.active_vt.as_ref().unwrap();
@@ -372,7 +376,7 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
                 &mut vt_inner.handle_file,
                 Cmd::Activate {
                     vt: vt.index,
-                    mode: VtMode::from(cmd.mode),
+                    mode: cmd.mode,
                 },
             ) {
                 log::error!("inputd: failed to activate VT #{}: {err}", vt.index)
@@ -501,7 +505,7 @@ pub fn main() {
             "vesa"
         } else {
             // TODO: What should we do when there are multiple display devices?
-            device[0].split("/").nth(2).unwrap()
+            device[0].split('/').nth(2).unwrap()
         };
 
         dbg!(&device);

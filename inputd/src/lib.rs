@@ -15,7 +15,7 @@ pub enum VtMode {
     Default = 2,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 #[repr(C)]
 pub struct VtActivate {
     pub vt: usize,
@@ -33,12 +33,12 @@ impl Handle {
     // The return value is the display identifier. It will be used to uniquely
     // identify the display on activation events.
     pub fn register(&mut self) -> Result<usize, Error> {
-        Ok(self.0.read(&mut [])?)
+        self.0.read(&mut [])
     }
 
     pub fn activate(&mut self, vt: usize, mode: VtMode) -> Result<usize, Error> {
         let cmd = VtActivate { vt, mode };
-        Ok(self.0.write(unsafe { any_as_u8_slice(&cmd) })?)
+        self.0.write(unsafe { any_as_u8_slice(&cmd) })
     }
 }
 
@@ -141,7 +141,7 @@ pub fn parse_command(buffer: &[u8]) -> Option<Cmd> {
             let cmd = unsafe { &*buffer.as_ptr().offset(1).cast::<VtActivate>() };
             Some(Cmd::Activate {
                 vt: cmd.vt,
-                mode: VtMode::from(cmd.mode),
+                mode: cmd.mode,
             })
         }
 
