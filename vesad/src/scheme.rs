@@ -37,6 +37,7 @@ pub struct DisplayScheme {
     next_id: usize,
     pub handles: BTreeMap<usize, Handle>,
     pub inputd_handle: inputd::Handle,
+
 }
 
 impl DisplayScheme {
@@ -72,7 +73,7 @@ impl DisplayScheme {
             vts,
             next_id: 0,
             handles: BTreeMap::new(),
-            inputd_handle
+            inputd_handle,
         }
     }
 
@@ -303,20 +304,33 @@ impl SchemeMut for DisplayScheme {
 
         match handle.kind {
             HandleKind::Input => {
-                use inputd::Cmd as DisplayCommand;
+                use inputd::{Cmd as DisplayCommand, VtMode};
     
                 let command = inputd::parse_command(buf).unwrap();
+                dbg!(&command);
 
                 match command {
-                    DisplayCommand::Activate(vt) => {
+                    DisplayCommand::Activate { vt, mode } => {
                         let vt_i = VtIndex(vt);
 
                         if let Some(screens) = self.vts.get_mut(&vt_i) {
                             for (screen_i, screen) in screens.iter_mut() {
-                                screen.redraw(
-                                    self.onscreens[screen_i.0],
-                                    self.framebuffers[screen_i.0].stride
-                                );
+                                match mode {
+                                    VtMode::Graphic => {
+                                        dbg!("yes");
+                                        *screen = Box::new(GraphicScreen::new(Display::new(screen.width(), screen.height())));
+                                    }
+
+                                    VtMode::Default => {
+                                        dbg!("x", &mode);
+                                        screen.redraw(
+                                            self.onscreens[screen_i.0],
+                                            self.framebuffers[screen_i.0].stride
+                                        );
+                                    }
+
+                                    VtMode::Text => todo!()
+                                }
                             }
                         }
 

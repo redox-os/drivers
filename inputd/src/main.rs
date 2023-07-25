@@ -17,7 +17,7 @@ use std::io::{Read, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use inputd::Cmd;
+use inputd::{Cmd, VtActivate, VtMode};
 
 use spin::Mutex;
 
@@ -49,6 +49,7 @@ impl Handle {
 /// requires the system call to return first. Otherwise, it will block indefinitely.
 struct VtInner {
     handle_file: File,
+    mode: VtMode,
 }
 
 struct Vt {
@@ -72,8 +73,10 @@ impl Vt {
     pub fn inner(&self) -> &Mutex<VtInner> {
         self.inner.call_once(|| {
             let handle_file = File::open(format!("{}:handle", self.display)).unwrap();
-
-            Mutex::new(VtInner { handle_file })
+            Mutex::new(VtInner {
+                handle_file,
+                mode: VtMode::Default,
+            })
         })
     }
 }
@@ -88,7 +91,7 @@ struct InputScheme {
     super_key: bool,
     active_vt: Option<Arc<Vt>>,
 
-    todo: Vec<usize>,
+    todo: Vec<VtActivate>,
 }
 
 impl InputScheme {
@@ -186,19 +189,19 @@ impl SchemeMut for InputScheme {
         let handle = self.handles.get_mut(&id).ok_or(SysError::new(EINVAL))?;
 
         match handle {
-            Handle::Device { .. } | Handle::Consumer { .. } => {
-                if buf.len() == core::mem::size_of::<usize>() {
-                    // The device is requesting to activate a VT.
-                    let vt =
-                        usize::from_le_bytes(buf.try_into().map_err(|_| SysError::new(EINVAL))?);
+            Handle::Device { device } => {
+                assert!(buf.len() == core::mem::size_of::<VtActivate>());
 
-                    self.todo.push(vt);
-                    return Ok(buf.len());
-                } else {
-                    unreachable!()
-                }
+                // SAFETY: We have verified the size of the buffer above.
+                let cmd = unsafe { &*buf.as_ptr().cast::<VtActivate>() };
+
+                self.vts.insert(cmd.vt, Vt::new(device.clone(), cmd.vt));
+                self.todo.push(cmd.clone());
+
+                return Ok(buf.len());
             }
 
+            Handle::Consumer { .. } => unreachable!(),
             _ => {}
         }
 
@@ -276,7 +279,10 @@ impl SchemeMut for InputScheme {
 
                     inputd::send_comand(
                         &mut vt_inner.handle_file,
-                        Cmd::Activate(new_active.index),
+                        Cmd::Activate {
+                            vt: new_active.index,
+                            mode: VtMode::Default,
+                        },
                     )?;
                     self.active_vt = Some(new_active.clone());
                 } else {
@@ -287,7 +293,7 @@ impl SchemeMut for InputScheme {
 
         assert!(handle.is_producer());
 
-        let active_vt  = self.active_vt.as_ref().unwrap();
+        let active_vt = self.active_vt.as_ref().unwrap();
         for handle in self.handles.values_mut() {
             match handle {
                 Handle::Consumer {
@@ -357,17 +363,22 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
         scheme.handle(&mut packet);
         socket_file.write(&packet)?;
 
-        while let Some(vt) = scheme.todo.pop() {
-            let vt = scheme.vts.get_mut(&vt).unwrap();
+        while let Some(cmd) = scheme.todo.pop() {
+            let vt = scheme.vts.get_mut(&cmd.vt).unwrap();
             let mut vt_inner = vt.inner().lock();
 
             // Failing to activate a VT is not a fatal error.
-            if let Err(err) =
-                inputd::send_comand(&mut vt_inner.handle_file, Cmd::Activate(vt.index))
-            {
+            if let Err(err) = inputd::send_comand(
+                &mut vt_inner.handle_file,
+                Cmd::Activate {
+                    vt: vt.index,
+                    mode: VtMode::from(cmd.mode),
+                },
+            ) {
                 log::error!("inputd: failed to activate VT #{}: {err}", vt.index)
             }
 
+            vt_inner.mode = cmd.mode;
             scheme.active_vt = Some(vt.clone());
         }
 
@@ -454,5 +465,53 @@ pub fn setup_logging(level: log::LevelFilter, name: &str) {
 pub fn main() {
     #[cfg(target_os = "redox")]
     setup_logging(log::LevelFilter::Trace, "inputd");
-    redox_daemon::Daemon::new(daemon_runner).expect("virtio-core: failed to daemonize");
+
+    let mut args = std::env::args().skip(1);
+
+    if let Some(val) = args.next() {
+        if val != "-G" {
+            panic!("inputd: invalid argument: {}", val);
+        }
+
+        let vt = args.next().unwrap().parse::<usize>().unwrap();
+
+        // On startup, the VESA display driver is started which basically makes use of the framebuffer
+        // provided by the firmware. The GPU device are latter started by `pcid` (such as `virtio-gpu`).
+        let mut devices = vec![];
+        let schemes = std::fs::read_dir(":").unwrap();
+
+        for entry in schemes {
+            let path = entry.unwrap().path();
+            let path_str = path
+                .into_os_string()
+                .into_string()
+                .expect("inputd: failed to convert path to string");
+
+            if path_str.contains("display") {
+                println!("inputd: found display scheme {}", path_str);
+                devices.push(path_str);
+            }
+        }
+
+        let device = devices
+            .iter()
+            .filter(|d| !d.contains("vesa"))
+            .collect::<Vec<_>>();
+        let device = if device.is_empty() {
+            "vesa"
+        } else {
+            // TODO: What should we do when there are multiple display devices?
+            device[0].split("/").nth(2).unwrap()
+        };
+
+        dbg!(&device);
+        let mut handle =
+            inputd::Handle::new(device).expect("inputd: failed to open display handle");
+
+        handle
+            .activate(vt, VtMode::Graphic)
+            .expect("inputd: failed to activate VT in graphic mode");
+    } else {
+        redox_daemon::Daemon::new(daemon_runner).expect("virtio-core: failed to daemonize");
+    }
 }

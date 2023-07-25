@@ -249,20 +249,16 @@ impl<'a> Display<'a> {
     }
 }
 
-enum Handle {
-    Vt(usize /* VT index */),
+enum Handle<'a> {
+    Vt { display: Arc<Display<'a>>, vt: usize },
     Input,
 }
 
 pub struct Scheme<'a> {
-    vts: BTreeMap<usize /* VT index */, Arc<Display<'a>>>,
-    handles: BTreeMap<usize /* file descriptor */, Handle>,
+    handles: BTreeMap<usize /* file descriptor */, Handle<'a>>,
     /// Counter used for file descriptor allocation.
     next_id: AtomicUsize,
     displays: Vec<Arc<Display<'a>>>,
-
-    pub(crate) inputd_handle: inputd::Handle,
-    pub(crate) main_vt: usize,
 }
 
 impl<'a> Scheme<'a> {
@@ -280,19 +276,10 @@ impl<'a> Scheme<'a> {
         )
         .await?;
 
-        let mut inputd_handle = inputd::Handle::new("virtio-gpu").unwrap();
-
-        let mut vts = BTreeMap::new();
-        let main_vt = inputd_handle.register().unwrap();
-        vts.insert(main_vt, displays[0].clone());
-
         Ok(Self {
-            vts,
             handles: BTreeMap::new(),
             next_id: AtomicUsize::new(0),
-            inputd_handle,
             displays,
-            main_vt,
         })
     }
 
@@ -363,22 +350,17 @@ impl<'a> SchemeMut for Scheme<'a> {
 
         dbg!(vt, id);
 
-        if self.displays.get(id).is_none() {
-            return Err(SysError::new(EINVAL));
-        }
+        let display = self.displays.get(id).ok_or(SysError::new(EINVAL))?;
 
         let fd = self.next_id.fetch_add(1, Ordering::SeqCst);
-        // FIXME: The +1 is a hack. vesad smh
-        self.handles.insert(fd, Handle::Vt(vt + 1));
+        self.handles.insert(fd, Handle::Vt {display: display.clone(), vt });
         Ok(fd)
     }
 
     fn fpath(&mut self, id: usize, buf: &mut [u8]) -> syscall::Result<usize> {
         match self.handles.get(&id).unwrap() {
-            Handle::Vt(id) => {
-                let handle = self.vts.get_mut(&(id - 1)).ok_or(SysError::new(EINVAL))?;
-                let bytes_copied = futures::executor::block_on(handle.get_fpath(buf)).unwrap();
-
+            Handle::Vt { display, .. } => {
+                let bytes_copied = futures::executor::block_on(display.get_fpath(buf)).unwrap();
                 Ok(bytes_copied)
             }
 
@@ -400,9 +382,8 @@ impl<'a> SchemeMut for Scheme<'a> {
 
     fn fmap(&mut self, id: usize, map: &syscall::Map) -> syscall::Result<usize> {
         match self.handles.get(&id).ok_or(SysError::new(EINVAL))? {
-            Handle::Vt(id) => {
-                let handle = self.vts.get_mut(&(id - 1)).ok_or(SysError::new(EINVAL))?;
-                Ok(futures::executor::block_on(handle.map_screen(map.offset)).unwrap())
+            Handle::Vt { display, .. } => {
+                Ok(futures::executor::block_on(display.map_screen(map.offset)).unwrap())
             }
             _ => unreachable!(),
         }
@@ -410,9 +391,8 @@ impl<'a> SchemeMut for Scheme<'a> {
 
     fn fsync(&mut self, id: usize) -> syscall::Result<usize> {
         match self.handles.get(&id).ok_or(SysError::new(EINVAL))? {
-            Handle::Vt(id) => {
-                let handle = self.vts.get_mut(&id).ok_or(SysError::new(EINVAL))?;
-                futures::executor::block_on(handle.flush(None)).unwrap();
+            Handle::Vt { display, .. } => {
+                futures::executor::block_on(display.flush(None)).unwrap();
                 Ok(0)
             }
 
@@ -428,12 +408,10 @@ impl<'a> SchemeMut for Scheme<'a> {
 
     fn write(&mut self, id: usize, buf: &[u8]) -> syscall::Result<usize> {
         match self.handles.get(&id).ok_or(SysError::new(EINVAL))? {
-            Handle::Vt(id) => {
-                let handle = self.vts.get_mut(&(id - 1)).ok_or(SysError::new(EINVAL))?;
-
+            Handle::Vt { display, .. } => {
                 // The VT is not active and the device is reseted. Ask them to try
                 // again later.
-                if handle.is_reseted.load(Ordering::SeqCst) {
+                if display.is_reseted.load(Ordering::SeqCst) {
                     return Err(SysError::new(EAGAIN));
                 }
 
@@ -445,26 +423,48 @@ impl<'a> SchemeMut for Scheme<'a> {
                 };
 
                 for damage in damages {
-                    futures::executor::block_on(handle.flush(Some(damage))).unwrap();
+                    futures::executor::block_on(display.flush(Some(damage))).unwrap();
                 }
 
                 Ok(buf.len())
             }
 
             Handle::Input => {
-                use inputd::Cmd as DisplayCommand;
+                use inputd::{Cmd as DisplayCommand, VtMode};
 
                 let command = inputd::parse_command(buf).unwrap();
 
                 match command {
-                    DisplayCommand::Activate(vt) => {
-                        let display = self.vts.get(&vt).unwrap();
-                        futures::executor::block_on(display.init()).unwrap();
+                    DisplayCommand::Activate { mode, vt } => {
+                        assert!(mode == VtMode::Graphic || mode == VtMode::Default);
+                        let target_vt = vt;
+
+                        for handle in self.handles.values() {
+                            if let Handle::Vt { display , vt } = handle {
+                                if *vt != target_vt { 
+                                    continue; 
+                                }
+
+                                futures::executor::block_on(display.init()).unwrap();
+                            }
+                        }
                     }
 
-                    DisplayCommand::Deactivate(vt) => {
-                        let display = self.vts.get(&vt).ok_or(SysError::new(EINVAL))?;
-                        futures::executor::block_on(display.detach()).unwrap();
+                    DisplayCommand::Deactivate(target_vt) => {
+                        for handle in self.handles.values() {
+                            if let Handle::Vt { display , vt } = handle {
+                                if *vt != target_vt { 
+                                    continue; 
+                                }
+
+                                futures::executor::block_on(display.detach()).unwrap();
+                                break;
+                            }
+                        }
+
+                        // for display in self.displays.iter() {
+                        //     futures::executor::block_on(display.detach()).unwrap();
+                        // }
                     }
 
                     DisplayCommand::Resize { .. } => {

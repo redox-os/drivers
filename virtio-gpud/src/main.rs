@@ -446,7 +446,7 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
         device.transport.clone(),
     ))?;
 
-    scheme.inputd_handle.activate(scheme.main_vt)?;
+    // scheme.inputd_handle.activate(scheme.main_vt)?;
 
     loop {
         let mut packet = Packet::default();

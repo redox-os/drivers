@@ -11,7 +11,7 @@ use pcid_interface::*;
 use syscall::Io;
 
 use crate::spec::*;
-use crate::transport::{Error, Queue, StandardTransport};
+use crate::transport::{Error, StandardTransport};
 use crate::utils::{align_down, VolatileCell};
 
 pub struct Device<'a> {
@@ -21,6 +21,8 @@ pub struct Device<'a> {
     pub isr: &'a VolatileCell<u32>,
 }
 
+// FIXME(andypython): `device_space` should not be `Send` nor `Sync`. Take
+// it out of `Device`.
 unsafe impl Send for Device<'_> {}
 unsafe impl Sync for Device<'_> {}
 

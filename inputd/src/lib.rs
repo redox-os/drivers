@@ -3,6 +3,25 @@
 use std::fs::File;
 use std::io::{Error, Read, Write};
 
+unsafe fn any_as_u8_slice<T: Sized>(p: &T) -> &[u8] {
+    ::core::slice::from_raw_parts((p as *const T) as *const u8, ::core::mem::size_of::<T>())
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+#[repr(usize)]
+pub enum VtMode {
+    Text = 0,
+    Graphic = 1,
+    Default = 2,
+}
+
+#[derive(Debug, Copy, Clone)]
+#[repr(C)]
+pub struct VtActivate {
+    pub vt: usize,
+    pub mode: VtMode,
+}
+
 pub struct Handle(File);
 
 impl Handle {
@@ -14,11 +33,12 @@ impl Handle {
     // The return value is the display identifier. It will be used to uniquely
     // identify the display on activation events.
     pub fn register(&mut self) -> Result<usize, Error> {
-        Ok(dbg!(self.0.read(&mut [])?))
+        Ok(self.0.read(&mut [])?)
     }
 
-    pub fn activate(&mut self, vt: usize) -> Result<usize, Error> {
-        Ok(dbg!(self.0.write(&vt.to_le_bytes())?))
+    pub fn activate(&mut self, vt: usize, mode: VtMode) -> Result<usize, Error> {
+        let cmd = VtActivate { vt, mode };
+        Ok(self.0.write(unsafe { any_as_u8_slice(&cmd) })?)
     }
 }
 
@@ -43,9 +63,14 @@ impl From<u8> for CmdTy {
     }
 }
 
+#[derive(Debug)]
 pub enum Cmd {
     // TODO(andypython): #VT should really need to be a `u8`.
-    Activate(usize /* #VT */),
+    Activate {
+        vt: usize,
+        mode: VtMode,
+    },
+
     Deactivate(usize /* #VT */),
     Resize {
         // TODO(andypython): do we really need to pass the VT here?
@@ -60,7 +85,7 @@ pub enum Cmd {
 impl Cmd {
     fn ty(&self) -> CmdTy {
         match self {
-            Cmd::Activate(_) => CmdTy::Activate,
+            Cmd::Activate { .. } => CmdTy::Activate,
             Cmd::Deactivate(_) => CmdTy::Deactivate,
             Cmd::Resize { .. } => CmdTy::Resize,
         }
@@ -74,7 +99,14 @@ pub fn send_comand(file: &mut File, command: Cmd) -> Result<(), syscall::Error> 
     result.push(command.ty() as u8);
 
     match command {
-        Cmd::Activate(vt) | Cmd::Deactivate(vt) => result.extend_from_slice(&vt.to_le_bytes()),
+        Cmd::Activate { vt, mode } => {
+            let cmd = VtActivate { vt, mode };
+            let bytes = unsafe { any_as_u8_slice(&cmd) };
+
+            result.extend_from_slice(bytes);
+        }
+
+        Cmd::Deactivate(vt) => result.extend_from_slice(&vt.to_le_bytes()),
         Cmd::Resize {
             vt,
             width,
@@ -105,7 +137,14 @@ pub fn parse_command(buffer: &[u8]) -> Option<Cmd> {
     let vt = usize::from_le_bytes(parser.next_chunk::<USIZE_SIZE>().ok()?);
 
     match command {
-        CmdTy::Activate => Some(Cmd::Activate(vt)),
+        CmdTy::Activate => {
+            let cmd = unsafe { &*buffer.as_ptr().offset(1).cast::<VtActivate>() };
+            Some(Cmd::Activate {
+                vt: cmd.vt,
+                mode: VtMode::from(cmd.mode),
+            })
+        }
+
         CmdTy::Deactivate => Some(Cmd::Deactivate(vt)),
         CmdTy::Resize => {
             let width = parser.next_chunk::<U32_SIZE>().ok()?;
