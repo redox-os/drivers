@@ -375,7 +375,7 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, bus_num: u8,
                         new & 0xFFFFFFF0
                     };
 
-                    let size = !masked + 1;
+                    let size = (!masked).wrapping_add(1);
                     bar_sizes[i] = if size <= 1 {
                         0
                     } else {
