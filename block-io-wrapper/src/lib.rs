@@ -18,11 +18,13 @@ pub fn read(
     if buf.len() == 0 {
         return Ok(0);
     }
-    let _ = offset.checked_add(buf.len() as u64).ok_or(Error::new(
-        ErrorKind::InvalidInput,
-        "Offset + Length greater than 2^64",
-    ))?;
-    let mut curr_buf = buf;
+    let (_, would_overflow) = offset.overflowing_add(buf.len() as u64);
+    let to_copy = if would_overflow {
+        usize::try_from(u64::MAX - offset).map_err(|_| Error::new(ErrorKind::Unsupported, "offset + len exceeds usize::MAX"))?
+    } else {
+        buf.len()
+    };
+    let mut curr_buf = &mut buf[..to_copy];
     let mut curr_offset = offset;
     let blk_size = usize::try_from(blksize).expect("blksize larger than usize");
     let mut total_read = 0;
