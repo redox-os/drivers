@@ -1,47 +1,49 @@
-pub fn read<E>(offset: u64, blksize: u32, mut buf: &mut [u8], block_bytes: &mut [u8], mut read: impl FnMut(u64, &mut [u8]) -> Result<(), E>) -> Result<usize, E> {
+use std::cmp::min;
+use std::io::{Error, ErrorKind};
+
+/// Split the read operation into a series of block reads.
+/// `read_fn` will be called with a block number to be read, and a buffer to be filled.
+/// The buffer must be large enough to hold `blksize` of data.
+/// `read_fn` must return a full block of data.
+/// Result will be the number of bytes read.
+pub fn read(
+    offset: u64,
+    blksize: u32,
+    mut buf: &mut [u8],
+    block_bytes: &mut [u8],
+    mut read_fn: impl FnMut(u64, &mut [u8]) -> Result<(), Error>,
+) -> Result<usize, Error> {
     // TODO: Yield sometimes, perhaps after a few blocks or something.
-    use std::ops::{Add, Div, Rem};
 
-    fn div_round_up<T>(a: T, b: T) -> T
-    where
-        T: Add<Output = T> + Div<Output = T> + Rem<Output = T> + PartialEq + From<u8> + Copy
-    {
-        if a % b != T::from(0u8) {
-            a / b + T::from(1u8)
-        } else {
-            a / b
-        }
+    if buf.len() == 0 {
+        return Ok(0);
     }
+    let _ = offset.checked_add(buf.len() as u64).ok_or(Error::new(
+        ErrorKind::InvalidInput,
+        "Offset + Length greater than 2^64",
+    ))?;
+    let mut curr_buf = buf;
+    let mut curr_offset = offset;
+    let blk_size = usize::try_from(blksize).expect("blksize larger than usize");
+    let mut total_read = 0;
 
-    let orig_buf_len = buf.len();
-
-    let start_block = offset / u64::from(blksize);
-    let end_block = div_round_up(offset + buf.len() as u64, u64::from(blksize)); // The first block not in the range
-
-    let offset_from_start_block: u64 = offset % u64::from(blksize);
-    let offset_to_end_block: u64 = u64::from(blksize) - (offset + buf.len() as u64) % u64::from(blksize);
-
-    let first_whole_block = start_block + if offset_from_start_block > 0 { 1 } else { 0 };
-    let last_whole_block = end_block - if offset_to_end_block > 0 { 1 } else { 0 } - 1;
-
-    let whole_blocks_to_read = last_whole_block - first_whole_block + 1;
-
-    for block in start_block..=end_block {
+    while curr_buf.len() > 0 {
         // TODO: Async/await? I mean, shouldn't AHCI be async?
 
-        read(block, block_bytes)?;
+        let blk_offset =
+            usize::try_from(curr_offset % u64::from(blksize)).expect("usize smaller than blksize");
+        let to_copy = min(curr_buf.len(), blk_size - blk_offset);
+        assert!(blk_offset + to_copy <= blk_size);
 
-        let (bytes_to_read, src_buf): (u64, &[u8]) = if block == start_block {
-            (u64::from(blksize) - offset_from_start_block, &block_bytes[offset_from_start_block as usize..])
-        } else if block == end_block {
-            (u64::from(blksize) - offset_to_end_block, &block_bytes[..offset_to_end_block as usize])
-        } else {
-            (blksize.into(), &block_bytes[..])
-        };
-        let bytes_to_read = std::cmp::min(bytes_to_read as usize, buf.len());
-        buf[..bytes_to_read].copy_from_slice(&src_buf[..bytes_to_read]);
-        buf = &mut buf[bytes_to_read..];
+        read_fn(curr_offset / u64::from(blksize), block_bytes)?;
+
+        let src_buf = &block_bytes[blk_offset..];
+
+        curr_buf[..to_copy].copy_from_slice(&src_buf[..to_copy]);
+        curr_buf = &mut curr_buf[to_copy..];
+        curr_offset += u64::try_from(to_copy).expect("bytes to copy larger than u64");
+        total_read += to_copy;
     }
 
-    Ok(std::cmp::min(orig_buf_len, whole_blocks_to_read as usize * blksize as usize + offset_from_start_block as usize + offset_to_end_block as usize))
+    Ok(total_read)
 }
