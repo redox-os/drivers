@@ -21,6 +21,11 @@ pub struct Device<'a> {
     pub isr: &'a VolatileCell<u32>,
 }
 
+// FIXME(andypython): `device_space` should not be `Send` nor `Sync`. Take
+// it out of `Device`.
+unsafe impl Send for Device<'_> {}
+unsafe impl Sync for Device<'_> {}
+
 struct MsixInfo {
     pub virt_table_base: NonNull<MsixTableEntry>,
     pub capability: MsixCapability,
@@ -187,7 +192,12 @@ pub fn probe_device<'a>(pcid_handle: &mut PcidServerHandle) -> Result<Device<'a>
 
             let size = offset + capability.length as usize;
 
-            let addr = common::physmap(aligned_addr, size, common::Prot::RW, common::MemoryType::Uncacheable)? as usize;
+            let addr = common::physmap(
+                aligned_addr,
+                size,
+                common::Prot::RW,
+                common::MemoryType::Uncacheable,
+            )? as usize;
 
             addr + offset
         };
@@ -237,21 +247,7 @@ pub fn probe_device<'a>(pcid_handle: &mut PcidServerHandle) -> Result<Device<'a>
     let device_space = unsafe { &mut *(device_addr as *mut u8) };
     let isr = unsafe { &*(isr_addr as *mut VolatileCell<u32>) };
 
-    // Reset the device.
-    common.device_status.set(DeviceStatusFlags::empty());
-    // Upon reset, the device must initialize device status to 0.
-    assert_eq!(common.device_status.get(), DeviceStatusFlags::empty());
-    log::info!("virtio: successfully reseted the device");
-
-    // XXX: According to the virtio specification v1.2, setting the ACKNOWLEDGE and DRIVER bits
-    //      in `device_status` is required to be done in two steps.
-    common
-        .device_status
-        .set(common.device_status.get() | DeviceStatusFlags::ACKNOWLEDGE);
-
-    common
-        .device_status
-        .set(common.device_status.get() | DeviceStatusFlags::DRIVER);
+    let transport = StandardTransport::new(common, notify_addr as *const u8, notify_multiplier);
 
     // Setup interrupts.
     let all_pci_features = pcid_handle.fetch_all_features()?;
@@ -265,12 +261,31 @@ pub fn probe_device<'a>(pcid_handle: &mut PcidServerHandle) -> Result<Device<'a>
 
     log::info!("virtio: using standard PCI transport");
 
-    let transport = StandardTransport::new(common, notify_addr as *const u8, notify_multiplier);
-
-    Ok(Device {
+    let device = Device {
         transport,
         device_space,
         irq_handle,
         isr,
-    })
+    };
+
+    device.transport.reset();
+    reinit(&device)?;
+
+    Ok(device)
+}
+
+pub fn reinit<'a>(device: &Device<'a>) -> Result<(), Error> {
+    // XXX: According to the virtio specification v1.2, setting the ACKNOWLEDGE and DRIVER bits
+    //      in `device_status` is required to be done in two steps.
+    let mut common = device.transport.common.lock().unwrap();
+    let old = common.device_status.get();
+
+    common
+        .device_status
+        .set(old | DeviceStatusFlags::ACKNOWLEDGE);
+
+    let old = common.device_status.get();
+    common.device_status.set(old | DeviceStatusFlags::DRIVER);
+
+    Ok(())
 }

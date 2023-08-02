@@ -27,7 +27,7 @@ pub struct GraphicScreen {
 impl GraphicScreen {
     pub fn new(display: Display) -> GraphicScreen {
         GraphicScreen {
-            display: display,
+            display,
             input: VecDeque::new(),
             sync_rects: Vec::new(),
         }

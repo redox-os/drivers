@@ -5,6 +5,8 @@ use std::sync::Arc;
 use syscall::Error as SysError;
 use syscall::*;
 
+use common::dma::Dma;
+
 use virtio_core::spec::{Buffer, ChainBuilder, DescriptorFlags};
 use virtio_core::transport::Queue;
 

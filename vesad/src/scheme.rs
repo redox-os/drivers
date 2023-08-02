@@ -1,8 +1,7 @@
 use std::collections::BTreeMap;
 use std::{mem, ptr, slice, str};
 
-use orbclient::{Event, EventOption};
-use syscall::{Error, EventFlags, EACCES, EBADF, EINVAL, ENOENT, Map, O_NONBLOCK, Result, SchemeMut, PAGE_SIZE};
+use syscall::{Error, EventFlags, EBADF, EINVAL, ENOENT, Map, O_NONBLOCK, Result, SchemeMut, PAGE_SIZE};
 
 use crate::{
     display::Display,
@@ -37,8 +36,8 @@ pub struct DisplayScheme {
     pub vts: BTreeMap<VtIndex, BTreeMap<ScreenIndex, Box<dyn Screen>>>,
     next_id: usize,
     pub handles: BTreeMap<usize, Handle>,
-    super_key: bool,
-    inputd_handle: inputd::Handle,
+    pub inputd_handle: inputd::Handle,
+
 }
 
 impl DisplayScheme {
@@ -74,8 +73,7 @@ impl DisplayScheme {
             vts,
             next_id: 0,
             handles: BTreeMap::new(),
-            super_key: false,
-            inputd_handle
+            inputd_handle,
         }
     }
 
@@ -146,6 +144,18 @@ impl DisplayScheme {
 
 impl SchemeMut for DisplayScheme {
     fn open(&mut self, path_str: &str, flags: usize, _uid: u32, _gid: u32) -> Result<usize> {
+        if path_str == "handle" {
+            let id = self.next_id;
+            self.next_id += 1;
+            self.handles.insert(id, Handle {
+                kind: HandleKind::Input,
+                flags,
+                events: EventFlags::empty(),
+                notified_read: false
+            });
+            return Ok(id);
+        }
+
         let mut parts = path_str.split('/');
         let mut vt_screen = parts.next().unwrap_or("").split('.');
         let vt_i = VtIndex(
@@ -156,16 +166,6 @@ impl SchemeMut for DisplayScheme {
         );
         if let Some(screens) = self.vts.get_mut(&vt_i) {
             if let Some(screen) = screens.get_mut(&screen_i) {
-                for cmd in parts {
-                    if cmd == "activate" {
-                        self.active = vt_i;
-                        screen.redraw(
-                            self.onscreens[screen_i.0],
-                            self.framebuffers[screen_i.0].stride
-                        );
-                    }
-                }
-
                 let id = self.next_id;
                 self.next_id += 1;
 
@@ -186,7 +186,7 @@ impl SchemeMut for DisplayScheme {
     }
 
     fn dup(&mut self, id: usize, buf: &[u8]) -> Result<usize> {
-        if ! buf.is_empty() {
+        if !buf.is_empty() {
             return Err(Error::new(EINVAL));
         }
 
@@ -303,70 +303,48 @@ impl SchemeMut for DisplayScheme {
         let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
         match handle.kind {
-            HandleKind::Input => if buf.len() == 1 && buf[0] >= 0xF4 {
-                let new_active = VtIndex((buf[0] - 0xF4) as usize + 1);
-                if let Some(screens) = self.vts.get_mut(&new_active) {
-                    self.active = new_active;
-                    for (screen_i, screen) in screens.iter_mut() {
-                        screen.redraw(
-                            self.onscreens[screen_i.0],
-                            self.framebuffers[screen_i.0].stride
-                        );
-                    }
-                }
-                Ok(1)
-            } else {
-                let events = unsafe { slice::from_raw_parts(buf.as_ptr() as *const Event, buf.len()/mem::size_of::<Event>()) };
+            HandleKind::Input => {
+                use inputd::{Cmd as DisplayCommand, VtMode};
+    
+                let command = inputd::parse_command(buf).unwrap();
 
-                for event in events.iter() {
-                    let mut new_active_opt = None;
-                    match event.to_option() {
-                        EventOption::Key(key_event) => match key_event.scancode {
-                            f @ 0x3B ..= 0x44 if self.super_key => { // F1 through F10
-                                new_active_opt = Some(VtIndex((f - 0x3A) as usize));
-                            },
-                            0x57 if self.super_key => { // F11
-                                new_active_opt = Some(VtIndex(11));
-                            },
-                            0x58 if self.super_key => { // F12
-                                new_active_opt = Some(VtIndex(12));
-                            },
-                            0x5B => { // Super
-                                self.super_key = key_event.pressed;
-                            },
-                            _ => ()
-                        },
-                        EventOption::Resize(resize_event) => {
-                            let width = resize_event.width as usize;
-                            let height = resize_event.height as usize;
-                            let stride = width; //TODO: get stride somehow
-                            self.resize(width, height, stride);
-                        },
-                        _ => ()
-                    };
+                match command {
+                    DisplayCommand::Activate { vt, mode } => {
+                        let vt_i = VtIndex(vt);
 
-                    if let Some(new_active) = new_active_opt {
-                        if let Some(screens) = self.vts.get_mut(&new_active) {
-                            self.active = new_active;
+                        if let Some(screens) = self.vts.get_mut(&vt_i) {
                             for (screen_i, screen) in screens.iter_mut() {
-                                screen.redraw(
-                                    self.onscreens[screen_i.0],
-                                    self.framebuffers[screen_i.0].stride
-                                );
+                                match mode {
+                                    VtMode::Graphic => {
+                                        *screen = Box::new(GraphicScreen::new(Display::new(screen.width(), screen.height())));
+                                    }
+
+                                    VtMode::Default => {
+                                        screen.redraw(
+                                            self.onscreens[screen_i.0],
+                                            self.framebuffers[screen_i.0].stride
+                                        );
+                                    }
+
+                                    VtMode::Text => todo!()
+                                }
                             }
                         }
-                    } else {
-                        if let Some(screens) = self.vts.get_mut(&self.active) {
-                            //TODO: send input to other screens? Don't want extra events
-                            if let Some(screen) = screens.get_mut(&ScreenIndex(0)) {
-                                screen.input(event);
-                            }
-                        }
+
+                        self.active = vt_i;
+                    },
+
+                    DisplayCommand::Resize { width, height, stride, .. } => {
+                        self.resize(width as usize, height as usize, stride as usize);
                     }
+
+                    // Nothing to do for deactivate :)
+                    DisplayCommand::Deactivate(_) => {},
                 }
 
-                Ok(events.len() * mem::size_of::<Event>())
+                Ok(buf.len())
             },
+
             HandleKind::Screen(vt_i, screen_i) => if let Some(screens) = self.vts.get_mut(&vt_i) {
                 if let Some(screen) = screens.get_mut(&screen_i) {
                     let count = screen.write(buf)?;

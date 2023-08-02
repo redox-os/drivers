@@ -131,6 +131,7 @@ pub struct Queue<'a> {
     pub descriptor: Dma<[Descriptor]>,
     pub available: Available<'a>,
     pub used_head: AtomicU16,
+    vector: u16,
 
     notification_bell: &'a mut AtomicU16,
     descriptor_stack: crossbeam_queue::SegQueue<u16>,
@@ -145,6 +146,7 @@ impl<'a> Queue<'a> {
 
         notification_bell: &'a mut AtomicU16,
         queue_index: u16,
+        vector: u16,
     ) -> Arc<Self> {
         let descriptor_stack = crossbeam_queue::SegQueue::new();
         (0..descriptor.len() as u16).for_each(|i| descriptor_stack.push(i));
@@ -159,7 +161,19 @@ impl<'a> Queue<'a> {
             descriptor_stack,
             used_head: AtomicU16::new(0),
             sref: sref.clone(),
+            vector,
         })
+    }
+
+    fn reinit(&self) {
+        self.used_head.store(0, Ordering::SeqCst);
+        self.available.set_head_idx(0);
+
+        // Drain all of the available descriptors.
+        while let Some(_) = self.descriptor_stack.pop() {}
+
+        // Refill the descriptor stack.
+        (0..self.descriptor.len() as u16).for_each(|i| self.descriptor_stack.push(i));
     }
 
     #[must_use = "The function returns a future that must be awaited to ensure the sent request is completed."]
@@ -230,9 +244,9 @@ impl<'a> Available<'a> {
         let size = size.next_multiple_of(syscall::PAGE_SIZE); // align to page size
 
         let addr = unsafe { syscall::physalloc(size) }.map_err(Error::SyscallError)?;
-        let virt = unsafe {
-            common::physmap(addr, size, common::Prot::RW, common::MemoryType::default())
-        }.map_err(Error::SyscallError)?;
+        let virt =
+            unsafe { common::physmap(addr, size, common::Prot::RW, common::MemoryType::default()) }
+                .map_err(Error::SyscallError)?;
 
         let ring = unsafe { &mut *(virt as *mut AvailableRing) };
 
@@ -298,7 +312,8 @@ impl<'a> Used<'a> {
 
         let addr = unsafe { syscall::physalloc(size) }.map_err(Error::SyscallError)?;
         let virt =
-            unsafe { common::physmap(addr, size, common::Prot::RW, common::MemoryType::default()) }.map_err(Error::SyscallError)?;
+            unsafe { common::physmap(addr, size, common::Prot::RW, common::MemoryType::default()) }
+                .map_err(Error::SyscallError)?;
 
         let ring = unsafe { &mut *(virt as *mut UsedRing) };
 
@@ -363,7 +378,7 @@ impl Drop for Used<'_> {
 }
 
 pub struct StandardTransport<'a> {
-    common: Mutex<&'a mut CommonCfg>,
+    pub(crate) common: Mutex<&'a mut CommonCfg>,
     notify: *const u8,
     notify_mul: u32,
 
@@ -383,7 +398,12 @@ impl<'a> StandardTransport<'a> {
 
     pub fn reset(&self) {
         let mut common = self.common.lock().unwrap();
+
         common.device_status.set(DeviceStatusFlags::empty());
+        // Upon reset, the device must initialize device status to 0.
+        assert_eq!(common.device_status.get(), DeviceStatusFlags::empty());
+
+        log::debug!("virtio: successfully reseted device");
     }
 
     pub fn check_device_feature(&self, feature: u32) -> bool {
@@ -474,7 +494,14 @@ impl<'a> StandardTransport<'a> {
 
         log::info!("virtio-core: enabled queue #{queue_index} (size={queue_size})");
 
-        let queue = Queue::new(descriptor, avail, used, notification_bell, queue_index);
+        let queue = Queue::new(
+            descriptor,
+            avail,
+            used,
+            notification_bell,
+            queue_index,
+            vector,
+        );
 
         let queue_copy = queue.clone();
         let irq_fd = irq_handle.as_raw_fd();
@@ -498,5 +525,24 @@ impl<'a> StandardTransport<'a> {
         });
 
         Ok(queue)
+    }
+
+    /// Re-initializes a queue; usually done after a device reset.
+    pub fn reinit_queue(&self, queue: Arc<Queue>) {
+        let mut common = self.common.lock().unwrap();
+        queue.reinit();
+
+        common.queue_select.set(queue.queue_index);
+
+        common.queue_desc.set(queue.descriptor.physical() as u64);
+        common.queue_driver.set(queue.available.phys_addr() as u64);
+        common.queue_device.set(queue.used.phys_addr() as u64);
+
+        // Set the MSI-X vector.
+        common.queue_msix_vector.set(queue.vector);
+        assert!(common.queue_msix_vector.get() == queue.vector);
+
+        // Enable the queue.
+        common.queue_enable.set(1);
     }
 }

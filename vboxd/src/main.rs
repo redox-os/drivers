@@ -208,7 +208,7 @@ fn main() {
 
         let mut width = 0;
         let mut height = 0;
-        let mut display_opt = File::open("display/vesa:input").ok();
+        let mut display_opt = File::open("inputd:producer").ok();
         if let Some(ref display) = display_opt {
             let mut buf: [u8; 4096] = [0; 4096];
             if let Ok(count) = syscall::fpath(display.as_raw_fd() as usize, &mut buf) {

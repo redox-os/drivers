@@ -1,11 +1,12 @@
 use std::collections::BTreeMap;
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use common::dma::Dma;
 use inputd::Damage;
-use syscall::{Error as SysError, SchemeMut, EINVAL};
+
+use common::dma::Dma;
+use syscall::{Error as SysError, SchemeMut, EAGAIN, EINVAL};
 
 use virtio_core::spec::{Buffer, ChainBuilder, DescriptorFlags};
 use virtio_core::transport::{Error, Queue, StandardTransport};
@@ -40,6 +41,8 @@ pub struct Display<'a> {
 
     resource_id: u32,
     id: usize,
+
+    is_reseted: AtomicBool,
 }
 
 impl<'a> Display<'a> {
@@ -61,7 +64,25 @@ impl<'a> Display<'a> {
 
             id,
             resource_id: RESOURCE_ALLOC.fetch_add(1, Ordering::SeqCst),
+
+            is_reseted: AtomicBool::new(false),
         }
+    }
+
+    async fn init(&self) -> Result<(), Error> {
+        if !self.is_reseted.load(Ordering::SeqCst) {
+            // The device is already initialized.
+            return Ok(());
+        }
+
+        self.is_reseted.store(false, Ordering::SeqCst);
+
+        log::info!("virtio-gpu: initializing GPU after a reset");
+
+        crate::reinit(self.control_queue.clone(), self.cursor_queue.clone())?;
+        self.remap_screen().await?;
+
+        Ok(())
     }
 
     async fn get_fpath(&self, buffer: &mut [u8]) -> Result<usize, Error> {
@@ -90,29 +111,26 @@ impl<'a> Display<'a> {
         Ok(())
     }
 
+    async fn remap_screen(&self) -> Result<usize, Error> {
+        let bpp = 32;
+        let fb_size = (self.width as usize * self.height as usize * bpp / 8)
+            .next_multiple_of(syscall::PAGE_SIZE);
+
+        let mapped = *self.mapped.get().unwrap();
+        let address = unsafe { syscall::virttophys(mapped) }?;
+
+        self.map_screen_with(0, address, fb_size, mapped).await
+    }
+
     async fn map_screen(&self, offset: usize) -> Result<usize, Error> {
         if let Some(mapped) = self.mapped.get() {
             return Ok(mapped + offset);
         }
 
-        // Create a host resource using `VIRTIO_GPU_CMD_RESOURCE_CREATE_2D`.
-        let mut request = Dma::new(ResourceCreate2d::default())?;
-
-        request.set_width(self.width);
-        request.set_height(self.height);
-        request.set_format(ResourceFormat::Bgrx);
-        request.set_resource_id(self.resource_id);
-
-        self.send_request(request).await?;
-
-        // Allocate a framebuffer from guest ram, and attach it as backing storage to the
-        // resource just created, using `VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING`. Scatter
-        // lists are supported, so the framebuffer doesn’t need to be contignous in guest
-        // physical memory.
         let bpp = 32;
         let fb_size = (self.width as usize * self.height as usize * bpp / 8)
             .next_multiple_of(syscall::PAGE_SIZE);
-        let address = unsafe { syscall::physalloc(fb_size) }? as u64;
+        let address = unsafe { syscall::physalloc(fb_size) }?;
         let mapped = unsafe {
             common::physmap(
                 address as usize,
@@ -126,9 +144,34 @@ impl<'a> Display<'a> {
             core::ptr::write_bytes(mapped as *mut u8, 255, fb_size);
         }
 
+        self.map_screen_with(offset, address, fb_size, mapped).await
+    }
+
+    async fn map_screen_with(
+        &self,
+        offset: usize,
+        address: usize,
+        size: usize,
+        mapped: usize,
+    ) -> Result<usize, Error> {
+        // Create a host resource using `VIRTIO_GPU_CMD_RESOURCE_CREATE_2D`.
+        let mut request = Dma::new(ResourceCreate2d::default())?;
+
+        request.set_width(self.width);
+        request.set_height(self.height);
+        request.set_format(ResourceFormat::Bgrx);
+        request.set_resource_id(self.resource_id);
+
+        self.send_request(request).await?;
+
+        // Use the allocated framebuffer from tthe guest ram, and attach it as backing
+        // storage to the resource just created, using `VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING`.
+        //
+        // TODO(andypython): Scatter lists are supported, so the framebuffer doesn’t need to be
+        // contignous in guest physical memory.
         let entry = Dma::new(MemEntry {
-            address,
-            length: fb_size as u32,
+            address: address as u64,
+            length: size as u32,
             padding: 0,
         })?;
 
@@ -200,13 +243,21 @@ impl<'a> Display<'a> {
 
         // Go back to legacy mode.
         self.transport.reset();
+        self.is_reseted.store(true, Ordering::SeqCst);
+
         Ok(())
     }
 }
 
+enum Handle<'a> {
+    Vt { display: Arc<Display<'a>>, vt: usize },
+    Input,
+}
+
 pub struct Scheme<'a> {
-    handles: BTreeMap<usize /* file descriptor */, Arc<Display<'a>>>,
-    inputd_handle: inputd::Handle,
+    handles: BTreeMap<usize /* file descriptor */, Handle<'a>>,
+    /// Counter used for file descriptor allocation.
+    next_id: AtomicUsize,
     displays: Vec<Arc<Display<'a>>>,
 }
 
@@ -227,7 +278,7 @@ impl<'a> Scheme<'a> {
 
         Ok(Self {
             handles: BTreeMap::new(),
-            inputd_handle: inputd::Handle::new("virtio-gpu").unwrap(),
+            next_id: AtomicUsize::new(0),
             displays,
         })
     }
@@ -284,56 +335,37 @@ impl<'a> Scheme<'a> {
 
 impl<'a> SchemeMut for Scheme<'a> {
     fn open(&mut self, path: &str, _flags: usize, _uid: u32, _gid: u32) -> syscall::Result<usize> {
-        dbg!(&path);
+        if path == "handle" {
+            let fd = self.next_id.fetch_add(1, Ordering::SeqCst);
+            self.handles.insert(fd, Handle::Input);
+
+            return Ok(fd);
+        }
 
         let mut parts = path.split('/');
         let mut screen = parts.next().unwrap_or("").split('.');
 
-        static YES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
-        if YES.load(Ordering::SeqCst) {
-            YES.store(false, Ordering::SeqCst);
-        }
-
-        let fd = screen.next().unwrap_or("").parse::<usize>().unwrap();
-
-        if path.contains("deactivate") {
-            log::info!("virtio-gpu: deactivating display at file #{}", fd);
-
-            let handle = self.handles.get(&fd).unwrap();
-            futures::executor::block_on(handle.detach()).unwrap();
-
-            return Ok(0);
-        }
-
+        let vt = screen.next().unwrap_or("").parse::<usize>().unwrap();
         let id = screen.next().unwrap_or("").parse::<usize>().unwrap_or(0);
 
-        dbg!(&id);
+        dbg!(vt, id);
 
         let display = self.displays.get(id).ok_or(SysError::new(EINVAL))?;
 
-        let fd = self.inputd_handle.register().unwrap();
-        self.handles.insert(fd, display.clone());
+        let fd = self.next_id.fetch_add(1, Ordering::SeqCst);
+        self.handles.insert(fd, Handle::Vt {display: display.clone(), vt });
         Ok(fd)
     }
 
-    fn dup(&mut self, _old_id: usize, _buf: &[u8]) -> syscall::Result<usize> {
-        todo!()
-    }
-
-    fn fevent(
-        &mut self,
-        _id: usize,
-        _flags: syscall::EventFlags,
-    ) -> syscall::Result<syscall::EventFlags> {
-        log::warn!("fevent is a stub!");
-        Ok(syscall::EventFlags::empty())
-    }
-
     fn fpath(&mut self, id: usize, buf: &mut [u8]) -> syscall::Result<usize> {
-        let handle = self.handles.get_mut(&id).ok_or(SysError::new(EINVAL))?;
-        let bytes_copied = futures::executor::block_on(handle.get_fpath(buf)).unwrap();
+        match self.handles.get(&id).unwrap() {
+            Handle::Vt { display, .. } => {
+                let bytes_copied = futures::executor::block_on(display.get_fpath(buf)).unwrap();
+                Ok(bytes_copied)
+            }
 
-        Ok(bytes_copied)
+            Handle::Input => unreachable!(),
+        }
     }
 
     fn fmap_old(&mut self, id: usize, map: &syscall::OldMap) -> syscall::Result<usize> {
@@ -349,14 +381,23 @@ impl<'a> SchemeMut for Scheme<'a> {
     }
 
     fn fmap(&mut self, id: usize, map: &syscall::Map) -> syscall::Result<usize> {
-        let handle = self.handles.get_mut(&id).ok_or(SysError::new(EINVAL))?;
-        Ok(futures::executor::block_on(handle.map_screen(map.offset)).unwrap())
+        match self.handles.get(&id).ok_or(SysError::new(EINVAL))? {
+            Handle::Vt { display, .. } => {
+                Ok(futures::executor::block_on(display.map_screen(map.offset)).unwrap())
+            }
+            _ => unreachable!(),
+        }
     }
 
     fn fsync(&mut self, id: usize) -> syscall::Result<usize> {
-        let handle = self.handles.get_mut(&id).ok_or(SysError::new(EINVAL))?;
-        futures::executor::block_on(handle.flush(None)).unwrap();
-        Ok(0)
+        match self.handles.get(&id).ok_or(SysError::new(EINVAL))? {
+            Handle::Vt { display, .. } => {
+                futures::executor::block_on(display.flush(None)).unwrap();
+                Ok(0)
+            }
+
+            _ => unreachable!(),
+        }
     }
 
     fn read(&mut self, _id: usize, _buf: &mut [u8]) -> syscall::Result<usize> {
@@ -366,18 +407,74 @@ impl<'a> SchemeMut for Scheme<'a> {
     }
 
     fn write(&mut self, id: usize, buf: &[u8]) -> syscall::Result<usize> {
-        let handle = self.handles.get_mut(&id).ok_or(SysError::new(EINVAL))?;
-        let damages = unsafe {
-            core::slice::from_raw_parts(
-                buf.as_ptr() as *const Damage,
-                buf.len() / core::mem::size_of::<Damage>(),
-            )
-        };
+        match self.handles.get(&id).ok_or(SysError::new(EINVAL))? {
+            Handle::Vt { display, .. } => {
+                // The VT is not active and the device is reseted. Ask them to try
+                // again later.
+                if display.is_reseted.load(Ordering::SeqCst) {
+                    return Err(SysError::new(EAGAIN));
+                }
 
-        for damage in damages {
-            futures::executor::block_on(handle.flush(Some(damage))).unwrap();
+                let damages = unsafe {
+                    core::slice::from_raw_parts(
+                        buf.as_ptr() as *const Damage,
+                        buf.len() / core::mem::size_of::<Damage>(),
+                    )
+                };
+
+                for damage in damages {
+                    futures::executor::block_on(display.flush(Some(damage))).unwrap();
+                }
+
+                Ok(buf.len())
+            }
+
+            Handle::Input => {
+                use inputd::{Cmd as DisplayCommand, VtMode};
+
+                let command = inputd::parse_command(buf).unwrap();
+
+                match command {
+                    DisplayCommand::Activate { mode, vt } => {
+                        assert!(mode == VtMode::Graphic || mode == VtMode::Default);
+                        let target_vt = vt;
+
+                        for handle in self.handles.values() {
+                            if let Handle::Vt { display , vt } = handle {
+                                if *vt != target_vt { 
+                                    continue; 
+                                }
+
+                                futures::executor::block_on(display.init()).unwrap();
+                            }
+                        }
+                    }
+
+                    DisplayCommand::Deactivate(target_vt) => {
+                        for handle in self.handles.values() {
+                            if let Handle::Vt { display , vt } = handle {
+                                if *vt != target_vt { 
+                                    continue; 
+                                }
+
+                                futures::executor::block_on(display.detach()).unwrap();
+                                break;
+                            }
+                        }
+
+                        // for display in self.displays.iter() {
+                        //     futures::executor::block_on(display.detach()).unwrap();
+                        // }
+                    }
+
+                    DisplayCommand::Resize { .. } => {
+                        log::warn!("virtio-gpu: resize is not implemented yet")
+                    }
+                }
+
+                Ok(buf.len())
+            }
         }
-        Ok(buf.len())
     }
 
     fn seek(&mut self, _id: usize, _pos: isize, _whence: usize) -> syscall::Result<isize> {
