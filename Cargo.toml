@@ -39,4 +39,4 @@ lto = "fat"
 mio = { git = "https://gitlab.redox-os.org/redox-os/mio.git", branch = "redox-unix" }
 net2 = { git = "https://gitlab.redox-os.org/redox-os/net2-rs.git", branch = "master" }
 orbclient = { git = "https://gitlab.redox-os.org/redox-os/orbclient.git", version = "0.3.44" }
-redox_syscall = { path = "../../kernel/source/syscall" }
+redox_syscall = { git = "https://gitlab.redox-os.org/redox-os/syscall.git" }
