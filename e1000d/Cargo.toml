@@ -5,7 +5,7 @@ edition = "2018"
 
 [dependencies]
 bitflags = "1"
-netutils = { git = "https://gitlab.redox-os.org/redox-os/netutils.git", branch = "redox-unix" }
+netutils = { git = "https://gitlab.redox-os.org/redox-os/netutils.git" }
 redox-daemon = "0.1"
 redox_event = { git = "https://gitlab.redox-os.org/redox-os/event.git" }
 redox_syscall = "0.3"
