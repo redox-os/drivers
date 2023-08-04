@@ -1,5 +1,5 @@
 use std::cmp::min;
-use std::io::{Error, ErrorKind};
+use std::io::Error;
 
 /// Split the read operation into a series of block reads.
 /// `read_fn` will be called with a block number to be read, and a buffer to be filled.
@@ -9,7 +9,7 @@ use std::io::{Error, ErrorKind};
 pub fn read(
     offset: u64,
     blksize: u32,
-    mut buf: &mut [u8],
+    buf: &mut [u8],
     block_bytes: &mut [u8],
     mut read_fn: impl FnMut(u64, &mut [u8]) -> Result<(), Error>,
 ) -> Result<usize, Error> {
@@ -18,12 +18,11 @@ pub fn read(
     if buf.len() == 0 {
         return Ok(0);
     }
-    let (_, would_overflow) = offset.overflowing_add(buf.len() as u64);
-    let to_copy = if would_overflow {
-        usize::try_from(u64::MAX - offset).map_err(|_| Error::new(ErrorKind::Unsupported, "offset + len exceeds usize::MAX"))?
-    } else {
-        buf.len()
-    };
+    let to_copy = usize::try_from(
+        offset.saturating_add(u64::try_from(buf.len()).expect("buf.len() larger than u64"))
+            - offset,
+    )
+    .expect("bytes to copy larger than usize");
     let mut curr_buf = &mut buf[..to_copy];
     let mut curr_offset = offset;
     let blk_size = usize::try_from(blksize).expect("blksize larger than usize");
@@ -46,6 +45,5 @@ pub fn read(
         curr_offset += u64::try_from(to_copy).expect("bytes to copy larger than u64");
         total_read += to_copy;
     }
-
     Ok(total_read)
 }
