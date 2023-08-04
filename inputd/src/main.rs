@@ -121,7 +121,10 @@ impl SchemeMut for InputScheme {
         let handle_ty = match command {
             "producer" => Handle::Producer,
             "consumer" => {
-                let target = path_parts.next().unwrap().parse::<usize>().unwrap();
+                let target = path_parts
+                    .next()
+                    .and_then(|x| x.parse::<usize>().ok())
+                    .ok_or(SysError::new(EINVAL))?;
 
                 Handle::Consumer {
                     events: EventFlags::empty(),
@@ -135,7 +138,10 @@ impl SchemeMut for InputScheme {
                 Handle::Device { device: display }
             }
 
-            _ => unreachable!("inputd: invalid path {path}"),
+            _ => {
+                log::error!("inputd: invalid path {path}");
+                return Err(SysError::new(EINVAL));
+            }
         };
 
         log::info!("inputd: {path} channel has been opened");
