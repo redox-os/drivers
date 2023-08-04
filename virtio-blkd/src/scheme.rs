@@ -122,7 +122,7 @@ impl<'a> DiskScheme<'a> {
 
         impl<'a, 'b> Read for VirtioShim<'a, 'b> {
             fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
-                let read_block = |block: u64, block_bytes: &mut [u8]| -> Result<(), ()> {
+                let read_block = |block: u64, block_bytes: &mut [u8]| -> Result<(), std::io::Error> {
                     let req = Dma::new(BlockVirtRequest {
                         ty: BlockRequestTy::In,
                         reserved: 0,
