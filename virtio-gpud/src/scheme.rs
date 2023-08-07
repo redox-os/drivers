@@ -4,9 +4,9 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use inputd::Damage;
-
 use common::dma::Dma;
-use syscall::{Error as SysError, SchemeMut, EAGAIN, EINVAL};
+
+use syscall::{Error as SysError, SchemeMut, EAGAIN, EINVAL, MapFlags, PAGE_SIZE, KSMSG_MMAP, KSMSG_MMAP_PREP, KSMSG_MSYNC, KSMSG_MUNMAP};
 
 use virtio_core::spec::{Buffer, ChainBuilder, DescriptorFlags};
 use virtio_core::transport::{Error, Queue, StandardTransport};
@@ -368,27 +368,6 @@ impl<'a> SchemeMut for Scheme<'a> {
         }
     }
 
-    fn fmap_old(&mut self, id: usize, map: &syscall::OldMap) -> syscall::Result<usize> {
-        self.fmap(
-            id,
-            &syscall::Map {
-                offset: map.offset,
-                size: map.size,
-                flags: map.flags,
-                address: 0,
-            },
-        )
-    }
-
-    fn fmap(&mut self, id: usize, map: &syscall::Map) -> syscall::Result<usize> {
-        match self.handles.get(&id).ok_or(SysError::new(EINVAL))? {
-            Handle::Vt { display, .. } => {
-                Ok(futures::executor::block_on(display.map_screen(map.offset)).unwrap())
-            }
-            _ => unreachable!(),
-        }
-    }
-
     fn fsync(&mut self, id: usize) -> syscall::Result<usize> {
         match self.handles.get(&id).ok_or(SysError::new(EINVAL))? {
             Handle::Vt { display, .. } => {
@@ -483,5 +462,14 @@ impl<'a> SchemeMut for Scheme<'a> {
 
     fn close(&mut self, _id: usize) -> syscall::Result<usize> {
         Ok(0)
+    }
+    fn mmap_prep(&mut self, id: usize, offset: u64, size: usize, flags: MapFlags) -> syscall::Result<usize> {
+        log::info!("KSMSG MMAP {} {:?} {} {}", id, flags, offset, size);
+        match self.handles.get(&id).ok_or(SysError::new(EINVAL))? {
+            Handle::Vt { display, .. } => {
+                Ok(futures::executor::block_on(display.map_screen(offset as usize)).unwrap())
+            }
+            _ => unreachable!(),
+        }
     }
 }

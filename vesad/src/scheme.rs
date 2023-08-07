@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 use std::{mem, ptr, slice, str};
 
-use syscall::{Error, EventFlags, EBADF, EINVAL, ENOENT, Map, O_NONBLOCK, Result, SchemeMut, PAGE_SIZE};
+use orbclient::{Event, EventOption};
+use syscall::{Error, EventFlags, EACCES, EBADF, EINVAL, ENOENT, Map, O_NONBLOCK, Result, SchemeMut, PAGE_SIZE, Packet, KSMSG_MMAP_PREP, KSMSG_MMAP, MapFlags, ESKMSG, SKMSG_PROVIDE_MMAP};
 
 use crate::{
     display::Display,
@@ -213,6 +214,7 @@ impl SchemeMut for DisplayScheme {
         }
     }
 
+    /*
     fn fmap(&mut self, id: usize, map: &Map) -> Result<usize> {
         let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
@@ -226,14 +228,7 @@ impl SchemeMut for DisplayScheme {
 
         Err(Error::new(EBADF))
     }
-    fn fmap_old(&mut self, id: usize, map: &syscall::OldMap) -> syscall::Result<usize> {
-        self.fmap(id, &Map {
-            offset: map.offset,
-            size: map.size,
-            flags: map.flags,
-            address: 0,
-        })
-    }
+    */
 
     fn fpath(&mut self, id: usize, buf: &mut [u8]) -> Result<usize> {
         let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
@@ -381,5 +376,18 @@ impl SchemeMut for DisplayScheme {
     fn close(&mut self, id: usize) -> Result<usize> {
         self.handles.remove(&id).ok_or(Error::new(EBADF))?;
         Ok(0)
+    }
+    fn mmap_prep(&mut self, id: usize, off: u64, size: usize, _flags: MapFlags) -> Result<usize> {
+        let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
+
+        if let HandleKind::Screen(vt_i, screen_i) = handle.kind {
+            if let Some(screens) = self.vts.get(&vt_i) {
+                if let Some(screen) = screens.get(&screen_i) {
+                    return screen.map(off as usize, size);
+                }
+            }
+        }
+
+        Err(Error::new(EBADF))
     }
 }
