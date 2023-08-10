@@ -1864,6 +1864,7 @@ dependencies = [
  "redox-daemon",
  "redox-log",
  "redox_syscall 0.3.5",
+ "spin",
  "static_assertions",
  "thiserror",
  "virtio-core",

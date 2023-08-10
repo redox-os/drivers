@@ -9,7 +9,7 @@ use common::dma::Dma;
 use syscall::{Error as SysError, SchemeMut, EAGAIN, EINVAL};
 
 use virtio_core::spec::{Buffer, ChainBuilder, DescriptorFlags};
-use virtio_core::transport::{Error, Queue, StandardTransport};
+use virtio_core::transport::{Error, Queue, Transport};
 use virtio_core::utils::VolatileCell;
 
 use crate::*;
@@ -30,7 +30,7 @@ impl Into<GpuRect> for &Damage {
 pub struct Display<'a> {
     control_queue: Arc<Queue<'a>>,
     cursor_queue: Arc<Queue<'a>>,
-    transport: Arc<StandardTransport<'a>>,
+    transport: Arc<dyn Transport>,
 
     // TODO(andypython): Remove the need for the spin crate after the `once_cell`
     //                   API is stabilized.
@@ -49,7 +49,7 @@ impl<'a> Display<'a> {
     pub fn new(
         control_queue: Arc<Queue<'a>>,
         cursor_queue: Arc<Queue<'a>>,
-        transport: Arc<StandardTransport<'a>>,
+        transport: Arc<dyn Transport>,
         id: usize,
     ) -> Self {
         Self {
@@ -250,7 +250,10 @@ impl<'a> Display<'a> {
 }
 
 enum Handle<'a> {
-    Vt { display: Arc<Display<'a>>, vt: usize },
+    Vt {
+        display: Arc<Display<'a>>,
+        vt: usize,
+    },
     Input,
 }
 
@@ -266,7 +269,7 @@ impl<'a> Scheme<'a> {
         config: &'a mut GpuConfig,
         control_queue: Arc<Queue<'a>>,
         cursor_queue: Arc<Queue<'a>>,
-        transport: Arc<StandardTransport<'a>>,
+        transport: Arc<dyn Transport>,
     ) -> Result<Scheme<'a>, Error> {
         let displays = Self::probe(
             control_queue.clone(),
@@ -286,7 +289,7 @@ impl<'a> Scheme<'a> {
     async fn probe(
         control_queue: Arc<Queue<'a>>,
         cursor_queue: Arc<Queue<'a>>,
-        transport: Arc<StandardTransport<'a>>,
+        transport: Arc<dyn Transport>,
         config: &GpuConfig,
     ) -> Result<Vec<Arc<Display<'a>>>, Error> {
         let mut display_info = Self::get_display_info(control_queue.clone()).await?;
@@ -353,7 +356,13 @@ impl<'a> SchemeMut for Scheme<'a> {
         let display = self.displays.get(id).ok_or(SysError::new(EINVAL))?;
 
         let fd = self.next_id.fetch_add(1, Ordering::SeqCst);
-        self.handles.insert(fd, Handle::Vt {display: display.clone(), vt });
+        self.handles.insert(
+            fd,
+            Handle::Vt {
+                display: display.clone(),
+                vt,
+            },
+        );
         Ok(fd)
     }
 
@@ -440,9 +449,9 @@ impl<'a> SchemeMut for Scheme<'a> {
                         let target_vt = vt;
 
                         for handle in self.handles.values() {
-                            if let Handle::Vt { display , vt } = handle {
-                                if *vt != target_vt { 
-                                    continue; 
+                            if let Handle::Vt { display, vt } = handle {
+                                if *vt != target_vt {
+                                    continue;
                                 }
 
                                 futures::executor::block_on(display.init()).unwrap();
@@ -452,9 +461,9 @@ impl<'a> SchemeMut for Scheme<'a> {
 
                     DisplayCommand::Deactivate(target_vt) => {
                         for handle in self.handles.values() {
-                            if let Handle::Vt { display , vt } = handle {
-                                if *vt != target_vt { 
-                                    continue; 
+                            if let Handle::Vt { display, vt } = handle {
+                                if *vt != target_vt {
+                                    continue;
                                 }
 
                                 futures::executor::block_on(display.detach()).unwrap();

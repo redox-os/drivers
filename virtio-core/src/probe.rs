@@ -11,11 +11,11 @@ use pcid_interface::*;
 use syscall::Io;
 
 use crate::spec::*;
-use crate::transport::{Error, StandardTransport};
+use crate::transport::{Error, LegacyTransport, StandardTransport, Transport};
 use crate::utils::{align_down, VolatileCell};
 
 pub struct Device<'a> {
-    pub transport: Arc<StandardTransport<'a>>,
+    pub transport: Arc<dyn Transport>,
     pub device_space: *const u8,
     pub irq_handle: File,
     pub isr: &'a VolatileCell<u32>,
@@ -233,59 +233,95 @@ pub fn probe_device<'a>(pcid_handle: &mut PcidServerHandle) -> Result<Device<'a>
         log::trace!("virtio-core::device-probe: {capability:?}");
     }
 
-    let common_addr = common_addr.ok_or(Error::InCapable(CfgType::Common))?;
-    let (notify_addr, notify_multiplier) = notify_addr.ok_or(Error::InCapable(CfgType::Notify))?;
-    let isr_addr = isr_addr.ok_or(Error::InCapable(CfgType::Isr))?;
-    let device_addr = device_addr.ok_or(Error::InCapable(CfgType::Device))?;
+    if let (
+        Some(common_addr),
+        Some(isr_addr),
+        Some(device_addr),
+        Some((notify_addr, notify_multiplier)),
+    ) = (common_addr, isr_addr, device_addr, notify_addr)
+    {
+        assert!(
+            notify_multiplier != 0,
+            "virtio-core::device_probe: device uses the same Queue Notify addresses for all queues"
+        );
 
-    assert!(
-        notify_multiplier != 0,
-        "virtio-core::device_probe: device uses the same Queue Notify addresses for all queues"
-    );
+        let common = unsafe { &mut *(common_addr as *mut CommonCfg) };
+        let device_space = unsafe { &mut *(device_addr as *mut u8) };
+        let isr = unsafe { &*(isr_addr as *mut VolatileCell<u32>) };
 
-    let common = unsafe { &mut *(common_addr as *mut CommonCfg) };
-    let device_space = unsafe { &mut *(device_addr as *mut u8) };
-    let isr = unsafe { &*(isr_addr as *mut VolatileCell<u32>) };
+        let transport = StandardTransport::new(
+            common,
+            notify_addr as *const u8,
+            notify_multiplier,
+            device_space,
+        );
 
-    let transport = StandardTransport::new(common, notify_addr as *const u8, notify_multiplier);
+        // Setup interrupts.
+        let all_pci_features = pcid_handle.fetch_all_features()?;
+        let has_msix = all_pci_features
+            .iter()
+            .any(|(feature, _)| feature.is_msix());
 
-    // Setup interrupts.
-    let all_pci_features = pcid_handle.fetch_all_features()?;
-    let has_msix = all_pci_features
-        .iter()
-        .any(|(feature, _)| feature.is_msix());
+        // According to the virtio specification, the device REQUIRED to support MSI-X.
+        assert!(has_msix, "virtio: device does not support MSI-X");
+        let irq_handle = enable_msix(pcid_handle)?;
 
-    // According to the virtio specification, the device REQUIRED to support MSI-X.
-    assert!(has_msix, "virtio: device does not support MSI-X");
-    let irq_handle = enable_msix(pcid_handle)?;
+        log::info!("virtio: using standard PCI transport");
 
-    log::info!("virtio: using standard PCI transport");
+        let device = Device {
+            transport,
+            device_space,
+            irq_handle,
+            isr,
+        };
 
-    let device = Device {
-        transport,
-        device_space,
-        irq_handle,
-        isr,
-    };
+        device.transport.reset();
+        reinit(&device)?;
 
-    device.transport.reset();
-    reinit(&device)?;
+        Ok(device)
+    } else {
+        if let PciBar::Port(port) = pci_header.get_bar(0) {
+            unsafe { syscall::iopl(3).expect("virtio: failed to set I/O privilege level") };
+            log::warn!("virtio: using legacy transport");
 
-    Ok(device)
+            static SHIM: VolatileCell<u32> = VolatileCell::new(0);
+
+            let transport = LegacyTransport::new(port);
+
+            // Setup interrupts.
+            let all_pci_features = pcid_handle.fetch_all_features()?;
+            let has_msix = all_pci_features
+                .iter()
+                .any(|(feature, _)| feature.is_msix());
+
+            // According to the virtio specification, the device REQUIRED to support MSI-X.
+            assert!(has_msix, "virtio: device does not support MSI-X");
+            let irq_handle = enable_msix(pcid_handle)?;
+
+            let device = Device {
+                transport,
+                irq_handle,
+                isr: &SHIM,
+                device_space: core::ptr::null_mut(),
+            };
+
+            device.transport.reset();
+            reinit(&device)?;
+
+            Ok(device)
+        } else {
+            unreachable!("virtio: legacy transport with non-port IO?")
+        }
+    }
 }
 
 pub fn reinit<'a>(device: &Device<'a>) -> Result<(), Error> {
     // XXX: According to the virtio specification v1.2, setting the ACKNOWLEDGE and DRIVER bits
     //      in `device_status` is required to be done in two steps.
-    let mut common = device.transport.common.lock().unwrap();
-    let old = common.device_status.get();
+    device
+        .transport
+        .insert_status(DeviceStatusFlags::ACKNOWLEDGE);
 
-    common
-        .device_status
-        .set(old | DeviceStatusFlags::ACKNOWLEDGE);
-
-    let old = common.device_status.get();
-    common.device_status.set(old | DeviceStatusFlags::DRIVER);
-
+    device.transport.insert_status(DeviceStatusFlags::DRIVER);
     Ok(())
 }

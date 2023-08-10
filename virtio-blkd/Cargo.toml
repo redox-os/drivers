@@ -10,6 +10,7 @@ log = "0.4"
 thiserror = "1.0.40"
 static_assertions = "1.1.0"
 futures = { version = "0.3.28", features = ["executor"] }
+spin = "*"
 
 redox-daemon = "0.1"
 redox-log = "0.1"
