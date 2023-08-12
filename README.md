@@ -5,18 +5,19 @@ These are the currently implemented devices/hardware interfaces.
 - ac97d - Realtek audio chipsets.
 - acpid - ACPI (incomplete).
 
-Lack of drivers for devices controlled using AML.
-
-The AML parser does not work on real hardware.
-
-It doesn't use any ACPI functionality other than S5 shutdown.
-
-Needs to implement something like "determine the battery status" on real hardware (hard).
+```
+- Lack of drivers for devices controlled using AML
+- The AML parser does not work on real hardware
+- It doesn't use any ACPI functionality other than S5 shutdown
+- Needs to implement something like "determine the battery status" on real hardware (hard)
+```
 
 - ahcid - SATA.
 - alxd - Atheros ethernet (incomplete).
 
-Lack of datasheet to finish.
+```
+- Lack of datasheet to finish
+```
 
 - amlserde - a library to provide serialization/deserialization of the AML symbol table from ACPI (incomplete).
 - bgad - Bochs emulator/debugger.
@@ -34,19 +35,27 @@ Lack of datasheet to finish.
 - rtl8168d - Realtek ethernet.
 - sb16d - Sound Blaster audio (incomplete).
 
-Still need to determine a way to allocate memory under 16MiB for use in ISA DMA.
+```
+- Need to determine a way to allocate memory under 16MiB for use in ISA DMA
+```
 
 - usbctl - USB control (incomplete).
 
-Missing class drivers for various classes.
+```
+- Missing class drivers for various classes
+```
 
 - usbhidd - USB HID (incomplete).
 
-Has tons of descriptors that are possible, not all are supported.
+```
+- Has tons of descriptors that are possible, not all are supported
+```
 
 - usbscsid - USB SCSI (incomplete).
 
-Missing class drivers for various classes.
+```
+- Missing class drivers for various classes
+```
 
 - vboxd - VirtualBox guest.
 - vesad - VESA.
