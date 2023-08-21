@@ -3,9 +3,7 @@ use std::ptr::NonNull;
 use std::sync::Arc;
 
 use pcid_interface::irq_helpers::{allocate_single_interrupt_vector, read_bsp_apic_id};
-use pcid_interface::msi::x86_64 as x86_64_msix;
-use pcid_interface::msi::x86_64::DeliveryMode;
-use pcid_interface::msi::{MsixCapability, MsixTableEntry};
+use pcid_interface::msi::{self, MsixCapability, MsixTableEntry};
 use pcid_interface::*;
 
 use syscall::Io;
@@ -46,6 +44,7 @@ static_assertions::const_assert_eq!(std::mem::size_of::<MsixTableEntry>(), 16);
 
 pub const MSIX_PRIMARY_VECTOR: u16 = 0;
 
+#[cfg(target_arch = "x86_64")]
 fn enable_msix(pcid_handle: &mut PcidServerHandle) -> Result<File, Error> {
     let pci_config = pcid_handle.fetch_config()?;
 
@@ -104,13 +103,13 @@ fn enable_msix(pcid_handle: &mut PcidServerHandle) -> Result<File, Error> {
 
         let rh = false;
         let dm = false;
-        let addr = x86_64_msix::message_address(lapic_id, rh, dm);
+        let addr = msi::x86_64::message_address(lapic_id, rh, dm);
 
         let (vector, interrupt_handle) = allocate_single_interrupt_vector(destination_id)
             .unwrap()
             .expect("virtio_core: interrupt vector exhaustion");
 
-        let msg_data = x86_64_msix::message_data_edge_triggered(DeliveryMode::Fixed, vector);
+        let msg_data = msi::x86_64::message_data_edge_triggered(msi::x86_64::DeliveryMode::Fixed, vector);
 
         table_entry_pointer.addr_lo.write(addr);
         table_entry_pointer.addr_hi.write(0);
@@ -126,6 +125,11 @@ fn enable_msix(pcid_handle: &mut PcidServerHandle) -> Result<File, Error> {
 
     log::info!("virtio: using MSI-X (interrupt_handle={interrupt_handle:?})");
     Ok(interrupt_handle)
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn enable_msix(pcid_handle: &mut PcidServerHandle) -> Result<File, Error> {
+    panic!("Msi-X only supported on x86_64");
 }
 
 /// VirtIO Device Probe
