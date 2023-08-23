@@ -56,7 +56,6 @@ pub enum DeviceConfigTy {
     BlkSize = 0x14,
 }
 
-#[repr(C)]
 pub struct BlockDeviceConfig(Weak<dyn Transport>);
 
 impl BlockDeviceConfig {
