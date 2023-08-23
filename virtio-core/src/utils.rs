@@ -9,7 +9,7 @@ pub struct VolatileCell<T> {
 
 impl<T: Copy> VolatileCell<T> {
     #[inline]
-    pub fn new(value: T) -> Self {
+    pub const fn new(value: T) -> Self {
         Self {
             value: UnsafeCell::new(value),
         }

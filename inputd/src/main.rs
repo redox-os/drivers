@@ -489,20 +489,20 @@ pub fn main() {
                 // provided by the firmware. The GPU devices are latter started by `pcid` (such as `virtio-gpu`).
                 let mut devices = vec![];
                 let schemes = std::fs::read_dir(":").unwrap();
-        
+
                 for entry in schemes {
                     let path = entry.unwrap().path();
                     let path_str = path
                         .into_os_string()
                         .into_string()
                         .expect("inputd: failed to convert path to string");
-        
+
                     if path_str.contains("display") {
                         println!("inputd: found display scheme {}", path_str);
                         devices.push(path_str);
                     }
                 }
-        
+
                 let device = devices
                     .iter()
                     .filter(|d| !d.contains("vesa"))
@@ -513,10 +513,10 @@ pub fn main() {
                     // TODO: What should we do when there are multiple display devices?
                     device[0].split('/').nth(2).unwrap()
                 };
-        
+
                 let mut handle =
                     inputd::Handle::new(device).expect("inputd: failed to open display handle");
-        
+
                 handle
                     .activate(vt, VtMode::Graphic)
                     .expect("inputd: failed to activate VT in graphic mode");
@@ -526,20 +526,33 @@ pub fn main() {
             "-A" => {
                 let vt = args.next().unwrap().parse::<usize>().unwrap();
 
-                let handle = File::open(format!("input:consumer/{vt}")).expect("inputd: failed to open consumer handle");
+                let handle = File::open(format!("input:consumer/{vt}"))
+                    .expect("inputd: failed to open consumer handle");
                 let mut display_path = [0; 4096];
 
-                let written = syscall::fpath(handle.as_raw_fd() as usize, &mut display_path).expect("inputd: fpath() failed");
+                let written = syscall::fpath(handle.as_raw_fd() as usize, &mut display_path)
+                    .expect("inputd: fpath() failed");
 
                 assert!(written <= display_path.len());
                 drop(handle);
 
-                let display_path = std::str::from_utf8(&display_path[..written]).expect("inputd: display path UTF-8 validation failed");
-                let display_name = display_path.split('/').skip(1).next().expect("inputd: invalid display path");
-                let display_scheme = display_name.split(':').next().expect("inputd: invalid display path");
+                let display_path = std::str::from_utf8(&display_path[..written])
+                    .expect("inputd: display path UTF-8 validation failed");
+                let display_name = display_path
+                    .split('/')
+                    .skip(1)
+                    .next()
+                    .expect("inputd: invalid display path");
+                let display_scheme = display_name
+                    .split(':')
+                    .next()
+                    .expect("inputd: invalid display path");
 
-                let mut handle = inputd::Handle::new(display_scheme).expect("inputd: failed to open display handle");
-                handle.activate(vt, VtMode::Default).expect("inputd: failed to activate VT");
+                let mut handle = inputd::Handle::new(display_scheme)
+                    .expect("inputd: failed to open display handle");
+                handle
+                    .activate(vt, VtMode::Default)
+                    .expect("inputd: failed to activate VT");
             }
 
             _ => panic!("inputd: invalid argument: {}", val),

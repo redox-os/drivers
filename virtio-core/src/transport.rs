@@ -1,8 +1,9 @@
 use crate::spec::*;
 use crate::utils::align;
 
-use common::dma::Dma;
+use common::dma::{Dma, PhysBox};
 use event::EventQueue;
+use syscall::{Io, Pio};
 
 use core::mem::size_of;
 use core::sync::atomic::{AtomicU16, Ordering};
@@ -62,10 +63,41 @@ const fn queue_part_sizes(queue_size: usize) -> (usize, usize, usize) {
     let used = used_header + size_of::<UsedRingElement>() * queue_size;
 
     (
-        align(desc, DESCRIPTOR_ALIGN),
-        align(avail, AVAILABLE_ALIGN),
-        align(used, USED_ALIGN),
+        align(desc, DESCRIPTOR_ALIGN).next_multiple_of(syscall::PAGE_SIZE),
+        align(avail, AVAILABLE_ALIGN).next_multiple_of(syscall::PAGE_SIZE),
+        align(used, USED_ALIGN).next_multiple_of(syscall::PAGE_SIZE),
     )
+}
+
+fn spawn_irq_thread(irq_handle: &File, queue: &Arc<Queue<'static>>) -> Result<(), Error> {
+    let irq_fd = irq_handle.as_raw_fd();
+    let queue_copy = queue.clone();
+
+    std::thread::spawn(move || {
+        let mut event_queue = EventQueue::<usize>::new().unwrap();
+
+        event_queue
+            .add(irq_fd, move |_| -> Result<Option<usize>, std::io::Error> {
+                // Wake up the tasks waiting on the queue.
+                for (_, task) in queue_copy.waker.lock().unwrap().iter() {
+                    task.wake_by_ref();
+                }
+
+                // Wake up the tasks waiting on the queue.
+                Ok(None)
+            })
+            .unwrap();
+
+        loop {
+            event_queue.run().unwrap();
+        }
+    });
+
+    Ok(())
+}
+
+pub trait NotifyBell {
+    fn ring(&self, queue_index: u16);
 }
 
 pub struct PendingRequest<'a> {
@@ -133,26 +165,29 @@ pub struct Queue<'a> {
     pub used_head: AtomicU16,
     vector: u16,
 
-    notification_bell: &'a mut AtomicU16,
+    notification_bell: Box<dyn NotifyBell>,
     descriptor_stack: crossbeam_queue::SegQueue<u16>,
     sref: Weak<Self>,
 }
 
 impl<'a> Queue<'a> {
-    pub fn new(
+    pub fn new<N>(
         descriptor: Dma<[Descriptor]>,
         available: Available<'a>,
         used: Used<'a>,
 
-        notification_bell: &'a mut AtomicU16,
+        notification_bell: N,
         queue_index: u16,
         vector: u16,
-    ) -> Arc<Self> {
+    ) -> Arc<Self>
+    where
+        N: NotifyBell + 'static,
+    {
         let descriptor_stack = crossbeam_queue::SegQueue::new();
         (0..descriptor.len() as u16).for_each(|i| descriptor_stack.push(i));
 
         Arc::new_cyclic(|sref| Self {
-            notification_bell,
+            notification_bell: Box::new(notification_bell),
             available,
             descriptor,
             used,
@@ -211,8 +246,7 @@ impl<'a> Queue<'a> {
             .set_table_index(first_descriptor as u16);
 
         self.available.set_head_idx(index as u16 + 1);
-        self.notification_bell
-            .store(self.queue_index, Ordering::SeqCst);
+        self.notification_bell.ring(self.queue_index);
 
         PendingRequest {
             queue: self.sref.upgrade().unwrap(),
@@ -240,22 +274,33 @@ pub struct Available<'a> {
 
 impl<'a> Available<'a> {
     pub fn new(queue_size: usize) -> Result<Self, Error> {
-        let (_, size, _) = queue_part_sizes(queue_size);
-        let size = size.next_multiple_of(syscall::PAGE_SIZE); // align to page size
-
+        let (_, _, size) = queue_part_sizes(queue_size);
         let addr = unsafe { syscall::physalloc(size) }.map_err(Error::SyscallError)?;
-        let virt =
-            unsafe { common::physmap(addr, size, common::Prot::RW, common::MemoryType::default()) }
-                .map_err(Error::SyscallError)?;
+
+        unsafe { Self::from_raw(addr, size, queue_size) }
+    }
+
+    /// `addr` is the physical address of the ring.
+    pub unsafe fn from_raw(addr: usize, size: usize, queue_size: usize) -> Result<Self, Error> {
+        let virt = unsafe {
+            common::physmap(addr, size, common::Prot::RW, common::MemoryType::default())
+        }?;
 
         let ring = unsafe { &mut *(virt as *mut AvailableRing) };
-
-        Ok(Self {
+        let ring = Self {
             addr,
             size,
             ring,
             queue_size,
-        })
+        };
+
+        for i in 0..queue_size {
+            // Setting them to `u16::MAX` helps with debugging since qemu reports them
+            // as illegal values.
+            ring.get_element_at(i).table_index.store(u16::MAX, Ordering::SeqCst);
+        }
+
+        Ok(ring)
     }
 
     /// ## Panics
@@ -308,21 +353,32 @@ pub struct Used<'a> {
 impl<'a> Used<'a> {
     pub fn new(queue_size: usize) -> Result<Self, Error> {
         let (_, _, size) = queue_part_sizes(queue_size);
-        let size = size.next_multiple_of(syscall::PAGE_SIZE); // align to page size
-
         let addr = unsafe { syscall::physalloc(size) }.map_err(Error::SyscallError)?;
-        let virt =
-            unsafe { common::physmap(addr, size, common::Prot::RW, common::MemoryType::default()) }
-                .map_err(Error::SyscallError)?;
+
+        unsafe { Self::from_raw(addr, size, queue_size) }
+    }
+
+    /// `addr` is the physical address of the ring.
+    pub unsafe fn from_raw(addr: usize, size: usize, queue_size: usize) -> Result<Self, Error> {
+        let virt = unsafe {
+            common::physmap(addr, size, common::Prot::RW, common::MemoryType::default())
+        }?;
 
         let ring = unsafe { &mut *(virt as *mut UsedRing) };
-
-        Ok(Self {
+        let mut ring = Self {
             addr,
             size,
             ring,
             queue_size,
-        })
+        };
+
+        for i in 0..queue_size {
+            // Setting them to `u32::MAX` helps with debugging since qemu reports them
+            // as illegal values.
+            ring.get_mut_element_at(i).table_index.set(u32::MAX);
+        }
+
+        Ok(ring)
     }
 
     /// ## Panics
@@ -377,43 +433,307 @@ impl Drop for Used<'_> {
     }
 }
 
+pub trait Transport: Sync + Send {
+    /// `size` specifies the size of the read in bytes.
+    ///
+    /// ## Panics
+    /// This function panics if the provided `size` is more then `size_of::<u64>()`.
+    fn load_config(&self, offset: u8, size: u8) -> u64;
+
+    /// Resets the device.
+    fn reset(&self);
+
+    /// Returns whether the device supports the specified feature.
+    fn check_device_feature(&self, feature: u32) -> bool;
+
+    /// Acknowledges the specified feature.
+    ///
+    /// **Note**: [`Transport::check_device_feature`] must be used to check whether
+    /// the device supports the feature before acknowledging it.
+    fn ack_driver_feature(&self, feature: u32);
+
+    /// Finalizes the acknowledged features by setting the `FEATURES_OK` bit in the
+    /// device status flags. No-op on a legacy device.
+    fn finalize_features(&self);
+
+    /// Runs the device.
+    ///
+    /// At this point, all of the queues must be created and the features must be
+    /// finalized.
+    ///
+    /// ## Panics
+    /// This function panics if the device is already running.
+    fn run_device(&self) {
+        self.insert_status(DeviceStatusFlags::DRIVER_OK);
+    }
+
+    /// Creates a new queue.
+    ///
+    /// ## Panics
+    /// This function panics if the device is running.
+    fn setup_queue(&self, vector: u16, irq_handle: &File) -> Result<Arc<Queue>, Error>;
+
+    // TODO(andypython): Should this function be unsafe?
+    fn reinit_queue(&self, queue: Arc<Queue>);
+    fn insert_status(&self, status: DeviceStatusFlags);
+}
+
+pub enum LegacyRegister {
+    DeviceFeatures = 0, // u32
+
+    QueueAddress = 8, // u32
+    QueueSize = 12,   // u16
+    QueueSelect = 14, // u16
+    QueueNotify = 16, // u16
+
+    DeviceStatus = 18, // u8
+
+    ConfigMsixVector = 20, // u16
+    QueueMsixVector = 22,  // u16
+}
+
+struct LegacyBell(Weak<LegacyTransport>);
+
+impl NotifyBell for LegacyBell {
+    #[inline]
+    fn ring(&self, queue_index: u16) {
+        let transport = self.0.upgrade().expect("bell: transport dropped");
+        transport.write::<u16>(LegacyRegister::QueueNotify, queue_index)
+    }
+}
+
+pub struct LegacyTransport(u16, AtomicU16, Weak<Self>);
+
+impl LegacyTransport {
+    pub(super) fn new(port: u16) -> Arc<Self> {
+        Arc::new_cyclic(|sref| Self(port, AtomicU16::new(0), sref.clone()))
+    }
+
+    unsafe fn read_raw<V>(&self, offset: usize) -> V
+    where
+        V: Sized + TryFrom<u64>,
+        <V as TryFrom<u64>>::Error: std::fmt::Debug,
+    {
+        let port = self.0 + offset as u16;
+
+        if size_of::<V>() == size_of::<u8>() {
+            V::try_from(Pio::<u8>::new(port).read() as u64).unwrap()
+        } else if size_of::<V>() == size_of::<u16>() {
+            V::try_from(Pio::<u16>::new(port).read() as u64).unwrap()
+        } else if size_of::<V>() == size_of::<u32>() {
+            V::try_from(Pio::<u32>::new(port).read() as u64).unwrap()
+        } else if size_of::<V>() == size_of::<u64>() {
+            let lower = Pio::<u32>::new(port).read() as u64;
+            let upper = Pio::<u32>::new(port + size_of::<u32>() as u16).read() as u64;
+
+            V::try_from(lower | (upper << 32)).unwrap()
+        } else {
+            unreachable!()
+        }
+    }
+
+    fn read<V>(&self, register: LegacyRegister) -> V
+    where
+        V: Sized + TryFrom<u64>,
+        <V as TryFrom<u64>>::Error: std::fmt::Debug,
+    {
+        unsafe { self.read_raw(register as usize) }
+    }
+
+    fn write<V>(&self, register: LegacyRegister, value: V)
+    where
+        V: Sized + TryInto<usize>,
+        <V as TryInto<usize>>::Error: std::fmt::Debug,
+    {
+        if size_of::<V>() == size_of::<u8>() {
+            Pio::<u8>::new(self.0 + register as u16).write(value.try_into().unwrap() as u8);
+        } else if size_of::<V>() == size_of::<u16>() {
+            Pio::<u16>::new(self.0 + register as u16).write(value.try_into().unwrap() as u16);
+        } else if size_of::<V>() == size_of::<u32>() {
+            Pio::<u32>::new(self.0 + register as u16).write(value.try_into().unwrap() as u32);
+        } else {
+            unreachable!()
+        }
+    }
+}
+
+impl Transport for LegacyTransport {
+    fn reset(&self) {
+        self.write(LegacyRegister::DeviceStatus, 0u8);
+
+        let status = self.read::<u8>(LegacyRegister::DeviceStatus);
+        assert_eq!(status, 0);
+    }
+
+    fn check_device_feature(&self, feature: u32) -> bool {
+        assert!(
+            feature < 32,
+            "virtio: cannot query feature {feature} on a legacy device"
+        );
+        self.read::<u32>(LegacyRegister::DeviceFeatures) & (1 << feature) == (1 << feature)
+    }
+
+    fn ack_driver_feature(&self, feature: u32) {
+        assert!(
+            feature < 32,
+            "virtio: cannot ack feature {feature} on a legacy device"
+        );
+
+        let current = self.read::<u32>(LegacyRegister::DeviceFeatures);
+        self.write::<u32>(LegacyRegister::DeviceFeatures, current | (1 << feature));
+    }
+
+    fn setup_queue(&self, vector: u16, irq_handle: &File) -> Result<Arc<Queue>, Error> {
+        let queue_index = self.1.fetch_add(1, Ordering::SeqCst);
+        self.write(LegacyRegister::QueueSelect, queue_index);
+
+        let queue_size = self.read::<u16>(LegacyRegister::QueueSize) as usize;
+        let (desc_size, avail_size, used_size) = queue_part_sizes(queue_size);
+
+        let size_bytes = desc_size + avail_size + used_size;
+        let addr = unsafe { syscall::physalloc(size_bytes).map_err(Error::SyscallError)? };
+
+        let descriptor = unsafe {
+            let physbox = PhysBox::from_raw_parts(addr, desc_size);
+            let table = Dma::<[Descriptor]>::from_physbox_uninit_unsized(physbox, queue_size)?;
+
+            table.assume_init()
+        };
+
+        let avail_addr = addr + desc_size;
+        let avail = unsafe { Available::from_raw(avail_addr, avail_size, queue_size)? };
+
+        let used_addr = avail_addr + avail_size;
+        let used = unsafe { Used::from_raw(used_addr, used_size, queue_size)? };
+
+        self.write::<u16>(LegacyRegister::QueueMsixVector, vector);
+        self.write::<u32>(LegacyRegister::QueueAddress, (addr as u32) >> 12);
+
+        log::info!("virtio-core: enabled queue #{queue_index} (size={queue_size})");
+
+        let queue = Queue::new(
+            descriptor,
+            avail,
+            used,
+            LegacyBell(self.2.clone()),
+            queue_index,
+            vector,
+        );
+
+        spawn_irq_thread(irq_handle, &queue)?;
+        Ok(queue)
+    }
+
+    fn load_config(&self, offset: u8, size: u8) -> u64 {
+        // We always enable MSI-X. So, the device configuration space offset will
+        // always be 0x18.
+        //
+        // Checkout 4.1.4.8 Legacy Interfaces: A Note on PCI Device Layout
+        const DEVICE_SPACE_OFFSET: usize = 0x18;
+
+        let size = size as usize;
+        let offset = DEVICE_SPACE_OFFSET + offset as usize;
+
+        unsafe {
+            if size == size_of::<u8>() {
+                self.read_raw::<u8>(offset) as u64
+            } else if size == size_of::<u16>() {
+                self.read_raw::<u16>(offset) as u64
+            } else if size == size_of::<u32>() {
+                self.read_raw::<u32>(offset) as u64
+            } else if size == size_of::<u64>() {
+                self.read_raw::<u64>(offset) as u64
+            } else {
+                unreachable!()
+            }
+        }
+    }
+
+    fn insert_status(&self, status: DeviceStatusFlags) {
+        let old = self.read::<u8>(LegacyRegister::DeviceStatus);
+        self.write(LegacyRegister::DeviceStatus, old | status.bits());
+    }
+
+    fn reinit_queue(&self, _queue: Arc<Queue>) {
+        todo!()
+    }
+
+    // Legacy devices do not have the `FEATURES_OK` bit.
+    fn finalize_features(&self) {}
+}
+
+struct StandardBell<'a>(&'a mut AtomicU16);
+
+impl NotifyBell for StandardBell<'_> {
+    #[inline]
+    fn ring(&self, queue_index: u16) {
+        self.0.store(queue_index, Ordering::SeqCst);
+    }
+}
+
 pub struct StandardTransport<'a> {
     pub(crate) common: Mutex<&'a mut CommonCfg>,
     notify: *const u8,
     notify_mul: u32,
+    device_space: *const u8,
 
     queue_index: AtomicU16,
 }
 
 impl<'a> StandardTransport<'a> {
-    pub fn new(common: &'a mut CommonCfg, notify: *const u8, notify_mul: u32) -> Arc<Self> {
+    pub fn new(
+        common: &'a mut CommonCfg,
+        notify: *const u8,
+        notify_mul: u32,
+        device_space: *const u8,
+    ) -> Arc<Self> {
         Arc::new(Self {
             common: Mutex::new(common),
             notify,
             notify_mul,
 
             queue_index: AtomicU16::new(0),
+            device_space,
         })
     }
+}
 
-    pub fn reset(&self) {
+impl Transport for StandardTransport<'_> {
+    fn load_config(&self, offset: u8, size: u8) -> u64 {
+        unsafe {
+            let ptr = self.device_space.add(offset as usize);
+            let size = size as usize;
+
+            if size == size_of::<u8>() {
+                ptr.cast::<u8>().read() as u64
+            } else if size == size_of::<u16>() {
+                ptr.cast::<u16>().read() as u64
+            } else if size == size_of::<u32>() {
+                ptr.cast::<u32>().read() as u64
+            } else if size == size_of::<u64>() {
+                ptr.cast::<u64>().read() as u64
+            } else {
+                unreachable!()
+            }
+        }
+    }
+
+    fn reset(&self) {
         let mut common = self.common.lock().unwrap();
 
         common.device_status.set(DeviceStatusFlags::empty());
         // Upon reset, the device must initialize device status to 0.
         assert_eq!(common.device_status.get(), DeviceStatusFlags::empty());
-
-        log::debug!("virtio: successfully reseted device");
     }
 
-    pub fn check_device_feature(&self, feature: u32) -> bool {
+    fn check_device_feature(&self, feature: u32) -> bool {
         let mut common = self.common.lock().unwrap();
 
         common.device_feature_select.set(feature >> 5);
         (common.device_feature.get() & (1 << (feature & 31))) != 0
     }
 
-    pub fn ack_driver_feature(&self, feature: u32) {
+    fn ack_driver_feature(&self, feature: u32) {
         let mut common = self.common.lock().unwrap();
 
         common.driver_feature_select.set(feature >> 5);
@@ -422,7 +742,7 @@ impl<'a> StandardTransport<'a> {
         common.driver_feature.set(current | (1 << (feature & 31)));
     }
 
-    pub fn finalize_features(&self) {
+    fn finalize_features(&self) {
         // Check VirtIO version 1 compliance.
         assert!(self.check_device_feature(VIRTIO_F_VERSION_1));
         self.ack_driver_feature(VIRTIO_F_VERSION_1);
@@ -440,16 +760,7 @@ impl<'a> StandardTransport<'a> {
         assert!((confirm & DeviceStatusFlags::FEATURES_OK) == DeviceStatusFlags::FEATURES_OK);
     }
 
-    pub fn run_device(&self) {
-        let mut common = self.common.lock().unwrap();
-
-        let status = common.device_status.get();
-        common
-            .device_status
-            .set(status | DeviceStatusFlags::DRIVER_OK);
-    }
-
-    pub fn setup_queue(&self, vector: u16, irq_handle: &File) -> Result<Arc<Queue<'a>>, Error> {
+    fn setup_queue(&self, vector: u16, irq_handle: &File) -> Result<Arc<Queue>, Error> {
         let mut common = self.common.lock().unwrap();
 
         let queue_index = self.queue_index.fetch_add(1, Ordering::SeqCst);
@@ -464,17 +775,7 @@ impl<'a> StandardTransport<'a> {
         };
 
         let avail = Available::new(queue_size)?;
-        let mut used = Used::new(queue_size)?;
-
-        for i in 0..queue_size {
-            // XXX: Fill the `table_index` of the elements with `T::MAX` to help with
-            //      debugging since qemu reports them as illegal values.
-            avail
-                .get_element_at(i)
-                .table_index
-                .store(u16::MAX, Ordering::Relaxed);
-            used.get_mut_element_at(i).table_index.set(u32::MAX);
-        }
+        let used = Used::new(queue_size)?;
 
         common.queue_desc.set(descriptor.physical() as u64);
         common.queue_driver.set(avail.phys_addr() as u64);
@@ -498,37 +799,24 @@ impl<'a> StandardTransport<'a> {
             descriptor,
             avail,
             used,
-            notification_bell,
+            StandardBell(notification_bell),
             queue_index,
             vector,
         );
 
-        let queue_copy = queue.clone();
-        let irq_fd = irq_handle.as_raw_fd();
-
-        std::thread::spawn(move || {
-            let mut event_queue = EventQueue::<usize>::new().unwrap();
-
-            event_queue
-                .add(irq_fd, move |_| -> Result<Option<usize>, std::io::Error> {
-                    // Wake up the tasks waiting on the queue.
-                    for (_, task) in queue_copy.waker.lock().unwrap().iter() {
-                        task.wake_by_ref();
-                    }
-                    Ok(None)
-                })
-                .unwrap();
-
-            loop {
-                event_queue.run().unwrap();
-            }
-        });
-
+        spawn_irq_thread(irq_handle, &queue)?;
         Ok(queue)
     }
 
+    fn insert_status(&self, status: DeviceStatusFlags) {
+        let mut common = self.common.lock().unwrap();
+        let old = common.device_status.get();
+
+        common.device_status.set(old | status);
+    }
+
     /// Re-initializes a queue; usually done after a device reset.
-    pub fn reinit_queue(&self, queue: Arc<Queue>) {
+    fn reinit_queue(&self, queue: Arc<Queue>) {
         let mut common = self.common.lock().unwrap();
         queue.reinit();
 
@@ -546,3 +834,6 @@ impl<'a> StandardTransport<'a> {
         common.queue_enable.set(1);
     }
 }
+
+unsafe impl Send for StandardTransport<'_> {}
+unsafe impl Sync for StandardTransport<'_> {}

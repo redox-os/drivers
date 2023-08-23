@@ -99,13 +99,13 @@ pub enum Handle {
 pub struct DiskScheme<'a> {
     queue: Arc<Queue<'a>>,
     next_id: usize,
-    cfg: &'a mut BlockDeviceConfig,
+    cfg: BlockDeviceConfig,
     handles: BTreeMap<usize, Handle>,
     part_table: Option<PartitionTable>,
 }
 
 impl<'a> DiskScheme<'a> {
-    pub fn new(queue: Arc<Queue<'a>>, cfg: &'a mut BlockDeviceConfig) -> Self {
+    pub fn new(queue: Arc<Queue<'a>>, cfg: BlockDeviceConfig) -> Self {
         let mut this = Self {
             queue,
             next_id: 0,
@@ -157,7 +157,7 @@ impl<'a> DiskScheme<'a> {
 
         impl<'a, 'b> Seek for VirtioShim<'a, 'b> {
             fn seek(&mut self, from: std::io::SeekFrom) -> IoResult<u64> {
-                let size_u = self.scheme.cfg.capacity.get() * self.scheme.cfg.blk_size.get() as u64;
+                let size_u = self.scheme.cfg.capacity() * self.scheme.cfg.block_size() as u64;
                 let size = i64::try_from(size_u).or(Err(std::io::Error::new(
                     std::io::ErrorKind::Other,
                     "Disk larger than 2^63 - 1 bytes",

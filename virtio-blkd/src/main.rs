@@ -1,9 +1,12 @@
 #![deny(trivial_numeric_casts, unused_allocation)]
 #![feature(int_roundings, async_fn_in_trait)]
 
+// TODO(andypython): driver panic with an empty disk.
+
 use std::fs::File;
 use std::io::{Read, Write};
 use std::os::fd::{FromRawFd, RawFd};
+use std::sync::{Arc, Weak};
 
 use static_assertions::const_assert_eq;
 
@@ -12,6 +15,7 @@ use virtio_core::spec::*;
 
 use syscall::{Packet, SchemeBlockMut};
 
+use virtio_core::transport::Transport;
 use virtio_core::utils::VolatileCell;
 
 mod scheme;
@@ -43,23 +47,47 @@ pub struct BlockGeometry {
     pub sectors: VolatileCell<u8>,
 }
 
-#[repr(C)]
-pub struct BlockDeviceConfig {
-    capacity: VolatileCell<u64>,
-    pub size_max: VolatileCell<u32>,
-    pub seq_max: VolatileCell<u32>,
-    pub geometry: BlockGeometry,
-    blk_size: VolatileCell<u32>,
+#[repr(u8)]
+pub enum DeviceConfigTy {
+    Capacity = 0,
+    SizeMax = 0x8,
+    SeqMax = 0xc,
+    Geometry = 0x10,
+    BlkSize = 0x14,
 }
 
+pub struct BlockDeviceConfig(Weak<dyn Transport>);
+
 impl BlockDeviceConfig {
-    /// Returns the capacity of the block device in bytes.
-    pub fn capacity(&self) -> u64 {
-        self.capacity.get()
+    #[inline]
+    fn new(tranport: &Arc<dyn Transport>) -> Self {
+        Self(Arc::downgrade(&tranport))
     }
 
+    pub fn load_config<T>(&self, ty: DeviceConfigTy) -> T
+    where
+        T: Sized + TryFrom<u64>,
+        <T as TryFrom<u64>>::Error: std::fmt::Debug,
+    {
+        let transport = self.0.upgrade().unwrap();
+
+        let size = core::mem::size_of::<T>()
+            .try_into()
+            .expect("load_config: invalid size");
+
+        let value = transport.load_config(ty as u8, size);
+        T::try_from(value).unwrap()
+    }
+
+    /// Returns the capacity of the block device in bytes.
+    #[inline]
+    pub fn capacity(&self) -> u64 {
+        self.load_config(DeviceConfigTy::Capacity)
+    }
+
+    #[inline]
     pub fn block_size(&self) -> u32 {
-        self.blk_size.get()
+        self.load_config(DeviceConfigTy::BlkSize)
     }
 }
 
@@ -98,15 +126,15 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
         .transport
         .setup_queue(virtio_core::MSIX_PRIMARY_VECTOR, &device.irq_handle)?;
 
-    let device_space = unsafe { &mut *(device.device_space as *mut BlockDeviceConfig) };
+    let device_space = BlockDeviceConfig::new(&device.transport);
 
     // At this point the device is alive!
     device.transport.run_device();
 
     log::info!(
         "virtio-blk: disk size: {} sectors and block size of {} bytes",
-        device_space.capacity.get(),
-        device_space.blk_size.get()
+        device_space.capacity(),
+        device_space.block_size()
     );
 
     let mut name = pci_config.func.name();

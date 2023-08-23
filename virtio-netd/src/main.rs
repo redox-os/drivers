@@ -9,7 +9,7 @@ use pcid_interface::PcidServerHandle;
 use syscall::{Packet, SchemeBlockMut};
 
 use virtio_core::spec::VIRTIO_NET_F_MAC;
-use virtio_core::transport::Error;
+use virtio_core::transport::{Error, Transport};
 
 use scheme::NetworkScheme;
 
