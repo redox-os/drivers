@@ -497,6 +497,11 @@ pub fn main() {
                     }
                 }
 
+                if devices.is_empty() {
+                    // No display devices found.
+                    return;
+                }
+
                 let device = devices
                     .iter()
                     .filter(|d| !d.contains("vesa"))
