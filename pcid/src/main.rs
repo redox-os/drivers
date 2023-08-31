@@ -466,11 +466,19 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, bus_num: u8,
                 info!("PCID SPAWN {:?}", command);
 
                 let (pcid_to_client_write, pcid_from_client_read, envs) = if driver.use_channel.unwrap_or(false) {
-                    let mut fds1 = [0usize; 2];
-                    let mut fds2 = [0usize; 2];
+                    // TODO: libc wrapper?
+                    let [fds1, fds2] = unsafe {
+                        let mut fds1 = [0 as libc::c_int; 2];
+                        let mut fds2 = [0 as libc::c_int; 2];
 
-                    syscall::pipe2(&mut fds1, 0).expect("pcid: failed to create pcid->client pipe");
-                    syscall::pipe2(&mut fds2, 0).expect("pcid: failed to create client->pcid pipe");
+                        assert_eq!(libc::pipe(fds1.as_mut_ptr()), 0, "pcid: failed to create pcid->client pipe");
+                        assert_eq!(libc::pipe(fds2.as_mut_ptr()), 0, "pcid: failed to create client->pcid pipe");
+
+                        [
+                            fds1.map(|c| c as usize),
+                            fds2.map(|c| c as usize),
+                        ]
+                    };
 
                     let [pcid_to_client_read, pcid_to_client_write] = fds1;
                     let [pcid_from_client_read, pcid_from_client_write] = fds2;
