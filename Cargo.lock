@@ -1115,9 +1115,9 @@ dependencies = [
 [[package]]
 name = "redox_event"
 version = "0.1.0"
-source = "git+https://gitlab.redox-os.org/redox-os/event.git#f7db3d25ca5e282c12ded12bf6c720087b570132"
+source = "git+https://gitlab.redox-os.org/redox-os/event.git#3f9ca18968d2c2d0f9ea819983d666f8b24eacf1"
 dependencies = [
- "redox_syscall 0.3.5",
+ "redox_syscall 0.4.0",
 ]
 
 [[package]]
