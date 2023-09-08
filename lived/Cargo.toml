@@ -10,5 +10,5 @@ license = "MIT"
 [dependencies]
 anyhow = "1"
 redox-daemon = "0.1"
-redox_syscall = "0.3"
+redox_syscall = "0.4"
 slab = "0.4"

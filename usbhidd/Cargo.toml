@@ -12,6 +12,6 @@ bitflags = "1.2"
 log = "0.4"
 orbclient = "0.3.27"
 redox-log = "0.1"
-redox_syscall = "0.3"
+redox_syscall = "0.4"
 ux = "0.1"
 xhcid = { path = "../xhcid" }

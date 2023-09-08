@@ -13,5 +13,5 @@ pcid = { path = "../pcid" }
 common = { path = "../common" }
 
 redox-daemon = "0.1"
-redox_syscall = "0.3"
+redox_syscall = "0.4"
 netutils = { git = "https://gitlab.redox-os.org/redox-os/netutils.git" }

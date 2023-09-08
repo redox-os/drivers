@@ -7,7 +7,7 @@ authors = ["Anhad Singh <andypython@protonmail.com>"]
 [dependencies]
 static_assertions = "1.1.0"
 bitflags = "2.3.2"
-redox_syscall = "0.3"
+redox_syscall = "0.4"
 log = "0.4"
 thiserror = "1.0.40"
 futures = { version = "0.3.28", features = ["executor"] }

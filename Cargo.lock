@@ -12,7 +12,7 @@ dependencies = [
  "redox-daemon",
  "redox-log",
  "redox_event",
- "redox_syscall 0.3.5",
+ "redox_syscall 0.4.0",
  "spin",
 ]
 
@@ -30,7 +30,7 @@ dependencies = [
  "plain",
  "redox-daemon",
  "redox-log",
- "redox_syscall 0.3.5",
+ "redox_syscall 0.4.0",
  "rustc-hash",
  "serde_json",
  "thiserror",
@@ -48,7 +48,7 @@ dependencies = [
  "partitionlib",
  "redox-daemon",
  "redox-log",
- "redox_syscall 0.3.5",
+ "redox_syscall 0.4.0",
 ]
 
 [[package]]
@@ -60,7 +60,7 @@ dependencies = [
  "netutils",
  "redox-daemon",
  "redox_event",
- "redox_syscall 0.3.5",
+ "redox_syscall 0.4.0",
 ]
 
 [[package]]
@@ -82,7 +82,7 @@ dependencies = [
  "aml",
  "rustc-hash",
  "serde",
- "toml 0.7.6",
+ "toml 0.7.7",
 ]
 
 [[package]]
@@ -164,7 +164,7 @@ version = "0.1.0"
 dependencies = [
  "orbclient",
  "redox-daemon",
- "redox_syscall 0.3.5",
+ "redox_syscall 0.4.0",
 ]
 
 [[package]]
@@ -261,15 +261,14 @@ dependencies = [
 
 [[package]]
 name = "chrono"
-version = "0.4.28"
+version = "0.4.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95ed24df0632f708f5f6d8082675bef2596f7084dee3dd55f632290bf35bfe0f"
+checksum = "defd4e7873dbddba6c7c91e199c7fcb946abc4a6a4ac3195400bcfb01b5de877"
 dependencies = [
  "android-tzdata",
  "iana-time-zone",
  "js-sys",
  "num-traits",
- "time",
  "wasm-bindgen",
  "windows-targets",
 ]
@@ -293,7 +292,7 @@ dependencies = [
 name = "common"
 version = "0.1.0"
 dependencies = [
- "redox_syscall 0.3.5",
+ "redox_syscall 0.4.0",
 ]
 
 [[package]]
@@ -376,7 +375,7 @@ dependencies = [
  "netutils",
  "redox-daemon",
  "redox_event",
- "redox_syscall 0.3.5",
+ "redox_syscall 0.4.0",
 ]
 
 [[package]]
@@ -453,7 +452,7 @@ checksum = "89ca545a94061b6365f2c7355b4b32bd20df3ff95f02da9329b34ccc3bd6ee72"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.29",
+ "syn 2.0.31",
 ]
 
 [[package]]
@@ -567,7 +566,7 @@ dependencies = [
  "pcid",
  "redox-daemon",
  "redox-log",
- "redox_syscall 0.3.5",
+ "redox_syscall 0.4.0",
 ]
 
 [[package]]
@@ -592,7 +591,7 @@ dependencies = [
  "redox-daemon",
  "redox-log",
  "redox_event",
- "redox_syscall 0.3.5",
+ "redox_syscall 0.4.0",
  "spin",
 ]
 
@@ -615,7 +614,7 @@ dependencies = [
  "orbclient",
  "redox-daemon",
  "redox-log",
- "redox_syscall 0.3.5",
+ "redox_syscall 0.4.0",
  "spin",
 ]
 
@@ -643,7 +642,7 @@ dependencies = [
  "netutils",
  "redox-daemon",
  "redox_event",
- "redox_syscall 0.3.5",
+ "redox_syscall 0.4.0",
 ]
 
 [[package]]
@@ -679,7 +678,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "redox-daemon",
- "redox_syscall 0.3.5",
+ "redox_syscall 0.4.0",
  "slab",
 ]
 
@@ -713,9 +712,9 @@ checksum = "60302e4db3a61da70c0cb7991976248362f30319e88850c487b9b95bbf059e00"
 
 [[package]]
 name = "memchr"
-version = "2.6.2"
+version = "2.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5486aed0026218e61b8a01d5fbd5a0a134649abb71a0e53b7bc088529dced86e"
+checksum = "8f232d6ef707e1956a43342693d2a31e72989554d58299d7a88738cc95b0d35c"
 
 [[package]]
 name = "net2"
@@ -730,7 +729,7 @@ dependencies = [
 [[package]]
 name = "netutils"
 version = "0.1.0"
-source = "git+https://gitlab.redox-os.org/redox-os/netutils.git#fc11b9bb3c1f5eefccb93ae670e4ec8b3d6fad4f"
+source = "git+https://gitlab.redox-os.org/redox-os/netutils.git#d1998d5aa2809b7f0c433f2df3125eecfbfa5c86"
 dependencies = [
  "arg_parser",
  "libc",
@@ -801,7 +800,7 @@ dependencies = [
  "pcid",
  "redox-daemon",
  "redox-log",
- "redox_syscall 0.3.5",
+ "redox_syscall 0.4.0",
  "smallvec 1.11.0",
 ]
 
@@ -945,7 +944,7 @@ dependencies = [
  "paw",
  "plain",
  "redox-log",
- "redox_syscall 0.3.5",
+ "redox_syscall 0.4.0",
  "serde",
  "serde_json",
  "smallvec 1.11.0",
@@ -959,7 +958,7 @@ name = "pcspkrd"
 version = "0.1.0"
 dependencies = [
  "redox-daemon",
- "redox_syscall 0.3.5",
+ "redox_syscall 0.4.0",
 ]
 
 [[package]]
@@ -1026,7 +1025,7 @@ dependencies = [
  "bitflags 1.3.2",
  "orbclient",
  "redox-daemon",
- "redox_syscall 0.3.5",
+ "redox_syscall 0.4.0",
 ]
 
 [[package]]
@@ -1133,7 +1132,16 @@ dependencies = [
 [[package]]
 name = "redox_syscall"
 version = "0.3.5"
-source = "git+https://gitlab.redox-os.org/redox-os/syscall.git#a525620c818a801bb7038e111b71033eff56a3ee"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "567664f262709473930a4bf9e51bf2ebf3348f2e748ccc50dea20646858f8f29"
+dependencies = [
+ "bitflags 1.3.2",
+]
+
+[[package]]
+name = "redox_syscall"
+version = "0.4.0"
+source = "git+https://gitlab.redox-os.org/redox-os/syscall.git#1bef275ffcc50c825214f5a349aa94932efb342c"
 dependencies = [
  "bitflags 1.3.2",
 ]
@@ -1159,7 +1167,7 @@ dependencies = [
  "redox-daemon",
  "redox-log",
  "redox_event",
- "redox_syscall 0.3.5",
+ "redox_syscall 0.4.0",
 ]
 
 [[package]]
@@ -1174,7 +1182,7 @@ dependencies = [
  "redox-daemon",
  "redox-log",
  "redox_event",
- "redox_syscall 0.3.5",
+ "redox_syscall 0.4.0",
 ]
 
 [[package]]
@@ -1210,7 +1218,7 @@ dependencies = [
  "redox-daemon",
  "redox-log",
  "redox_event",
- "redox_syscall 0.3.5",
+ "redox_syscall 0.4.0",
  "spin",
 ]
 
@@ -1280,7 +1288,7 @@ checksum = "4eca7ac642d82aa35b60049a6eccb4be6be75e599bd2e9adb5f875a737654af2"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.29",
+ "syn 2.0.31",
 ]
 
 [[package]]
@@ -1422,9 +1430,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "2.0.29"
+version = "2.0.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c324c494eba9d92503e6f1ef2e6df781e78f6a7705a0202d9801b198807d518a"
+checksum = "718fa2415bcb8d8bd775917a1bf12a7931b6dfa890753378538118181e0cb398"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1460,22 +1468,22 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "1.0.47"
+version = "1.0.48"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97a802ec30afc17eee47b2855fc72e0c4cd62be9b4efe6591edde0ec5bd68d8f"
+checksum = "9d6d7a740b8a666a7e828dd00da9c0dc290dff53154ea77ac109281de90589b7"
 dependencies = [
  "thiserror-impl",
 ]
 
 [[package]]
 name = "thiserror-impl"
-version = "1.0.47"
+version = "1.0.48"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6bb623b56e39ab7dcd4b1b98bb6c8f8d907ed255b18de254088016b27a8ee19b"
+checksum = "49922ecae66cc8a249b77e68d1d0623c1b2c514f0060c27cdc68bd62a1219d35"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.29",
+ "syn 2.0.31",
 ]
 
 [[package]]
@@ -1515,9 +1523,9 @@ dependencies = [
 
 [[package]]
 name = "toml"
-version = "0.7.6"
+version = "0.7.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c17e963a819c331dcacd7ab957d80bc2b9a9c1e71c804826d2f283dd65306542"
+checksum = "de0a3ab2091e52d7299a39d098e200114a972df0a7724add02a273aa9aada592"
 dependencies = [
  "serde",
  "serde_spanned",
@@ -1536,9 +1544,9 @@ dependencies = [
 
 [[package]]
 name = "toml_edit"
-version = "0.19.14"
+version = "0.19.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8123f27e969974a3dfba720fdb560be359f57b44302d280ba72e76a74480e8a"
+checksum = "1b5bb770da30e5cbfde35a2d7b9b8a2c4b8ef89548a7a6aeab5c9a576e3e7421"
 dependencies = [
  "indexmap",
  "serde",
@@ -1607,7 +1615,7 @@ dependencies = [
  "log",
  "orbclient",
  "redox-log",
- "redox_syscall 0.3.5",
+ "redox_syscall 0.4.0",
  "ux",
  "xhcid",
 ]
@@ -1619,7 +1627,7 @@ dependencies = [
  "base64",
  "plain",
  "redox-daemon",
- "redox_syscall 0.3.5",
+ "redox_syscall 0.4.0",
  "thiserror",
  "xhcid",
 ]
@@ -1653,7 +1661,7 @@ dependencies = [
  "orbclient",
  "redox-daemon",
  "redox_event",
- "redox_syscall 0.3.5",
+ "redox_syscall 0.4.0",
 ]
 
 [[package]]
@@ -1683,7 +1691,7 @@ dependencies = [
  "orbclient",
  "ransid",
  "redox-daemon",
- "redox_syscall 0.3.5",
+ "redox_syscall 0.4.0",
  "rusttype",
 ]
 
@@ -1700,7 +1708,7 @@ dependencies = [
  "pcid",
  "redox-daemon",
  "redox-log",
- "redox_syscall 0.3.5",
+ "redox_syscall 0.4.0",
  "spin",
  "static_assertions",
  "thiserror",
@@ -1719,7 +1727,7 @@ dependencies = [
  "pcid",
  "redox-log",
  "redox_event",
- "redox_syscall 0.3.5",
+ "redox_syscall 0.4.0",
  "static_assertions",
  "thiserror",
 ]
@@ -1737,7 +1745,7 @@ dependencies = [
  "paste",
  "pcid",
  "redox-daemon",
- "redox_syscall 0.3.5",
+ "redox_syscall 0.4.0",
  "spin",
  "static_assertions",
  "virtio-core",
@@ -1753,7 +1761,7 @@ dependencies = [
  "netutils",
  "pcid",
  "redox-daemon",
- "redox_syscall 0.3.5",
+ "redox_syscall 0.4.0",
  "static_assertions",
  "virtio-core",
 ]
@@ -1800,7 +1808,7 @@ dependencies = [
  "once_cell",
  "proc-macro2",
  "quote",
- "syn 2.0.29",
+ "syn 2.0.31",
  "wasm-bindgen-shared",
 ]
 
@@ -1822,7 +1830,7 @@ checksum = "54681b18a46765f095758388f2d0cf16eb8d4169b639ab575a8f5693af210c7b"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.29",
+ "syn 2.0.31",
  "wasm-bindgen-backend",
  "wasm-bindgen-shared",
 ]
@@ -1955,7 +1963,7 @@ dependencies = [
  "redox-daemon",
  "redox-log",
  "redox_event",
- "redox_syscall 0.3.5",
+ "redox_syscall 0.4.0",
  "serde",
  "serde_json",
  "smallvec 1.11.0",

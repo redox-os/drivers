@@ -5,5 +5,5 @@ authors = ["Tibor Nagy <xnagytibor@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-redox_syscall = "0.3"
+redox_syscall = "0.4"
 redox-daemon = "0.1"
