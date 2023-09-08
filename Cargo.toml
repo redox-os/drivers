@@ -12,6 +12,7 @@ members = [
     "ihdad",
     "ixgbed",
     "nvmed",
+    "lived", # TODO: not really a driver...
     "pcid",
     "pcspkrd",
     "ps2d",
