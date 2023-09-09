@@ -246,18 +246,21 @@ impl OutputStream {
 
 #[repr(packed)]
 pub struct BufferDescriptorListEntry {
-	addr:     Mmio<u64>,
+	addr_low: Mmio<u32>,
+	addr_high: Mmio<u32>,
 	len:      Mmio<u32>,
 	ioc_resv: Mmio<u32>,
 }
 
 impl BufferDescriptorListEntry {
-	pub fn address(&self) -> usize {
-		self.addr.read() as usize
+	pub fn address(&self) -> u64 {
+		(self.addr_low.read() as u64) |
+		((self.addr_high.read() as u64) << 32)
 	}
 
-	pub fn set_address(&mut self, addr:usize) {
-		self.addr.write(addr as u64);
+	pub fn set_address(&mut self, addr: u64) {
+		self.addr_low.write(addr as u32);
+		self.addr_high.write((addr >> 32) as u32);
 	}
 
 	pub fn length(&self) -> u32 {

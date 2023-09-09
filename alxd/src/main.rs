@@ -112,7 +112,7 @@ fn main() {
 
             for event_count in event_queue.trigger_all(event::Event {
                 fd: 0,
-                flags: EventFlags::empty(),
+    			flags: EventFlags::empty(),
             }).expect("alxd: failed to trigger events") {
                 socket.borrow_mut().write(&Packet {
                     id: 0,

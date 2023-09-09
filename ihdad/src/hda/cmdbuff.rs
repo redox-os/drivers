@@ -73,6 +73,7 @@ struct Corb {
 
 impl Corb {
     pub fn new(regs_addr: usize, corb_buff_phys: usize, corb_buff_virt: usize) -> Corb {
+        println!("regs addr {:x}", regs_addr);
         unsafe {
             Corb {
                 regs: &mut *(regs_addr as *mut CorbRegs),
@@ -84,7 +85,9 @@ impl Corb {
     }
     //Intel 4.4.1.3
     pub fn init(&mut self) {
+        println!("{}:{}", file!(), line!());
         self.stop();
+        println!("{}:{}", file!(), line!());
         //Determine CORB and RIRB size and allocate buffer
 
         //3.3.24
@@ -122,6 +125,7 @@ impl Corb {
         self.regs.corbctl.writef(CORBRUN, true);
     }
 
+    #[inline(never)]
     pub fn stop(&mut self) {
         while self.regs.corbctl.readf(CORBRUN) {
             self.regs.corbctl.write(0);

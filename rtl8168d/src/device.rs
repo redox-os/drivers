@@ -61,14 +61,16 @@ const LS: u32 = 1 << 28;
 struct Rd {
     ctrl: Mmio<u32>,
     _vlan: Mmio<u32>,
-    buffer: Mmio<u64>
+    buffer_low: Mmio<u32>,
+    buffer_high: Mmio<u32>,
 }
 
 #[repr(packed)]
 struct Td {
     ctrl: Mmio<u32>,
     _vlan: Mmio<u32>,
-    buffer: Mmio<u64>
+    buffer_low: Mmio<u32>,
+    buffer_high: Mmio<u32>,
 }
 
 pub struct Rtl8168 {
@@ -299,7 +301,8 @@ impl Rtl8168 {
         for i in 0..self.receive_ring.len() {
             let rd = &mut self.receive_ring[i];
             let data = &mut self.receive_buffer[i];
-            rd.buffer.write(data.physical() as u64);
+            rd.buffer_low.write(data.physical() as u32);
+            rd.buffer_high.write((data.physical() as u64 >> 32) as u32);
             rd.ctrl.write(OWN | data.len() as u32);
         }
         if let Some(rd) = self.receive_ring.last_mut() {
@@ -309,7 +312,8 @@ impl Rtl8168 {
         // Set up normal priority tx buffers
         println!("  - Transmit buffers (normal priority)");
         for i in 0..self.transmit_ring.len() {
-            self.transmit_ring[i].buffer.write(self.transmit_buffer[i].physical() as u64);
+            self.transmit_ring[i].buffer_low.write(self.transmit_buffer[i].physical() as u32);
+            self.transmit_ring[i].buffer_high.write((self.transmit_buffer[i].physical() as u64 >> 32) as u32);
         }
         if let Some(td) = self.transmit_ring.last_mut() {
             td.ctrl.writef(EOR, true);
@@ -318,7 +322,8 @@ impl Rtl8168 {
         // Set up high priority tx buffers
         println!("  - Transmit buffers (high priority)");
         for i in 0..self.transmit_ring_h.len() {
-            self.transmit_ring_h[i].buffer.write(self.transmit_buffer_h[i].physical() as u64);
+            self.transmit_ring_h[i].buffer_low.write(self.transmit_buffer_h[i].physical() as u32);
+            self.transmit_ring_h[i].buffer_high.write((self.transmit_buffer_h[i].physical() as u64 >> 32) as u32);
         }
         if let Some(td) = self.transmit_ring_h.last_mut() {
             td.ctrl.writef(EOR, true);

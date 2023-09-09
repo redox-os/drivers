@@ -459,7 +459,7 @@ impl IntelHDA {
 		let o = self.output_streams.get_mut(0).unwrap();
 
 		for i in 0..NUM_SUB_BUFFS {
-			self.buff_desc[i].set_address(o.phys() + o.block_size() * i);
+			self.buff_desc[i].set_address((o.phys() + o.block_size() * i) as u64);
 			self.buff_desc[i].set_length(o.block_size() as u32);
 			self.buff_desc[i].set_interrupt_on_complete(true);
 		}
@@ -741,7 +741,7 @@ impl IntelHDA {
 		}
 	}
 
-	fn set_dma_position_buff_addr(&mut self, addr: usize) {
+	fn set_dma_position_buff_addr(&mut self, addr: u64) {
 		let addr_val = addr & !0x7F;
 		self.regs.dplbase.write((addr_val & 0xFFFFFFFF) as u32);
 		self.regs.dpubase.write((addr_val >> 32) as u32);

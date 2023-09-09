@@ -213,13 +213,15 @@ struct Tpd {
     blen: Mmio<u16>,
     vlan: Mmio<u16>,
     flags: Mmio<u32>,
-    addr: Mmio<u64>,
+    addr_low: Mmio<u32>,
+    addr_high: Mmio<u32>,
 }
 
 /// Receive free descriptor
 #[repr(packed)]
 struct Rfd {
-    addr: Mmio<u64>,
+    addr_low: Mmio<u32>,
+    addr_high: Mmio<u32>,
 }
 
 /// Receive return descriptor
@@ -1529,7 +1531,8 @@ impl Alx {
 
         // RFD ring
         for i in 0..self.rfd_ring.len() {
-            self.rfd_ring[i].addr.write(self.rfd_buffer[i].physical() as u64);
+            self.rfd_ring[i].addr_low.write(self.rfd_buffer[i].physical() as u32);
+            self.rfd_ring[i].addr_high.write(((self.rfd_buffer[i].physical() as u64) >> 32) as u32);
         }
         self.write(RFD_ADDR_LO, self.rfd_ring.physical() as u32);
         self.write(RFD_RING_SZ, self.rfd_ring.len() as u32);
