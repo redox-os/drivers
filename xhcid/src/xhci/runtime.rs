@@ -6,8 +6,10 @@ pub struct Interrupter {
     pub imod: Mmio<u32>,
     pub erstsz: Mmio<u32>,
     _rsvd: Mmio<u32>,
-    pub erstba: Mmio<u64>,
-    pub erdp: Mmio<u64>,
+    pub erstba_low: Mmio<u32>,
+    pub erstba_high: Mmio<u32>,
+    pub erdp_low: Mmio<u32>,
+    pub erdp_high: Mmio<u32>,
 }
 
 #[repr(packed)]

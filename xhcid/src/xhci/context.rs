@@ -166,11 +166,13 @@ impl StreamContextArray {
 
 #[repr(packed)]
 pub struct ScratchpadBufferEntry {
-    pub value: Mmio<u64>,
+    pub value_low: Mmio<u32>,
+    pub value_high: Mmio<u32>,
 }
 impl ScratchpadBufferEntry {
     pub fn set_addr(&mut self, addr: u64) {
-        self.value.write(addr);
+        self.value_low.write(addr as u32);
+        self.value_high.write((addr >> 32) as u32);
     }
 }
 

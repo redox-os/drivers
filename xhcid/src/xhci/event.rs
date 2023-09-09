@@ -9,7 +9,8 @@ use super::trb::Trb;
 
 #[repr(packed)]
 pub struct EventRingSte {
-    pub address: Mmio<u64>,
+    pub address_low: Mmio<u32>,
+    pub address_high: Mmio<u32>,
     pub size: Mmio<u16>,
     _rsvd: Mmio<u16>,
     _rsvd2: Mmio<u32>,
@@ -28,7 +29,8 @@ impl EventRing {
             ring: Ring::new(ac64, 256, false)?,
         };
 
-        ring.ste[0].address.write(ring.ring.trbs.physical() as u64);
+        ring.ste[0].address_low.write(ring.ring.trbs.physical() as u32);
+        ring.ste[0].address_high.write((ring.ring.trbs.physical() as u64 >> 32) as u32);
         ring.ste[0].size.write(ring.ring.trbs.len() as u16);
 
         Ok(ring)

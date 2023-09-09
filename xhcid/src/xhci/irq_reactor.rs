@@ -209,7 +209,8 @@ impl IrqReactor {
 
         trace!("Updated ERDP to {:#0x}", dequeue_pointer);
 
-        self.hci.run.lock().unwrap().ints[0].erdp.write(dequeue_pointer);
+        self.hci.run.lock().unwrap().ints[0].erdp_low.write(dequeue_pointer as u32);
+        self.hci.run.lock().unwrap().ints[0].erdp_high.write((dequeue_pointer >> 32) as u32);
     }
     fn handle_requests(&mut self) {
         self.states.extend(self.receiver.try_iter().inspect(|req| trace!("Received request: {:X?}", req)));

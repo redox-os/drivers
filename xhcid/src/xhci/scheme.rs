@@ -259,8 +259,8 @@ impl Xhci {
             //TODO: find out why this bit is set earlier!
             let mut run = self.run.lock().unwrap();
             let mut int = &mut run.ints[0];
-            if int.erdp.readf(1 << 3) {
-                int.erdp.writef(1 << 3, true);
+            if int.erdp_low.readf(1 << 3) {
+                int.erdp_low.writef(1 << 3, true);
             }
         }
 
@@ -2110,7 +2110,7 @@ impl Xhci {
     pub fn event_handler_finished(&self) {
         trace!("Event handler finished");
         // write 1 to EHB to clear it
-        self.run.lock().unwrap().ints[0].erdp.writef(1 << 3, true);
+        self.run.lock().unwrap().ints[0].erdp_low.writef(1 << 3, true);
     }
 }
 pub fn handle_event_trb(name: &str, event_trb: &Trb, command_trb: &Trb) -> Result<()> {

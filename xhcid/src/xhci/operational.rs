@@ -11,9 +11,11 @@ pub struct OperationalRegs {
     pub page_size: Mmio<u32>,
     _rsvd: [Mmio<u32>; 2],
     pub dn_ctrl: Mmio<u32>,
-    pub crcr: Mmio<u64>,
+    pub crcr_low: Mmio<u32>,
+    pub crcr_high: Mmio<u32>,
     _rsvd2: [Mmio<u32>; 4],
-    pub dcbaap: Mmio<u64>,
+    pub dcbaap_low: Mmio<u32>,
+    pub dcbaap_high: Mmio<u32>,
     pub config: Mmio<u32>,
 }
 

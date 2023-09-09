@@ -367,13 +367,15 @@ impl Xhci {
         // Set device context address array pointer
         let dcbaap = self.dev_ctx.dcbaap();
         debug!("Writing DCBAAP: {:X}", dcbaap);
-        self.op.get_mut().unwrap().dcbaap.write(dcbaap as u64);
+        self.op.get_mut().unwrap().dcbaap_low.write(dcbaap as u32);
+        self.op.get_mut().unwrap().dcbaap_high.write((dcbaap as u64 >> 32) as u32);
 
         // Set command ring control register
         let crcr = self.cmd.get_mut().unwrap().register();
         assert_eq!(crcr & 0xFFFF_FFFF_FFFF_FFC1, crcr, "unaligned CRCR");
         debug!("Writing CRCR: {:X}", crcr);
-        self.op.get_mut().unwrap().crcr.write(crcr as u64);
+        self.op.get_mut().unwrap().crcr_low.write(crcr as u32);
+        self.op.get_mut().unwrap().crcr_high.write((crcr as u64 >> 32) as u32);
 
         // Set event ring segment table registers
         debug!("Interrupter 0: {:p}", self.run.get_mut().unwrap().ints.as_ptr());
@@ -386,11 +388,13 @@ impl Xhci {
 
             let erdp = self.primary_event_ring.get_mut().unwrap().erdp();
             debug!("Writing ERDP: {:X}", erdp);
-            int.erdp.write(erdp as u64 | (1 << 3));
+            int.erdp_low.write(erdp as u32 | (1 << 3));
+            int.erdp_high.write((erdp as u64 >> 32) as u32);
 
             let erstba = self.primary_event_ring.get_mut().unwrap().erstba();
             debug!("Writing ERSTBA: {:X}", erstba);
-            int.erstba.write(erstba as u64);
+            int.erstba_low.write(erstba as u32);
+            int.erstba_high.write((erstba as u64 >> 32) as u32);
 
             debug!("Writing IMODC and IMODI: {} and {}", 0, 0);
             int.imod.write(0);
@@ -749,10 +753,10 @@ impl Xhci {
         if self.uses_msi() || self.uses_msix() {
             // Since using MSI and MSI-X implies having no IRQ sharing whatsoever, the IP bit
             // doesn't have to be touched.
-            trace!("Successfully received MSI/MSI-X interrupt, IP={}, EHB={}", runtime_regs.ints[0].iman.readf(1), runtime_regs.ints[0].erdp.readf(3));
+            trace!("Successfully received MSI/MSI-X interrupt, IP={}, EHB={}", runtime_regs.ints[0].iman.readf(1), runtime_regs.ints[0].erdp_low.readf(3));
             true
         } else if runtime_regs.ints[0].iman.readf(1) {
-            trace!("Successfully received INTx# interrupt, IP={}, EHB={}", runtime_regs.ints[0].iman.readf(1), runtime_regs.ints[0].erdp.readf(3));
+            trace!("Successfully received INTx# interrupt, IP={}, EHB={}", runtime_regs.ints[0].iman.readf(1), runtime_regs.ints[0].erdp_low.readf(3));
             // If MSI and/or MSI-X are not used, the interrupt might have to be shared, and thus there is
             // a special register to specify whether the IRQ actually came from the xHC.
             runtime_regs.ints[0].iman.writef(1, true);

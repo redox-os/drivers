@@ -110,14 +110,16 @@ pub enum TransferKind {
 
 #[repr(packed)]
 pub struct Trb {
-    pub data: Mmio<u64>,
+    pub data_low: Mmio<u32>,
+    pub data_high: Mmio<u32>,
     pub status: Mmio<u32>,
     pub control: Mmio<u32>,
 }
 impl Clone for Trb {
     fn clone(&self) -> Self {
         Self {
-            data: Mmio::from(self.data.read()),
+            data_low: Mmio::from(self.data_low.read()),
+            data_high: Mmio::from(self.data_high.read()),
             status: Mmio::from(self.status.read()),
             control: Mmio::from(self.control.read()),
         }
@@ -144,13 +146,19 @@ pub const TRB_CONTROL_ENDPOINT_ID_SHIFT: u8 = 16;
 
 impl Trb {
     pub fn set(&mut self, data: u64, status: u32, control: u32) {
-        self.data.write(data);
+        self.data_low.write(data as u32);
+        self.data_high.write((data >> 32) as u32);
         self.status.write(status);
         self.control.write(control);
     }
 
     pub fn reserved(&mut self, cycle: bool) {
         self.set(0, 0, ((TrbType::Reserved as u32) << 10) | (cycle as u32));
+    }
+
+    pub fn read_data(&self) -> u64 {
+        (self.data_low.read() as u64) |
+        ((self.data_high.read() as u64) << 32)
     }
 
     pub fn completion_code(&self) -> u8 {
@@ -172,7 +180,7 @@ impl Trb {
         debug_assert_eq!(self.trb_type(), TrbType::CommandCompletion as u8);
 
         if self.has_completion_trb_pointer() {
-            Some(self.data.read())
+            Some(self.read_data())
         } else {
             None
         }
@@ -181,7 +189,7 @@ impl Trb {
         debug_assert_eq!(self.trb_type(), TrbType::Transfer as u8);
 
         if self.has_completion_trb_pointer() {
-            Some(self.data.read())
+            Some(self.read_data())
         } else {
             None
         }
@@ -199,7 +207,7 @@ impl Trb {
     }
     pub fn event_data(&self) -> Option<u64> {
         if self.event_data_bit() {
-            Some(self.data.read())
+            Some(self.read_data())
         } else {
             None
         }
@@ -459,7 +467,7 @@ impl fmt::Debug for Trb {
         write!(
             f,
             "Trb {{ data: {:>016X}, status: {:>08X}, control: {:>08X} }}",
-            self.data.read(),
+            self.read_data(),
             self.status.read(),
             self.control.read()
         )
@@ -471,7 +479,7 @@ impl fmt::Display for Trb {
         write!(
             f,
             "({:>016X}, {:>08X}, {:>08X})",
-            self.data.read(),
+            self.read_data(),
             self.status.read(),
             self.control.read()
         )
