@@ -109,7 +109,8 @@ impl HbaPort {
 
         for i in 0..32 {
             let cmdheader = &mut clb[i];
-            cmdheader.ctba.write(ctbas[i].physical() as u64);
+            cmdheader.ctba_low.write(ctbas[i].physical() as u32);
+            cmdheader.ctba_high.write((ctbas[i].physical() as u64 >> 32) as u32);
             cmdheader.prdtl.write(0);
         }
 
@@ -149,7 +150,8 @@ impl HbaPort {
             cmdheader.prdtl.write(1);
 
             let prdt_entry = &mut prdt_entries[0];
-            prdt_entry.dba.write(dest.physical() as u64);
+            prdt_entry.dba_low.write(dest.physical() as u32);
+            prdt_entry.dba_high.write((dest.physical() as u64 >> 32) as u32);
             prdt_entry.dbc.write(512 | 1);
 
             cmdfis.pm.write(1 << 7);
@@ -234,7 +236,8 @@ impl HbaPort {
             cmdheader.prdtl.write(1);
 
             let prdt_entry = &mut prdt_entries[0];
-            prdt_entry.dba.write(buf.physical() as u64);
+            prdt_entry.dba_low.write(buf.physical() as u32);
+            prdt_entry.dba_high.write((buf.physical() as u64 >> 32) as u32);
             prdt_entry.dbc.write(((sectors * 512) as u32) | 1);
 
             cmdfis.pm.write(1 << 7);
@@ -268,7 +271,8 @@ impl HbaPort {
             cmdheader.prdtl.write(1);
 
             let prdt_entry = &mut prdt_entries[0];
-            prdt_entry.dba.write(buf.physical() as u64);
+            prdt_entry.dba_low.write(buf.physical() as u32);
+            prdt_entry.dba_high.write((buf.physical() as u64 >> 32) as u32);
             prdt_entry.dbc.write(size - 1);
 
             cmdfis.pm.write(1 << 7);
@@ -392,7 +396,8 @@ impl HbaMem {
 
 #[repr(packed)]
 pub struct HbaPrdtEntry {
-    dba: Mmio<u64>, // Data base address
+    dba_low: Mmio<u32>, // Data base address (low
+    dba_high: Mmio<u32>, // Data base address (high)
     _rsv0: Mmio<u32>, // Reserved
     dbc: Mmio<u32>, // Byte count, 4M max, interrupt = 1
 }
@@ -424,7 +429,8 @@ pub struct HbaCmdHeader {
     _prdbc: Mmio<u32>, // Physical region descriptor byte count transferred
 
     // DW2, 3
-    ctba: Mmio<u64>, // Command table descriptor base address
+    ctba_low: Mmio<u32>, // Command table descriptor base address (low)
+    ctba_high: Mmio<u32>, // Command table descriptor base address (high)
 
     // DW4 - 7
     _rsv1: [Mmio<u32>; 4], // Reserved

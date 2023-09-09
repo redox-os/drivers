@@ -128,7 +128,8 @@ pub struct MsixCfg {
 #[repr(packed)]
 pub struct NvmeRegs {
     /// Controller Capabilities
-    cap: Mmio<u64>,
+    cap_low: Mmio<u32>,
+    cap_high: Mmio<u32>,
     /// Version
     vs: Mmio<u32>,
     /// Interrupt mask set
@@ -146,9 +147,11 @@ pub struct NvmeRegs {
     /// Admin queue attributes
     aqa: Mmio<u32>,
     /// Admin submission queue base address
-    asq: Mmio<u64>,
+    asq_low: Mmio<u32>,
+    asq_high: Mmio<u32>,
     /// Admin completion queue base address
-    acq: Mmio<u64>,
+    acq_low: Mmio<u32>,
+    acq_high: Mmio<u32>,
     /// Controller memory buffer location
     cmbloc: Mmio<u32>,
     /// Controller memory buffer size
@@ -242,7 +245,7 @@ impl Nvme {
         let mut regs_guard = self.regs.write().unwrap();
         let mut regs: &mut NvmeRegs = regs_guard.deref_mut();
 
-        let dstrd = ((regs.cap.read() >> 32) & 0b1111) as usize;
+        let dstrd = (regs.cap_high.read() & 0b1111) as usize;
         let addr = (regs as *mut NvmeRegs as usize) + 0x1000 + index * (4 << dstrd);
         (&mut *(addr as *mut Mmio<u32>)).write(value);
     }
@@ -265,7 +268,8 @@ impl Nvme {
 
         {
             let regs = self.regs.read().unwrap();
-            log::debug!("CAPS: {:X}", regs.cap.read());
+            log::debug!("CAP_LOW: {:X}", regs.cap_low.read());
+            log::debug!("CAP_HIGH: {:X}", regs.cap_high.read());
             log::debug!("VS: {:X}", regs.vs.read());
             log::debug!("CC: {:X}", regs.cc.read());
             log::debug!("CSTS: {:X}", regs.csts.read());
@@ -315,8 +319,10 @@ impl Nvme {
             let (acq, _) = completion_queues.get_mut(&0).unwrap().get_mut().unwrap();
             regs.aqa
                 .write(((acq.data.len() as u32 - 1) << 16) | (asq.data.len() as u32 - 1));
-            regs.asq.write(asq.data.physical() as u64);
-            regs.acq.write(acq.data.physical() as u64);
+            regs.asq_low.write(asq.data.physical() as u32);
+            regs.asq_high.write((asq.data.physical() as u64 >> 32) as u32);
+            regs.acq_low.write(acq.data.physical() as u32);
+            regs.acq_high.write((acq.data.physical() as u64 >> 32) as u32);
 
             // Set IOCQES, IOSQES, AMS, MPS, and CSS
             let mut cc = regs.cc.read();
