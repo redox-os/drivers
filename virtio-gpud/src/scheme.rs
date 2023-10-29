@@ -86,7 +86,7 @@ impl<'a> Display<'a> {
     }
 
     async fn get_fpath(&self, buffer: &mut [u8]) -> Result<usize, Error> {
-        let path = format!("display/virtio-gpu:3.0/{}/{}", self.width, self.height);
+        let path = format!("display.virtio-gpu:3.0/{}/{}", self.width, self.height);
 
         // Copy the path into the target buffer.
         buffer[..path.len()].copy_from_slice(path.as_bytes());

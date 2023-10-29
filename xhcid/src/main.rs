@@ -275,7 +275,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         format!(" + XHCI {} on: {} IRQ: {}\n", name, bar, irq)
     );
 
-    let scheme_name = format!("usb/{}", name);
+    let scheme_name = format!("usb.{}", name);
     let socket_fd = syscall::open(
         format!(":{}", scheme_name),
         syscall::O_RDWR | syscall::O_CREAT,

@@ -98,7 +98,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         ).expect("ahcid: failed to map address")
     };
     {
-        let scheme_name = format!("disk/{}", name);
+        let scheme_name = format!("disk.{}", name);
         let socket_fd = syscall::open(
             &format!(":{}", scheme_name),
             syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK
