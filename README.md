@@ -1,6 +1,8 @@
 # Drivers
 
-These are the currently implemented devices/hardware interfaces.
+This document covers the driver details/status.
+
+Implemented devices/hardware interfaces:
 
 - ac97d - Realtek audio chipsets.
 - acpid - ACPI (incomplete).
@@ -65,13 +67,18 @@ These are the currently implemented devices/hardware interfaces.
 - virtio-netd - VirtIO net device (incomplete).
 - xhcid - xHCI (incomplete).
 
-## Kernel Interfaces
+## Interfaces
 
-These are the most used kernel interfaces by Redox drivers.
+This section cover the interfaces used by Redox drivers.
+
+### System Calls
 
 - `iopl` - syscall that sets the I/O privilege level. x86 has four privilege rings (0/1/2/3), of which the kernel runs in ring 0 and userspace in ring 3. IOPL can only be changed by the kernel, for obvious security reasons, and therefore the Redox kernel needs root to set it. It is unique for each process. Processes with IOPL=3 can access I/O ports, and the kernel can access them as well.
 - `physalloc` - allocates physical memory frames.
 - `physfree` - frees memory frames.
+
+### Schemes
+
 - `memory:physical` - allows mapping physical memory frames to driver-accessible virtual memory pages, with various available memory types:
     - `memory:physical`: default memory type (currently writeback)
     - `memory:physical@wb` writeback cached memory
@@ -87,6 +94,6 @@ If you don't have datasheets, we recommend you to do reverse-engineering of avai
 
 We recommend BSDs drivers because BSD license is compatible with MIT (permissive), that way we can reuse the code in other drivers.
 
-You can see this [example](https://gitlab.redox-os.org/redox-os/exampled) driver, read the code of the existent ones or the most close driver type for your device.
+You can use the [example](https://gitlab.redox-os.org/redox-os/exampled) driver or read the code of other drivers with the same type of your device.
 
-Before testing your changes be aware of [this](https://doc.redox-os.org/book/ch09-02-coding-and-building.html#a-note-about-drivers).
+Before testing your changes, be aware of [this](https://doc.redox-os.org/book/ch09-02-coding-and-building.html#a-note-about-drivers).
