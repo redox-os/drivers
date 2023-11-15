@@ -86,14 +86,30 @@ This section cover the interfaces used by Redox drivers.
     - `memory:physical@wc`: write-combining memory
 - `irq:` - allows getting events from interrupts. It is used primarily by listening for its file descriptors using the `event:` scheme.
 
-## Contributing to Drivers
+## Contributing
 
-If you want to write drivers for Redox, datasheets are preferable, when they are freely available. Be aware that datasheets are often provided under a [Non-Disclosure Agreement](https://en.wikipedia.org/wiki/Non-disclosure_agreement) from hardware vendors, which can affect the ability to create an MIT-licensed driver.
+### Driver Design
 
-If you don't have datasheets, we recommend you to do reverse-engineering of available C code of BSD drivers.
+A device driver on Redox is an user-space daemon that use system calls and schemes to work.
 
-We recommend BSDs drivers because BSD license is compatible with MIT (permissive), that way we can reuse the code in other drivers.
+For operating systems with monolithic kernels, drivers use internal kernel APIs instead of common program APIs.
+
+If you want to port a driver from a monolithic OS to Redox you will need to rewrite the driver with reverse enginnering of the code logic, because the logic is adapted to internal kernel APIs (it's a hard task if the device is complex, datasheets are more easy).
+
+### Write a Driver
+
+Datasheets are preferable, when they are freely available. Be aware that datasheets are often provided under a [Non-Disclosure Agreement](https://en.wikipedia.org/wiki/Non-disclosure_agreement) from hardware vendors, which can affect the ability to create an MIT-licensed driver.
+
+If you don't have datasheets, we recommend you to do reverse-engineering of available C code on BSD drivers.
 
 You can use the [example](https://gitlab.redox-os.org/redox-os/exampled) driver or read the code of other drivers with the same type of your device.
 
 Before testing your changes, be aware of [this](https://doc.redox-os.org/book/ch09-02-coding-and-building.html#a-note-about-drivers).
+
+### Driver References
+
+If you want to reverse enginner the existing drivers, you can access the BSD code using these links:
+
+- [FreeBSD drivers](https://github.com/freebsd/freebsd-src/tree/main/sys/dev)
+- [NetBSD drivers](https://github.com/NetBSD/src/tree/trunk/sys/dev)
+- [OpenBSD drivers](https://github.com/openbsd/src/tree/master/sys/dev)
