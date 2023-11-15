@@ -140,7 +140,7 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
     let mut name = pci_config.func.name();
     name.push_str("_virtio_blk");
 
-    let scheme_name = format!("disk/{}", name);
+    let scheme_name = format!("disk.{}", name);
 
     let socket_fd = syscall::open(
         &format!(":{}", scheme_name),

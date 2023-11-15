@@ -90,7 +90,7 @@ fn main() {
     redox_daemon::Daemon::new(|daemon| inner(daemon, framebuffers, &spec)).expect("failed to create daemon");
 }
 fn inner(daemon: redox_daemon::Daemon, framebuffers: Vec<FrameBuffer>, spec: &[bool]) -> ! {
-    let mut socket = File::create(":display/vesa").expect("vesad: failed to create display scheme");
+    let mut socket = File::create(":display.vesa").expect("vesad: failed to create display scheme");
 
     let mut scheme = DisplayScheme::new(framebuffers, &spec);
 

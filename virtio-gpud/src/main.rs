@@ -438,7 +438,7 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
     device.transport.run_device();
     deamon.ready().unwrap();
 
-    let mut socket_file = File::create(":display/virtio-gpu")?;
+    let mut socket_file = File::create(":display.virtio-gpu")?;
     let mut scheme = futures::executor::block_on(scheme::Scheme::new(
         config,
         control_queue.clone(),

@@ -134,7 +134,7 @@ impl SchemeMut for InputScheme {
                 }
             }
             "handle" => {
-                let display = path_parts.collect::<Vec<_>>().join("/");
+                let display = path_parts.collect::<Vec<_>>().join(".");
                 Handle::Device { device: display }
             }
 

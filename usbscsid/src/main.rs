@@ -39,7 +39,7 @@ fn main() {
     redox_daemon::Daemon::new(move |d| daemon(d, scheme, port, protocol)).expect("usbscsid: failed to daemonize");
 }
 fn daemon(daemon: redox_daemon::Daemon, scheme: String, port: usize, protocol: u8) -> ! {
-    let disk_scheme_name = format!(":disk/{}-{}_scsi", scheme, port);
+    let disk_scheme_name = format!(":disk.usb-{scheme}+{port}-scsi");
 
     // TODO: Use eventfds.
     let handle = XhciClientHandle::new(scheme.to_owned(), port);

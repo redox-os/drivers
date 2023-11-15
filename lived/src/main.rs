@@ -173,7 +173,7 @@ impl SchemeMut for DiskScheme {
             HandleType::TheData => "0",
         };
 
-        let src = format!("disk/live:{}", path).into_bytes();
+        let src = format!("disk.live:{}", path).into_bytes();
 
         let byte_count = std::cmp::min(buf.len(), src.len());
         buf[..byte_count].copy_from_slice(&src[..byte_count]);
@@ -201,7 +201,7 @@ impl SchemeMut for DiskScheme {
 }
 fn main() -> anyhow::Result<()> {
     redox_daemon::Daemon::new(move |daemon| {
-        let mut socket = File::create(":disk/live").expect("failed to open scheme");
+        let mut socket = File::create(":disk.live").expect("failed to open scheme");
         let mut scheme = DiskScheme::new().unwrap_or_else(|err| {
             eprintln!("failed to initialize livedisk scheme: {}", err);
             std::process::exit(1)

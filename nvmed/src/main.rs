@@ -299,10 +299,9 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         .fetch_config()
         .expect("nvmed: failed to fetch config");
 
-    let mut name = pci_config.func.name();
-    name.push_str("_nvme");
+    let mut scheme_name = format!("disk.pci-{:x}+{:x}+{:x}-nvme", pci_config.func.bus_num, pci_config.func.dev_num, pci_config.func.func_num);
 
-    let _logger_ref = setup_logging(&name);
+    let _logger_ref = setup_logging(&scheme_name);
 
     let bar = match pci_config.func.bars[0] {
         PciBar::Memory32(mem) => match mem {
@@ -337,7 +336,6 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         ptr: NonNull::new(address as *mut u8).expect("Physmapping BAR gave nullptr"),
     });
 
-    let scheme_name = format!("disk/{}", name);
     let socket_fd = syscall::open(
         &format!(":{}", scheme_name),
         syscall::O_RDWR | syscall::O_CREAT | syscall::O_CLOEXEC,
