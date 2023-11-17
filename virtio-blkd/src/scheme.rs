@@ -35,7 +35,7 @@ impl BlkExtension for Queue<'_> {
         })
         .unwrap();
 
-        let result = unsafe { Dma::<[u8]>::zeroed_unsized(target.len()) }.unwrap();
+        let result = unsafe { Dma::<[u8]>::zeroed_slice(target.len()).unwrap().assume_init() };
         let status = Dma::new(u8::MAX).unwrap();
 
         let chain = ChainBuilder::new()
@@ -60,7 +60,7 @@ impl BlkExtension for Queue<'_> {
         })
         .unwrap();
 
-        let mut result = unsafe { Dma::<[u8]>::zeroed_unsized(target.len()) }.unwrap();
+        let mut result = unsafe { Dma::<[u8]>::zeroed_slice(target.len()).unwrap().assume_init() };
         result.copy_from_slice(target.as_ref());
 
         let status = Dma::new(u8::MAX).unwrap();

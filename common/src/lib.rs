@@ -59,3 +59,13 @@ pub unsafe fn physmap(base_phys: usize, len: usize, Prot { read, write }: Prot, 
 
     Ok(base? as *mut ())
 }
+
+impl std::fmt::Display for MemoryType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", match self {
+            Self::Writeback => "wb",
+            Self::Uncacheable => "uc",
+            Self::WriteCombining => "wc",
+        })
+    }
+}

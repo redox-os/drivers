@@ -14,7 +14,7 @@ use syscall::flag::{O_RDONLY, PhysallocFlags};
 use syscall::io::Io;
 
 use chashmap::CHashMap;
-use common::dma::{Dma, PhysBox};
+use common::dma::Dma;
 use crossbeam_channel::{Receiver, Sender};
 use log::{debug, error, info, trace, warn};
 use serde::Deserialize;
@@ -490,26 +490,16 @@ impl Xhci {
     pub fn slot_state(&self, slot: usize) -> u8 {
         self.dev_ctx.contexts[slot].slot.state()
     }
-    pub unsafe fn alloc_phys(ac64: bool, byte_count: usize) -> Result<PhysBox> {
-        let flags = if ac64 {
-            PhysallocFlags::SPACE_64
-        } else {
-            PhysallocFlags::SPACE_32
-        };
-        PhysBox::new_with_flags(byte_count, flags)
-    }
-    fn page_align(size: usize) -> usize {
-        // TODO: PAGE_SIZE
-        (size+4095)/4096*4096
-    }
-    pub unsafe fn alloc_dma_zeroed_raw<T>(ac64: bool) -> Result<Dma<T>> {
-        Ok(Dma::from_physbox_zeroed(Self::alloc_phys(ac64, Self::page_align(mem::size_of::<T>()))?)?.assume_init())
+    pub unsafe fn alloc_dma_zeroed_raw<T>(_ac64: bool) -> Result<Dma<T>> {
+        // TODO: ac64
+        Ok(Dma::zeroed()?.assume_init())
     }
     pub unsafe fn alloc_dma_zeroed<T>(&self) -> Result<Dma<T>> {
         Self::alloc_dma_zeroed_raw(self.cap.ac64())
     }
-    pub unsafe fn alloc_dma_zeroed_unsized_raw<T>(ac64: bool, count: usize) -> Result<Dma<[T]>> {
-        Ok(Dma::from_physbox_zeroed_unsized(Self::alloc_phys(ac64, Self::page_align(mem::size_of::<T>() * count))?, count)?.assume_init())
+    pub unsafe fn alloc_dma_zeroed_unsized_raw<T>(_ac64: bool, count: usize) -> Result<Dma<[T]>> {
+        // TODO: ac64
+        Ok(Dma::zeroed_slice(count)?.assume_init())
     }
     pub unsafe fn alloc_dma_zeroed_unsized<T>(&self, count: usize) -> Result<Dma<[T]>> {
         Self::alloc_dma_zeroed_unsized_raw(self.cap.ac64(), count)

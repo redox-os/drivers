@@ -31,7 +31,7 @@ impl<'a> NetworkScheme<'a> {
         // Populate all of the `rx_queue` with buffers to maximize performence.
         let mut rx_buffers = vec![];
         for i in 0..(rx.descriptor_len() as usize) {
-            rx_buffers.push(unsafe { Dma::<[u8]>::zeroed_unsized(MAX_BUFFER_LEN) }.unwrap());
+            rx_buffers.push(unsafe { Dma::<[u8]>::zeroed_slice(MAX_BUFFER_LEN).unwrap().assume_init() });
 
             let chain = ChainBuilder::new()
                 .chain(Buffer::new_unsized(&rx_buffers[i]).flags(DescriptorFlags::WRITE_ONLY))
@@ -123,7 +123,7 @@ impl<'a> SchemeBlockMut for NetworkScheme<'a> {
 
         let header = unsafe { Dma::<VirtHeader>::zeroed()?.assume_init() };
 
-        let mut payload = unsafe { Dma::<[u8]>::zeroed_unsized(buffer.len())? };
+        let mut payload = unsafe { Dma::<[u8]>::zeroed_slice(buffer.len())?.assume_init() };
         payload.copy_from_slice(buffer);
 
         let chain = ChainBuilder::new()

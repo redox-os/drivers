@@ -10,7 +10,7 @@ use syscall::{
     io::{Io, Pio, ReadOnly, WriteOnly},
 };
 
-use common::dma::{Dma, PhysBox};
+use common::dma::Dma;
 
 static TIMEOUT: Duration = Duration::new(1, 0);
 
@@ -61,7 +61,7 @@ pub struct Channel {
 
 impl Channel {
     pub fn new(base: u16, control_base: u16, busmaster_base: u16) -> Result<Self> {
-        let mut chan = Self {
+        Ok(Self {
             data8: Pio::new(base + 0),
             data32: Pio::new(base + 0),
             error: ReadOnly::new(Pio::new(base + 1)),
@@ -79,20 +79,16 @@ impl Channel {
             busmaster_status: Pio::new(busmaster_base + 2),
             busmaster_prdt: Pio::new(busmaster_base + 4),
             prdt: unsafe {
-                Dma::from_physbox_zeroed(
+                Dma::zeroed(
                     //TODO: PhysBox::new_in_32bit_space(4096)?
-                    PhysBox::new(4096 /* 128 * 8 page aligned */)?
                 )?.assume_init()
             },
             buf: unsafe {
-                Dma::from_physbox_zeroed(
+                Dma::zeroed(
                     //TODO: PhysBox::new_in_32bit_space(16 * 4096)?
-                    PhysBox::new(128 * 512)?
                 )?.assume_init()
             },
-        };
-
-        Ok(chan)
+        })
     }
 
     pub fn primary_compat(busmaster_base: u16) -> Result<Self> {

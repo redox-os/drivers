@@ -588,7 +588,7 @@ impl Transport for StandardTransport<'_> {
 
         // Allocate memory for the queue structues.
         let descriptor = unsafe {
-            Dma::<[Descriptor]>::zeroed_unsized(queue_size).map_err(Error::SyscallError)?
+            Dma::<[Descriptor]>::zeroed_slice(queue_size).map_err(Error::SyscallError)?.assume_init()
         };
 
         let avail = Available::new(queue_size)?;
