@@ -1,3 +1,4 @@
+use common::dma::Dma;
 use syscall::io::{Io, Mmio};
 
 use super::common::*;
@@ -345,31 +346,33 @@ pub struct CommandBuffer {
     corb_rirb_base_phys: usize,
 
     use_immediate_cmd: bool,
+    mem: Dma<[u8; 0x1000]>,
 }
 
 impl CommandBuffer {
     pub fn new(
         regs_addr: usize,
-        cmd_buff_frame_phys: usize,
-        cmd_buff_frame: usize,
+        cmd_buff: Dma<[u8; 0x1000]>,
     ) -> CommandBuffer {
-        let corb = Corb::new(regs_addr + CORB_OFFSET, cmd_buff_frame_phys, cmd_buff_frame);
+        let corb = Corb::new(regs_addr + CORB_OFFSET, cmd_buff.physical(), cmd_buff.as_ptr() as usize);
         let rirb = Rirb::new(
             regs_addr + RIRB_OFFSET,
-            cmd_buff_frame_phys + CORB_BUFF_MAX_SIZE,
-            cmd_buff_frame + CORB_BUFF_MAX_SIZE,
+            cmd_buff.as_ptr() as usize + CORB_BUFF_MAX_SIZE,
+            cmd_buff.physical() + CORB_BUFF_MAX_SIZE,
         );
 
         let icmd = ImmediateCommand::new(regs_addr + ICMD_OFFSET);
 
         let cmdbuff = CommandBuffer {
-            corb: corb,
-            rirb: rirb,
-            icmd: icmd,
+            corb,
+            rirb,
+            icmd,
 
-            corb_rirb_base_phys: cmd_buff_frame_phys,
+            corb_rirb_base_phys: cmd_buff.physical(),
 
             use_immediate_cmd: false,
+
+            mem: cmd_buff,
         };
 
         cmdbuff

@@ -7,6 +7,7 @@ use std::str;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use common::dma::Dma;
 use syscall::error::{Error, EACCES, EBADF, Result, EINVAL};
 use syscall::flag::{SEEK_SET, SEEK_CUR, SEEK_END};
 use syscall::io::{Mmio, Io};
@@ -137,8 +138,7 @@ pub struct IntelHDA {
 
 	beep_addr: WidgetAddr,
 
-	buff_desc: &'static mut [BufferDescriptorListEntry; 256],
-	buff_desc_phys: usize,
+	buff_desc: Dma<[BufferDescriptorListEntry; 256]>,
 
 	output_streams:         Vec<OutputStream>,
 
@@ -153,31 +153,23 @@ impl IntelHDA {
 	pub unsafe fn new(base: usize, vend_prod:u32) -> Result<Self> {
 		let regs = &mut *(base as *mut Regs);
 
-		let buff_desc_phys =
-			syscall::physalloc(0x1000)
-				.expect("Could not allocate physical memory for buffer descriptor list.");
+		let buff_desc = Dma::<[BufferDescriptorListEntry; 256]>::zeroed()
+				.expect("Could not allocate physical memory for buffer descriptor list.")
+        .assume_init();
 
-		let buff_desc_virt =
-			common::physmap(buff_desc_phys, 0x1000, common::Prot::RW, common::MemoryType::Uncacheable)
-				.expect("ihdad: failed to map address for buffer descriptor list.") as usize;
+		log::debug!("Virt: {:016X}, Phys: {:016X}", buff_desc.as_ptr() as usize, buff_desc.physical());
 
-		log::debug!("Virt: {:016X}, Phys: {:016X}", buff_desc_virt, buff_desc_phys);
+		let cmd_buff = Dma::<[u8; 0x1000]>::zeroed()
+				.expect("Could not allocate physical memory for CORB and RIRB.")
+        .assume_init();
 
-		let buff_desc = &mut *(buff_desc_virt as *mut [BufferDescriptorListEntry;256]);
-
-		let cmd_buff_address =
-			syscall::physalloc(0x1000)
-				.expect("Could not allocate physical memory for CORB and RIRB.");
-
-		let cmd_buff_virt = common::physmap(cmd_buff_address, 0x1000, common::Prot::RW, common::MemoryType::Uncacheable).expect("ihdad: failed to map address for CORB/RIRB buff") as usize;
-
-		log::debug!("Virt: {:016X}, Phys: {:016X}", cmd_buff_virt, cmd_buff_address);
+		log::debug!("Virt: {:016X}, Phys: {:016X}", cmd_buff.as_ptr() as usize, cmd_buff.physical());
 		let mut module = IntelHDA {
-			vend_prod: vend_prod,
-			base: base,
-			regs: regs,
+			vend_prod,
+			base,
+			regs,
 
-			cmd: CommandBuffer::new(base + COMMAND_BUFFER_OFFSET, cmd_buff_address, cmd_buff_virt),
+			cmd: CommandBuffer::new(base + COMMAND_BUFFER_OFFSET, cmd_buff),
 
 			beep_addr: (0,0),
 
@@ -191,8 +183,7 @@ impl IntelHDA {
 			output_pins: Vec::<WidgetAddr>::new(),
 			input_pins: Vec::<WidgetAddr>::new(),
 
-			buff_desc: buff_desc,
-			buff_desc_phys: buff_desc_phys,
+			buff_desc,
 
 			output_streams: Vec::<OutputStream>::new(),
 
@@ -498,7 +489,7 @@ impl IntelHDA {
 
 		// Create output stream
 		let output = self.get_output_stream_descriptor(0).unwrap();
-		output.set_address(self.buff_desc_phys);
+		output.set_address(self.buff_desc.physical());
 		output.set_pcm_format(&super::SR_44_1, BitsPerSample::Bits16, 2);
 		output.set_cyclic_buffer_length((NUM_SUB_BUFFS * SUB_BUFF_SIZE) as u32); // number of bytes
 		output.set_stream_number(1);

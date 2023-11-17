@@ -86,6 +86,16 @@ impl<T> Dma<[T]> {
 
         Ok(Dma { phys, aligned_len, virt: ptr::slice_from_raw_parts_mut(virt.cast(), count) })
     }
+    pub unsafe fn cast_slice<U>(self) -> Dma<[U]> {
+        let Dma { phys, virt, aligned_len } = self;
+        core::mem::forget(self);
+
+        Dma {
+            phys,
+            virt: virt as *mut [U],
+            aligned_len,
+        }
+    }
 }
 impl<T> Dma<[MaybeUninit<T>]> {
     pub unsafe fn assume_init(self) -> Dma<[T]> {

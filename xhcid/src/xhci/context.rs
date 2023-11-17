@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use log::debug;
+use syscall::PAGE_SIZE;
 use syscall::error::Result;
 use syscall::io::{Io, Mmio};
 
@@ -178,18 +179,18 @@ impl ScratchpadBufferEntry {
 
 pub struct ScratchpadBufferArray {
     pub entries: Dma<[ScratchpadBufferEntry]>,
-    pub pages: Vec<usize>,
+    pub pages: Vec<Dma<[u8; PAGE_SIZE]>>,
 }
 impl ScratchpadBufferArray {
-    pub fn new(ac64: bool, page_size: usize, entries: u16) -> Result<Self> {
+    pub fn new(ac64: bool, entries: u16) -> Result<Self> {
         let mut entries = unsafe { Xhci::alloc_dma_zeroed_unsized_raw(ac64, entries as usize)? };
 
-        let pages = entries.iter_mut().map(|entry: &mut ScratchpadBufferEntry| -> Result<usize> {
-            let pointer = unsafe { syscall::physalloc(page_size)? };
-            assert_eq!((pointer as u64) & 0xFFFF_FFFF_FFFF_F000, pointer as u64, "physically allocated pointer (physalloc) wasn't 4k page-aligned");
-            entry.set_addr(pointer as u64);
-            Ok(pointer)
-        }).collect::<Result<Vec<usize>, _>>()?;
+        let pages = entries.iter_mut().map(|entry: &mut ScratchpadBufferEntry| {
+            let dma = unsafe { Dma::<[u8; PAGE_SIZE]>::zeroed()?.assume_init() };
+            assert_eq!(dma.physical() % PAGE_SIZE, 0);
+            entry.set_addr(dma.physical() as u64);
+            Ok(dma)
+        }).collect::<Result<Vec<_>, _>>()?;
 
         Ok(Self {
             entries,
