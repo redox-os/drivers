@@ -31,6 +31,8 @@ members = [
     "virtio-netd",
     "virtio-gpud",
     "virtio-core",
+
+    "bcm2835-sdhcid",
 ]
 
 [profile.release]
