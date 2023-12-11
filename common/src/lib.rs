@@ -11,6 +11,7 @@ pub enum MemoryType {
     Writeback,
     Uncacheable,
     WriteCombining,
+    DeviceMemory,
 }
 impl Default for MemoryType {
     fn default() -> Self {
@@ -35,6 +36,7 @@ pub unsafe fn physmap(base_phys: usize, len: usize, Prot { read, write }: Prot, 
         MemoryType::Writeback => "wb",
         MemoryType::Uncacheable => "uc",
         MemoryType::WriteCombining => "wc",
+        MemoryType::DeviceMemory => "dev",
     });
     let mode = match (read, write) {
         (true, true) => O_RDWR,
