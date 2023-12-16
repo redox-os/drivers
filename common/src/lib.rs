@@ -66,6 +66,7 @@ impl std::fmt::Display for MemoryType {
             Self::Writeback => "wb",
             Self::Uncacheable => "uc",
             Self::WriteCombining => "wc",
+            Self::DeviceMemory => "dev",
         })
     }
 }
