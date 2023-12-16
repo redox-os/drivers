@@ -263,33 +263,68 @@ unsafe impl Sync for Queue<'_> {}
 unsafe impl Send for Queue<'_> {}
 
 pub struct Available<'a> {
-    addr: usize,
-    size: usize,
-
+    mem: Mem<'a>,
     queue_size: usize,
-
-    ring: &'a mut AvailableRing,
+}
+pub struct Borrowed<'a> {
+    phys: usize,
+    virt: usize,
+    size: usize,
+    _unused: &'a (),
+}
+pub enum Mem<'a> {
+    Owned(Dma<[u8]>),
+    Borrowed(Borrowed<'a>),
+}
+impl Borrowed<'_> {
+    pub unsafe fn new(phys: usize, virt: usize, size: usize) -> Self {
+        Self {
+            phys,
+            virt,
+            size,
+            _unused: &(),
+        }
+    }
+}
+impl<'a> Mem<'a> {
+    pub fn as_ptr<T>(&self) -> *const T {
+        match *self {
+            Self::Owned(ref dma) => dma.as_ptr().cast(),
+            Self::Borrowed(Borrowed { phys, virt, size, _unused }) => virt as *const T,
+        }
+    }
+    pub fn as_mut_ptr<T>(&mut self) -> *mut T {
+        match *self {
+            Self::Owned(ref mut dma) => dma.as_mut_ptr().cast(),
+            Self::Borrowed(Borrowed { phys, virt, size, _unused }) => virt as *mut T,
+        }
+    }
+    pub fn physical(&self) -> usize {
+        match self {
+            Self::Owned(dma) => dma.physical(),
+            Self::Borrowed(borrowed) => borrowed.phys,
+        }
+    }
 }
 
 impl<'a> Available<'a> {
+    pub fn ring(&self) -> &AvailableRing {
+        unsafe { &*self.mem.as_ptr() }
+    }
+    pub fn ring_mut(&mut self) -> &mut AvailableRing {
+        unsafe { &mut *self.mem.as_mut_ptr() }
+    }
     pub fn new(queue_size: usize) -> Result<Self, Error> {
         let (_, _, size) = queue_part_sizes(queue_size);
-        let addr = unsafe { syscall::physalloc(size) }.map_err(Error::SyscallError)?;
+        let mem = unsafe { Dma::zeroed_slice(size).map_err(Error::SyscallError)?.assume_init() };
 
-        unsafe { Self::from_raw(addr, size, queue_size) }
+        unsafe { Self::from_raw(Mem::Owned(mem), queue_size) }
     }
 
     /// `addr` is the physical address of the ring.
-    pub unsafe fn from_raw(addr: usize, size: usize, queue_size: usize) -> Result<Self, Error> {
-        let virt = unsafe {
-            common::physmap(addr, size, common::Prot::RW, common::MemoryType::default())
-        }?;
-
-        let ring = unsafe { &mut *(virt as *mut AvailableRing) };
+    pub unsafe fn from_raw(mem: Mem<'a>, queue_size: usize) -> Result<Self, Error> {
         let ring = Self {
-            addr,
-            size,
-            ring,
+            mem,
             queue_size,
         };
 
@@ -310,7 +345,7 @@ impl<'a> Available<'a> {
         // SAFETY: We have exclusive access to the elements and the number of elements
         //         is correct; same as the queue size.
         unsafe {
-            self.ring
+            self.ring()
                 .elements
                 .as_slice(self.queue_size)
                 .get(index % self.queue_size)
@@ -319,58 +354,51 @@ impl<'a> Available<'a> {
     }
 
     pub fn head_index(&self) -> u16 {
-        self.ring.head_index.load(Ordering::SeqCst)
+        self.ring().head_index.load(Ordering::SeqCst)
     }
 
     pub fn set_head_idx(&self, index: u16) {
-        self.ring.head_index.store(index, Ordering::SeqCst);
+        self.ring().head_index.store(index, Ordering::SeqCst);
     }
 
     pub fn phys_addr(&self) -> usize {
-        self.addr
+        self.mem.physical()
     }
 }
 
-impl Drop for Available<'_> {
+impl<'a> Drop for Available<'a> {
     fn drop(&mut self) {
-        log::warn!("virtio-core: dropping 'available' ring at {:#x}", self.addr);
-
-        unsafe {
-            syscall::funmap(self.addr, self.size).unwrap();
-            syscall::physfree(self.addr, self.size).unwrap();
-        }
+        log::warn!("virtio-core: dropping 'available' ring at {:#x}", self.phys_addr());
     }
 }
 
 pub struct Used<'a> {
-    addr: usize,
-    size: usize,
-
+    mem: Mem<'a>,
     queue_size: usize,
-
-    ring: &'a mut UsedRing,
+    _unused: &'a (),
 }
 
 impl<'a> Used<'a> {
+    fn ring(&self) -> &UsedRing {
+        unsafe { &*self.mem.as_ptr() }
+    }
+    fn ring_mut(&mut self) -> &mut UsedRing {
+        unsafe { &mut *self.mem.as_mut_ptr() }
+    }
+
     pub fn new(queue_size: usize) -> Result<Self, Error> {
         let (_, _, size) = queue_part_sizes(queue_size);
-        let addr = unsafe { syscall::physalloc(size) }.map_err(Error::SyscallError)?;
+        let mem = unsafe { Dma::zeroed_slice(size).map_err(Error::SyscallError)?.assume_init() };
 
-        unsafe { Self::from_raw(addr, size, queue_size) }
+        unsafe { Self::from_raw(Mem::Owned(mem), queue_size) }
     }
 
     /// `addr` is the physical address of the ring.
-    pub unsafe fn from_raw(addr: usize, size: usize, queue_size: usize) -> Result<Self, Error> {
-        let virt = unsafe {
-            common::physmap(addr, size, common::Prot::RW, common::MemoryType::default())
-        }?;
-
-        let ring = unsafe { &mut *(virt as *mut UsedRing) };
+    pub unsafe fn from_raw(mem: Mem<'a>, queue_size: usize) -> Result<Self, Error> {
         let mut ring = Self {
-            addr,
-            size,
-            ring,
+            mem,
             queue_size,
+            _unused: &(),
         };
 
         for i in 0..queue_size {
@@ -388,7 +416,7 @@ impl<'a> Used<'a> {
         // SAFETY: We have exclusive access to the elements and the number of elements
         //         is correct; same as the queue size.
         unsafe {
-            self.ring
+            self.ring()
                 .elements
                 .as_slice(self.queue_size)
                 .get(index % self.queue_size)
@@ -401,36 +429,32 @@ impl<'a> Used<'a> {
     pub fn get_mut_element_at(&mut self, index: usize) -> &mut UsedRingElement {
         // SAFETY: We have exclusive access to the elements and the number of elements
         //         is correct; same as the queue size.
+        let queue_size = self.queue_size;
         unsafe {
-            self.ring
+            self.ring_mut()
                 .elements
-                .as_mut_slice(self.queue_size)
+                .as_mut_slice(queue_size)
                 .get_mut(index % 256)
                 .expect("virtio-core::used: index out of bounds")
         }
     }
 
     pub fn flags(&self) -> u16 {
-        self.ring.flags.get()
+        self.ring().flags.get()
     }
 
     pub fn head_index(&self) -> u16 {
-        self.ring.head_index.get()
+        self.ring().head_index.get()
     }
 
     pub fn phys_addr(&self) -> usize {
-        self.addr
+        self.mem.physical()
     }
 }
 
 impl Drop for Used<'_> {
     fn drop(&mut self) {
-        log::warn!("virtio-core: dropping 'used' ring at {:#x}", self.addr);
-
-        unsafe {
-            syscall::funmap(self.addr, self.size).unwrap();
-            syscall::physfree(self.addr, self.size).unwrap();
-        }
+        log::warn!("virtio-core: dropping 'used' ring at {:#x}", self.phys_addr());
     }
 }
 
@@ -588,7 +612,7 @@ impl Transport for StandardTransport<'_> {
 
         // Allocate memory for the queue structues.
         let descriptor = unsafe {
-            Dma::<[Descriptor]>::zeroed_unsized(queue_size).map_err(Error::SyscallError)?
+            Dma::<[Descriptor]>::zeroed_slice(queue_size).map_err(Error::SyscallError)?.assume_init()
         };
 
         let avail = Available::new(queue_size)?;

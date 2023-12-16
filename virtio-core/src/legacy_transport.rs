@@ -1,9 +1,9 @@
 use std::{sync::{Weak, atomic::{AtomicU16, Ordering}, Arc}, mem::size_of, fs::File};
 
-use common::dma::{PhysBox, Dma};
+use common::dma::Dma;
 use syscall::{Pio, Io};
 
-use crate::{transport::{NotifyBell, Transport, Queue, Error, Available, Used, queue_part_sizes, spawn_irq_thread}, spec::{Descriptor, DeviceStatusFlags}};
+use crate::{transport::{NotifyBell, Transport, Queue, Error, Available, Used, queue_part_sizes, spawn_irq_thread, Mem, Borrowed}, spec::{Descriptor, DeviceStatusFlags}};
 
 
 pub enum LegacyRegister {
@@ -118,24 +118,20 @@ impl Transport for LegacyTransport {
         let queue_size = self.read::<u16>(LegacyRegister::QueueSize) as usize;
         let (desc_size, avail_size, used_size) = queue_part_sizes(queue_size);
 
-        let size_bytes = desc_size + avail_size + used_size;
-        let addr = unsafe { syscall::physalloc(size_bytes).map_err(Error::SyscallError)? };
-
         let descriptor = unsafe {
-            let physbox = PhysBox::from_raw_parts(addr, desc_size);
-            let table = Dma::<[Descriptor]>::from_physbox_uninit_unsized(physbox, queue_size)?;
-
-            table.assume_init()
+            Dma::<[Descriptor]>::zeroed_slice(queue_size)?.assume_init()
         };
 
-        let avail_addr = addr + desc_size;
-        let avail = unsafe { Available::from_raw(avail_addr, avail_size, queue_size)? };
+        let avail_addr = descriptor.physical() + desc_size;
+        let avail_virt = (descriptor.as_ptr() as usize) + desc_size;
+        let avail = unsafe { Available::from_raw(Mem::Borrowed(Borrowed::new(avail_addr, avail_virt, avail_size)), queue_size)? };
 
         let used_addr = avail_addr + avail_size;
-        let used = unsafe { Used::from_raw(used_addr, used_size, queue_size)? };
+        let used_virt = avail_virt + desc_size;
+        let used = unsafe { Used::from_raw(Mem::Borrowed(Borrowed::new(used_addr, used_virt, used_size)), queue_size)? };
 
         self.write::<u16>(LegacyRegister::QueueMsixVector, vector);
-        self.write::<u32>(LegacyRegister::QueueAddress, (addr as u32) >> 12);
+        self.write::<u32>(LegacyRegister::QueueAddress, (descriptor.physical() as u32) >> 12);
 
         log::info!("virtio-core: enabled queue #{queue_index} (size={queue_size})");
 

@@ -9,12 +9,13 @@ use std::sync::atomic::{AtomicBool, AtomicUsize};
 
 use std::{mem, process, slice, sync::atomic, task, thread};
 
+use syscall::PAGE_SIZE;
 use syscall::error::{Error, Result, EBADF, EBADMSG, ENOENT, EIO};
 use syscall::flag::{O_RDONLY, PhysallocFlags};
 use syscall::io::Io;
 
 use chashmap::CHashMap;
-use common::dma::{Dma, PhysBox};
+use common::dma::Dma;
 use crossbeam_channel::{Receiver, Sender};
 use log::{debug, error, info, trace, warn};
 use serde::Deserialize;
@@ -176,7 +177,7 @@ impl Xhci {
 pub struct Xhci {
     // immutable
     cap: &'static CapabilityRegs,
-    page_size: usize,
+    //page_size: usize,
 
     // XXX: It would be really useful to be able to mutably access individual elements of a slice,
     // without having to wrap every element in a lock (which wouldn't work since they're packed).
@@ -248,12 +249,12 @@ impl Xhci {
         let cap = unsafe { &mut *(address as *mut CapabilityRegs) };
         debug!("CAP REGS BASE {:X}", address);
 
-        let page_size = {
+        /*let page_size = {
             let memory_fd = syscall::open("memory:", O_RDONLY)?;
             let mut stat = syscall::data::StatVfs::default();
             syscall::fstatvfs(memory_fd, &mut stat)?;
             stat.f_bsize as usize
-        };
+        };*/
 
         let op_base = address + cap.len.read() as usize;
         let op = unsafe { &mut *(op_base as *mut OperationalRegs) };
@@ -306,7 +307,7 @@ impl Xhci {
 
         // Create the command ring with 4096 / 16 (TRB size) entries, so that it uses all of the
         // DMA allocation (which is at least a 4k page).
-        let entries_per_page = page_size / mem::size_of::<Trb>();
+        let entries_per_page = PAGE_SIZE / mem::size_of::<Trb>();
         let cmd = Ring::new(cap.ac64(), entries_per_page, true)?;
 
         let (irq_reactor_sender, irq_reactor_receiver) = crossbeam_channel::unbounded();
@@ -315,7 +316,7 @@ impl Xhci {
             base: address as *const u8,
 
             cap,
-            page_size,
+            //page_size,
 
             op: Mutex::new(op),
             ports: Mutex::new(ports),
@@ -459,7 +460,7 @@ impl Xhci {
         if buf_count == 0 {
             return Ok(());
         }
-        let scratchpad_buf_arr = ScratchpadBufferArray::new(self.cap.ac64(), self.page_size,buf_count)?;
+        let scratchpad_buf_arr = ScratchpadBufferArray::new(self.cap.ac64(), buf_count)?;
         self.dev_ctx.dcbaa[0] = scratchpad_buf_arr.register() as u64;
         debug!("Setting up {} scratchpads, at {:#0x}", buf_count, scratchpad_buf_arr.register());
         self.scratchpad_buf_arr = Some(scratchpad_buf_arr);
@@ -490,26 +491,16 @@ impl Xhci {
     pub fn slot_state(&self, slot: usize) -> u8 {
         self.dev_ctx.contexts[slot].slot.state()
     }
-    pub unsafe fn alloc_phys(ac64: bool, byte_count: usize) -> Result<PhysBox> {
-        let flags = if ac64 {
-            PhysallocFlags::SPACE_64
-        } else {
-            PhysallocFlags::SPACE_32
-        };
-        PhysBox::new_with_flags(byte_count, flags)
-    }
-    fn page_align(size: usize) -> usize {
-        // TODO: PAGE_SIZE
-        (size+4095)/4096*4096
-    }
-    pub unsafe fn alloc_dma_zeroed_raw<T>(ac64: bool) -> Result<Dma<T>> {
-        Ok(Dma::from_physbox_zeroed(Self::alloc_phys(ac64, Self::page_align(mem::size_of::<T>()))?)?.assume_init())
+    pub unsafe fn alloc_dma_zeroed_raw<T>(_ac64: bool) -> Result<Dma<T>> {
+        // TODO: ac64
+        Ok(Dma::zeroed()?.assume_init())
     }
     pub unsafe fn alloc_dma_zeroed<T>(&self) -> Result<Dma<T>> {
         Self::alloc_dma_zeroed_raw(self.cap.ac64())
     }
-    pub unsafe fn alloc_dma_zeroed_unsized_raw<T>(ac64: bool, count: usize) -> Result<Dma<[T]>> {
-        Ok(Dma::from_physbox_zeroed_unsized(Self::alloc_phys(ac64, Self::page_align(mem::size_of::<T>() * count))?, count)?.assume_init())
+    pub unsafe fn alloc_dma_zeroed_unsized_raw<T>(_ac64: bool, count: usize) -> Result<Dma<[T]>> {
+        // TODO: ac64
+        Ok(Dma::zeroed_slice(count)?.assume_init())
     }
     pub unsafe fn alloc_dma_zeroed_unsized<T>(&self, count: usize) -> Result<Dma<[T]>> {
         Self::alloc_dma_zeroed_unsized_raw(self.cap.ac64(), count)

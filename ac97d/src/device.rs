@@ -8,7 +8,7 @@ use syscall::error::{Error, EACCES, EBADF, Result, EINVAL, ENOENT};
 use syscall::io::{Mmio, Pio, Io};
 use syscall::scheme::SchemeBlockMut;
 
-use common::dma::{Dma, PhysBox};
+use common::dma::Dma;
 use spin::Mutex;
 
 const NUM_SUB_BUFFS: usize = 32;
@@ -145,24 +145,14 @@ pub struct Ac97 {
 
 impl Ac97 {
 	pub unsafe fn new(bar0: u16, bar1: u16) -> Result<Self> {
-		let round_page = |size: usize| -> usize {
-			let page_size = 4096;
-			let pages = (size + (page_size - 1)) / page_size;
-			pages * page_size
-		};
-		let bdl_size = round_page(NUM_SUB_BUFFS * mem::size_of::<BufferDescriptor>());
-		let buf_size = round_page(NUM_SUB_BUFFS * SUB_BUFF_SIZE);
-
 		let mut module = Ac97 {
 			mixer: MixerRegs::new(bar0),
 			bus: BusRegs::new(bar1),
-            bdl: Dma::from_physbox_zeroed(
+            bdl: Dma::zeroed(
                 //TODO: PhysBox::new_in_32bit_space(bdl_size)?
-                PhysBox::new(bdl_size)?
             )?.assume_init(),
-            buf: Dma::from_physbox_zeroed(
+            buf: Dma::zeroed(
                 //TODO: PhysBox::new_in_32bit_space(buf_size)?
-                PhysBox::new(buf_size)?
             )?.assume_init(),
 			handles: Mutex::new(BTreeMap::new()),
 			next_id: AtomicUsize::new(0),

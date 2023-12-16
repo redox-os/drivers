@@ -1,3 +1,4 @@
+use common::dma::Dma;
 use syscall::io::{Io, Mmio};
 
 use super::common::*;
@@ -72,12 +73,12 @@ struct Corb {
 }
 
 impl Corb {
-    pub fn new(regs_addr: usize, corb_buff_phys: usize, corb_buff_virt: usize) -> Corb {
+    pub fn new(regs_addr: usize, corb_buff_phys: usize, corb_buff_virt: *mut u32) -> Corb {
         println!("regs addr {:x}", regs_addr);
         unsafe {
             Corb {
                 regs: &mut *(regs_addr as *mut CorbRegs),
-                corb_base: (corb_buff_virt) as *mut u32,
+                corb_base: corb_buff_virt,
                 corb_base_phys: corb_buff_phys,
                 corb_count: 0,
             }
@@ -208,11 +209,11 @@ struct Rirb {
 }
 
 impl Rirb {
-    pub fn new(regs_addr: usize, rirb_buff_phys: usize, rirb_buff_virt: usize) -> Rirb {
+    pub fn new(regs_addr: usize, rirb_buff_phys: usize, rirb_buff_virt: *mut u64) -> Rirb {
         unsafe {
             Rirb {
                 regs: &mut *(regs_addr as *mut RirbRegs),
-                rirb_base: (rirb_buff_virt) as *mut u64,
+                rirb_base: rirb_buff_virt,
                 rirb_rp: 0,
                 rirb_base_phys: rirb_buff_phys,
                 rirb_count: 0,
@@ -342,34 +343,32 @@ pub struct CommandBuffer {
     rirb: Rirb,
     icmd: ImmediateCommand,
 
-    corb_rirb_base_phys: usize,
-
     use_immediate_cmd: bool,
+    mem: Dma<[u8; 0x1000]>,
 }
 
 impl CommandBuffer {
     pub fn new(
         regs_addr: usize,
-        cmd_buff_frame_phys: usize,
-        cmd_buff_frame: usize,
+        mut cmd_buff: Dma<[u8; 0x1000]>,
     ) -> CommandBuffer {
-        let corb = Corb::new(regs_addr + CORB_OFFSET, cmd_buff_frame_phys, cmd_buff_frame);
+        let corb = Corb::new(regs_addr + CORB_OFFSET, cmd_buff.physical(), cmd_buff.as_mut_ptr().cast());
         let rirb = Rirb::new(
             regs_addr + RIRB_OFFSET,
-            cmd_buff_frame_phys + CORB_BUFF_MAX_SIZE,
-            cmd_buff_frame + CORB_BUFF_MAX_SIZE,
+            cmd_buff.physical() + CORB_BUFF_MAX_SIZE,
+            cmd_buff.as_mut_ptr().cast::<u8>().wrapping_add(CORB_BUFF_MAX_SIZE).cast(),
         );
 
         let icmd = ImmediateCommand::new(regs_addr + ICMD_OFFSET);
 
         let cmdbuff = CommandBuffer {
-            corb: corb,
-            rirb: rirb,
-            icmd: icmd,
-
-            corb_rirb_base_phys: cmd_buff_frame_phys,
+            corb,
+            rirb,
+            icmd,
 
             use_immediate_cmd: false,
+
+            mem: cmd_buff,
         };
 
         cmdbuff

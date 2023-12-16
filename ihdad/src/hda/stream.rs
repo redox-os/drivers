@@ -1,3 +1,4 @@
+use common::dma::Dma;
 use syscall::PAGE_SIZE;
 use syscall::error::{Error, EIO, Result};
 use syscall::io::{Mmio, Io};
@@ -281,8 +282,7 @@ impl BufferDescriptorListEntry {
 }
 
 pub struct StreamBuffer {
-	phys:   usize,
-	addr:   usize,
+  mem: Dma<[u8]>,
 
 	block_cnt: usize,
 	block_len:  usize,
@@ -293,36 +293,10 @@ pub struct StreamBuffer {
 impl StreamBuffer {
 	pub fn new(block_length: usize, block_count: usize) -> result::Result<StreamBuffer, &'static str> {
     let page_aligned_size = (block_length * block_count).next_multiple_of(PAGE_SIZE);
-
-		let phys = match unsafe {
-			syscall::physalloc(page_aligned_size)
-		} {
-			Ok(phys) => phys,
-			Err(_err) => {
-				return Err("Could not allocate physical memory for buffer.");
-			}
-		};
-
-		let addr = match unsafe {
-			common::physmap(phys, page_aligned_size, common::Prot::RW, common::MemoryType::Uncacheable)
-		} {
-			Ok(ptr) => ptr as usize,
-			Err(_err) => {
-				unsafe {
-					syscall::physfree(phys, page_aligned_size);
-				}
-				return Err("Could not map physical memory for buffer.");
-			}
-		};
-
-    // TODO: Already zeroed by kernel?
-		unsafe {
-			ptr::write_bytes(addr as *mut u8, 0, block_length * block_count);
-		}
+    let mem = unsafe { Dma::zeroed_slice(page_aligned_size).map_err(|_| "Could not allocate physical memory for buffer.")?.assume_init() };
 
 		Ok(StreamBuffer {
-			phys:   phys,
-			addr:   addr,
+      mem,
 			block_len: block_length,
 			block_cnt:  block_count,
 			cur_pos: 0,
@@ -334,11 +308,11 @@ impl StreamBuffer {
 	}
 
 	pub fn addr(&self) -> usize {
-		self.addr
+		self.mem.as_ptr() as usize
 	}
 
 	pub fn phys(&self) -> usize {
-		self.phys
+		self.mem.physical()
 	}
 
 	pub fn block_size(&self) -> usize {
@@ -374,13 +348,6 @@ impl StreamBuffer {
 }
 impl Drop for StreamBuffer {
 	fn drop(&mut self) {
-		unsafe {
-			log::debug!("IHDA: Deallocating buffer.");
-      let page_aligned_size = (self.block_len * self.block_cnt).next_multiple_of(PAGE_SIZE);
-
-			if syscall::funmap(self.addr, page_aligned_size).is_ok() {
-				let _ = syscall::physfree(self.phys, page_aligned_size);
-			}
-		}
+		log::debug!("IHDA: Deallocating buffer.");
 	}
 }

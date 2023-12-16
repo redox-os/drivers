@@ -74,8 +74,6 @@ This section cover the interfaces used by Redox drivers.
 ### System Calls
 
 - `iopl` - syscall that sets the I/O privilege level. x86 has four privilege rings (0/1/2/3), of which the kernel runs in ring 0 and userspace in ring 3. IOPL can only be changed by the kernel, for obvious security reasons, and therefore the Redox kernel needs root to set it. It is unique for each process. Processes with IOPL=3 can access I/O ports, and the kernel can access them as well.
-- `physalloc` - allocates physical memory frames.
-- `physfree` - frees memory frames.
 
 ### Schemes
 

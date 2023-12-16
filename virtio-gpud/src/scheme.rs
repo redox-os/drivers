@@ -130,21 +130,18 @@ impl<'a> Display<'a> {
         let bpp = 32;
         let fb_size = (self.width as usize * self.height as usize * bpp / 8)
             .next_multiple_of(syscall::PAGE_SIZE);
-        let address = unsafe { syscall::physalloc(fb_size) }?;
-        let mapped = unsafe {
-            common::physmap(
-                address as usize,
-                fb_size,
-                common::Prot::RW,
-                common::MemoryType::default(),
-            )
-        }? as usize;
+        let mut mapped = unsafe { Dma::zeroed_slice(fb_size)?.assume_init() };
 
         unsafe {
-            core::ptr::write_bytes(mapped as *mut u8, 255, fb_size);
+            core::ptr::write_bytes(mapped.as_mut_ptr() as *mut u8, 255, fb_size);
         }
 
-        self.map_screen_with(offset, address, fb_size, mapped).await
+        let virt = mapped.as_mut_ptr() as usize;
+        let phys = mapped.physical();
+        core::mem::forget(mapped);
+        // TODO: Keep Dma
+
+        self.map_screen_with(offset, phys, fb_size, virt).await
     }
 
     async fn map_screen_with(

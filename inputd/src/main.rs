@@ -516,7 +516,7 @@ pub fn main() {
                     "vesa"
                 } else {
                     // TODO: What should we do when there are multiple display devices?
-                    device[0].split('/').nth(2).unwrap()
+                    device[0][2..].split('.').nth(1).unwrap()
                 };
 
                 let mut handle =
