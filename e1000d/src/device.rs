@@ -5,8 +5,9 @@ use std::{cmp, mem, ptr, slice};
 use netutils::setcfg;
 
 use syscall::error::{Error, Result, EACCES, EBADF, EINVAL, EWOULDBLOCK};
-use syscall::flag::{EventFlags, O_NONBLOCK};
+use syscall::flag::{EventFlags, MODE_FILE, O_NONBLOCK};
 use syscall::scheme::SchemeBlockMut;
+use syscall::Stat;
 
 use common::dma::Dma;
 
@@ -99,6 +100,7 @@ const TD_DD: u8 = 1;
 
 pub struct Intel8254x {
     base: usize,
+    mac_address: [u8; 6],
     receive_buffer: [Dma<[u8; 16384]>; 16],
     receive_ring: Dma<[Rd; 16]>,
     receive_index: usize,
@@ -108,7 +110,13 @@ pub struct Intel8254x {
     transmit_index: usize,
     transmit_clean_index: usize,
     next_id: usize,
-    pub handles: BTreeMap<usize, usize>,
+    pub handles: BTreeMap<usize, Handle>,
+}
+
+#[derive(Copy, Clone)]
+pub enum Handle {
+    Data { flags: usize },
+    Mac { offset: usize },
 }
 
 fn wrap_ring(index: usize, ring_size: usize) -> usize {
@@ -116,14 +124,20 @@ fn wrap_ring(index: usize, ring_size: usize) -> usize {
 }
 
 impl SchemeBlockMut for Intel8254x {
-    fn open(&mut self, _path: &str, flags: usize, uid: u32, _gid: u32) -> Result<Option<usize>> {
-        if uid == 0 {
-            self.next_id += 1;
-            self.handles.insert(self.next_id, flags);
-            Ok(Some(self.next_id))
-        } else {
-            Err(Error::new(EACCES))
+    fn open(&mut self, path: &str, flags: usize, uid: u32, _gid: u32) -> Result<Option<usize>> {
+        if uid != 0 {
+            return Err(Error::new(EACCES));
         }
+
+        let handle = match path {
+            "" => Handle::Data { flags },
+            "mac" => Handle::Mac { offset: 0 },
+            _ => return Err(Error::new(EINVAL)),
+        };
+
+        self.next_id += 1;
+        self.handles.insert(self.next_id, handle);
+        Ok(Some(self.next_id))
     }
 
     fn dup(&mut self, id: usize, buf: &[u8]) -> Result<Option<usize>> {
@@ -131,17 +145,25 @@ impl SchemeBlockMut for Intel8254x {
             return Err(Error::new(EINVAL));
         }
 
-        let flags = {
-            let flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
-            *flags
-        };
+        let handle = *self.handles.get(&id).ok_or(Error::new(EBADF))?;
         self.next_id += 1;
-        self.handles.insert(self.next_id, flags);
+        self.handles.insert(self.next_id, handle);
         Ok(Some(self.next_id))
     }
 
     fn read(&mut self, id: usize, buf: &mut [u8]) -> Result<Option<usize>> {
-        let flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
+        let handle = self.handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+
+        let flags = match *handle {
+            Handle::Data { flags } => flags,
+            Handle::Mac { ref mut offset } => {
+                let data = &self.mac_address[*offset..];
+                let i = cmp::min(buf.len(), data.len());
+                buf[..i].copy_from_slice(&data[..i]);
+                *offset += i;
+                return Ok(Some(i));
+            }
+        };
 
         let desc = unsafe { &mut *(self.receive_ring.as_ptr().add(self.receive_index) as *mut Rd) };
 
@@ -167,7 +189,12 @@ impl SchemeBlockMut for Intel8254x {
     }
 
     fn write(&mut self, id: usize, buf: &[u8]) -> Result<Option<usize>> {
-        let _flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
+        let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
+
+        match handle {
+            Handle::Data { .. } => {}
+            Handle::Mac { .. } => return Err(Error::new(EINVAL)),
+        }
 
         if self.transmit_ring_free == 0 {
             loop {
@@ -222,15 +249,19 @@ impl SchemeBlockMut for Intel8254x {
     }
 
     fn fevent(&mut self, id: usize, _flags: EventFlags) -> Result<Option<EventFlags>> {
-        let _flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
+        let _handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
         Ok(Some(EventFlags::empty()))
     }
 
     fn fpath(&mut self, id: usize, buf: &mut [u8]) -> Result<Option<usize>> {
-        let _flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
+        let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
+
+        let scheme_path = match handle {
+            Handle::Data { .. } => &b"network:"[..],
+            Handle::Mac { .. } => &b"network:mac"[..],
+        };
 
         let mut i = 0;
-        let scheme_path = b"network:";
         while i < buf.len() && i < scheme_path.len() {
             buf[i] = scheme_path[i];
             i += 1;
@@ -238,8 +269,24 @@ impl SchemeBlockMut for Intel8254x {
         Ok(Some(i))
     }
 
+    fn fstat(&mut self, id: usize, stat: &mut Stat) -> Result<Option<usize>> {
+        let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
+
+        match handle {
+            Handle::Data { .. } => {
+                stat.st_mode = MODE_FILE | 0o700;
+            }
+            Handle::Mac { .. } => {
+                stat.st_mode = MODE_FILE | 0o400;
+                stat.st_size = 6;
+            }
+        }
+
+        Ok(Some(0))
+    }
+
     fn fsync(&mut self, id: usize) -> Result<Option<usize>> {
-        let _flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
+        let _handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
         Ok(Some(0))
     }
 
@@ -260,7 +307,8 @@ impl Intel8254x {
     pub unsafe fn new(base: usize) -> Result<Self> {
         #[rustfmt::skip]
         let mut module = Intel8254x {
-            base: base,
+            base,
+            mac_address: [0; 6],
             receive_buffer: dma_array()?,
             receive_ring: Dma::zeroed()?.assume_init(),
             transmit_buffer: dma_array()?,
@@ -348,6 +396,7 @@ impl Intel8254x {
                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
             )
         );
+        self.mac_address = mac;
         let _ = setcfg(
             "mac",
             &format!(
