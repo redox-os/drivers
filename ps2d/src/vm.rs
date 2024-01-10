@@ -9,6 +9,7 @@ use core::arch::global_asm;
 const MAGIC: u32 = 0x564D5868;
 const PORT: u16 = 0x5658;
 
+pub const GETVERSION: u32 = 10;
 pub const ABSPOINTER_DATA: u32 = 39;
 pub const ABSPOINTER_STATUS: u32 = 40;
 pub const ABSPOINTER_COMMAND: u32 = 41;
@@ -82,6 +83,12 @@ pub fn enable(relative: bool) -> bool {
     eprintln!("ps2d: Enable vmmouse");
 
     unsafe {
+        let (eax, ebx, _, _, _, _) = cmd(GETVERSION, 0);
+        if ebx != MAGIC || eax == 0xFFFFFFFF {
+            eprintln!("ps2d: No vmmouse support");
+            return false;
+        }
+
         let _ = cmd(ABSPOINTER_COMMAND, CMD_ENABLE);
 
         let (status, _, _, _, _, _) = cmd(ABSPOINTER_STATUS, 0);
