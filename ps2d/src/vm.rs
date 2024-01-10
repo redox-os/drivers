@@ -50,6 +50,8 @@ cmd_inner:
     mov DWORD PTR [rdi + 0x0C], edx
     mov DWORD PTR [rdi + 0x10], esi
     mov DWORD PTR [rdi + 0x14], r8d
+
+    ret
 ",
     MAGIC = const MAGIC,
     PORT = const PORT,
