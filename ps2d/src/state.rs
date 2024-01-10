@@ -49,7 +49,7 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
         let extra_packet = ps2.init().expect("ps2d: failed to initialize");
 
         let vmmouse_relative = true;
-        let vmmouse = false; //vm::enable(vmmouse_relative);
+        let vmmouse = vm::enable(vmmouse_relative);
 
         let mut ps2d = Ps2d {
             ps2,
