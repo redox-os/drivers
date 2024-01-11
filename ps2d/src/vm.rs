@@ -78,6 +78,11 @@ pub unsafe fn cmd(_cmd: u32, _arg: u32) -> (u32, u32, u32, u32, u32, u32) {
     (0, 0, 0, 0, 0, 0)
 }
 
+#[cfg(not(target_arch = "x86_64"))]
+pub fn enable(relative: bool) -> bool {
+    false
+}
+
 #[cfg(target_arch = "x86_64")]
 pub fn enable(relative: bool) -> bool {
     eprintln!("ps2d: Enable vmmouse");
