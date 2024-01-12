@@ -454,8 +454,11 @@ fn main() {
                             binary_view.read_u8(16).expect("Failed to read array item") as u16 |
                             (binary_view.read_u8(24).expect("Failed to read array item") as u16) << 8;
 
-                        let x = ((raw_x as u32) * display_width) / 32767;
-                        let y = ((raw_y as u32) * display_height) / 32767;
+                        // ps2d uses 0..=65535 as range, while usb uses 0..=32767. orbital
+                        // expects the former range, so multiply by two here to translate
+                        // the usb coordinates to what orbital expects.
+                        let x = raw_x * 2;
+                        let y = raw_y * 2;
 
                         log::trace!("Touchscreen {}, {} => {}, {}", raw_x, raw_y, x, y);
                         if x != 0 || y != 0 {
