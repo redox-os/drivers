@@ -4,7 +4,7 @@
 // As well as the Linux implementation here:
 // http://elixir.free-electrons.com/linux/v4.1/source/drivers/input/mouse/vmmouse.c
 
-use core::arch::global_asm;
+use core::arch::asm;
 
 const MAGIC: u32 = 0x564D5868;
 const PORT: u16 = 0x5658;
@@ -28,48 +28,29 @@ pub const RIGHT_BUTTON: u32 = 0x10;
 pub const MIDDLE_BUTTON: u32 = 0x08;
 
 #[cfg(target_arch = "x86_64")]
-global_asm!("
-    .globl cmd_inner
-cmd_inner:
-    mov r8, rdi
-
-    // 2nd argument `cmd` as per sysv64.
-    mov ecx, esi
-    // 3rd argument `arg` as per sysv64.
-    mov ebx, edx
-
-    mov eax, {MAGIC}
-    mov dx, {PORT}
-
-    in eax, dx
-
-    xchg rdi, r8
-
-    mov DWORD PTR [rdi + 0x00], eax
-    mov DWORD PTR [rdi + 0x04], ebx
-    mov DWORD PTR [rdi + 0x08], ecx
-    mov DWORD PTR [rdi + 0x0C], edx
-    mov DWORD PTR [rdi + 0x10], esi
-    mov DWORD PTR [rdi + 0x14], r8d
-
-    ret
-",
-    MAGIC = const MAGIC,
-    PORT = const PORT,
-);
-
-#[cfg(target_arch = "x86_64")]
 pub unsafe fn cmd(cmd: u32, arg: u32) -> (u32, u32, u32, u32, u32, u32) {
-    extern "sysv64" {
-        fn cmd_inner(array_ptr: *mut u32, cmd: u32, arg: u32);
-    }
+    let a: u32;
+    let b: u32;
+    let c: u32;
+    let d: u32;
+    let si: u32;
+    let di: u32;
 
-    let mut array = [0_u32; 6];
+    // ebx can't be used as input or output constraint in rust as LLVM reserves it.
+    // Use xchg to pass it through r9 instead while restoring the original value in
+    // rbx when leaving the inline asm block.
+    asm!(
+        "xchg r9, rbx; in eax, dx; xchg r9, rbx",
+        inout("eax") MAGIC => a,
+        inout("r9") arg => b,
+        inout("ecx") cmd => c,
+        inout("edx") PORT as u32 => d,
+        out("esi") si,
+        out("edi") di,
+    );
 
-    cmd_inner(array.as_mut_ptr(), cmd, arg);
+    (a, b, c, d, si, di)
 
-    let [a, b, c, d, e, f] = array;
-    (a, b, c, d, e, f)
 }
 
 //TODO: is it possible to enable this on non-x86_64?
