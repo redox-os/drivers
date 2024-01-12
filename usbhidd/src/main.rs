@@ -382,20 +382,7 @@ fn main() {
         let report_ty = ReportTy::Input;
         let report_id = 0;
 
-        let mut display = File::open("display.vesa:input").expect("Failed to open orbital input socket");
-
-        //TODO: get dynamically
-        let mut display_width = 0;
-        let mut display_height = 0;
-        {
-            let mut buf = [0; 4096];
-            if let Ok(count) = syscall::fpath(display.as_raw_fd() as usize, &mut buf) {
-                let path = unsafe { String::from_utf8_unchecked(Vec::from(&buf[..count])) };
-                let res = path.split(":").nth(1).unwrap_or("");
-                display_width = res.split("/").nth(1).unwrap_or("").parse::<u32>().unwrap_or(0);
-                display_height = res.split("/").nth(2).unwrap_or("").parse::<u32>().unwrap_or(0);
-            }
-        }
+        let mut display = File::open("input:producer").expect("Failed to open orbital input socket");
 
         let mut pressed_keys = Vec::<(u32, u8)>::new();
         let mut last_pressed_keys = pressed_keys.clone();
@@ -454,8 +441,11 @@ fn main() {
                             binary_view.read_u8(16).expect("Failed to read array item") as u16 |
                             (binary_view.read_u8(24).expect("Failed to read array item") as u16) << 8;
 
-                        let x = ((raw_x as u32) * display_width) / 32767;
-                        let y = ((raw_y as u32) * display_height) / 32767;
+                        // ps2d uses 0..=65535 as range, while usb uses 0..=32767. orbital
+                        // expects the former range, so multiply by two here to translate
+                        // the usb coordinates to what orbital expects.
+                        let x = raw_x * 2;
+                        let y = raw_y * 2;
 
                         log::trace!("Touchscreen {}, {} => {}, {}", raw_x, raw_y, x, y);
                         if x != 0 || y != 0 {
