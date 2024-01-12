@@ -26,8 +26,6 @@ pub struct Ps2d<F: Fn(u8,bool) -> char>  {
     vmmouse: bool,
     vmmouse_relative: bool,
     input: File,
-    width: u32,
-    height: u32,
     extended: bool,
     lshift: bool,
     rshift: bool,
@@ -51,13 +49,11 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
         let vmmouse_relative = true;
         let vmmouse = vm::enable(vmmouse_relative);
 
-        let mut ps2d = Ps2d {
+        Ps2d {
             ps2,
             vmmouse,
             vmmouse_relative,
             input,
-            width: 0,
-            height: 0,
             extended: false,
             lshift: false,
             rshift: false,
@@ -70,20 +66,6 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
             packet_i: 0,
             extra_packet,
             get_char: keymap
-        };
-
-        ps2d.resize();
-
-        ps2d
-    }
-
-    pub fn resize(&mut self) {
-        let mut buf: [u8; 4096] = [0; 4096];
-        if let Ok(count) = syscall::fpath(self.input.as_raw_fd() as usize, &mut buf) {
-            let path = unsafe { str::from_utf8_unchecked(&buf[..count]) };
-            let res = path.split(":").nth(1).unwrap_or("");
-            self.width = res.split("/").nth(1).unwrap_or("").parse::<u32>().unwrap_or(0);
-            self.height = res.split("/").nth(2).unwrap_or("").parse::<u32>().unwrap_or(0);
         }
     }
 
@@ -253,20 +235,20 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
             }
         } else if self.vmmouse {
             for _i in 0..256 {
-        		let (status, _, _, _, _, _) = unsafe { vm::cmd(vm::ABSPOINTER_STATUS, 0) };
-        		//TODO if ((status & VMMOUSE_ERROR) == VMMOUSE_ERROR)
+                let (status, _, _, _, _, _) = unsafe { vm::cmd(vm::ABSPOINTER_STATUS, 0) };
+                //TODO if ((status & VMMOUSE_ERROR) == VMMOUSE_ERROR)
 
-        		let queue_length = status & 0xffff;
-        		if queue_length == 0 {
-        			break;
+                let queue_length = status & 0xffff;
+                if queue_length == 0 {
+                    break;
                 }
 
-        		if queue_length % 4 != 0 {
-        			eprintln!("ps2d: queue length not a multiple of 4: {}", queue_length);
-        			break;
-        		}
+                if queue_length % 4 != 0 {
+                    eprintln!("ps2d: queue length not a multiple of 4: {}", queue_length);
+                    break;
+                }
 
-        		let (status, dx, dy, dz, _, _) = unsafe { vm::cmd(vm::ABSPOINTER_DATA, 4) };
+                let (status, dx, dy, dz, _, _) = unsafe { vm::cmd(vm::ABSPOINTER_DATA, 4) };
 
                 if self.vmmouse_relative {
                     if dx != 0 || dy != 0 {
@@ -275,21 +257,17 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
                             dy: dy as i32,
                         }.to_event()).expect("ps2d: failed to write mouse event");
                     }
-        		} else {
-                    // TODO: Improve efficiency
-                    self.resize();
-
-                    let x = dx as i32 * self.width as i32 / 0xFFFF;
-                    let y = dy as i32 * self.height as i32 / 0xFFFF;
+                } else {
+                    let x = dx as i32;
+                    let y = dy as i32;
                     if x != self.mouse_x || y != self.mouse_y {
                         self.mouse_x = x;
                         self.mouse_y = y;
-                        self.input.write(&MouseEvent {
-                            x: x,
-                            y: y,
-                        }.to_event()).expect("ps2d: failed to write mouse event");
+                        self.input
+                            .write(&MouseEvent { x, y }.to_event())
+                            .expect("ps2d: failed to write mouse event");
                     }
-        		};
+                };
 
                 if dz != 0 {
                     self.input.write(&ScrollEvent {
