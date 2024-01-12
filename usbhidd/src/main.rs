@@ -382,20 +382,7 @@ fn main() {
         let report_ty = ReportTy::Input;
         let report_id = 0;
 
-        let mut display = File::open("display.vesa:input").expect("Failed to open orbital input socket");
-
-        //TODO: get dynamically
-        let mut display_width = 0;
-        let mut display_height = 0;
-        {
-            let mut buf = [0; 4096];
-            if let Ok(count) = syscall::fpath(display.as_raw_fd() as usize, &mut buf) {
-                let path = unsafe { String::from_utf8_unchecked(Vec::from(&buf[..count])) };
-                let res = path.split(":").nth(1).unwrap_or("");
-                display_width = res.split("/").nth(1).unwrap_or("").parse::<u32>().unwrap_or(0);
-                display_height = res.split("/").nth(2).unwrap_or("").parse::<u32>().unwrap_or(0);
-            }
-        }
+        let mut display = File::open("input:producer").expect("Failed to open orbital input socket");
 
         let mut pressed_keys = Vec::<(u32, u8)>::new();
         let mut last_pressed_keys = pressed_keys.clone();
