@@ -46,7 +46,8 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
         let mut ps2 = Ps2::new();
         let extra_packet = ps2.init().expect("ps2d: failed to initialize");
 
-        let vmmouse_relative = true;
+        // FIXME add an option for orbital to disable this when an app captures the mouse.
+        let vmmouse_relative = false;
         let vmmouse = vm::enable(vmmouse_relative);
 
         Ps2d {
