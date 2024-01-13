@@ -4,7 +4,6 @@ use std::{mem, ptr, slice, str};
 use syscall::{Error, EventFlags, EBADF, EINVAL, ENOENT, O_NONBLOCK, Result, SchemeMut, PAGE_SIZE, MapFlags};
 
 use crate::{
-    display::Display,
     framebuffer::FrameBuffer,
     screen::{Screen, GraphicScreen, TextScreen},
 };
@@ -57,7 +56,7 @@ impl DisplayScheme {
             let mut screens = BTreeMap::<ScreenIndex, Box<dyn Screen>>::new();
             for fb_i in 0..framebuffers.len() {
                 let fb = &framebuffers[fb_i];
-                let graphic_screen = GraphicScreen::new(Display::new(fb.width, fb.height));
+                let graphic_screen = GraphicScreen::new(fb.width, fb.height);
                 screens.insert(ScreenIndex(fb_i), if vt_type {
                     Box::new(graphic_screen)
                 } else {
@@ -311,7 +310,7 @@ impl SchemeMut for DisplayScheme {
                             for (screen_i, screen) in screens.iter_mut() {
                                 match mode {
                                     VtMode::Graphic => {
-                                        *screen = Box::new(GraphicScreen::new(Display::new(screen.width(), screen.height())));
+                                        *screen = Box::new(GraphicScreen::new(screen.width(), screen.height()));
                                     }
 
                                     VtMode::Default => {

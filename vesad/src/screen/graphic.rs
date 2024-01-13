@@ -1,11 +1,11 @@
 use std::collections::VecDeque;
 use std::convert::TryInto;
-use std::{mem, slice};
+use std::{mem, slice, cmp, ptr};
 
 use orbclient::{Event, ResizeEvent};
 use syscall::error::*;
 
-use crate::display::Display;
+use crate::display::OffscreenBuffer;
 use crate::screen::Screen;
 
 // Keep synced with orbital
@@ -19,15 +19,19 @@ pub struct SyncRect {
 }
 
 pub struct GraphicScreen {
-    pub display: Display,
+    pub width: usize,
+    pub height: usize,
+    pub offscreen: OffscreenBuffer,
     pub input: VecDeque<Event>,
     pub sync_rects: Vec<SyncRect>,
 }
 
 impl GraphicScreen {
-    pub fn new(display: Display) -> GraphicScreen {
+    pub fn new(width: usize, height: usize) -> GraphicScreen {
         GraphicScreen {
-            display,
+            width,
+            height,
+            offscreen: OffscreenBuffer::new(width * height),
             input: VecDeque::new(),
             sync_rects: Vec::new(),
         }
@@ -36,16 +40,61 @@ impl GraphicScreen {
 
 impl Screen for GraphicScreen {
     fn width(&self) -> usize {
-        self.display.width
+        self.width
     }
 
     fn height(&self) -> usize {
-        self.display.height
+        self.height
     }
 
     fn resize(&mut self, width: usize, height: usize) {
         //TODO: Fix issue with mapped screens
-        self.display.resize(width, height);
+
+        if width != self.width || height != self.height {
+            println!("Resize display to {}, {}", width, height);
+
+            let size = width * height;
+            let mut offscreen = OffscreenBuffer::new(size);
+
+            let mut old_ptr = self.offscreen.as_ptr();
+            let mut new_ptr = offscreen.as_mut_ptr();
+
+            for _y in 0..cmp::min(height, self.height) {
+                unsafe {
+                    ptr::copy(
+                        old_ptr as *const u8,
+                        new_ptr as *mut u8,
+                        cmp::min(width, self.width) * 4
+                    );
+                    if width > self.width {
+                        ptr::write_bytes(
+                            new_ptr.offset(self.width as isize),
+                            0,
+                            width - self.width
+                        );
+                    }
+                    old_ptr = old_ptr.offset(self.width as isize);
+                    new_ptr = new_ptr.offset(width as isize);
+                }
+            }
+
+            if height > self.height {
+                for _y in self.height..height {
+                    unsafe {
+                        ptr::write_bytes(new_ptr, 0, width);
+                        new_ptr = new_ptr.offset(width as isize);
+                    }
+                }
+            }
+
+            self.width = width;
+            self.height = height;
+
+            self.offscreen = offscreen;
+        } else {
+            println!("Display is already {}, {}", width, height);
+        };
+
         self.input.push_back(ResizeEvent {
             width: width as u32,
             height: height as u32,
@@ -53,8 +102,8 @@ impl Screen for GraphicScreen {
     }
 
     fn map(&self, offset: usize, size: usize) -> Result<usize> {
-        if offset + size <= self.display.offscreen.len() * 4 {
-            Ok(self.display.offscreen.as_ptr() as usize + offset)
+        if offset + size <= self.offscreen.len() * 4 {
+            Ok(self.offscreen.as_ptr() as usize + offset)
         } else {
             Err(Error::new(EINVAL))
         }
@@ -104,20 +153,43 @@ impl Screen for GraphicScreen {
 
     fn sync(&mut self, onscreen: &mut [u32], stride: usize) {
         for sync_rect in self.sync_rects.drain(..) {
-            self.display.sync(
-                sync_rect.x.try_into().unwrap_or(0),
-                sync_rect.y.try_into().unwrap_or(0),
-                sync_rect.w.try_into().unwrap_or(0),
-                sync_rect.h.try_into().unwrap_or(0),
-                onscreen,
-                stride,
-            );
+            let x = sync_rect.x.try_into().unwrap_or(0);
+            let y = sync_rect.y.try_into().unwrap_or(0);
+            let w = sync_rect.w.try_into().unwrap_or(0);
+            let h = sync_rect.h.try_into().unwrap_or(0);
+
+            let start_y = cmp::min(self.height, y);
+            let end_y = cmp::min(self.height, y + h);
+
+            let start_x = cmp::min(self.width, x);
+            let len = (cmp::min(self.width, x + w) - start_x) * 4;
+
+            let mut offscreen_ptr = self.offscreen.as_mut_ptr() as usize;
+            let mut onscreen_ptr = onscreen.as_mut_ptr() as usize;
+
+            offscreen_ptr += (y * self.width + start_x) * 4;
+            onscreen_ptr += (y * stride + start_x) * 4;
+
+            let mut rows = end_y - start_y;
+            while rows > 0 {
+                unsafe {
+                    ptr::copy(
+                        offscreen_ptr as *const u8,
+                        onscreen_ptr as *mut u8,
+                        len
+                    );
+                }
+                offscreen_ptr += self.width * 4;
+                onscreen_ptr += stride * 4;
+                rows -= 1;
+            };
         }
     }
 
     fn redraw(&mut self, onscreen: &mut [u32], stride: usize) {
-        let width = self.display.width;
-        let height = self.display.height;
-        self.display.sync(0, 0, width, height, onscreen, stride);
+        let width = self.width.try_into().unwrap();
+        let height = self.height.try_into().unwrap();
+        self.sync_rects.push(SyncRect { x: 0, y: 0, w: width, h: height });
+        self.sync(onscreen, stride);
     }
 }

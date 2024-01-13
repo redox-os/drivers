@@ -39,7 +39,7 @@ impl TextScreen {
         let start_x = cmp::min(screen.width(), x);
         let len = cmp::min(screen.width(), x + w) - start_x;
 
-        let mut offscreen_ptr = screen.display.offscreen.as_mut_ptr() as usize;
+        let mut offscreen_ptr = screen.offscreen.as_mut_ptr() as usize;
 
         let stride = screen.width() * 4;
 
@@ -66,7 +66,7 @@ impl TextScreen {
         let start_x = cmp::min(screen.width(), x);
         let len = cmp::min(screen.width(), x + w) - start_x;
 
-        let mut offscreen_ptr = screen.display.offscreen.as_mut_ptr() as usize;
+        let mut offscreen_ptr = screen.offscreen.as_mut_ptr() as usize;
 
         let stride = screen.width() * 4;
 
@@ -93,7 +93,7 @@ impl TextScreen {
     /// Draw a character
     fn char(screen: &mut GraphicScreen, x: usize, y: usize, character: char, color: u32, _bold: bool, _italic: bool) {
         if x + 8 <= screen.width() && y + 16 <= screen.height() {
-            let mut dst = screen.display.offscreen.as_mut_ptr() as usize + (y * screen.width() + x) * 4;
+            let mut dst = screen.offscreen.as_mut_ptr() as usize + (y * screen.width() + x) * 4;
 
             let font_i = 16 * (character as usize);
             if font_i + 16 <= FONT.len() {
@@ -245,7 +245,7 @@ impl Screen for TextScreen {
                     ransid::Event::ScreenBuffer { .. } => (),
                     ransid::Event::Move {from_x, from_y, to_x, to_y, w, h } => {
                         let width = screen.width();
-                        let pixels = &mut screen.display.offscreen;
+                        let pixels = &mut screen.offscreen;
 
                         for raw_y in 0..h {
                             let y = if from_y > to_y {
