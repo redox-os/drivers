@@ -1,8 +1,7 @@
 use std::collections::BTreeMap;
 use std::{mem, ptr, slice, str};
 
-use orbclient::{Event, EventOption};
-use syscall::{Error, EventFlags, EACCES, EBADF, EINVAL, ENOENT, Map, O_NONBLOCK, Result, SchemeMut, PAGE_SIZE, Packet, KSMSG_MMAP_PREP, KSMSG_MMAP, MapFlags, ESKMSG, SKMSG_PROVIDE_MMAP};
+use syscall::{Error, EventFlags, EBADF, EINVAL, ENOENT, O_NONBLOCK, Result, SchemeMut, PAGE_SIZE, MapFlags};
 
 use crate::{
     display::Display,
@@ -167,7 +166,7 @@ impl SchemeMut for DisplayScheme {
             vt_screen.next().unwrap_or("").parse::<usize>().unwrap_or(0)
         );
         if let Some(screens) = self.vts.get_mut(&vt_i) {
-            if let Some(screen) = screens.get_mut(&screen_i) {
+            if screens.get_mut(&screen_i).is_some() {
                 let id = self.next_id;
                 self.next_id += 1;
 
@@ -301,7 +300,7 @@ impl SchemeMut for DisplayScheme {
         match handle.kind {
             HandleKind::Input => {
                 use inputd::{Cmd as DisplayCommand, VtMode};
-    
+
                 let command = inputd::parse_command(buf).unwrap();
 
                 match command {
