@@ -10,7 +10,6 @@ unsafe fn any_as_u8_slice<T: Sized>(p: &T) -> &[u8] {
 #[derive(Debug, Copy, Clone, PartialEq)]
 #[repr(usize)]
 pub enum VtMode {
-    Text = 0,
     Graphic = 1,
     Default = 2,
 }

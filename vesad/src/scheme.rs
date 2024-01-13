@@ -319,8 +319,6 @@ impl SchemeMut for DisplayScheme {
                                             self.framebuffers[screen_i.0].stride
                                         );
                                     }
-
-                                    VtMode::Text => todo!()
                                 }
                             }
                         }
