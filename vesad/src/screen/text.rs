@@ -1,17 +1,21 @@
 extern crate ransid;
 
 use std::collections::{BTreeSet, VecDeque};
+use std::convert::{TryFrom, TryInto};
 use std::{ptr, cmp};
 
 use orbclient::{Event, EventOption, FONT};
 use syscall::error::*;
 
 use crate::display::Display;
-use crate::screen::Screen;
+use crate::screen::{Screen, GraphicScreen};
+
+use super::graphic::SyncRect;
 
 pub struct TextScreen {
     pub console: ransid::Console,
-    pub display: Display,
+    // FIXME avoid directly accessing the fields of screen
+    pub screen: GraphicScreen,
     pub changed: BTreeSet<usize>,
     pub ctrl: bool,
     pub input: VecDeque<u8>,
@@ -21,7 +25,7 @@ impl TextScreen {
     pub fn new(display: Display) -> TextScreen {
         TextScreen {
             console: ransid::Console::new(display.width/8, display.height/16),
-            display: display,
+            screen: GraphicScreen::new(display),
             changed: BTreeSet::new(),
             ctrl: false,
             input: VecDeque::new(),
@@ -118,7 +122,7 @@ impl Screen for TextScreen {
     }
 
     fn resize(&mut self, width: usize, height: usize) {
-        self.display.resize(width, height);
+        self.screen.display.resize(width, height);
         self.console.state.w = width / 8;
         self.console.state.h = height / 16;
     }
@@ -215,33 +219,33 @@ impl Screen for TextScreen {
         if self.console.state.cursor && self.console.state.x < self.console.state.w && self.console.state.y < self.console.state.h {
             let x = self.console.state.x;
             let y = self.console.state.y;
-            Self::invert(&mut self.display, x * 8, y * 16, 8, 16);
+            Self::invert(&mut self.screen.display, x * 8, y * 16, 8, 16);
             self.changed.insert(y);
         }
 
         {
-            let display = &mut self.display;
+            let screen = &mut self.screen;
             let changed = &mut self.changed;
             let input = &mut self.input;
             self.console.write(buf, |event| {
                 match event {
                     ransid::Event::Char { x, y, c, color, bold, .. } => {
-                        Self::char(display, x * 8, y * 16, c, color.as_rgb(), bold, false);
+                        Self::char(&mut screen.display, x * 8, y * 16, c, color.as_rgb(), bold, false);
                         changed.insert(y);
                     },
                     ransid::Event::Input { data } => {
                         input.extend(data);
                     },
                     ransid::Event::Rect { x, y, w, h, color } => {
-                        Self::rect(display, x * 8, y * 16, w * 8, h * 16, color.as_rgb());
+                        Self::rect(&mut screen.display, x * 8, y * 16, w * 8, h * 16, color.as_rgb());
                         for y2 in y..y + h {
                             changed.insert(y2);
                         }
                     },
                     ransid::Event::ScreenBuffer { .. } => (),
                     ransid::Event::Move {from_x, from_y, to_x, to_y, w, h } => {
-                        let width = display.width;
-                        let pixels = &mut display.offscreen;
+                        let width = screen.width();
+                        let pixels = &mut screen.display.offscreen;
 
                         for raw_y in 0..h {
                             let y = if from_y > to_y {
@@ -277,7 +281,7 @@ impl Screen for TextScreen {
         if self.console.state.cursor && self.console.state.x < self.console.state.w && self.console.state.y < self.console.state.h {
             let x = self.console.state.x;
             let y = self.console.state.y;
-            Self::invert(&mut self.display, x * 8, y * 16, 8, 16);
+            Self::invert(&mut self.screen.display, x * 8, y * 16, 8, 16);
             self.changed.insert(y);
         }
 
@@ -289,17 +293,21 @@ impl Screen for TextScreen {
     }
 
     fn sync(&mut self, onscreen: &mut [u32], stride: usize) {
-        let width = self.display.width;
-        for change in self.changed.iter() {
-            self.display.sync(0, change * 16, width, 16, onscreen, stride);
+        let width = self.screen.width().try_into().unwrap();
+        for &change in self.changed.iter() {
+            self.screen.sync_rects.push(SyncRect {
+                x: 0,
+                y: i32::try_from(change).unwrap() * 16,
+                w: width,
+                h: 16,
+            });
         }
         self.changed.clear();
+        self.screen.sync(onscreen, stride);
     }
 
     fn redraw(&mut self, onscreen: &mut [u32], stride: usize) {
-        let width = self.display.width;
-        let height = self.display.height;
-        self.display.sync(0, 0, width, height, onscreen, stride);
+        self.screen.redraw(onscreen, stride);
         self.changed.clear();
     }
 }

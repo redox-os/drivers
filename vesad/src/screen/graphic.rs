@@ -11,17 +11,17 @@ use crate::screen::Screen;
 // Keep synced with orbital
 #[derive(Clone, Copy)]
 #[repr(packed)]
-struct SyncRect {
-    x: i32,
-    y: i32,
-    w: i32,
-    h: i32,
+pub struct SyncRect {
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
 }
 
 pub struct GraphicScreen {
     pub display: Display,
     pub input: VecDeque<Event>,
-    sync_rects: Vec<SyncRect>,
+    pub sync_rects: Vec<SyncRect>,
 }
 
 impl GraphicScreen {
