@@ -58,10 +58,11 @@ impl DisplayScheme {
             let mut screens = BTreeMap::<ScreenIndex, Box<dyn Screen>>::new();
             for fb_i in 0..framebuffers.len() {
                 let fb = &framebuffers[fb_i];
+                let graphic_screen = GraphicScreen::new(Display::new(fb.width, fb.height));
                 screens.insert(ScreenIndex(fb_i), if vt_type {
-                    Box::new(GraphicScreen::new(Display::new(fb.width, fb.height)))
+                    Box::new(graphic_screen)
                 } else {
-                    Box::new(TextScreen::new(Display::new(fb.width, fb.height)))
+                    Box::new(TextScreen::new(graphic_screen))
                 });
             }
             vts.insert(VtIndex(inputd_handle.register().unwrap()), screens);

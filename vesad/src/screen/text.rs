@@ -7,25 +7,24 @@ use std::{ptr, cmp};
 use orbclient::{Event, EventOption, FONT};
 use syscall::error::*;
 
-use crate::display::Display;
 use crate::screen::{Screen, GraphicScreen};
 
 use super::graphic::SyncRect;
 
 pub struct TextScreen {
-    pub console: ransid::Console,
+    console: ransid::Console,
     // FIXME avoid directly accessing the fields of screen
-    pub screen: GraphicScreen,
-    pub changed: BTreeSet<usize>,
-    pub ctrl: bool,
-    pub input: VecDeque<u8>,
+    screen: GraphicScreen,
+    changed: BTreeSet<usize>,
+    ctrl: bool,
+    input: VecDeque<u8>,
 }
 
 impl TextScreen {
-    pub fn new(display: Display) -> TextScreen {
+    pub fn new(screen: GraphicScreen) -> TextScreen {
         TextScreen {
-            console: ransid::Console::new(display.width/8, display.height/16),
-            screen: GraphicScreen::new(display),
+            console: ransid::Console::new(screen.width()/8, screen.height()/16),
+            screen,
             changed: BTreeSet::new(),
             ctrl: false,
             input: VecDeque::new(),
@@ -33,16 +32,16 @@ impl TextScreen {
     }
 
     /// Draw a rectangle
-    fn rect(display: &mut Display, x: usize, y: usize, w: usize, h: usize, color: u32) {
-        let start_y = cmp::min(display.height, y);
-        let end_y = cmp::min(display.height, y + h);
+    fn rect(screen: &mut GraphicScreen, x: usize, y: usize, w: usize, h: usize, color: u32) {
+        let start_y = cmp::min(screen.height(), y);
+        let end_y = cmp::min(screen.height(), y + h);
 
-        let start_x = cmp::min(display.width, x);
-        let len = cmp::min(display.width, x + w) - start_x;
+        let start_x = cmp::min(screen.width(), x);
+        let len = cmp::min(screen.width(), x + w) - start_x;
 
-        let mut offscreen_ptr = display.offscreen.as_mut_ptr() as usize;
+        let mut offscreen_ptr = screen.display.offscreen.as_mut_ptr() as usize;
 
-        let stride = display.width * 4;
+        let stride = screen.width() * 4;
 
         let offset = y * stride + start_x * 4;
         offscreen_ptr += offset;
@@ -60,16 +59,16 @@ impl TextScreen {
     }
 
     /// Invert a rectangle
-    fn invert(display: &mut Display, x: usize, y: usize, w: usize, h: usize) {
-        let start_y = cmp::min(display.height, y);
-        let end_y = cmp::min(display.height, y + h);
+    fn invert(screen: &mut GraphicScreen, x: usize, y: usize, w: usize, h: usize) {
+        let start_y = cmp::min(screen.height(), y);
+        let end_y = cmp::min(screen.height(), y + h);
 
-        let start_x = cmp::min(display.width, x);
-        let len = cmp::min(display.width, x + w) - start_x;
+        let start_x = cmp::min(screen.width(), x);
+        let len = cmp::min(screen.width(), x + w) - start_x;
 
-        let mut offscreen_ptr = display.offscreen.as_mut_ptr() as usize;
+        let mut offscreen_ptr = screen.display.offscreen.as_mut_ptr() as usize;
 
-        let stride = display.width * 4;
+        let stride = screen.width() * 4;
 
         let offset = y * stride + start_x * 4;
         offscreen_ptr += offset;
@@ -92,9 +91,9 @@ impl TextScreen {
     }
 
     /// Draw a character
-    fn char(display: &mut Display, x: usize, y: usize, character: char, color: u32, _bold: bool, _italic: bool) {
-        if x + 8 <= display.width && y + 16 <= display.height {
-            let mut dst = display.offscreen.as_mut_ptr() as usize + (y * display.width + x) * 4;
+    fn char(screen: &mut GraphicScreen, x: usize, y: usize, character: char, color: u32, _bold: bool, _italic: bool) {
+        if x + 8 <= screen.width() && y + 16 <= screen.height() {
+            let mut dst = screen.display.offscreen.as_mut_ptr() as usize + (y * screen.width() + x) * 4;
 
             let font_i = 16 * (character as usize);
             if font_i + 16 <= FONT.len() {
@@ -105,7 +104,7 @@ impl TextScreen {
                             unsafe { *((dst + col * 4) as *mut u32)  = color; }
                         }
                     }
-                    dst += display.width * 4;
+                    dst += screen.width() * 4;
                 }
             }
         }
@@ -219,7 +218,7 @@ impl Screen for TextScreen {
         if self.console.state.cursor && self.console.state.x < self.console.state.w && self.console.state.y < self.console.state.h {
             let x = self.console.state.x;
             let y = self.console.state.y;
-            Self::invert(&mut self.screen.display, x * 8, y * 16, 8, 16);
+            Self::invert(&mut self.screen, x * 8, y * 16, 8, 16);
             self.changed.insert(y);
         }
 
@@ -230,14 +229,14 @@ impl Screen for TextScreen {
             self.console.write(buf, |event| {
                 match event {
                     ransid::Event::Char { x, y, c, color, bold, .. } => {
-                        Self::char(&mut screen.display, x * 8, y * 16, c, color.as_rgb(), bold, false);
+                        Self::char(screen, x * 8, y * 16, c, color.as_rgb(), bold, false);
                         changed.insert(y);
                     },
                     ransid::Event::Input { data } => {
                         input.extend(data);
                     },
                     ransid::Event::Rect { x, y, w, h, color } => {
-                        Self::rect(&mut screen.display, x * 8, y * 16, w * 8, h * 16, color.as_rgb());
+                        Self::rect(screen, x * 8, y * 16, w * 8, h * 16, color.as_rgb());
                         for y2 in y..y + h {
                             changed.insert(y2);
                         }
@@ -281,7 +280,7 @@ impl Screen for TextScreen {
         if self.console.state.cursor && self.console.state.x < self.console.state.w && self.console.state.y < self.console.state.h {
             let x = self.console.state.x;
             let y = self.console.state.y;
-            Self::invert(&mut self.screen.display, x * 8, y * 16, 8, 16);
+            Self::invert(&mut self.screen, x * 8, y * 16, 8, 16);
             self.changed.insert(y);
         }
 
