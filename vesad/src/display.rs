@@ -1,24 +1,8 @@
-#[cfg(feature="rusttype")]
-extern crate rusttype;
-
 use std::alloc::{self, Layout};
 use std::{cmp, ptr};
 use std::ptr::NonNull;
 
-#[cfg(feature="rusttype")]
-use self::rusttype::{Font, FontCollection, Scale, point};
-
-#[cfg(not(feature="rusttype"))]
 use orbclient::FONT;
-
-#[cfg(feature="rusttype")]
-static FONT: &'static [u8] = include_bytes!("../res/DejaVuSansMono.ttf");
-#[cfg(feature="rusttype")]
-static FONT_BOLD: &'static [u8] = include_bytes!("../res/DejaVuSansMono-Bold.ttf");
-#[cfg(feature="rusttype")]
-static FONT_BOLD_ITALIC: &'static [u8] = include_bytes!("../res/DejaVuSansMono-BoldOblique.ttf");
-#[cfg(feature="rusttype")]
-static FONT_ITALIC: &'static [u8] = include_bytes!("../res/DejaVuSansMono-Oblique.ttf");
 
 pub struct OffscreenBuffer {
     ptr: NonNull<[u32]>,
@@ -63,18 +47,9 @@ pub struct Display {
     pub width: usize,
     pub height: usize,
     pub offscreen: OffscreenBuffer,
-    #[cfg(feature="rusttype")]
-    pub font: Font<'static>,
-    #[cfg(feature="rusttype")]
-    pub font_bold: Font<'static>,
-    #[cfg(feature="rusttype")]
-    pub font_bold_italic: Font<'static>,
-    #[cfg(feature="rusttype")]
-    pub font_italic: Font<'static>
 }
 
 impl Display {
-    #[cfg(not(feature="rusttype"))]
     pub fn new(width: usize, height: usize) -> Display {
         let size = width * height;
         let offscreen = OffscreenBuffer::new(size);
@@ -82,21 +57,6 @@ impl Display {
             width,
             height,
             offscreen,
-        }
-    }
-
-    #[cfg(feature="rusttype")]
-    pub fn new(width: usize, height: usize) -> Display {
-        let size = width * height;
-        let offscreen = OffscreenBuffer::new(size);
-        Display {
-            width,
-            height,
-            offscreen,
-            font: FontCollection::from_bytes(FONT).into_font().unwrap(),
-            font_bold: FontCollection::from_bytes(FONT_BOLD).into_font().unwrap(),
-            font_bold_italic: FontCollection::from_bytes(FONT_BOLD_ITALIC).into_font().unwrap(),
-            font_italic: FontCollection::from_bytes(FONT_ITALIC).into_font().unwrap()
         }
     }
 
@@ -209,7 +169,6 @@ impl Display {
     }
 
     /// Draw a character
-    #[cfg(not(feature="rusttype"))]
     pub fn char(&mut self, x: usize, y: usize, character: char, color: u32, _bold: bool, _italic: bool) {
         if x + 8 <= self.width && y + 16 <= self.height {
             let mut dst = self.offscreen.as_mut_ptr() as usize + (y * self.width + x) * 4;
@@ -225,59 +184,6 @@ impl Display {
                     }
                     dst += self.width * 4;
                 }
-            }
-        }
-    }
-
-    /// Draw a character
-    #[cfg(feature="rusttype")]
-    pub fn char(&mut self, x: usize, y: usize, character: char, color: u32, bold: bool, italic: bool) {
-        let width = self.width;
-        let height = self.height;
-        let offscreen = self.offscreen.as_mut_ptr() as usize;
-
-        let font = if bold && italic {
-            &self.font_bold_italic
-        } else if bold {
-            &self.font_bold
-        } else if italic {
-            &self.font_italic
-        } else {
-            &self.font
-        };
-
-        if let Some(glyph) = font.glyph(character){
-            let scale = Scale::uniform(16.0);
-            let v_metrics = font.v_metrics(scale);
-            let point = point(0.0, v_metrics.ascent);
-            let glyph = glyph.scaled(scale).positioned(point);
-            if let Some(bb) = glyph.pixel_bounding_box() {
-                glyph.draw(|off_x, off_y, v| {
-                    let off_x = x + (off_x as i32 + bb.min.x) as usize;
-                    let off_y = y + (off_y as i32 + bb.min.y) as usize;
-                    // There's still a possibility that the glyph clips the boundaries of the bitmap
-                    if off_x < width && off_y < height {
-                        if v > 0.0 {
-                            let f_a = (v * 255.0) as u32;
-                            let f_r = (((color >> 16) & 0xFF) * f_a)/255;
-                            let f_g = (((color >> 8) & 0xFF) * f_a)/255;
-                            let f_b = ((color & 0xFF) * f_a)/255;
-
-                            let offscreen_ptr = (offscreen + (off_y * width + off_x) * 4) as *mut u32;
-
-                            let bg = unsafe { *offscreen_ptr };
-
-                            let b_a = 255 - f_a;
-                            let b_r = (((bg >> 16) & 0xFF) * b_a)/255;
-                            let b_g = (((bg >> 8) & 0xFF) * b_a)/255;
-                            let b_b = ((bg & 0xFF) * b_a)/255;
-
-                            let c = ((f_r + b_r) << 16) | ((f_g + b_g) << 8) | (f_b + b_b);
-
-                            unsafe { *offscreen_ptr = c; }
-                        }
-                    }
-                });
             }
         }
     }

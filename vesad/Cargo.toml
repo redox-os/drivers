@@ -6,7 +6,6 @@ edition = "2018"
 [dependencies]
 orbclient = "0.3.27"
 ransid = "0.4"
-rusttype = { version = "0.2", optional = true }
 redox_syscall = "0.4"
 redox-daemon = "0.1"
 
