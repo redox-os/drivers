@@ -121,7 +121,8 @@ impl Screen for TextScreen {
     }
 
     fn resize(&mut self, width: usize, height: usize) {
-        self.screen.display.resize(width, height);
+        self.screen.resize(width, height);
+        self.screen.input.clear();
         self.console.state.w = width / 8;
         self.console.state.h = height / 16;
     }
