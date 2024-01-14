@@ -205,22 +205,6 @@ impl SchemeMut for DisplayScheme {
         }
     }
 
-    /*
-    fn fmap(&mut self, id: usize, map: &Map) -> Result<usize> {
-        let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
-
-        if let HandleKind::Screen(vt_i, screen_i) = handle.kind {
-            if let Some(screens) = self.vts.get(&vt_i) {
-                if let Some(screen) = screens.get(&screen_i) {
-                    return screen.map(map.offset, map.size);
-                }
-            }
-        }
-
-        Err(Error::new(EBADF))
-    }
-    */
-
     fn fpath(&mut self, id: usize, buf: &mut [u8]) -> Result<usize> {
         let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
@@ -231,7 +215,7 @@ impl SchemeMut for DisplayScheme {
             },
             HandleKind::Screen(vt_i, screen_i) => if let Some(screens) = self.vts.get(&vt_i) {
                 if let Some(screen) = screens.get(&screen_i) {
-                    format!("display:{}.{}/{}/{}", vt_i.0, screen_i.0, screen.width(), screen.height())
+                    format!("display:{}.{}/{}/{}", vt_i.0, screen_i.0, screen.width, screen.height)
                 } else {
                     return Err(Error::new(EBADF));
                 }
@@ -340,20 +324,6 @@ impl SchemeMut for DisplayScheme {
         }
     }
 
-    fn seek(&mut self, id: usize, _pos: isize, _whence: usize) -> Result<isize> {
-        let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
-
-        if let HandleKind::Screen(vt_i, screen_i) = handle.kind {
-            if let Some(screens) = self.vts.get_mut(&vt_i) {
-                if screens.contains_key(&screen_i) {
-                    return Ok(0);
-                }
-            }
-        }
-
-        Err(Error::new(EBADF))
-    }
-
     fn close(&mut self, id: usize) -> Result<usize> {
         self.handles.remove(&id).ok_or(Error::new(EBADF))?;
         Ok(0)
@@ -364,7 +334,11 @@ impl SchemeMut for DisplayScheme {
         if let HandleKind::Screen(vt_i, screen_i) = handle.kind {
             if let Some(screens) = self.vts.get(&vt_i) {
                 if let Some(screen) = screens.get(&screen_i) {
-                    return screen.map(off as usize, size);
+                    if off as usize + size <= screen.offscreen.len() * 4 {
+                        return Ok(screen.offscreen.as_ptr() as usize + off as usize);
+                    } else {
+                        return Err(Error::new(EINVAL));
+                    }
                 }
             }
         }

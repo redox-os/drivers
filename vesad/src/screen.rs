@@ -38,14 +38,6 @@ impl GraphicScreen {
 }
 
 impl GraphicScreen {
-    pub fn width(&self) -> usize {
-        self.width
-    }
-
-    pub fn height(&self) -> usize {
-        self.height
-    }
-
     pub fn resize(&mut self, width: usize, height: usize) {
         //TODO: Fix issue with mapped screens
 
@@ -98,14 +90,6 @@ impl GraphicScreen {
             width: width as u32,
             height: height as u32,
         }.to_event());
-    }
-
-    pub fn map(&self, offset: usize, size: usize) -> Result<usize> {
-        if offset + size <= self.offscreen.len() * 4 {
-            Ok(self.offscreen.as_ptr() as usize + offset)
-        } else {
-            Err(Error::new(EINVAL))
-        }
     }
 
     pub fn read(&mut self, buf: &mut [u8]) -> Result<usize> {

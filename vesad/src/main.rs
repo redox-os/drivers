@@ -12,10 +12,10 @@ use crate::{
     scheme::{DisplayScheme, HandleKind}
 };
 
-pub mod display;
-pub mod framebuffer;
-pub mod scheme;
-pub mod screen;
+mod display;
+mod framebuffer;
+mod scheme;
+mod screen;
 
 fn main() {
     let mut spec = Vec::new();
