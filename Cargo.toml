@@ -8,6 +8,7 @@ members = [
     "block-io-wrapper",
     "common",
     "e1000d",
+    "fbcond",
     "ided",
     "ihdad",
     "ixgbed",
