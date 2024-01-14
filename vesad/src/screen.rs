@@ -6,7 +6,6 @@ use orbclient::{Event, ResizeEvent};
 use syscall::error::*;
 
 use crate::display::OffscreenBuffer;
-use crate::screen::Screen;
 
 // Keep synced with orbital
 #[derive(Clone, Copy)]
@@ -38,16 +37,16 @@ impl GraphicScreen {
     }
 }
 
-impl Screen for GraphicScreen {
-    fn width(&self) -> usize {
+impl GraphicScreen {
+    pub fn width(&self) -> usize {
         self.width
     }
 
-    fn height(&self) -> usize {
+    pub fn height(&self) -> usize {
         self.height
     }
 
-    fn resize(&mut self, width: usize, height: usize) {
+    pub fn resize(&mut self, width: usize, height: usize) {
         //TODO: Fix issue with mapped screens
 
         if width != self.width || height != self.height {
@@ -101,7 +100,7 @@ impl Screen for GraphicScreen {
         }.to_event());
     }
 
-    fn map(&self, offset: usize, size: usize) -> Result<usize> {
+    pub fn map(&self, offset: usize, size: usize) -> Result<usize> {
         if offset + size <= self.offscreen.len() * 4 {
             Ok(self.offscreen.as_ptr() as usize + offset)
         } else {
@@ -109,11 +108,7 @@ impl Screen for GraphicScreen {
         }
     }
 
-    fn input(&mut self, event: &Event) {
-        self.input.push_back(*event);
-    }
-
-    fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+    pub fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
         let mut i = 0;
 
         let event_buf = unsafe { slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut Event, buf.len()/mem::size_of::<Event>()) };
@@ -126,7 +121,7 @@ impl Screen for GraphicScreen {
         Ok(i * mem::size_of::<Event>())
     }
 
-    fn can_read(&self) -> Option<usize> {
+    pub fn can_read(&self) -> Option<usize> {
         if self.input.is_empty() {
             None
         } else {
@@ -134,7 +129,7 @@ impl Screen for GraphicScreen {
         }
     }
 
-    fn write(&mut self, buf: &[u8]) -> Result<usize> {
+    pub fn write(&mut self, buf: &[u8]) -> Result<usize> {
         let sync_rects = unsafe {
             slice::from_raw_parts(
                 buf.as_ptr() as *const SyncRect,
@@ -147,11 +142,7 @@ impl Screen for GraphicScreen {
         Ok(sync_rects.len() * mem::size_of::<SyncRect>())
     }
 
-    fn seek(&mut self, _pos: isize, _whence: usize) -> Result<usize> {
-        Ok(0)
-    }
-
-    fn sync(&mut self, onscreen: &mut [u32], stride: usize) {
+    pub fn sync(&mut self, onscreen: &mut [u32], stride: usize) {
         for sync_rect in self.sync_rects.drain(..) {
             let x = sync_rect.x.try_into().unwrap_or(0);
             let y = sync_rect.y.try_into().unwrap_or(0);
@@ -186,7 +177,7 @@ impl Screen for GraphicScreen {
         }
     }
 
-    fn redraw(&mut self, onscreen: &mut [u32], stride: usize) {
+    pub fn redraw(&mut self, onscreen: &mut [u32], stride: usize) {
         let width = self.width.try_into().unwrap();
         let height = self.height.try_into().unwrap();
         self.sync_rects.push(SyncRect { x: 0, y: 0, w: width, h: height });

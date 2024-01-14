@@ -20,14 +20,8 @@ pub mod screen;
 fn main() {
     let mut spec = Vec::new();
 
-    for arg in env::args().skip(1) {
-        if arg == "T" {
-            spec.push(false);
-        } else if arg == "G" {
-            spec.push(true);
-        } else {
-            eprintln!("vesad: unknown screen type: {}", arg);
-        }
+    for _ in env::args().skip(1) {
+        spec.push(());
     }
 
     let width = usize::from_str_radix(
@@ -89,7 +83,7 @@ fn main() {
 
     redox_daemon::Daemon::new(|daemon| inner(daemon, framebuffers, &spec)).expect("failed to create daemon");
 }
-fn inner(daemon: redox_daemon::Daemon, framebuffers: Vec<FrameBuffer>, spec: &[bool]) -> ! {
+fn inner(daemon: redox_daemon::Daemon, framebuffers: Vec<FrameBuffer>, spec: &[()]) -> ! {
     let mut socket = File::create(":display.vesa").expect("vesad: failed to create display scheme");
 
     let mut scheme = DisplayScheme::new(framebuffers, &spec);
