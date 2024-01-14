@@ -1,4 +1,6 @@
+use std::fs::OpenOptions;
 use std::mem;
+use std::os::unix::fs::OpenOptionsExt;
 use std::{
     fs::File,
     io,
@@ -51,7 +53,10 @@ impl Display {
     pub fn open_vt(vt: usize) -> io::Result<Self> {
         let mut buffer = [0; 1024];
 
-        let input_handle = File::open(format!("input:consumer/{vt}"))?;
+        let input_handle = OpenOptions::new()
+            .read(true)
+            .custom_flags(O_NONBLOCK as i32)
+            .open(format!("input:consumer/{vt}"))?;
         let fd = input_handle.as_raw_fd();
 
         let written = syscall::fpath(fd as usize, &mut buffer)
