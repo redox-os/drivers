@@ -11,7 +11,7 @@ dependencies = [
  "log",
  "redox-daemon",
  "redox-log",
- "redox_event",
+ "redox_event 0.1.0",
  "redox_syscall 0.4.1",
  "spin",
 ]
@@ -59,7 +59,7 @@ dependencies = [
  "common",
  "netutils",
  "redox-daemon",
- "redox_event",
+ "redox_event 0.1.0",
  "redox_syscall 0.4.1",
 ]
 
@@ -119,15 +119,6 @@ checksum = "a4668cab20f66d8d020e1fbc0ebe47217433c1b6c8f2040faf858554e394ace6"
 name = "arg_parser"
 version = "0.1.0"
 source = "git+https://gitlab.redox-os.org/redox-os/arg-parser.git#1c434b55f3e1a0375ebcca85b3e88db7378e82fa"
-
-[[package]]
-name = "arrayvec"
-version = "0.4.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cd9fd44efafa8690358b7408d253adf110036b88f55672a933f01d616ad9b1b9"
-dependencies = [
- "nodrop",
-]
 
 [[package]]
 name = "arrayvec"
@@ -386,7 +377,7 @@ dependencies = [
  "common",
  "netutils",
  "redox-daemon",
- "redox_event",
+ "redox_event 0.1.0",
  "redox_syscall 0.4.1",
 ]
 
@@ -395,6 +386,18 @@ name = "equivalent"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5443807d6dff69373d433ab9ef5378ad8df50ca6298caf15de6e52e24aaf54d5"
+
+[[package]]
+name = "fbcond"
+version = "0.1.0"
+dependencies = [
+ "inputd",
+ "orbclient",
+ "ransid",
+ "redox-daemon",
+ "redox_event 0.2.1",
+ "redox_syscall 0.4.1",
+]
 
 [[package]]
 name = "fdt"
@@ -608,7 +611,7 @@ dependencies = [
  "pcid",
  "redox-daemon",
  "redox-log",
- "redox_event",
+ "redox_event 0.1.0",
  "redox_syscall 0.4.1",
  "spin",
 ]
@@ -659,7 +662,7 @@ dependencies = [
  "common",
  "netutils",
  "redox-daemon",
- "redox_event",
+ "redox_event 0.1.0",
  "redox_syscall 0.4.1",
 ]
 
@@ -685,10 +688,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4668fb0ea861c1df094127ac5f1da3409a82116a4ba74fca2e58ef927159bb3"
 
 [[package]]
-name = "linked-hash-map"
-version = "0.5.6"
+name = "libredox"
+version = "0.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0717cef1bc8b636c6e1c1bbdefc09e6322da8a9321966e8928ef80d20f7f770f"
+checksum = "85c833ca1e66078851dba29046874e38f08b2c883700aa29a03ddd3b23814ee8"
+dependencies = [
+ "bitflags 2.4.0",
+ "libc",
+ "redox_syscall 0.4.1",
+]
 
 [[package]]
 name = "lived"
@@ -755,18 +763,12 @@ dependencies = [
  "ntpclient",
  "pbr",
  "redox-daemon",
- "redox_event",
+ "redox_event 0.1.0",
  "redox_syscall 0.3.5",
  "redox_termios",
  "termion",
  "url",
 ]
-
-[[package]]
-name = "nodrop"
-version = "0.1.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72ef4a56884ca558e5ddb05a1d1e7e1bfd9a68d9ed024c21704cc98872dae1bb"
 
 [[package]]
 name = "ntpclient"
@@ -807,7 +809,7 @@ checksum = "b8f8bdf33df195859076e54ab11ee78a1b208382d3a26ec40d142ffc1ecc49ef"
 name = "nvmed"
 version = "0.1.0"
 dependencies = [
- "arrayvec 0.5.2",
+ "arrayvec",
  "bitflags 1.3.2",
  "block-io-wrapper",
  "common",
@@ -1139,6 +1141,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "redox_event"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "475e252d7add4825405d2248d530d33e22364ac5477eab816b56efbeec1e2712"
+dependencies = [
+ "bitflags 2.4.0",
+ "libredox",
+ "redox_syscall 0.4.1",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1185,7 +1198,7 @@ dependencies = [
  "pcid",
  "redox-daemon",
  "redox-log",
- "redox_event",
+ "redox_event 0.1.0",
  "redox_syscall 0.4.1",
 ]
 
@@ -1200,7 +1213,7 @@ dependencies = [
  "pcid",
  "redox-daemon",
  "redox-log",
- "redox_event",
+ "redox_event 0.1.0",
  "redox_syscall 0.4.1",
 ]
 
@@ -1209,17 +1222,6 @@ name = "rustc-hash"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "08d43f7aa6b08d49f382cde6a7982047c3426db949b1424bc4b7ec9ae12c6ce2"
-
-[[package]]
-name = "rusttype"
-version = "0.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d8d729e72445ad579171b01a9231657736b3793a2cf423078e687e20ecb8695a"
-dependencies = [
- "arrayvec 0.4.12",
- "linked-hash-map",
- "stb_truetype 0.2.8",
-]
 
 [[package]]
 name = "ryu"
@@ -1236,7 +1238,7 @@ dependencies = [
  "log",
  "redox-daemon",
  "redox-log",
- "redox_event",
+ "redox_event 0.1.0",
  "redox_syscall 0.4.1",
  "spin",
 ]
@@ -1386,24 +1388,6 @@ name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
-
-[[package]]
-name = "stb_truetype"
-version = "0.2.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9d1bec4382294c5a680fcebd29f8451e8d8c04479a026f6909004e2ab1cb425d"
-dependencies = [
- "stb_truetype 0.3.1",
-]
-
-[[package]]
-name = "stb_truetype"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f77b6b07e862c66a9f3e62a07588fee67cd90a9135a2b942409f195507b4fb51"
-dependencies = [
- "byteorder 1.4.3",
-]
 
 [[package]]
 name = "strsim"
@@ -1679,7 +1663,7 @@ dependencies = [
  "common",
  "orbclient",
  "redox-daemon",
- "redox_event",
+ "redox_event 0.1.0",
  "redox_syscall 0.4.1",
 ]
 
@@ -1711,7 +1695,6 @@ dependencies = [
  "ransid",
  "redox-daemon",
  "redox_syscall 0.4.1",
- "rusttype",
 ]
 
 [[package]]
@@ -1745,7 +1728,7 @@ dependencies = [
  "log",
  "pcid",
  "redox-log",
- "redox_event",
+ "redox_event 0.1.0",
  "redox_syscall 0.4.1",
  "static_assertions",
  "thiserror",
@@ -1981,7 +1964,7 @@ dependencies = [
  "plain",
  "redox-daemon",
  "redox-log",
- "redox_event",
+ "redox_event 0.1.0",
  "redox_syscall 0.4.1",
  "serde",
  "serde_json",
