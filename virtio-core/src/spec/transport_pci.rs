@@ -41,13 +41,11 @@ pub struct PciCapability {
     pub offset: u32,
     /// Length of the structure, in bytes.
     pub length: u32,
-    // FIXME move out of PciCapability type
-    notify_multiplier: u32,
 }
 
 // The size of `PciCapability` is 13 bytes since the generic
 // PCI fields are *not* included.
-const_assert_eq!(core::mem::size_of::<PciCapability>(), 17);
+const_assert_eq!(core::mem::size_of::<PciCapability>(), 13);
 
 #[derive(Debug, Copy, Clone)]
 #[repr(u8)]
@@ -69,14 +67,6 @@ pub enum CfgType {
 }
 
 const_assert_eq!(core::mem::size_of::<CfgType>(), 1);
-
-impl PciCapability {
-    /// ## Safety
-    /// Undefined if accessed from a capability type other than [`CfgType::Notify`].
-    pub unsafe fn notify_multiplier(&self) -> u32 {
-        self.notify_multiplier
-    }
-}
 
 #[derive(Debug)]
 #[repr(C)]
@@ -163,6 +153,22 @@ pub struct CommonCfg {
 }
 
 const_assert_eq!(core::mem::size_of::<CommonCfg>(), 64);
+
+#[derive(Debug, Copy, Clone)]
+#[repr(C, packed)]
+pub struct PciCapabilityNotify {
+    pub cap: PciCapability,
+    /// Multiplier for queue_notify_off.
+    notify_off_multiplier: u32,
+}
+
+impl PciCapabilityNotify {
+    pub fn notify_off_multiplier(&self) -> u32 {
+        self.notify_off_multiplier
+    }
+}
+
+const_assert_eq!(core::mem::size_of::<PciCapabilityNotify>(), 17);
 
 /// Vector value used to disable MSI for queue
 pub const VIRTIO_MSI_NO_VECTOR: u16 = 0xffff;

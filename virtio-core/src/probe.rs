@@ -1,9 +1,9 @@
-
-use std::ptr::NonNull;
 use std::fs::File;
+use std::ptr::NonNull;
 use std::sync::Arc;
+
+use pcid_interface::msi::{MsixCapability, MsixTableEntry};
 use pcid_interface::*;
-use pcid_interface::msi::{self, MsixTableEntry, MsixCapability};
 
 use crate::spec::*;
 use crate::transport::{Error, StandardTransport, Transport};
@@ -131,7 +131,10 @@ pub fn probe_device<'a>(pcid_handle: &mut PcidServerHandle) -> Result<Device<'a>
 
                 // SAFETY: The capability type is `Notify`, so its safe to access
                 //         the `notify_multiplier` field.
-                let multiplier = unsafe { capability.notify_multiplier() };
+                let multiplier = unsafe {
+                    (&*(capability as *const PciCapability as *const PciCapabilityNotify))
+                        .notify_off_multiplier()
+                };
                 notify_addr = Some((address, multiplier));
             }
 
