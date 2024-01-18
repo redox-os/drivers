@@ -60,6 +60,8 @@ pub fn enable_msix(pcid_handle: &mut PcidServerHandle) -> Result<File, Error> {
     };
 
     // Allocate the primary MSI vector.
+    // FIXME allow the driver to register multiple MSI-X vectors
+    // FIXME move this MSI-X registering code into pcid_interface or pcid itself
     let interrupt_handle = {
         let table_entry_pointer = info.table_entry_pointer(MSIX_PRIMARY_VECTOR as usize);
 

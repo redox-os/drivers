@@ -47,6 +47,8 @@ bitflags::bitflags! {
 mod split_virtqueue;
 pub use split_virtqueue::*;
 
+// FIXME add [2.8 Packed Virtqueues](https://docs.oasis-open.org/virtio/virtio/v1.2/cs01/virtio-v1.2-cs01.html#x1-720008)
+
 mod transport_pci;
 pub use transport_pci::*;
 

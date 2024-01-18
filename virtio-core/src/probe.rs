@@ -150,6 +150,7 @@ pub fn probe_device(pcid_handle: &mut PcidServerHandle) -> Result<Device, Error>
     if let (Some(common_addr), Some(device_addr), Some((notify_addr, notify_multiplier))) =
         (common_addr, device_addr, notify_addr)
     {
+        // FIXME this is explicitly allowed by the virtio specification to happen
         assert!(
             notify_multiplier != 0,
             "virtio-core::device_probe: device uses the same Queue Notify addresses for all queues"
