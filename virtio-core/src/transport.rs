@@ -68,7 +68,7 @@ pub const fn queue_part_sizes(queue_size: usize) -> (usize, usize, usize) {
     )
 }
 
-pub fn spawn_irq_thread(irq_handle: &File, queue: &Arc<Queue<'static>>) -> Result<(), Error> {
+pub fn spawn_irq_thread(irq_handle: &File, queue: &Arc<Queue<'static>>) {
     let irq_fd = irq_handle.as_raw_fd();
     let queue_copy = queue.clone();
 
@@ -91,8 +91,6 @@ pub fn spawn_irq_thread(irq_handle: &File, queue: &Arc<Queue<'static>>) -> Resul
             event_queue.run().unwrap();
         }
     });
-
-    Ok(())
 }
 
 pub trait NotifyBell {
@@ -645,7 +643,7 @@ impl Transport for StandardTransport<'_> {
             vector,
         );
 
-        spawn_irq_thread(irq_handle, &queue)?;
+        spawn_irq_thread(irq_handle, &queue);
         Ok(queue)
     }
 
