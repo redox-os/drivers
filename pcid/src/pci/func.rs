@@ -1,16 +1,18 @@
-use byteorder::{LittleEndian, ByteOrder};
+use byteorder::{ByteOrder, LittleEndian};
 
-use super::PciDev;
+use super::{PciAddress, PciDev};
 
 pub trait ConfigReader {
     unsafe fn read_range(&self, offset: u16, len: u16) -> Vec<u8> {
         assert!(len > 3 && len % 4 == 0, "invalid range length: {}", len);
         let mut ret = Vec::with_capacity(len as usize);
-        let results = (offset..offset + len).step_by(4).fold(Vec::new(), |mut acc, offset| {
-            let val = self.read_u32(offset);
-            acc.push(val);
-            acc
-        });
+        let results = (offset..offset + len)
+            .step_by(4)
+            .fold(Vec::new(), |mut acc, offset| {
+                let val = self.read_u32(offset);
+                acc.push(val);
+                acc
+            });
         ret.set_len(len as usize);
         LittleEndian::write_u32_into(&*results, &mut ret);
         ret
@@ -37,11 +39,18 @@ pub struct PciFunc<'pci> {
 
 impl<'pci> ConfigReader for PciFunc<'pci> {
     unsafe fn read_u32(&self, offset: u16) -> u32 {
-        self.dev.read(self.num, offset)
+        self.dev.bus.pci.read(
+            PciAddress::new(0, self.dev.bus.num, self.dev.num, self.num),
+            offset,
+        )
     }
 }
 impl<'pci> ConfigWriter for PciFunc<'pci> {
     unsafe fn write_u32(&self, offset: u16, value: u32) {
-        self.dev.write(self.num, offset, value);
+        self.dev.bus.pci.write(
+            PciAddress::new(0, self.dev.bus.num, self.dev.num, self.num),
+            offset,
+            value,
+        );
     }
 }
