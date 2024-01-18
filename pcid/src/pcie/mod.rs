@@ -189,25 +189,22 @@ impl Pcie {
 }
 
 impl CfgAccess for Pcie {
-    unsafe fn read_nolock(&self, bus: u8, dev: u8, func: u8, offset: u16) -> u32 {
+    unsafe fn read(&self, bus: u8, dev: u8, func: u8, offset: u16) -> u32 {
+        let _guard = self.lock.lock().unwrap();
+
         self.with_pointer(bus, dev, func, offset, |pointer| match pointer {
             Some(address) => ptr::read_volatile::<u32>(address),
             None => self.fallback.read(bus, dev, func, offset),
         })
     }
-    unsafe fn read(&self, bus: u8, dev: u8, func: u8, offset: u16) -> u32 {
+
+    unsafe fn write(&self, bus: u8, dev: u8, func: u8, offset: u16, value: u32) {
         let _guard = self.lock.lock().unwrap();
-        self.read_nolock(bus, dev, func, offset)
-    }
-    unsafe fn write_nolock(&self, bus: u8, dev: u8, func: u8, offset: u16, value: u32) {
+
         self.with_pointer(bus, dev, func, offset, |pointer| match pointer {
             Some(address) => ptr::write_volatile::<u32>(address, value),
             None => { self.fallback.read(bus, dev, func, offset); }
         });
-    }
-    unsafe fn write(&self, bus: u8, dev: u8, func: u8, offset: u16, value: u32) {
-        let _guard = self.lock.lock().unwrap();
-        self.write_nolock(bus, dev, func, offset, value);
     }
 }
 

@@ -23,10 +23,7 @@ pub mod header;
 pub mod msi;
 
 pub trait CfgAccess {
-    unsafe fn read_nolock(&self, bus: u8, dev: u8, func: u8, offset: u16) -> u32;
     unsafe fn read(&self, bus: u8, dev: u8, func: u8, offset: u16) -> u32;
-
-    unsafe fn write_nolock(&self, bus: u8, dev: u8, func: u8, offset: u16, value: u32);
     unsafe fn write(&self, bus: u8, dev: u8, func: u8, offset: u16, value: u32);
 }
 
@@ -68,7 +65,9 @@ impl Pci {
 }
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 impl CfgAccess for Pci {
-    unsafe fn read_nolock(&self, bus: u8, dev: u8, func: u8, offset: u16) -> u32 {
+    unsafe fn read(&self, bus: u8, dev: u8, func: u8, offset: u16) -> u32 {
+        let _guard = self.lock.lock().unwrap();
+
         self.iopl_once.call_once(Self::set_iopl);
 
         let offset = u8::try_from(offset).expect("offset too large for PCI 3.0 configuration space");
@@ -78,12 +77,9 @@ impl CfgAccess for Pci {
         Pio::<u32>::new(0xCFC).read()
     }
 
-    unsafe fn read(&self, bus: u8, dev: u8, func: u8, offset: u16) -> u32 {
+    unsafe fn write(&self, bus: u8, dev: u8, func: u8, offset: u16, value: u32) {
         let _guard = self.lock.lock().unwrap();
-        self.read_nolock(bus, dev, func, offset)
-    }
 
-    unsafe fn write_nolock(&self, bus: u8, dev: u8, func: u8, offset: u16, value: u32) {
         self.iopl_once.call_once(Self::set_iopl);
 
         let offset = u8::try_from(offset).expect("offset too large for PCI 3.0 configuration space");
@@ -92,28 +88,17 @@ impl CfgAccess for Pci {
         Pio::<u32>::new(0xCF8).write(address);
         Pio::<u32>::new(0xCFC).write(value);
     }
-    unsafe fn write(&self, bus: u8, dev: u8, func: u8, offset: u16, value: u32) {
-        let _guard = self.lock.lock().unwrap();
-        self.write_nolock(bus, dev, func, offset, value)
-    }
 }
 #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
 impl CfgAccess for Pci {
-    unsafe fn read_nolock(&self, bus: u8, dev: u8, func: u8, offset: u16) -> u32 {
-        todo!("Pci::CfgAccess::read_nolock on this architecture")
-    }
-
     unsafe fn read(&self, bus: u8, dev: u8, func: u8, offset: u16) -> u32 {
         let _guard = self.lock.lock().unwrap();
-        self.read_nolock(bus, dev, func, offset)
+        todo!("Pci::CfgAccess::read on this architecture")
     }
 
-    unsafe fn write_nolock(&self, bus: u8, dev: u8, func: u8, offset: u16, value: u32) {
-        todo!("Pci::CfgAccess::write_nolock on this architecture")
-    }
     unsafe fn write(&self, bus: u8, dev: u8, func: u8, offset: u16, value: u32) {
         let _guard = self.lock.lock().unwrap();
-        self.write_nolock(bus, dev, func, offset, value)
+        todo!("Pci::CfgAccess::write on this architecture")
     }
 }
 
