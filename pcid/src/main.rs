@@ -43,17 +43,9 @@ pub struct DriverHandler {
     state: Arc<State>,
 }
 fn with_pci_func_raw<T, F: FnOnce(&PciFunc) -> T>(pci: &dyn CfgAccess, bus_num: u8, dev_num: u8, func_num: u8, function: F) -> T {
-    let bus = PciBus {
-        pci,
-        num: bus_num,
-    };
-    let dev = PciDev {
-        bus: &bus,
-        num: dev_num,
-    };
     let func = PciFunc {
-        dev: &dev,
-        num: func_num,
+        pci,
+        addr: PciAddress::new(0, bus_num, dev_num, func_num),
     };
     function(&func)
 }
@@ -399,17 +391,9 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, bus_num: u8,
             }
 
             let capabilities = if header.status() & (1 << 4) != 0 {
-                let bus = PciBus {
-                    pci: state.preferred_cfg_access(),
-                    num: bus_num,
-                };
-                let dev = PciDev {
-                    bus: &bus,
-                    num: dev_num
-                };
                 let func = PciFunc {
-                    dev: &dev,
-                    num: func_num,
+                    pci: state.preferred_cfg_access(),
+                    addr: PciAddress::new(0, bus_num, dev_num, func_num),
                 };
                 crate::pci::cap::CapabilitiesIter { inner: crate::pci::cap::CapabilityOffsetsIter::new(header.cap_pointer(), &func) }.collect::<Vec<_>>()
             } else {
@@ -631,10 +615,10 @@ fn main(args: Args) {
         let bus_num = bus_nums[bus_i];
         bus_i += 1;
 
-        let bus = PciBus { pci, num: bus_num };
+        let bus = PciBus { num: bus_num };
         'dev: for dev in bus.devs() {
-            for func in dev.funcs() {
-                let func_num = func.num;
+            for func in dev.funcs(pci) {
+                let func_num = func.addr.function();
                 match PciHeader::from_reader(func) {
                     Ok(header) => {
                         handle_parsed_header(Arc::clone(&state), &config, bus.num, dev.num, func_num, header);

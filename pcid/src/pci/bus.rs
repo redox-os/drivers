@@ -1,29 +1,29 @@
-use super::{CfgAccess, PciDev};
+use super::PciDev;
 
-pub struct PciBus<'pci> {
-    pub pci: &'pci dyn CfgAccess,
+#[derive(Copy, Clone)]
+pub struct PciBus {
     pub num: u8,
 }
 
-impl<'pci> PciBus<'pci> {
-    pub fn devs(&'pci self) -> PciBusIter<'pci> {
+impl<'pci> PciBus {
+    pub fn devs(self) -> PciBusIter {
         PciBusIter::new(self)
     }
 }
 
-pub struct PciBusIter<'pci> {
-    bus: &'pci PciBus<'pci>,
+pub struct PciBusIter {
+    bus: PciBus,
     num: u8,
 }
 
-impl<'pci> PciBusIter<'pci> {
-    pub fn new(bus: &'pci PciBus<'pci>) -> Self {
+impl PciBusIter {
+    pub fn new(bus: PciBus) -> Self {
         PciBusIter { bus, num: 0 }
     }
 }
 
-impl<'pci> Iterator for PciBusIter<'pci> {
-    type Item = PciDev<'pci>;
+impl Iterator for PciBusIter {
+    type Item = PciDev;
     fn next(&mut self) -> Option<Self::Item> {
         match self.num {
             dev_num if dev_num < 32 => {

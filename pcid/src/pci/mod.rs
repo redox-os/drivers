@@ -188,14 +188,11 @@ impl<'pci> PciIter<'pci> {
 }
 
 impl<'pci> Iterator for PciIter<'pci> {
-    type Item = PciBus<'pci>;
+    type Item = PciBus;
     fn next(&mut self) -> Option<Self::Item> {
         match self.num {
             Some(bus_num) => {
-                let bus = PciBus {
-                    pci: self.pci,
-                    num: bus_num,
-                };
+                let bus = PciBus { num: bus_num };
                 self.num = bus_num.checked_add(1);
                 Some(bus)
             }
