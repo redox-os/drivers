@@ -144,7 +144,7 @@ impl Transport for LegacyTransport {
             vector,
         );
 
-        spawn_irq_thread(irq_handle, &queue)?;
+        spawn_irq_thread(irq_handle, &queue);
         Ok(queue)
     }
 
