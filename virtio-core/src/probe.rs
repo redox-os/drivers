@@ -7,19 +7,18 @@ use pcid_interface::*;
 
 use crate::spec::*;
 use crate::transport::{Error, StandardTransport, Transport};
-use crate::utils::{align_down, VolatileCell};
+use crate::utils::align_down;
 
-pub struct Device<'a> {
+pub struct Device {
     pub transport: Arc<dyn Transport>,
     pub device_space: *const u8,
     pub irq_handle: File,
-    pub isr: &'a VolatileCell<u32>,
 }
 
 // FIXME(andypython): `device_space` should not be `Send` nor `Sync`. Take
 // it out of `Device`.
-unsafe impl Send for Device<'_> {}
-unsafe impl Sync for Device<'_> {}
+unsafe impl Send for Device {}
+unsafe impl Sync for Device {}
 
 pub struct MsixInfo {
     pub virt_table_base: NonNull<MsixTableEntry>,
@@ -60,7 +59,7 @@ fn enable_msix(pcid_handle: &mut PcidServerHandle) -> Result<File, Error> {
 ///
 /// ## Panics
 /// This function panics if the device is not a virtio device.
-pub fn probe_device<'a>(pcid_handle: &mut PcidServerHandle) -> Result<Device<'a>, Error> {
+pub fn probe_device(pcid_handle: &mut PcidServerHandle) -> Result<Device, Error> {
     let pci_config = pcid_handle.fetch_config()?;
     let pci_header = pcid_handle.fetch_header()?;
 
@@ -71,7 +70,6 @@ pub fn probe_device<'a>(pcid_handle: &mut PcidServerHandle) -> Result<Device<'a>
 
     let mut common_addr = None;
     let mut notify_addr = None;
-    let mut isr_addr = None;
     let mut device_addr = None;
 
     for capability in pcid_handle
@@ -89,7 +87,7 @@ pub fn probe_device<'a>(pcid_handle: &mut PcidServerHandle) -> Result<Device<'a>
         let capability = unsafe { &*(capability.data.as_ptr() as *const PciCapability) };
 
         match capability.cfg_type {
-            CfgType::Common | CfgType::Notify | CfgType::Isr | CfgType::Device => {}
+            CfgType::Common | CfgType::Notify | CfgType::Device => {}
             _ => continue,
         }
 
@@ -138,11 +136,6 @@ pub fn probe_device<'a>(pcid_handle: &mut PcidServerHandle) -> Result<Device<'a>
                 notify_addr = Some((address, multiplier));
             }
 
-            CfgType::Isr => {
-                debug_assert!(isr_addr.is_none());
-                isr_addr = Some(address);
-            }
-
             CfgType::Device => {
                 debug_assert!(device_addr.is_none());
                 device_addr = Some(address);
@@ -154,12 +147,8 @@ pub fn probe_device<'a>(pcid_handle: &mut PcidServerHandle) -> Result<Device<'a>
         log::trace!("virtio-core::device-probe: {capability:?}");
     }
 
-    if let (
-        Some(common_addr),
-        Some(isr_addr),
-        Some(device_addr),
-        Some((notify_addr, notify_multiplier)),
-    ) = (common_addr, isr_addr, device_addr, notify_addr)
+    if let (Some(common_addr), Some(device_addr), Some((notify_addr, notify_multiplier))) =
+        (common_addr, device_addr, notify_addr)
     {
         assert!(
             notify_multiplier != 0,
@@ -168,7 +157,6 @@ pub fn probe_device<'a>(pcid_handle: &mut PcidServerHandle) -> Result<Device<'a>
 
         let common = unsafe { &mut *(common_addr as *mut CommonCfg) };
         let device_space = unsafe { &mut *(device_addr as *mut u8) };
-        let isr = unsafe { &*(isr_addr as *mut VolatileCell<u32>) };
 
         let transport = StandardTransport::new(
             common,
@@ -193,7 +181,6 @@ pub fn probe_device<'a>(pcid_handle: &mut PcidServerHandle) -> Result<Device<'a>
             transport,
             device_space,
             irq_handle,
-            isr,
         };
 
         device.transport.reset();
@@ -205,7 +192,7 @@ pub fn probe_device<'a>(pcid_handle: &mut PcidServerHandle) -> Result<Device<'a>
     }
 }
 
-pub fn reinit<'a>(device: &Device<'a>) -> Result<(), Error> {
+pub fn reinit(device: &Device) -> Result<(), Error> {
     // XXX: According to the virtio specification v1.2, setting the ACKNOWLEDGE and DRIVER bits
     //      in `device_status` is required to be done in two steps.
     device

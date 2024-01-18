@@ -1,13 +1,8 @@
-use crate::{
-    reinit,
-    transport::{Error},
-    utils::VolatileCell,
-    Device, legacy_transport::LegacyTransport,
-};
+use crate::{legacy_transport::LegacyTransport, reinit, transport::Error, Device};
 
-use pcid_interface::msi::{self, MsixTableEntry};
 use pcid_interface::irq_helpers::{allocate_single_interrupt_vector, read_bsp_apic_id};
-use std::{ptr::NonNull, fs::File};
+use pcid_interface::msi::{self, MsixTableEntry};
+use std::{fs::File, ptr::NonNull};
 
 use syscall::Io;
 
@@ -16,7 +11,6 @@ use crate::{probe::MsixInfo, MSIX_PRIMARY_VECTOR};
 use pcid_interface::*;
 
 pub fn enable_msix(pcid_handle: &mut PcidServerHandle) -> Result<File, Error> {
-
     let pci_config = pcid_handle.fetch_config()?;
 
     // Extended message signaled interrupts.
@@ -80,7 +74,8 @@ pub fn enable_msix(pcid_handle: &mut PcidServerHandle) -> Result<File, Error> {
             .unwrap()
             .expect("virtio_core: interrupt vector exhaustion");
 
-        let msg_data = msi::x86_64::message_data_edge_triggered(msi::x86_64::DeliveryMode::Fixed, vector);
+        let msg_data =
+            msi::x86_64::message_data_edge_triggered(msi::x86_64::DeliveryMode::Fixed, vector);
 
         table_entry_pointer.addr_lo.write(addr);
         table_entry_pointer.addr_hi.write(0);
@@ -98,15 +93,13 @@ pub fn enable_msix(pcid_handle: &mut PcidServerHandle) -> Result<File, Error> {
     Ok(interrupt_handle)
 }
 
-pub fn probe_legacy_port_transport<'a>(
+pub fn probe_legacy_port_transport(
     pci_header: &PciHeader,
     pcid_handle: &mut PcidServerHandle,
-) -> Result<Device<'a>, Error> {
+) -> Result<Device, Error> {
     if let PciBar::Port(port) = pci_header.get_bar(0) {
         unsafe { syscall::iopl(3).expect("virtio: failed to set I/O privilege level") };
         log::warn!("virtio: using legacy transport");
-
-        static SHIM: VolatileCell<u32> = VolatileCell::new(0);
 
         let transport = LegacyTransport::new(port);
 
@@ -123,7 +116,6 @@ pub fn probe_legacy_port_transport<'a>(
         let device = Device {
             transport,
             irq_handle,
-            isr: &SHIM,
             device_space: core::ptr::null_mut(),
         };
 

@@ -1,10 +1,4 @@
-use crate::{
-    legacy_transport::LegacyTransport,
-    reinit,
-    transport::Error,
-    utils::VolatileCell,
-    Device,
-};
+use crate::{legacy_transport::LegacyTransport, reinit, transport::Error, Device};
 use std::fs::File;
 
 use pcid_interface::*;
@@ -13,15 +7,13 @@ pub fn enable_msix(pcid_handle: &mut PcidServerHandle) -> Result<File, Error> {
     panic!("virtio-core: x86 doesn't support enable_msix")
 }
 
-pub fn probe_legacy_port_transport<'a>(
+pub fn probe_legacy_port_transport(
     pci_header: &PciHeader,
     pcid_handle: &mut PcidServerHandle,
-) -> Result<Device<'a>, Error> {
+) -> Result<Device, Error> {
     if let PciBar::Port(port) = pci_header.get_bar(0) {
         unsafe { syscall::iopl(3).expect("virtio: failed to set I/O privilege level") };
         log::warn!("virtio: using legacy transport");
-
-        static SHIM: VolatileCell<u32> = VolatileCell::new(0);
 
         let transport = LegacyTransport::new(port);
 
@@ -38,7 +30,6 @@ pub fn probe_legacy_port_transport<'a>(
         let device = Device {
             transport,
             irq_handle,
-            isr: &SHIM,
             device_space: core::ptr::null_mut(),
         };
 
