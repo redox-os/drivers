@@ -10,7 +10,7 @@ use log::{debug, error, info, warn, trace};
 use redox_log::{OutputBuilder, RedoxLogger};
 
 use crate::config::Config;
-use crate::pci::{CfgAccess, Pci, PciIter, PciBar, PciBus, PciClass, PciDev, PciFunc, PciHeader, PciHeaderError, PciHeaderType};
+use crate::pci::{CfgAccess, Pci, PciAddress, PciBar, PciBus, PciClass, PciDev, PciFunc, PciHeader, PciHeaderError, PciHeaderType};
 use crate::pci::cap::Capability as PciCapability;
 use crate::pci::func::{ConfigReader, ConfigWriter};
 use crate::pcie::Pcie;
@@ -327,9 +327,9 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, bus_num: u8,
         if let Some(ref args) = driver.command {
             // Enable bus mastering, memory space, and I/O space
             unsafe {
-                let mut data = pci.read(bus_num, dev_num, func_num, 0x04);
+                let mut data = pci.read(PciAddress::new(0, bus_num, dev_num, func_num), 0x04);
                 data |= 7;
-                pci.write(bus_num, dev_num, func_num, 0x04, data);
+                pci.write(PciAddress::new(0, bus_num, dev_num, func_num), 0x04, data);
             }
 
             // Set IRQ line to 9 if not set
@@ -337,14 +337,14 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, bus_num: u8,
             let mut interrupt_pin;
 
             unsafe {
-                let mut data = pci.read(bus_num, dev_num, func_num, 0x3C);
+                let mut data = pci.read(PciAddress::new(0, bus_num, dev_num, func_num), 0x3C);
                 irq = (data & 0xFF) as u8;
                 interrupt_pin = ((data & 0x0000_FF00) >> 8) as u8;
                 if irq == 0xFF {
                     irq = 9;
                 }
                 data = (data & 0xFFFFFF00) | irq as u32;
-                pci.write(bus_num, dev_num, func_num, 0x3C, data);
+                pci.write(PciAddress::new(0, bus_num, dev_num, func_num), 0x3C, data);
             };
 
             // Find BAR sizes
@@ -363,11 +363,25 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, bus_num: u8,
 
                     let offset = 0x10 + (i as u8) * 4;
 
-                    let original = pci.read(bus_num, dev_num, func_num, offset.into());
-                    pci.write(bus_num, dev_num, func_num, offset.into(), 0xFFFFFFFF);
+                    let original = pci.read(
+                        PciAddress::new(0, bus_num, dev_num, func_num),
+                        offset.into(),
+                    );
+                    pci.write(
+                        PciAddress::new(0, bus_num, dev_num, func_num),
+                        offset.into(),
+                        0xFFFFFFFF,
+                    );
 
-                    let new = pci.read(bus_num, dev_num, func_num, offset.into());
-                    pci.write(bus_num, dev_num, func_num, offset.into(), original);
+                    let new = pci.read(
+                        PciAddress::new(0, bus_num, dev_num, func_num),
+                        offset.into(),
+                    );
+                    pci.write(
+                        PciAddress::new(0, bus_num, dev_num, func_num),
+                        offset.into(),
+                        original,
+                    );
 
                     let masked = if new & 1 == 1 {
                         new & 0xFFFFFFFC

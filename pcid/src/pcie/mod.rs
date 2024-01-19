@@ -1,12 +1,12 @@
-use std::{fmt, fs, io, mem, ptr, slice};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
+use std::{fmt, fs, io, mem, ptr, slice};
 
 use syscall::PAGE_SIZE;
 
 use smallvec::SmallVec;
 
-use crate::pci::{CfgAccess, Pci, PciIter};
+use crate::pci::{CfgAccess, Pci, PciAddress, PciIter};
 
 pub const MCFG_NAME: [u8; 4] = *b"MCFG";
 
@@ -137,7 +137,7 @@ impl fmt::Debug for Mcfgs {
 pub struct Pcie {
     lock: Mutex<()>,
     mcfgs: Mcfgs,
-    maps: Mutex<BTreeMap<(u8, u8, u8), *mut u32>>,
+    maps: Mutex<BTreeMap<PciAddress, *mut u32>>,
     fallback: Arc<Pci>,
 }
 unsafe impl Send for Pcie {}
@@ -154,34 +154,55 @@ impl Pcie {
             fallback,
         })
     }
-    fn addr_offset_in_bytes(starting_bus: u8, bus: u8, dev: u8, func: u8, offset: u16) -> usize {
+    fn addr_offset_in_bytes(starting_bus: u8, address: PciAddress, offset: u16) -> usize {
         assert_eq!(offset & 0xFFFC, offset, "pcie offset not dword-aligned");
         assert_eq!(offset & 0x0FFF, offset, "pcie offset larger than 4095");
-        assert_eq!(dev & 0x1F, dev, "pcie dev number larger than 5 bits");
-        assert_eq!(func & 0x7, func, "pcie func number larger than 3 bits");
 
-        (((bus - starting_bus) as usize) << 20) | ((dev as usize) << 15) | ((func as usize) << 12) | (offset as usize)
+        assert_eq!(
+            address.segment(),
+            0,
+            "multiple segments not yet implemented"
+        );
+
+        (((address.bus() - starting_bus) as usize) << 20)
+            | ((address.device() as usize) << 15)
+            | ((address.function() as usize) << 12)
+            | (offset as usize)
     }
-    fn addr_offset_in_dwords(starting_bus: u8, bus: u8, dev: u8, func: u8, offset: u16) -> usize {
-        Self::addr_offset_in_bytes(starting_bus, bus, dev, func, offset) / mem::size_of::<u32>()
+    fn addr_offset_in_dwords(starting_bus: u8, address: PciAddress, offset: u16) -> usize {
+        Self::addr_offset_in_bytes(starting_bus, address, offset) / mem::size_of::<u32>()
     }
-    unsafe fn with_pointer<T, F: FnOnce(Option<&mut u32>) -> T>(&self, bus: u8, dev: u8, func: u8, offset: u16, f: F) -> T {
-        let (base_address_phys, starting_bus) = match self.mcfgs.at_bus(bus) {
+    unsafe fn with_pointer<T, F: FnOnce(Option<&mut u32>) -> T>(
+        &self,
+        address: PciAddress,
+        offset: u16,
+        f: F,
+    ) -> T {
+        let (base_address_phys, starting_bus) = match self.mcfgs.at_bus(address.bus()) {
             Some(t) => (t.base_addr, t.start_bus),
             None => return f(None),
         };
         let mut maps_lock = self.maps.lock().unwrap();
-        let virt_pointer = maps_lock.entry((bus, dev, func)).or_insert_with(|| {
+        let virt_pointer = maps_lock.entry(address).or_insert_with(|| {
             common::physmap(
-                base_address_phys as usize + Self::addr_offset_in_bytes(starting_bus, bus, dev, func, 0),
+                base_address_phys as usize + Self::addr_offset_in_bytes(starting_bus, address, 0),
                 PAGE_SIZE,
-                common::Prot { read: true, write: true },
+                common::Prot {
+                    read: true,
+                    write: true,
+                },
                 common::MemoryType::Uncacheable,
-            ).unwrap_or_else(|error| {
-                panic!("failed to physmap pcie configuration space for {:2x}:{:2x}.{:2x}: {:?}", bus, dev, func, error)
+            )
+            .unwrap_or_else(|error| {
+                panic!(
+                    "failed to physmap pcie configuration space for {}: {:?}",
+                    address, error
+                )
             }) as *mut u32
         });
-        f(Some(&mut *virt_pointer.offset((offset as usize / mem::size_of::<u32>()) as isize)))
+        f(Some(&mut *virt_pointer.offset(
+            (offset as usize / mem::size_of::<u32>()) as isize,
+        )))
     }
     pub fn buses<'pcie>(&'pcie self) -> PciIter<'pcie> {
         PciIter::new(self)
@@ -189,21 +210,23 @@ impl Pcie {
 }
 
 impl CfgAccess for Pcie {
-    unsafe fn read(&self, bus: u8, dev: u8, func: u8, offset: u16) -> u32 {
+    unsafe fn read(&self, address: PciAddress, offset: u16) -> u32 {
         let _guard = self.lock.lock().unwrap();
 
-        self.with_pointer(bus, dev, func, offset, |pointer| match pointer {
+        self.with_pointer(address, offset, |pointer| match pointer {
             Some(address) => ptr::read_volatile::<u32>(address),
-            None => self.fallback.read(bus, dev, func, offset),
+            None => self.fallback.read(address, offset),
         })
     }
 
-    unsafe fn write(&self, bus: u8, dev: u8, func: u8, offset: u16, value: u32) {
+    unsafe fn write(&self, address: PciAddress, offset: u16, value: u32) {
         let _guard = self.lock.lock().unwrap();
 
-        self.with_pointer(bus, dev, func, offset, |pointer| match pointer {
+        self.with_pointer(address, offset, |pointer| match pointer {
             Some(address) => ptr::write_volatile::<u32>(address, value),
-            None => { self.fallback.read(bus, dev, func, offset); }
+            None => {
+                self.fallback.write(address, offset, value);
+            }
         });
     }
 }
