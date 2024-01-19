@@ -4,8 +4,6 @@ use std::{fmt, fs, io, mem, ptr, slice};
 
 use syscall::PAGE_SIZE;
 
-use smallvec::{smallvec, SmallVec};
-
 use crate::pci::{CfgAccess, Pci, PciAddress, PciIter};
 
 pub const MCFG_NAME: [u8; 4] = *b"MCFG";
@@ -73,29 +71,21 @@ impl fmt::Debug for Mcfg {
 }
 
 pub struct Mcfgs {
-    tables: SmallVec<[Vec<u8>; 2]>,
+    bytes: Vec<u8>,
 }
 
 impl Mcfgs {
-    pub fn tables<'a>(&'a self) -> impl Iterator<Item = &'a Mcfg> + 'a {
-        self.tables.iter().filter_map(|bytes| {
-            let mcfg = plain::from_bytes::<Mcfg>(bytes).ok()?;
-            if mcfg.length as usize > bytes.len() {
+    pub fn table<'a>(&'a self) -> Option<&'a Mcfg> {
+        let mcfg = plain::from_bytes::<Mcfg>(&self.bytes).ok()?;
+        if mcfg.length as usize > self.bytes.len() {
                 return None;
             }
             Some(mcfg)
-        })
-    }
-    pub fn allocs<'a>(&'a self) -> impl Iterator<Item = &'a PcieAlloc> + 'a {
-        self.tables()
-            .map(|table| table.base_addr_structs().iter())
-            .flatten()
     }
 
     pub fn fetch() -> io::Result<Self> {
         let table_dir = fs::read_dir("acpi:tables")?;
 
-        let mut tables = smallvec![];
         for table_direntry in table_dir {
             let table_path = table_direntry?.path();
 
@@ -107,24 +97,30 @@ impl Mcfgs {
             // is fine.
             let table_filename = table_path.file_name().unwrap().as_encoded_bytes();
             if table_filename.get(0..4) == Some(&MCFG_NAME) {
-                tables.push(fs::read(table_path)?);
+                // There should only be a single MCFG table and Linux ignores
+                // all MCFG tables beyond the first too.
+                return Ok(Self {
+                    bytes: fs::read(table_path)?,
+                });
             }
         }
 
-        Ok(Self { tables })
+        Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "couldn't find mcfg table",
+        ))
     }
-    pub fn table_and_alloc_at_bus(&self, bus: u8) -> Option<(&Mcfg, &PcieAlloc)> {
-        self.tables().find_map(|table| {
-            Some((
-                table,
+
+    pub fn at_bus(&self, bus: u8) -> Option<&PcieAlloc> {
+        if let Some(table) = (&self).table() {
+            Some(
                 table.base_addr_structs().iter().find(|addr_struct| {
                     (addr_struct.start_bus..=addr_struct.end_bus).contains(&bus)
                 })?,
-            ))
-        })
+            )
+        } else {
+            None
     }
-    pub fn at_bus(&self, bus: u8) -> Option<&PcieAlloc> {
-        self.table_and_alloc_at_bus(bus).map(|(_, alloc)| alloc)
     }
 }
 
@@ -133,7 +129,7 @@ impl fmt::Debug for Mcfgs {
         struct Tables<'a>(&'a Mcfgs);
         impl<'a> fmt::Debug for Tables<'a> {
             fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                f.debug_list().entries(self.0.tables()).finish()
+                f.debug_list().entries(self.0.table()).finish()
             }
         }
 
