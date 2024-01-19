@@ -3,6 +3,7 @@ use std::fmt;
 use std::sync::{Mutex, Once};
 
 use bit_field::BitField;
+use serde::{Deserialize, Serialize};
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use syscall::io::{Io as _, Pio};
 
@@ -29,7 +30,7 @@ pub trait CfgAccess {
     unsafe fn write(&self, addr: PciAddress, offset: u16, value: u32);
 }
 
-// Copied from the pci_types crate, version 0.6.1.
+// Copied from the pci_types crate, version 0.6.1. It has been modified to add serde support.
 // FIXME If we start using it in the future use the upstream version instead.
 /// The address of a PCIe function.
 ///
@@ -41,7 +42,7 @@ pub trait CfgAccess {
 ///  |            segment            |      bus      | device  | func |
 ///  +-------------------------------+---------------+---------+------+
 /// ```
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize)]
 pub struct PciAddress(u32);
 
 impl PciAddress {

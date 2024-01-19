@@ -11,7 +11,7 @@ use std::{slice, usize};
 
 use pcid_interface::{PciBar, PciFeature, PciFeatureInfo, PciFunction, PcidServerHandle};
 use syscall::{
-    Event, Mmio, Packet, Result, SchemeBlockMut, 
+    Event, Mmio, Packet, Result, SchemeBlockMut,
     PAGE_SIZE,
 };
 use redox_log::{OutputBuilder, RedoxLogger};
@@ -299,7 +299,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         .fetch_config()
         .expect("nvmed: failed to fetch config");
 
-    let mut scheme_name = format!("disk.pci-{:x}+{:x}+{:x}-nvme", pci_config.func.bus_num, pci_config.func.dev_num, pci_config.func.func_num);
+    let scheme_name = format!("disk.pci-{}-nvme", pci_config.func.addr);
 
     let _logger_ref = setup_logging(&scheme_name);
 
