@@ -10,7 +10,7 @@ use log::{debug, error, info, warn, trace};
 use redox_log::{OutputBuilder, RedoxLogger};
 
 use crate::config::Config;
-use crate::pci::{CfgAccess, Pci, PciAddress, PciBar, PciBus, PciClass, PciDev, PciFunc, PciHeader, PciHeaderError, PciHeaderType};
+use crate::pci::{CfgAccess, Pci, PciAddress, PciBar, PciBus, PciClass, PciFunc, PciHeader, PciHeaderError, PciHeaderType};
 use crate::pci::cap::Capability as PciCapability;
 use crate::pci::func::{ConfigReader, ConfigWriter};
 use crate::pcie::Pcie;
@@ -48,9 +48,6 @@ fn with_pci_func_raw<T, F: FnOnce(&PciFunc) -> T>(pci: &dyn CfgAccess, addr: Pci
     function(&func)
 }
 impl DriverHandler {
-    fn with_pci_func_raw<T, F: FnOnce(&PciFunc) -> T>(&self, function: F) -> T {
-        with_pci_func_raw(self.state.preferred_cfg_access(), self.addr, function)
-    }
     fn respond(&mut self, request: driver_interface::PcidClientRequest, args: &driver_interface::SubdriverArguments) -> driver_interface::PcidClientResponse {
         use driver_interface::*;
         use crate::pci::cap::{MsiCapability, MsixCapability};
@@ -323,7 +320,7 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, he
 
             // Set IRQ line to 9 if not set
             let mut irq;
-            let mut interrupt_pin;
+            let interrupt_pin;
 
             unsafe {
                 let mut data = pci.read(addr, 0x3C);
@@ -476,7 +473,7 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, he
                             state: Arc::clone(&state),
                             capabilities,
                         };
-                        let thread = thread::spawn(move || {
+                        thread::spawn(move || {
                             // RFLAGS are no longer kept in the relibc clone() implementation.
                             unsafe { syscall::iopl(3).expect("pcid: failed to set IOPL"); }
 
