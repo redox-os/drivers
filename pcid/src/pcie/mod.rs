@@ -4,7 +4,7 @@ use std::{fmt, fs, io, mem, ptr, slice};
 
 use syscall::PAGE_SIZE;
 
-use crate::pci::{CfgAccess, Pci, PciAddress, PciIter};
+use crate::pci::{CfgAccess, Pci, PciAddress};
 
 pub const MCFG_NAME: [u8; 4] = *b"MCFG";
 
@@ -164,9 +164,6 @@ impl Pcie {
             | ((address.function() as usize) << 12)
             | (offset as usize)
     }
-    fn addr_offset_in_dwords(starting_bus: u8, address: PciAddress, offset: u16) -> usize {
-        Self::addr_offset_in_bytes(starting_bus, address, offset) / mem::size_of::<u32>()
-    }
     unsafe fn with_pointer<T, F: FnOnce(Option<&mut u32>) -> T>(
         &self,
         address: PciAddress,
@@ -198,9 +195,6 @@ impl Pcie {
         f(Some(&mut *virt_pointer.offset(
             (offset as usize / mem::size_of::<u32>()) as isize,
         )))
-    }
-    pub fn buses<'pcie>(&'pcie self) -> PciIter<'pcie> {
-        PciIter::new(self)
     }
 }
 
