@@ -4,12 +4,12 @@ use std::{env, io};
 
 use std::os::unix::io::{FromRawFd, RawFd};
 
-use serde::{Serialize, Deserialize, de::DeserializeOwned};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use thiserror::Error;
 
 pub use crate::pci::cap::Capability;
 pub use crate::pci::msi;
-pub use crate::pci::{PciBar, PciHeader};
+pub use crate::pci::{PciAddress, PciBar, PciHeader};
 
 pub mod irq_helpers;
 
@@ -28,14 +28,8 @@ pub enum LegacyInterruptPin {
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct PciFunction {
-    /// Number of PCI bus
-    pub bus_num: u8,
-
-    /// Number of PCI device
-    pub dev_num: u8,
-
-    /// Number of PCI function
-    pub func_num: u8,
+    /// Address of the PCI function.
+    pub addr: PciAddress,
 
     /// PCI Base Address Registers
     pub bars: [PciBar; 6],
@@ -58,7 +52,8 @@ pub struct PciFunction {
 }
 impl PciFunction {
     pub fn name(&self) -> String {
-        format!("pci-{:>02X}.{:>02X}.{:>02X}", self.bus_num, self.dev_num, self.func_num)
+        // FIXME stop replacing : with - once it is a valid character in scheme names
+        format!("pci-{}", self.addr).replace(':', "-")
     }
 }
 

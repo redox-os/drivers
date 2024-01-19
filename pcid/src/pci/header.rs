@@ -1,15 +1,15 @@
 use bitflags::bitflags;
-use byteorder::{LittleEndian, ByteOrder};
-use serde::{Serialize, Deserialize};
+use byteorder::{ByteOrder, LittleEndian};
+use serde::{Deserialize, Serialize};
 
-use super::func::ConfigReader;
-use super::class::PciClass;
 use super::bar::PciBar;
+use super::class::PciClass;
+use super::func::ConfigReader;
 
 #[derive(Debug, PartialEq)]
 pub enum PciHeaderError {
     NoDevice,
-    UnknownHeaderType(u8)
+    UnknownHeaderType(u8),
 }
 
 bitflags! {
@@ -30,8 +30,7 @@ bitflags! {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-pub enum PciHeader {
-    General {
+pub struct SharedPciHeader {
         vendor_id: u16,
         device_id: u16,
         command: u16,
@@ -44,6 +43,12 @@ pub enum PciHeader {
         latency_timer: u8,
         header_type: PciHeaderType,
         bist: u8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum PciHeader {
+    General {
+        shared: SharedPciHeader,
         bars: [PciBar; 6],
         cardbus_cis_ptr: u32,
         subsystem_vendor_id: u16,
@@ -53,21 +58,10 @@ pub enum PciHeader {
         interrupt_line: u8,
         interrupt_pin: u8,
         min_grant: u8,
-        max_latency: u8
+        max_latency: u8,
     },
     PciToPci {
-        vendor_id: u16,
-        device_id: u16,
-        command: u16,
-        status: u16,
-        revision: u8,
-        interface: u8,
-        subclass: u8,
-        class: PciClass,
-        cache_line_size: u8,
-        latency_timer: u8,
-        header_type: PciHeaderType,
-        bist: u8,
+        shared: SharedPciHeader,
         bars: [PciBar; 2],
         primary_bus_num: u8,
         secondary_bus_num: u8,
@@ -87,9 +81,9 @@ pub enum PciHeader {
         cap_pointer: u8,
         expansion_rom: u32,
         interrupt_line: u8,
-        interrupt_pin : u8,
-        bridge_control: u16
-    }
+        interrupt_pin: u8,
+        bridge_control: u16,
+    },
 }
 
 impl PciHeader {
@@ -111,7 +105,7 @@ impl PciHeader {
                     addr |= (LittleEndian::read_u32(high_bytes) as u64) << 32;
                     bars[i] = PciBar::Memory64(addr);
                     i += 2;
-                },
+                }
                 bar => {
                     bars[i] = bar;
                     i += 1;
@@ -138,6 +132,21 @@ impl PciHeader {
             let latency_timer = bytes[13];
             let header_type = PciHeaderType::from_bits_truncate(bytes[14]);
             let bist = bytes[15];
+            let shared = SharedPciHeader {
+                vendor_id,
+                device_id,
+                command,
+                status,
+                revision,
+                interface,
+                subclass,
+                class,
+                cache_line_size,
+                latency_timer,
+                header_type,
+                bist,
+            };
+
             match header_type & PciHeaderType::HEADER_TYPE {
                 PciHeaderType::GENERAL => {
                     let bytes = unsafe { reader.read_range(16, 48) };
@@ -153,13 +162,19 @@ impl PciHeader {
                     let min_grant = bytes[46];
                     let max_latency = bytes[47];
                     Ok(PciHeader::General {
-                        vendor_id, device_id, command, status, revision, interface,
-                        subclass, class, cache_line_size, latency_timer, header_type,
-                        bist, bars, cardbus_cis_ptr, subsystem_vendor_id, subsystem_id,
-                        expansion_rom_bar, cap_pointer, interrupt_line, interrupt_pin,
-                        min_grant, max_latency
+                        shared,
+                        bars,
+                        cardbus_cis_ptr,
+                        subsystem_vendor_id,
+                        subsystem_id,
+                        expansion_rom_bar,
+                        cap_pointer,
+                        interrupt_line,
+                        interrupt_pin,
+                        min_grant,
+                        max_latency,
                     })
-                },
+                }
                 PciHeaderType::PCITOPCI => {
                     let bytes = unsafe { reader.read_range(16, 48) };
                     let mut bars = [PciBar::None; 2];
@@ -185,17 +200,31 @@ impl PciHeader {
                     let interrupt_pin = bytes[45];
                     let bridge_control = LittleEndian::read_u16(&bytes[46..48]);
                     Ok(PciHeader::PciToPci {
-                        vendor_id, device_id, command, status, revision, interface,
-                        subclass, class, cache_line_size, latency_timer, header_type,
-                        bist, bars, primary_bus_num, secondary_bus_num, subordinate_bus_num,
-                        secondary_latency_timer, io_base, io_limit, secondary_status,
-                        mem_base, mem_limit, prefetch_base, prefetch_limit, prefetch_base_upper,
-                        prefetch_limit_upper, io_base_upper, io_limit_upper, cap_pointer,
-                        expansion_rom, interrupt_line, interrupt_pin, bridge_control
+                        shared,
+                        bars,
+                        primary_bus_num,
+                        secondary_bus_num,
+                        subordinate_bus_num,
+                        secondary_latency_timer,
+                        io_base,
+                        io_limit,
+                        secondary_status,
+                        mem_base,
+                        mem_limit,
+                        prefetch_base,
+                        prefetch_limit,
+                        prefetch_base_upper,
+                        prefetch_limit_upper,
+                        io_base_upper,
+                        io_limit_upper,
+                        cap_pointer,
+                        expansion_rom,
+                        interrupt_line,
+                        interrupt_pin,
+                        bridge_control,
                     })
-
-                },
-                id => Err(PciHeaderError::UnknownHeaderType(id.bits()))
+                }
+                id => Err(PciHeaderError::UnknownHeaderType(id.bits())),
             }
         } else {
             Err(PciHeaderError::NoDevice)
@@ -205,49 +234,98 @@ impl PciHeader {
     /// Return the Header Type.
     pub fn header_type(&self) -> PciHeaderType {
         match self {
-            &PciHeader::General { header_type, .. } | &PciHeader::PciToPci { header_type, .. } => header_type,
+            &PciHeader::General {
+                shared: SharedPciHeader { header_type, .. },
+                ..
+            }
+            | &PciHeader::PciToPci {
+                shared: SharedPciHeader { header_type, .. },
+                ..
+            } => header_type,
         }
     }
 
     /// Return the Vendor ID field.
     pub fn vendor_id(&self) -> u16 {
         match self {
-            &PciHeader::General { vendor_id, .. } | &PciHeader::PciToPci { vendor_id, .. } => vendor_id,
+            &PciHeader::General {
+                shared: SharedPciHeader { vendor_id, .. },
+                ..
+            }
+            | &PciHeader::PciToPci {
+                shared: SharedPciHeader { vendor_id, .. },
+                ..
+            } => vendor_id,
         }
     }
 
     /// Return the Device ID field.
     pub fn device_id(&self) -> u16 {
         match self {
-            &PciHeader::General { device_id, .. } | &PciHeader::PciToPci { device_id, .. } => device_id,
+            &PciHeader::General {
+                shared: SharedPciHeader { device_id, .. },
+                ..
+            }
+            | &PciHeader::PciToPci {
+                shared: SharedPciHeader { device_id, .. },
+                ..
+            } => device_id,
         }
     }
 
     /// Return the Revision field.
     pub fn revision(&self) -> u8 {
         match self {
-            &PciHeader::General { revision, .. } | &PciHeader::PciToPci { revision, .. } => revision,
+            &PciHeader::General {
+                shared: SharedPciHeader { revision, .. },
+                ..
+            }
+            | &PciHeader::PciToPci {
+                shared: SharedPciHeader { revision, .. },
+                ..
+            } => revision,
         }
     }
 
     /// Return the Interface field.
     pub fn interface(&self) -> u8 {
         match self {
-            &PciHeader::General { interface, .. } | &PciHeader::PciToPci { interface, .. } => interface,
+            &PciHeader::General {
+                shared: SharedPciHeader { interface, .. },
+                ..
+            }
+            | &PciHeader::PciToPci {
+                shared: SharedPciHeader { interface, .. },
+                ..
+            } => interface,
         }
     }
 
     /// Return the Subclass field.
     pub fn subclass(&self) -> u8 {
         match self {
-            &PciHeader::General { subclass, .. } | &PciHeader::PciToPci { subclass, .. } => subclass,
+            &PciHeader::General {
+                shared: SharedPciHeader { subclass, .. },
+                ..
+            }
+            | &PciHeader::PciToPci {
+                shared: SharedPciHeader { subclass, .. },
+                ..
+            } => subclass,
         }
     }
 
     /// Return the Class field.
     pub fn class(&self) -> PciClass {
         match self {
-            &PciHeader::General { class, .. } | &PciHeader::PciToPci { class, .. } => class,
+            &PciHeader::General {
+                shared: SharedPciHeader { class, .. },
+                ..
+            }
+            | &PciHeader::PciToPci {
+                shared: SharedPciHeader { class, .. },
+                ..
+            } => class,
         }
     }
 
@@ -269,7 +347,7 @@ impl PciHeader {
             &PciHeader::General { bars, .. } => {
                 assert!(idx < 6, "the general PCI device only has 6 BARs");
                 bars[idx]
-            },
+            }
             &PciHeader::PciToPci { bars, .. } => {
                 assert!(idx < 2, "the general PCI device only has 2 BARs");
                 bars[idx]
@@ -280,20 +358,29 @@ impl PciHeader {
     /// Return the Interrupt Line field.
     pub fn interrupt_line(&self) -> u8 {
         match self {
-            &PciHeader::General { interrupt_line, .. } | &PciHeader::PciToPci { interrupt_line, .. } =>
-                interrupt_line,
+            &PciHeader::General { interrupt_line, .. }
+            | &PciHeader::PciToPci { interrupt_line, .. } => interrupt_line,
         }
     }
 
     pub fn status(&self) -> u16 {
         match self {
-            &PciHeader::General { status, .. } | &PciHeader::PciToPci { status, .. } => status,
+            &PciHeader::General {
+                shared: SharedPciHeader { status, .. },
+                ..
+            }
+            | &PciHeader::PciToPci {
+                shared: SharedPciHeader { status, .. },
+                ..
+            } => status,
         }
     }
 
     pub fn cap_pointer(&self) -> u8 {
         match self {
-            &PciHeader::General { cap_pointer, .. } | &PciHeader::PciToPci { cap_pointer, .. } => cap_pointer,
+            &PciHeader::General { cap_pointer, .. } | &PciHeader::PciToPci { cap_pointer, .. } => {
+                cap_pointer
+            }
         }
     }
 }
@@ -380,7 +467,7 @@ mod test {
     macro_rules! read_range_should_panic {
         ($name:ident, $len:expr) => {
             #[test]
-            #[should_panic(expected = "assertion failed: len > 3 && len % 4 == 0")]
+            #[should_panic(expected = "invalid range length")]
             fn $name() {
                 let _ = unsafe { (&IGB_DEV_BYTES[..]).read_range(0, $len) };
             }
