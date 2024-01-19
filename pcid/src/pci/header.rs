@@ -467,7 +467,7 @@ mod test {
     macro_rules! read_range_should_panic {
         ($name:ident, $len:expr) => {
             #[test]
-            #[should_panic(expected = "assertion failed: len > 3 && len % 4 == 0")]
+            #[should_panic(expected = "invalid range length")]
             fn $name() {
                 let _ = unsafe { (&IGB_DEV_BYTES[..]).read_range(0, $len) };
             }
