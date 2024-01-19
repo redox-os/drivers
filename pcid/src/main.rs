@@ -585,7 +585,7 @@ fn main(args: Args) {
 
     let mut bus_nums = vec![0];
     let mut bus_i = 0;
-    'bus: while bus_i < bus_nums.len() {
+    while bus_i < bus_nums.len() {
         let bus_num = bus_nums[bus_i];
         bus_i += 1;
 
@@ -602,13 +602,8 @@ fn main(args: Args) {
                     }
                     Err(PciHeaderError::NoDevice) => {
                         if func_addr.function() == 0 {
-                            if dev.num == 0 {
-                                trace!("PCI {:>02X}: no bus", bus.num);
-                                continue 'bus;
-                            } else {
                                 trace!("PCI {:>02X}/{:>02X}: no dev", bus.num, dev.num);
                                 continue 'dev;
-                            }
                         }
                     },
                     Err(PciHeaderError::UnknownHeaderType(id)) => {
