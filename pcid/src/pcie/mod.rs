@@ -1,8 +1,5 @@
-use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::{fmt, fs, io, mem, ptr, slice};
-
-use syscall::PAGE_SIZE;
 
 use crate::pci::{CfgAccess, Pci, PciAddress};
 
@@ -131,8 +128,7 @@ impl fmt::Debug for Mcfg {
 
 pub struct Pcie {
     lock: Mutex<()>,
-    mcfg: &'static Mcfg,
-    maps: Mutex<BTreeMap<PciAddress, *mut u32>>,
+    bus_maps: Vec<Option<(*mut u32, usize)>>,
     fallback: Arc<Pci>,
 }
 unsafe impl Send for Pcie {}
@@ -142,25 +138,52 @@ impl Pcie {
     pub fn new(fallback: Arc<Pci>) -> io::Result<Self> {
         let mcfg = Mcfg::fetch()?;
 
+        let alloc_maps = (0..=255)
+            .map(|bus| {
+                if let Some(alloc) = mcfg.at_bus(bus) {
+                    Some(unsafe { Self::physmap_pcie_bus(alloc, bus) })
+                } else {
+                    None
+                }
+            })
+            .collect();
+
         Ok(Self {
             lock: Mutex::new(()),
-            mcfg,
-            maps: Mutex::new(BTreeMap::new()),
+            bus_maps: alloc_maps,
             fallback,
         })
     }
-    fn addr_offset_in_bytes(starting_bus: u8, address: PciAddress, offset: u16) -> usize {
+
+    unsafe fn physmap_pcie_bus(alloc: &PcieAlloc, bus: u8) -> (*mut u32, usize) {
+        let base_phys = alloc.base_addr as usize + (((bus - alloc.start_bus) as usize) << 20);
+        let map_size = 1 << 20;
+        let ptr = common::physmap(
+            base_phys,
+            map_size,
+            common::Prot {
+                read: true,
+                write: true,
+            },
+            common::MemoryType::Uncacheable,
+        )
+        .unwrap_or_else(|error| {
+            panic!(
+                "failed to physmap pcie configuration space for segment {} bus {} @ {:p}: {:?}",
+                { alloc.seg_group_num },
+                bus,
+                base_phys as *const u32,
+                error,
+            )
+        }) as *mut u32;
+        (ptr, map_size)
+    }
+
+    fn bus_addr_offset_in_bytes(address: PciAddress, offset: u16) -> usize {
         assert_eq!(offset & 0xFFFC, offset, "pcie offset not dword-aligned");
         assert_eq!(offset & 0x0FFF, offset, "pcie offset larger than 4095");
 
-        assert_eq!(
-            address.segment(),
-            0,
-            "multiple segments not yet implemented"
-        );
-
-        (((address.bus() - starting_bus) as usize) << 20)
-            | ((address.device() as usize) << 15)
+        ((address.device() as usize) << 15)
             | ((address.function() as usize) << 12)
             | (offset as usize)
     }
@@ -170,28 +193,20 @@ impl Pcie {
         offset: u16,
         f: F,
     ) -> T {
-        let (base_address_phys, starting_bus) = match self.mcfg.at_bus(address.bus()) {
-            Some(t) => (t.base_addr, t.start_bus),
+        assert_eq!(
+            address.segment(),
+            0,
+            "multiple segments not yet implemented"
+        );
+
+        let bus_addr = match self.bus_maps[address.bus() as usize] {
+            Some(bus_addr) => bus_addr,
             None => return f(None),
         };
-        let mut maps_lock = self.maps.lock().unwrap();
-        let virt_pointer = maps_lock.entry(address).or_insert_with(|| {
-            common::physmap(
-                base_address_phys as usize + Self::addr_offset_in_bytes(starting_bus, address, 0),
-                PAGE_SIZE,
-                common::Prot {
-                    read: true,
-                    write: true,
-                },
-                common::MemoryType::Uncacheable,
-            )
-            .unwrap_or_else(|error| {
-                panic!(
-                    "failed to physmap pcie configuration space for {}: {:?}",
-                    address, error
-                )
-            }) as *mut u32
-        });
+        let virt_pointer = unsafe {
+            // FIXME use byte_add once stable
+            (bus_addr.0 as *mut u8).add(Self::bus_addr_offset_in_bytes(address, 0)) as *mut u32
+        };
         f(Some(&mut *virt_pointer.offset(
             (offset as usize / mem::size_of::<u32>()) as isize,
         )))
@@ -222,8 +237,10 @@ impl CfgAccess for Pcie {
 
 impl Drop for Pcie {
     fn drop(&mut self) {
-        for address in self.maps.lock().unwrap().values().copied() {
-            let _ = unsafe { syscall::funmap(address as usize, PAGE_SIZE) };
+        for &map in &self.bus_maps {
+            if let Some((ptr, size)) = map {
+                let _ = unsafe { syscall::funmap(ptr as usize, size) };
+            }
         }
     }
 }
