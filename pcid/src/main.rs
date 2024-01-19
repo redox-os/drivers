@@ -581,8 +581,11 @@ fn main(args: Args) {
 
     let pci = state.preferred_cfg_access();
 
-    info!("PCI BS/DV/FN VEND:DEVI CL.SC.IN.RV");
+    info!("PCI SG-BS:DV.F VEND:DEVI CL.SC.IN.RV");
 
+    // FIXME Use full ACPI for enumerating the host bridges. MCFG only describes the first
+    // host bridge, while multi-processor systems likely have a host bridge for each CPU.
+    // See also https://www.kernel.org/doc/html/latest/PCI/acpi-info.html
     let mut bus_nums = vec![0];
     let mut bus_i = 0;
     while bus_i < bus_nums.len() {
