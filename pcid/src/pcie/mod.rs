@@ -4,7 +4,7 @@ use std::{fmt, fs, io, mem, ptr, slice};
 
 use syscall::PAGE_SIZE;
 
-use smallvec::SmallVec;
+use smallvec::{smallvec, SmallVec};
 
 use crate::pci::{CfgAccess, Pci, PciAddress, PciIter};
 
@@ -89,25 +89,25 @@ impl Mcfgs {
     pub fn fetch() -> io::Result<Self> {
         let table_dir = fs::read_dir("acpi:tables")?;
 
-        let tables = table_dir.map(|table_direntry| -> io::Result<Option<_>> {
+        let mut tables = smallvec![];
+        for table_direntry in table_dir {
             let table_direntry = table_direntry?;
             let table_path = table_direntry.path();
 
             let table_filename = match table_path.file_name() {
-                Some(n) => n.to_str().ok_or(io::Error::new(io::ErrorKind::InvalidData, "Non-UTF-8 ACPI table filename"))?,
-                None => return Ok(None),
+                Some(n) => n.to_str().ok_or(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Non-UTF-8 ACPI table filename",
+                ))?,
+                None => continue,
             };
 
             if table_filename.starts_with("MCFG") {
-                Ok(Some(fs::read(table_path)?))
-            } else {
-                Ok(None)
+                tables.push(fs::read(table_path)?);
             }
-        }).filter_map(|result_option| result_option.transpose()).collect::<Result<SmallVec<_>, _>>()?;
+        }
 
-        Ok(Self {
-            tables,
-        })
+        Ok(Self { tables })
     }
     pub fn table_and_alloc_at_bus(&self, bus: u8) -> Option<(&Mcfg, &PcieAlloc)> {
         self.tables().find_map(|table| {
