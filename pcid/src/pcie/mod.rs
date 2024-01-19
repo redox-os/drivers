@@ -41,7 +41,65 @@ pub struct PcieAlloc {
 unsafe impl plain::Plain for PcieAlloc {}
 
 impl Mcfg {
-    pub fn base_addr_structs(&self) -> &[PcieAlloc] {
+    fn fetch() -> io::Result<&'static Mcfg> {
+        let table_dir = fs::read_dir("acpi:tables")?;
+
+        for table_direntry in table_dir {
+            let table_path = table_direntry?.path();
+
+            // Every directory entry has to have a filename unless
+            // the filesystem (or in this case acpid) misbehaves.
+            // If it misbehaves we have worse problems than pcid
+            // crashing. `as_encoded_bytes()` returns some superset
+            // of ASCII, so directly comparing it with an ASCII name
+            // is fine.
+            let table_filename = table_path.file_name().unwrap().as_encoded_bytes();
+            if table_filename.get(0..4) == Some(&MCFG_NAME) {
+                let bytes = fs::read(table_path)?.into_boxed_slice();
+                if Mcfg::parse(&*bytes).is_none() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "couldn't find mcfg table",
+                    ));
+                }
+
+                // Leaking memory is fine as this function is only called once
+                // and we need this for the entire lifetime of pcid anyway.
+                let bytes = Box::leak(bytes);
+
+                // This unwrap is fine as we checked that it will return Some above.
+                let mcfg = Mcfg::parse(bytes).unwrap();
+
+                // There should only be a single MCFG table and Linux ignores
+                // all MCFG tables beyond the first too, so doing an early
+                // return here is fine.
+                return Ok(mcfg);
+            }
+        }
+
+        Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "couldn't find mcfg table",
+        ))
+    }
+
+    fn parse<'a>(bytes: &'a [u8]) -> Option<&'a Mcfg> {
+        let mcfg = plain::from_bytes::<Mcfg>(bytes).ok()?;
+        if mcfg.length as usize > bytes.len() {
+            return None;
+        }
+        Some(mcfg)
+    }
+
+    fn at_bus(&self, bus: u8) -> Option<&PcieAlloc> {
+        Some(
+            self.base_addr_structs()
+                .iter()
+                .find(|addr_struct| (addr_struct.start_bus..=addr_struct.end_bus).contains(&bus))?,
+        )
+    }
+
+    fn base_addr_structs(&self) -> &[PcieAlloc] {
         let total_length = self.length as usize;
         let len = total_length - mem::size_of::<Mcfg>();
         // safe because the length cannot be changed arbitrarily
@@ -53,6 +111,7 @@ impl Mcfg {
         }
     }
 }
+
 impl fmt::Debug for Mcfg {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("Mcfg")
@@ -70,76 +129,9 @@ impl fmt::Debug for Mcfg {
     }
 }
 
-pub struct Mcfgs {
-    bytes: Vec<u8>,
-}
-
-impl Mcfgs {
-    pub fn table<'a>(&'a self) -> Option<&'a Mcfg> {
-        let mcfg = plain::from_bytes::<Mcfg>(&self.bytes).ok()?;
-        if mcfg.length as usize > self.bytes.len() {
-                return None;
-            }
-            Some(mcfg)
-    }
-
-    pub fn fetch() -> io::Result<Self> {
-        let table_dir = fs::read_dir("acpi:tables")?;
-
-        for table_direntry in table_dir {
-            let table_path = table_direntry?.path();
-
-            // Every directory entry has to have a filename unless
-            // the filesystem (or in this case acpid) misbehaves.
-            // If it misbehaves we have worse problems than pcid
-            // crashing. `as_encoded_bytes()` returns some superset
-            // of ASCII, so directly comparing it with an ASCII name
-            // is fine.
-            let table_filename = table_path.file_name().unwrap().as_encoded_bytes();
-            if table_filename.get(0..4) == Some(&MCFG_NAME) {
-                // There should only be a single MCFG table and Linux ignores
-                // all MCFG tables beyond the first too.
-                return Ok(Self {
-                    bytes: fs::read(table_path)?,
-                });
-            }
-        }
-
-        Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            "couldn't find mcfg table",
-        ))
-    }
-
-    pub fn at_bus(&self, bus: u8) -> Option<&PcieAlloc> {
-        if let Some(table) = (&self).table() {
-            Some(
-                table.base_addr_structs().iter().find(|addr_struct| {
-                    (addr_struct.start_bus..=addr_struct.end_bus).contains(&bus)
-                })?,
-            )
-        } else {
-            None
-    }
-    }
-}
-
-impl fmt::Debug for Mcfgs {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        struct Tables<'a>(&'a Mcfgs);
-        impl<'a> fmt::Debug for Tables<'a> {
-            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                f.debug_list().entries(self.0.table()).finish()
-            }
-        }
-
-        f.debug_tuple("Mcfgs").field(&Tables(self)).finish()
-    }
-}
-
 pub struct Pcie {
     lock: Mutex<()>,
-    mcfgs: Mcfgs,
+    mcfg: &'static Mcfg,
     maps: Mutex<BTreeMap<PciAddress, *mut u32>>,
     fallback: Arc<Pci>,
 }
@@ -148,11 +140,11 @@ unsafe impl Sync for Pcie {}
 
 impl Pcie {
     pub fn new(fallback: Arc<Pci>) -> io::Result<Self> {
-        let mcfgs = Mcfgs::fetch()?;
+        let mcfg = Mcfg::fetch()?;
 
         Ok(Self {
             lock: Mutex::new(()),
-            mcfgs,
+            mcfg,
             maps: Mutex::new(BTreeMap::new()),
             fallback,
         })
@@ -181,7 +173,7 @@ impl Pcie {
         offset: u16,
         f: F,
     ) -> T {
-        let (base_address_phys, starting_bus) = match self.mcfgs.at_bus(address.bus()) {
+        let (base_address_phys, starting_bus) = match self.mcfg.at_bus(address.bus()) {
             Some(t) => (t.base_addr, t.start_bus),
             None => return f(None),
         };
