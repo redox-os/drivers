@@ -45,10 +45,15 @@ unsafe impl plain::Plain for PcieAlloc {}
 
 impl Mcfg {
     pub fn base_addr_structs(&self) -> &[PcieAlloc] {
-        let total_length = mem::size_of::<Self>();
-        let len = total_length - 44;
+        let total_length = self.length as usize;
+        let len = total_length - mem::size_of::<Mcfg>();
         // safe because the length cannot be changed arbitrarily
-        unsafe { slice::from_raw_parts(&self.base_addrs as *const PcieAlloc, len / mem::size_of::<PcieAlloc>()) }
+        unsafe {
+            slice::from_raw_parts(
+                &self.base_addrs as *const PcieAlloc,
+                len / mem::size_of::<PcieAlloc>(),
+            )
+        }
     }
 }
 impl fmt::Debug for Mcfg {
@@ -111,9 +116,12 @@ impl Mcfgs {
     }
     pub fn table_and_alloc_at_bus(&self, bus: u8) -> Option<(&Mcfg, &PcieAlloc)> {
         self.tables().find_map(|table| {
-            Some((table, table.base_addr_structs().iter().find(|addr_struct| {
-                (addr_struct.start_bus..addr_struct.end_bus).contains(&bus)
-            })?))
+            Some((
+                table,
+                table.base_addr_structs().iter().find(|addr_struct| {
+                    (addr_struct.start_bus..=addr_struct.end_bus).contains(&bus)
+                })?,
+            ))
         })
     }
     pub fn at_bus(&self, bus: u8) -> Option<&PcieAlloc> {
