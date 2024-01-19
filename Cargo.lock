@@ -968,7 +968,6 @@ dependencies = [
  "redox_syscall 0.4.1",
  "serde",
  "serde_json",
- "smallvec 1.11.0",
  "structopt",
  "thiserror",
  "toml 0.5.11",
