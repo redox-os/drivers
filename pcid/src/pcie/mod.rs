@@ -38,7 +38,7 @@ pub struct PcieAlloc {
 unsafe impl plain::Plain for PcieAlloc {}
 
 impl Mcfg {
-    fn fetch() -> io::Result<&'static Mcfg> {
+    fn with<T>(f: impl FnOnce(&Mcfg) -> io::Result<T>) -> io::Result<T> {
         let table_dir = fs::read_dir("acpi:tables")?;
 
         for table_direntry in table_dir {
@@ -53,24 +53,15 @@ impl Mcfg {
             let table_filename = table_path.file_name().unwrap().as_encoded_bytes();
             if table_filename.get(0..4) == Some(&MCFG_NAME) {
                 let bytes = fs::read(table_path)?.into_boxed_slice();
-                if Mcfg::parse(&*bytes).is_none() {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "couldn't find mcfg table",
-                    ));
+                match Mcfg::parse(&*bytes) {
+                    Some(mcfg) => return f(mcfg),
+                    None => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "couldn't find mcfg table",
+                        ));
+                    }
                 }
-
-                // Leaking memory is fine as this function is only called once
-                // and we need this for the entire lifetime of pcid anyway.
-                let bytes = Box::leak(bytes);
-
-                // This unwrap is fine as we checked that it will return Some above.
-                let mcfg = Mcfg::parse(bytes).unwrap();
-
-                // There should only be a single MCFG table and Linux ignores
-                // all MCFG tables beyond the first too, so doing an early
-                // return here is fine.
-                return Ok(mcfg);
             }
         }
 
@@ -136,22 +127,22 @@ unsafe impl Sync for Pcie {}
 
 impl Pcie {
     pub fn new(fallback: Arc<Pci>) -> io::Result<Self> {
-        let mcfg = Mcfg::fetch()?;
+        Mcfg::with(|mcfg| {
+            let alloc_maps = (0..=255)
+                .map(|bus| {
+                    if let Some(alloc) = mcfg.at_bus(bus) {
+                        Some(unsafe { Self::physmap_pcie_bus(alloc, bus) })
+                    } else {
+                        None
+                    }
+                })
+                .collect();
 
-        let alloc_maps = (0..=255)
-            .map(|bus| {
-                if let Some(alloc) = mcfg.at_bus(bus) {
-                    Some(unsafe { Self::physmap_pcie_bus(alloc, bus) })
-                } else {
-                    None
-                }
+            Ok(Self {
+                lock: Mutex::new(()),
+                bus_maps: alloc_maps,
+                fallback,
             })
-            .collect();
-
-        Ok(Self {
-            lock: Mutex::new(()),
-            bus_maps: alloc_maps,
-            fallback,
         })
     }
 
