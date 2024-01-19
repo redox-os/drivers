@@ -31,7 +31,6 @@ unsafe impl plain::Plain for Mcfg {}
 
 /// The "Memory Mapped Enhanced Configuration Space Base Address Allocation Structure" (yes, it's
 /// called that).
-
 #[repr(packed)]
 #[derive(Clone, Copy, Debug)]
 pub struct PcieAlloc {
@@ -59,7 +58,7 @@ impl Mcfg {
 impl fmt::Debug for Mcfg {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("Mcfg")
-            .field("name", &"MCFG")
+            .field("name", &self.name)
             .field("length", &{ self.length })
             .field("revision", &self.revision)
             .field("checksum", &self.checksum)
@@ -88,7 +87,9 @@ impl Mcfgs {
         })
     }
     pub fn allocs<'a>(&'a self) -> impl Iterator<Item = &'a PcieAlloc> + 'a {
-        self.tables().map(|table| table.base_addr_structs().iter()).flatten()
+        self.tables()
+            .map(|table| table.base_addr_structs().iter())
+            .flatten()
     }
 
     pub fn fetch() -> io::Result<Self> {
@@ -96,18 +97,16 @@ impl Mcfgs {
 
         let mut tables = smallvec![];
         for table_direntry in table_dir {
-            let table_direntry = table_direntry?;
-            let table_path = table_direntry.path();
+            let table_path = table_direntry?.path();
 
-            let table_filename = match table_path.file_name() {
-                Some(n) => n.to_str().ok_or(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "Non-UTF-8 ACPI table filename",
-                ))?,
-                None => continue,
-            };
-
-            if table_filename.starts_with("MCFG") {
+            // Every directory entry has to have a filename unless
+            // the filesystem (or in this case acpid) misbehaves.
+            // If it misbehaves we have worse problems than pcid
+            // crashing. `as_encoded_bytes()` returns some superset
+            // of ASCII, so directly comparing it with an ASCII name
+            // is fine.
+            let table_filename = table_path.file_name().unwrap().as_encoded_bytes();
+            if table_filename.get(0..4) == Some(&MCFG_NAME) {
                 tables.push(fs::read(table_path)?);
             }
         }
