@@ -141,7 +141,7 @@ impl Pcie {
                         None
                     }
                 })
-                .collect();
+                .collect::<Vec<_>>();
 
             Ok(Self {
                 lock: Mutex::new(()),
