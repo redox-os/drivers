@@ -1,6 +1,6 @@
 [[drivers]]
 name = "RTL8168 NIC"
-class = 2
+class = 0x02
 ids = { 0x10ec = [0x8168, 0x8169] }
 command = ["rtl8168d"]
 use_channel = true

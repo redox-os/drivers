@@ -1,13 +1,13 @@
 [[drivers]]
 name = "QEMU Graphics Array"
-class = 3
-vendor = 4660
-device = 4369
+class = 0x03
+vendor = 0x1234
+device = 0x1111
 command = ["bgad", "$NAME", "$BAR0"]
 
 [[drivers]]
 name = "VirtualBox Graphics Array"
-class = 3
-vendor = 33006
-device = 48879
+class = 0x03
+vendor = 0x80EE
+device = 0xBEEF
 command = ["bgad", "$NAME", "$BAR0"]

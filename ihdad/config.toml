@@ -1,6 +1,6 @@
 [[drivers]]
 name = "Intel HD Audio"
-class = 4
-subclass = 3
+class = 0x04
+subclass = 0x03
 command = ["ihdad"]
 use_channel = true
