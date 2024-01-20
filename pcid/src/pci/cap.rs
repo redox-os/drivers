@@ -153,18 +153,6 @@ impl Capability {
             _ => None,
         }
     }
-    pub fn into_msi(self) -> Option<MsiCapability> {
-        match self {
-            Self::Msi(msi) => Some(msi),
-            _ => None,
-        }
-    }
-    pub fn into_msix(self) -> Option<MsixCapability> {
-        match self {
-            Self::MsiX(msix) => Some(msix),
-            _ => None,
-        }
-    }
     unsafe fn parse_msi<R: ConfigReader>(reader: &R, offset: u8) -> Self {
         Self::Msi(MsiCapability::parse(reader, offset))
     }
