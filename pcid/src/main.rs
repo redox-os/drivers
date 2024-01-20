@@ -9,16 +9,16 @@ use structopt::StructOpt;
 use log::{debug, error, info, warn, trace};
 use redox_log::{OutputBuilder, RedoxLogger};
 
+use crate::cfg_access::Pcie;
 use crate::config::Config;
 use crate::pci::{CfgAccess, PciAddress, PciBar, PciClass, PciFunc, PciHeader, PciHeaderError, PciHeaderType};
 use crate::pci::cap::Capability as PciCapability;
 use crate::pci::func::{ConfigReader, ConfigWriter};
-use crate::pcie::Pcie;
 
+mod cfg_access;
 mod config;
 mod driver_interface;
 mod pci;
-mod pcie;
 
 #[derive(StructOpt)]
 #[structopt(about)]
