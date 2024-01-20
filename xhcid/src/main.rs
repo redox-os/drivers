@@ -98,7 +98,7 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle, address: usize) -> (Option
             0 => panic!("BAR 0 is mapped to address 0"),
             _ => ptr,
         },
-        other => panic!("Expected memory bar, found {}", other),
+        other => panic!("Expected memory bar, found {:?}", other),
     };
 
     let all_pci_features = pcid_handle.fetch_all_features().expect("xhcid: failed to fetch pci features");
@@ -260,7 +260,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
             0 => panic!("BAR 0 is mapped to address 0"),
             _ => ptr,
         },
-        other => panic!("Expected memory bar, found {}", other),
+        other => panic!("Expected memory bar, found {:?}", other),
     };
 
     let address = unsafe {
@@ -272,7 +272,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     print!(
         "{}",
-        format!(" + XHCI {} on: {} IRQ: {}\n", name, bar, irq)
+        format!(" + XHCI {} on: {:016X} IRQ: {}\n", name, bar_ptr, irq)
     );
 
     let scheme_name = format!("usb.{}", name);

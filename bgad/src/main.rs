@@ -1,12 +1,10 @@
-#![deny(warnings)]
-
 extern crate orbclient;
 extern crate syscall;
 
-use std::env;
 use std::fs::File;
 use std::io::{Read, Write};
 
+use pcid_interface::PcidServerHandle;
 use syscall::call::iopl;
 use syscall::data::Packet;
 use syscall::scheme::SchemeMut;
@@ -18,15 +16,16 @@ mod bga;
 mod scheme;
 
 fn main() {
-    let mut args = env::args().skip(1);
+    let mut pcid_handle =
+        PcidServerHandle::connect_default().expect("bgad: failed to setup channel to pcid");
+    let pci_config = pcid_handle
+        .fetch_config()
+        .expect("bgad: failed to fetch config");
 
-    let mut name = args.next().expect("bgad: no name provided");
+    let mut name = pci_config.func.name();
     name.push_str("_bga");
 
-    let bar_str = args.next().expect("bgad: no address provided");
-    let bar = usize::from_str_radix(&bar_str, 16).expect("bgad: failed to parse address");
-
-    print!("{}", format!(" + BGA {} on: {:X}\n", name, bar));
+    println!(" + BGA {}", name);
 
     redox_daemon::Daemon::new(move |daemon| {
         unsafe { iopl(3).unwrap() };
@@ -34,11 +33,11 @@ fn main() {
         let mut socket = File::create(":bga").expect("bgad: failed to create bga scheme");
 
         let mut bga = Bga::new();
-        print!("{}", format!("   - BGA {}x{}\n", bga.width(), bga.height()));
+        println!("   - BGA {}x{}", bga.width(), bga.height());
 
         let mut scheme = BgaScheme {
             bga,
-            display: File::open("input:producer").ok()
+            display: File::open("input:producer").ok(),
         };
 
         scheme.update_size();
@@ -49,12 +48,19 @@ fn main() {
 
         loop {
             let mut packet = Packet::default();
-            if socket.read(&mut packet).expect("bgad: failed to read events from bga scheme") == 0 {
+            if socket
+                .read(&mut packet)
+                .expect("bgad: failed to read events from bga scheme")
+                == 0
+            {
                 break;
             }
             scheme.handle(&mut packet);
-            socket.write(&packet).expect("bgad: failed to write responses to bga scheme");
+            socket
+                .write(&packet)
+                .expect("bgad: failed to write responses to bga scheme");
         }
         std::process::exit(0);
-    }).expect("bgad: failed to daemonize");
+    })
+    .expect("bgad: failed to daemonize");
 }

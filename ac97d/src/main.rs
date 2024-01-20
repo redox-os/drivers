@@ -5,16 +5,17 @@ extern crate spin;
 extern crate syscall;
 extern crate event;
 
-use std::{env, usize};
 use std::fs::File;
 use std::io::{ErrorKind, Read, Write, Result};
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
-use syscall::{Packet, SchemeBlockMut, EventFlags};
 use std::cell::RefCell;
 use std::sync::Arc;
+use std::usize;
 
 use event::EventQueue;
+use pcid_interface::{PciBar, PcidServerHandle};
 use redox_log::{OutputBuilder, RedoxLogger};
+use syscall::{EventFlags, Packet, SchemeBlockMut};
 
 pub mod device;
 
@@ -63,26 +64,33 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
 }
 
 fn main() {
-	let mut args = env::args().skip(1);
+	let mut pcid_handle =
+        PcidServerHandle::connect_default().expect("ac97d: failed to setup channel to pcid");
+    let pci_config = pcid_handle
+        .fetch_config()
+        .expect("ac97d: failed to fetch config");
 
-	let mut name = args.next().expect("ac97: no name provided");
+	let mut name = pci_config.func.name();
 	name.push_str("_ac97");
 
-	let bar0_str = args.next().expect("ac97: no address provided");
-	let bar0 = u16::from_str_radix(&bar0_str, 16).expect("ac97: failed to parse address");
+	let bar0 = match pci_config.func.bars[0] {
+		PciBar::Port(port) => port,
+		_ => unreachable!(),
+	};
 
-	let bar1_str = args.next().expect("ac97: no address provided");
-	let bar1 = u16::from_str_radix(&bar1_str, 16).expect("ac97: failed to parse address");
+	let bar1 = match pci_config.func.bars[1] {
+		PciBar::Port(port) => port,
+		_ => unreachable!(),
+	};
 
-	let irq_str = args.next().expect("ac97: no irq provided");
-	let irq = irq_str.parse::<u8>().expect("ac97: failed to parse irq");
+	let irq = pci_config.func.legacy_interrupt_line;
 
 	print!("{}", format!(" + ac97 {} on: {:X}, {:X}, IRQ {}\n", name, bar0, bar1, irq));
 
 	// Daemonize
     redox_daemon::Daemon::new(move |daemon| {
 	    let _logger_ref = setup_logging();
-        
+
         unsafe { syscall::iopl(3) }.expect("ac97d: failed to set I/O privilege level to Ring 3");
 
 		let mut irq_file = File::open(format!("irq:{}", irq)).expect("ac97d: failed to open IRQ file");

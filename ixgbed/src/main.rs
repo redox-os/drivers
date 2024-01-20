@@ -10,9 +10,10 @@ use std::fs::File;
 use std::io::{ErrorKind, Read, Result, Write};
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::sync::Arc;
-use std::{env, thread};
+use std::thread;
 
 use event::EventQueue;
+use pcid_interface::{PciBar, PcidServerHandle};
 use std::time::Duration;
 use syscall::{EventFlags, Packet, SchemeBlockMut};
 
@@ -66,16 +67,22 @@ fn handle_update(
 }
 
 fn main() {
-    let mut args = env::args().skip(1);
+    let mut pcid_handle =
+        PcidServerHandle::connect_default().expect("ixgbed: failed to setup channel to pcid");
+    let pci_config = pcid_handle
+        .fetch_config()
+        .expect("ixgbed: failed to fetch config");
 
-    let mut name = args.next().expect("ixgbed: no name provided");
+    let mut name = pci_config.func.name();
     name.push_str("_ixgbe");
 
-    let bar_str = args.next().expect("ixgbed: no address provided");
-    let bar = usize::from_str_radix(&bar_str, 16).expect("ixgbed: failed to parse address");
+    let bar = match pci_config.func.bars[0] {
+        PciBar::Memory32(addr) => addr as usize,
+        PciBar::Memory64(addr) => addr as usize,
+        PciBar::None | PciBar::Port(_) => unreachable!(),
+    };
 
-    let irq_str = args.next().expect("ixgbed: no irq provided");
-    let irq = irq_str.parse::<u8>().expect("ixgbed: failed to parse irq");
+    let irq = pci_config.func.legacy_interrupt_line;
 
     println!(" + IXGBE {} on: {:X} IRQ: {}", name, bar, irq);
 

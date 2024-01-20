@@ -1,5 +1,5 @@
 [[drivers]]
 name = "AC97 Audio"
-class = 4
-subclass = 1
-command = ["ac97d", "$NAME", "$BAR0", "$BAR1", "$IRQ"]
+class = 0x04
+subclass = 0x01
+command = ["ac97d"]

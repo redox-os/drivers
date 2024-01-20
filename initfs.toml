@@ -5,7 +5,7 @@
 name = "AHCI storage"
 class = 1
 subclass = 6
-command = ["ahcid", "$NAME", "$BAR5", "$BARSIZE5", "$IRQ"]
+command = ["ahcid"]
 
 # ided
 [[drivers]]
@@ -13,7 +13,6 @@ name = "IDE storage"
 class = 1
 subclass = 1
 command = ["ided"]
-use_channel = true
 
 # nvmed
 [[drivers]]
@@ -21,7 +20,6 @@ name = "NVME storage"
 class = 1
 subclass = 8
 command = ["nvmed"]
-use_channel = true
 
 [[drivers]]
 name = "virtio-blk"
@@ -30,7 +28,6 @@ subclass = 0
 vendor = 6900
 device = 4097
 command = ["virtio-blkd"]
-use_channel = true
 
 [[drivers]]
 name = "virtio-gpu"
@@ -38,4 +35,3 @@ class = 3
 vendor = 6900
 device = 4176
 command = ["virtio-gpud"]
-use_channel = true

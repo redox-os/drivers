@@ -10,7 +10,7 @@ use syscall::scheme::SchemeBlockMut;
 use common::dma::Dma;
 use netutils::setcfg;
 
-use ixgbe::*;
+use crate::ixgbe::*;
 
 pub struct Intel8259x {
     base: usize,

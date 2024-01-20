@@ -181,7 +181,7 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle) -> Option<File> {
                 0 => panic!("BAR {} is mapped to address 0", bir),
                 _ => ptr,
             },
-            other => panic!("Expected memory bar, found {}", other),
+            other => panic!("Expected memory bar, found {:?}", other),
         };
 
         let address = unsafe {
@@ -323,7 +323,7 @@ fn find_bar(pci_config: &SubdriverArguments) -> Option<(usize, usize)> {
                     pci_config.func.bar_sizes[barnum].try_into().unwrap()
                 )),
             },
-            other => log::warn!("BAR {} is {} instead of memory BAR", barnum, other),
+            other => log::warn!("BAR {} is {:?} instead of memory BAR", barnum, other),
         }
     }
     None

@@ -1,5 +1,3 @@
-use std::fmt;
-
 use serde::{Serialize, Deserialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -38,17 +36,6 @@ impl From<u32> for PciBar {
             }
         } else {
             PciBar::Port((bar & 0xFFFC) as u16)
-        }
-    }
-}
-
-impl fmt::Display for PciBar {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            &PciBar::Memory32(address) => write!(f, "{:>08X}", address),
-            &PciBar::Memory64(address) => write!(f, "{:>016X}", address),
-            &PciBar::Port(address) => write!(f, "{:>04X}", address),
-            &PciBar::None => write!(f, "None")
         }
     }
 }

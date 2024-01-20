@@ -4,11 +4,12 @@
 extern crate syscall;
 extern crate byteorder;
 
-use std::{env, usize};
 use std::fs::File;
 use std::io::{ErrorKind, Read, Write};
 use std::os::unix::io::{FromRawFd, RawFd};
+use std::usize;
 
+use pcid_interface::{PciBar, PcidServerHandle};
 use syscall::error::{Error, ENODEV};
 use syscall::data::{Event, Packet};
 use syscall::flag::EVENT_READ;
@@ -71,28 +72,32 @@ fn main() {
 }
 
 fn daemon(daemon: redox_daemon::Daemon) -> ! {
-    let mut args = env::args().skip(1);
+    let mut pcid_handle =
+        PcidServerHandle::connect_default().expect("ahcid: failed to setup channel to pcid");
+    let pci_config = pcid_handle
+        .fetch_config()
+        .expect("ahcid: failed to fetch config");
 
-    let mut name = args.next().expect("ahcid: no name provided");
+    let mut name = pci_config.func.name();
     name.push_str("_ahci");
 
-    let bar_str = args.next().expect("ahcid: no address provided");
-    let bar = usize::from_str_radix(&bar_str, 16).expect("ahcid: failed to parse address");
+    let bar = match pci_config.func.bars[5] {
+        PciBar::Memory32(addr) => addr as usize,
+        PciBar::Memory64(addr) => addr as usize,
+        PciBar::None | PciBar::Port(_) => unreachable!(),
+    };
+    let bar_size = pci_config.func.bar_sizes[5];
 
-    let bar_size_str = args.next().expect("ahcid: no address size provided");
-    let bar_size = usize::from_str_radix(&bar_size_str, 16).expect("ahcid: failed to parse address size");
-
-    let irq_str = args.next().expect("ahcid: no irq provided");
-    let irq = irq_str.parse::<u8>().expect("ahcid: failed to parse irq");
+    let irq = pci_config.func.legacy_interrupt_line;
 
     let _logger_ref = setup_logging(&name);
 
-    info!(" + AHCI {} on: {:X} size: {} IRQ: {}", name, bar, bar_size, irq);
+    info!(" + AHCI {} on: {} size: {} IRQ: {}", name, bar, bar_size, irq);
 
     let address = unsafe {
         common::physmap(
             bar,
-            bar_size,
+            bar_size as usize,
             common::Prot { read: true, write: true },
             common::MemoryType::Uncacheable,
         ).expect("ahcid: failed to map address")

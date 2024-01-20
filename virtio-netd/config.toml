@@ -1,7 +1,6 @@
 [[drivers]]
 name = "virtio-net"
-class = 2
-vendor = 6900
-device = 4096
+class = 0x02
+vendor = 0x1AF4
+device = 0x1000
 command = ["virtio-netd"]
-use_channel = true
