@@ -1,7 +1,12 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use std::{fmt, fs, io, mem, ptr, slice};
 
-use crate::pci::{CfgAccess, Pci, PciAddress};
+use log::info;
+
+use crate::pci::{CfgAccess, PciAddress};
+use fallback::Pci;
+
+mod fallback;
 
 pub const MCFG_NAME: [u8; 4] = *b"MCFG";
 
@@ -120,14 +125,14 @@ impl fmt::Debug for Mcfg {
 pub struct Pcie {
     lock: Mutex<()>,
     bus_maps: Vec<Option<(*mut u32, usize)>>,
-    fallback: Arc<Pci>,
+    fallback: Pci,
 }
 unsafe impl Send for Pcie {}
 unsafe impl Sync for Pcie {}
 
 impl Pcie {
-    pub fn new(fallback: Arc<Pci>) -> io::Result<Self> {
-        Mcfg::with(|mcfg| {
+    pub fn new() -> Self {
+        match Mcfg::with(|mcfg| {
             let alloc_maps = (0..=255)
                 .map(|bus| {
                     if let Some(alloc) = mcfg.at_bus(bus) {
@@ -141,9 +146,19 @@ impl Pcie {
             Ok(Self {
                 lock: Mutex::new(()),
                 bus_maps: alloc_maps,
-                fallback,
+                fallback: Pci::new(),
             })
-        })
+        }) {
+            Ok(pcie) => pcie,
+            Err(error) => {
+                info!("Couldn't retrieve PCIe info, perhaps the kernel is not compiled with acpi? Using the PCI 3.0 configuration space instead. Error: {:?}", error);
+                Self {
+                    lock: Mutex::new(()),
+                    bus_maps: vec![],
+                    fallback: Pci::new(),
+                }
+            }
+        }
     }
 
     unsafe fn physmap_pcie_bus(alloc: &PcieAlloc, bus: u8) -> (*mut u32, usize) {
@@ -190,9 +205,9 @@ impl Pcie {
             "multiple segments not yet implemented"
         );
 
-        let bus_addr = match self.bus_maps[address.bus() as usize] {
-            Some(bus_addr) => bus_addr,
-            None => return f(None),
+        let bus_addr = match self.bus_maps.get(address.bus() as usize) {
+            Some(Some(bus_addr)) => bus_addr,
+            Some(None) | None => return f(None),
         };
         let virt_pointer = unsafe {
             // FIXME use byte_add once stable

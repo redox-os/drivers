@@ -10,7 +10,7 @@ use log::{debug, error, info, warn, trace};
 use redox_log::{OutputBuilder, RedoxLogger};
 
 use crate::config::Config;
-use crate::pci::{CfgAccess, Pci, PciAddress, PciBar, PciClass, PciFunc, PciHeader, PciHeaderError, PciHeaderType};
+use crate::pci::{CfgAccess, PciAddress, PciBar, PciClass, PciFunc, PciHeader, PciHeaderError, PciHeaderType};
 use crate::pci::cap::Capability as PciCapability;
 use crate::pci::func::{ConfigReader, ConfigWriter};
 use crate::pcie::Pcie;
@@ -206,12 +206,11 @@ impl DriverHandler {
 
 pub struct State {
     threads: Mutex<Vec<thread::JoinHandle<()>>>,
-    pci: Arc<Pci>,
-    pcie: Option<Pcie>,
+    pcie: Pcie,
 }
 impl State {
     fn preferred_cfg_access(&self) -> &dyn CfgAccess {
-        self.pcie.as_ref().map(|pcie| pcie as &dyn CfgAccess).unwrap_or(&*self.pci as &dyn CfgAccess)
+        &self.pcie
     }
 }
 
@@ -565,17 +564,8 @@ fn main(args: Args) {
 
     let _logger_ref = setup_logging(args.verbose);
 
-    let pci = Arc::new(Pci::new());
-
     let state = Arc::new(State {
-        pci: Arc::clone(&pci),
-        pcie: match Pcie::new(Arc::clone(&pci)) {
-            Ok(pcie) => Some(pcie),
-            Err(error) => {
-                info!("Couldn't retrieve PCIe info, perhaps the kernel is not compiled with acpi? Using the PCI 3.0 configuration space instead. Error: {:?}", error);
-                None
-            }
-        },
+        pcie: Pcie::new(),
         threads: Mutex::new(Vec::new()),
     });
 
