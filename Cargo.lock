@@ -1667,6 +1667,7 @@ version = "0.1.0"
 dependencies = [
  "common",
  "orbclient",
+ "pcid",
  "redox-daemon",
  "redox_event 0.1.0",
  "redox_syscall 0.4.1",

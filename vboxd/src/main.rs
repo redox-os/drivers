@@ -5,11 +5,12 @@ extern crate orbclient;
 extern crate syscall;
 
 use event::EventQueue;
-use std::{env, mem};
+use std::mem;
 use std::os::unix::io::AsRawFd;
 use std::fs::File;
 use std::io::{Result, Read, Write};
 
+use pcid_interface::{PciBar, PcidServerHandle};
 use syscall::call::iopl;
 use syscall::flag::EventFlags;
 use syscall::io::{Io, Mmio, Pio};
@@ -184,19 +185,27 @@ impl VboxGuestInfo {
 }
 
 fn main() {
-    let mut args = env::args().skip(1);
+    let mut pcid_handle =
+        PcidServerHandle::connect_default().expect("vboxd: failed to setup channel to pcid");
+    let pci_config = pcid_handle
+        .fetch_config()
+        .expect("vboxd: failed to fetch config");
 
-    let mut name = args.next().expect("vboxd: no name provided");
+    let mut name = pci_config.func.name();
     name.push_str("_vbox");
 
-    let bar0_str = args.next().expect("vboxd: no address provided");
-    let bar0 = usize::from_str_radix(&bar0_str, 16).expect("vboxd: failed to parse address");
+    let bar0 = match pci_config.func.bars[0] {
+        PciBar::Port(port) => port,
+        _ => unreachable!(),
+    };
 
-    let bar1_str = args.next().expect("vboxd: no address provided");
-    let bar1 = usize::from_str_radix(&bar1_str, 16).expect("vboxd: failed to parse address");
+    let bar1 = match pci_config.func.bars[1] {
+        PciBar::Memory32(addr) => addr as usize,
+        PciBar::Memory64(addr) => addr as usize,
+        PciBar::None | PciBar::Port(_) => unreachable!(),
+    };
 
-    let irq_str = args.next().expect("vboxd: no irq provided");
-    let irq = irq_str.parse::<u8>().expect("vboxd: failed to parse irq");
+    let irq = pci_config.func.legacy_interrupt_line;
 
     print!("{}", format!(" + VirtualBox {} on: {:X}, {:X}, IRQ {}\n", name, bar0, bar1, irq));
 
