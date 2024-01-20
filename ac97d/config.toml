@@ -3,4 +3,3 @@ name = "AC97 Audio"
 class = 0x04
 subclass = 0x01
 command = ["ac97d"]
-use_channel = true

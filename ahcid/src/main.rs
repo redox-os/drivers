@@ -4,10 +4,10 @@
 extern crate syscall;
 extern crate byteorder;
 
-use std::{env, usize};
 use std::fs::File;
 use std::io::{ErrorKind, Read, Write};
 use std::os::unix::io::{FromRawFd, RawFd};
+use std::usize;
 
 use pcid_interface::{PciBar, PcidServerHandle};
 use syscall::error::{Error, ENODEV};
@@ -81,7 +81,11 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let mut name = pci_config.func.name();
     name.push_str("_ahci");
 
-    let bar = pci_config.func.bars[5];
+    let bar = match pci_config.func.bars[5] {
+        PciBar::Memory32(addr) => addr as usize,
+        PciBar::Memory64(addr) => addr as usize,
+        PciBar::None | PciBar::Port(_) => unreachable!(),
+    };
     let bar_size = pci_config.func.bar_sizes[5];
 
     let irq = pci_config.func.legacy_interrupt_line;
@@ -92,11 +96,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     let address = unsafe {
         common::physmap(
-            match bar {
-                PciBar::Memory32(addr) => addr as usize,
-                PciBar::Memory64(addr) => addr as usize,
-                PciBar::None | PciBar::Port(_) => unreachable!(),
-            },
+            bar,
             bar_size as usize,
             common::Prot { read: true, write: true },
             common::MemoryType::Uncacheable,

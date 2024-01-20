@@ -171,7 +171,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
             0 => panic!("BAR 0 is mapped to address 0"),
             _ => ptr,
         },
-        other => panic!("Expected memory bar, found {}", other),
+        other => panic!("Expected memory bar, found {:?}", other),
     };
 
     log::info!(" + IHDA {} on: {:#X} size: {}", name, bar_ptr, bar_size);

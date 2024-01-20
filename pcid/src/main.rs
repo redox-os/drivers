@@ -189,17 +189,15 @@ impl DriverHandler {
             }
         }
     }
-    fn handle_spawn(mut self, pcid_to_client_write: Option<usize>, pcid_from_client_read: Option<usize>, args: driver_interface::SubdriverArguments) {
+    fn handle_spawn(mut self, pcid_to_client_write: usize, pcid_from_client_read: usize, args: driver_interface::SubdriverArguments) {
         use driver_interface::*;
 
-        if let (Some(pcid_to_client_fd), Some(pcid_from_client_fd)) = (pcid_to_client_write, pcid_from_client_read) {
-            let mut pcid_to_client = unsafe { File::from_raw_fd(pcid_to_client_fd as RawFd) };
-            let mut pcid_from_client = unsafe { File::from_raw_fd(pcid_from_client_fd as RawFd) };
+        let mut pcid_to_client = unsafe { File::from_raw_fd(pcid_to_client_write as RawFd) };
+        let mut pcid_from_client = unsafe { File::from_raw_fd(pcid_from_client_read as RawFd) };
 
             while let Ok(msg) = recv(&mut pcid_from_client) {
                 let response = self.respond(msg, &args);
                 send(&mut pcid_to_client, &response).unwrap();
-            }
         }
     }
 }
@@ -256,8 +254,11 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, he
     }
 
     for (i, bar) in header.bars().iter().enumerate() {
-        if !bar.is_none() {
-            string.push_str(&format!(" {}={}", i, bar));
+        match bar {
+            PciBar::None => {},
+            PciBar::Memory32(addr) => string.push_str(&format!(" {i}={addr:08X}")),
+            PciBar::Memory64(addr) => string.push_str(&format!(" {i}={addr:016X}")),
+            PciBar::Port(port) => string.push_str(&format!(" {i}=P{port:04X}")),
         }
     }
 
@@ -411,34 +412,14 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, he
             if let Some(program) = args.next() {
                 let mut command = Command::new(program);
                 for arg in args {
-                    let arg = match arg.as_str() {
-                        "$BUS" => format!("{:>02X}", addr.bus()),
-                        "$DEV" => format!("{:>02X}", addr.device()),
-                        "$FUNC" => format!("{:>02X}", addr.function()),
-                        "$NAME" => func.name(),
-                        "$BAR0" => format!("{}", bars[0]),
-                        "$BAR1" => format!("{}", bars[1]),
-                        "$BAR2" => format!("{}", bars[2]),
-                        "$BAR3" => format!("{}", bars[3]),
-                        "$BAR4" => format!("{}", bars[4]),
-                        "$BAR5" => format!("{}", bars[5]),
-                        "$BARSIZE0" => format!("{:>08X}", bar_sizes[0]),
-                        "$BARSIZE1" => format!("{:>08X}", bar_sizes[1]),
-                        "$BARSIZE2" => format!("{:>08X}", bar_sizes[2]),
-                        "$BARSIZE3" => format!("{:>08X}", bar_sizes[3]),
-                        "$BARSIZE4" => format!("{:>08X}", bar_sizes[4]),
-                        "$BARSIZE5" => format!("{:>08X}", bar_sizes[5]),
-                        "$IRQ" => format!("{}", irq),
-                        "$VENID" => format!("{:>04X}", header.vendor_id()),
-                        "$DEVID" => format!("{:>04X}", header.device_id()),
-                        _ => arg.clone()
-                    };
-                    command.arg(&arg);
+                    if arg.starts_with("$") {
+                        panic!("support for $VARIABLE has been removed. use pcid_interface instead");
+                    }
+                    command.arg(arg);
                 }
 
                 info!("PCID SPAWN {:?}", command);
 
-                let (pcid_to_client_write, pcid_from_client_read, envs) = if driver.use_channel.unwrap_or(false) {
                     // TODO: libc wrapper?
                     let [fds1, fds2] = unsafe {
                         let mut fds1 = [0 as libc::c_int; 2];
@@ -456,10 +437,10 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, he
                     let [pcid_to_client_read, pcid_to_client_write] = fds1;
                     let [pcid_from_client_read, pcid_from_client_write] = fds2;
 
-                    (Some(pcid_to_client_write), Some(pcid_from_client_read), vec! [("PCID_TO_CLIENT_FD", format!("{}", pcid_to_client_read)), ("PCID_FROM_CLIENT_FD", format!("{}", pcid_from_client_write))])
-                } else {
-                    (None, None, vec! [])
-                };
+                let envs = vec![
+                    ("PCID_TO_CLIENT_FD", format!("{}", pcid_to_client_read)),
+                    ("PCID_FROM_CLIENT_FD", format!("{}", pcid_from_client_write)),
+                ];
 
                 match command.envs(envs).spawn() {
                     Ok(mut child) => {
