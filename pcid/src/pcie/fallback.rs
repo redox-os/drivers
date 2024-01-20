@@ -42,17 +42,13 @@ impl Pci {
     }
 
     fn address(address: PciAddress, offset: u8) -> u32 {
-        // TODO: Find the part of pcid that uses an unaligned offset!
-        //
-        // assert_eq!(offset & 0xFC, offset, "pci offset is not aligned");
-        //
-        let offset = offset & 0xFC;
-
         assert_eq!(
             address.segment(),
             0,
             "usage of multiple segments requires PCIe extended configuration"
         );
+
+        assert_eq!(offset & 0xFC, offset, "pci offset is not aligned");
 
         0x80000000
             | (u32::from(address.bus()) << 16)

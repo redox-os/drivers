@@ -205,6 +205,8 @@ impl Pcie {
             "multiple segments not yet implemented"
         );
 
+        assert_eq!(offset & 0xFC, offset, "pci offset is not aligned");
+
         let bus_addr = match self.bus_maps.get(address.bus() as usize) {
             Some(Some(bus_addr)) => bus_addr,
             Some(None) | None => return f(None),
