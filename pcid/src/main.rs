@@ -10,7 +10,7 @@ use log::{debug, error, info, warn, trace};
 use redox_log::{OutputBuilder, RedoxLogger};
 
 use crate::config::Config;
-use crate::pci::{CfgAccess, Pci, PciAddress, PciBar, PciBus, PciClass, PciFunc, PciHeader, PciHeaderError, PciHeaderType};
+use crate::pci::{CfgAccess, Pci, PciAddress, PciBar, PciClass, PciFunc, PciHeader, PciHeaderError, PciHeaderType};
 use crate::pci::cap::Capability as PciCapability;
 use crate::pci::func::{ConfigReader, ConfigWriter};
 use crate::pcie::Pcie;
@@ -592,10 +592,10 @@ fn main(args: Args) {
         let bus_num = bus_nums[bus_i];
         bus_i += 1;
 
-        let bus = PciBus { num: bus_num };
-        'dev: for dev in bus.devs() {
-            for func in dev.funcs(pci) {
-                let func_addr = func.addr;
+        'dev: for dev_num in 0..32 {
+            for func_num in 0..8 {
+                let func_addr = PciAddress::new(0, bus_num, dev_num, func_num);
+                let func = PciFunc { pci, addr: func_addr };
                 match PciHeader::from_reader(func) {
                     Ok(header) => {
                         handle_parsed_header(Arc::clone(&state), &config, func_addr, header);
@@ -605,7 +605,7 @@ fn main(args: Args) {
                     }
                     Err(PciHeaderError::NoDevice) => {
                         if func_addr.function() == 0 {
-                                trace!("PCI {:>02X}/{:>02X}: no dev", bus.num, dev.num);
+                                trace!("PCI {:>02X}:{:>02X}: no dev", bus_num, dev_num);
                                 continue 'dev;
                         }
                     },

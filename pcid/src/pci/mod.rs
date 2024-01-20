@@ -8,19 +8,15 @@ use serde::{Deserialize, Serialize};
 use syscall::io::{Io as _, Pio};
 
 pub use self::bar::PciBar;
-pub use self::bus::{PciBus, PciBusIter};
 pub use self::class::PciClass;
-pub use self::dev::{PciDev, PciDevIter};
 pub use self::func::PciFunc;
 pub use self::header::{PciHeader, PciHeaderError, PciHeaderType};
 
 use log::info;
 
 mod bar;
-mod bus;
 pub mod cap;
 mod class;
-mod dev;
 pub mod func;
 pub mod header;
 pub mod msi;
@@ -104,10 +100,6 @@ impl Pci {
         }
     }
 
-    pub fn buses<'pci>(&'pci self) -> PciIter<'pci> {
-        PciIter::new(self)
-    }
-
     fn set_iopl() {
         // make sure that pcid is not granted io port permission unless pcie memory-mapped
         // configuration space is not available.
@@ -174,30 +166,5 @@ impl CfgAccess for Pci {
     unsafe fn write(&self, addr: PciAddress, offset: u16, value: u32) {
         let _guard = self.lock.lock().unwrap();
         todo!("Pci::CfgAccess::write on this architecture")
-    }
-}
-
-pub struct PciIter<'pci> {
-    pci: &'pci dyn CfgAccess,
-    num: Option<u8>,
-}
-
-impl<'pci> PciIter<'pci> {
-    pub fn new(pci: &'pci dyn CfgAccess) -> Self {
-        PciIter { pci, num: Some(0) }
-    }
-}
-
-impl<'pci> Iterator for PciIter<'pci> {
-    type Item = PciBus;
-    fn next(&mut self) -> Option<Self::Item> {
-        match self.num {
-            Some(bus_num) => {
-                let bus = PciBus { num: bus_num };
-                self.num = bus_num.checked_add(1);
-                Some(bus)
-            }
-            None => None,
-        }
     }
 }
