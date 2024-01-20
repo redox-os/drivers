@@ -1,6 +1,6 @@
 use byteorder::{ByteOrder, LittleEndian};
 
-use super::{CfgAccess, PciAddress, PciDev};
+use super::{CfgAccess, PciAddress};
 
 pub trait ConfigReader {
     unsafe fn read_range(&self, offset: u16, len: u16) -> Vec<u8> {

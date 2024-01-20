@@ -9,16 +9,16 @@ use structopt::StructOpt;
 use log::{debug, error, info, warn, trace};
 use redox_log::{OutputBuilder, RedoxLogger};
 
+use crate::cfg_access::Pcie;
 use crate::config::Config;
-use crate::pci::{CfgAccess, Pci, PciAddress, PciBar, PciBus, PciClass, PciFunc, PciHeader, PciHeaderError, PciHeaderType};
+use crate::pci::{CfgAccess, PciAddress, PciBar, PciClass, PciFunc, PciHeader, PciHeaderError, PciHeaderType};
 use crate::pci::cap::Capability as PciCapability;
 use crate::pci::func::{ConfigReader, ConfigWriter};
-use crate::pcie::Pcie;
 
+mod cfg_access;
 mod config;
 mod driver_interface;
 mod pci;
-mod pcie;
 
 #[derive(StructOpt)]
 #[structopt(about)]
@@ -206,12 +206,11 @@ impl DriverHandler {
 
 pub struct State {
     threads: Mutex<Vec<thread::JoinHandle<()>>>,
-    pci: Arc<Pci>,
-    pcie: Option<Pcie>,
+    pcie: Pcie,
 }
 impl State {
     fn preferred_cfg_access(&self) -> &dyn CfgAccess {
-        self.pcie.as_ref().map(|pcie| pcie as &dyn CfgAccess).unwrap_or(&*self.pci as &dyn CfgAccess)
+        &self.pcie
     }
 }
 
@@ -471,12 +470,11 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, he
                             state: Arc::clone(&state),
                             capabilities,
                         };
-                        thread::spawn(move || {
-                            // RFLAGS are no longer kept in the relibc clone() implementation.
-                            unsafe { syscall::iopl(3).expect("pcid: failed to set IOPL"); }
-
+                        let _handle = thread::spawn(move || {
                             driver_handler.handle_spawn(pcid_to_client_write, pcid_from_client_read, subdriver_args);
                         });
+                        // FIXME this currently deadlocks as pcid doesn't daemonize
+                        //state.threads.lock().unwrap().push(handle);
                         match child.wait() {
                             Ok(_status) => (),
                             Err(err) => error!("pcid: failed to wait for {:?}: {}", command, err),
@@ -565,17 +563,8 @@ fn main(args: Args) {
 
     let _logger_ref = setup_logging(args.verbose);
 
-    let pci = Arc::new(Pci::new());
-
     let state = Arc::new(State {
-        pci: Arc::clone(&pci),
-        pcie: match Pcie::new(Arc::clone(&pci)) {
-            Ok(pcie) => Some(pcie),
-            Err(error) => {
-                info!("Couldn't retrieve PCIe info, perhaps the kernel is not compiled with acpi? Using the PCI 3.0 configuration space instead. Error: {:?}", error);
-                None
-            }
-        },
+        pcie: Pcie::new(),
         threads: Mutex::new(Vec::new()),
     });
 
@@ -592,10 +581,10 @@ fn main(args: Args) {
         let bus_num = bus_nums[bus_i];
         bus_i += 1;
 
-        let bus = PciBus { num: bus_num };
-        'dev: for dev in bus.devs() {
-            for func in dev.funcs(pci) {
-                let func_addr = func.addr;
+        'dev: for dev_num in 0..32 {
+            for func_num in 0..8 {
+                let func_addr = PciAddress::new(0, bus_num, dev_num, func_num);
+                let func = PciFunc { pci, addr: func_addr };
                 match PciHeader::from_reader(func) {
                     Ok(header) => {
                         handle_parsed_header(Arc::clone(&state), &config, func_addr, header);
@@ -605,7 +594,7 @@ fn main(args: Args) {
                     }
                     Err(PciHeaderError::NoDevice) => {
                         if func_addr.function() == 0 {
-                                trace!("PCI {:>02X}/{:>02X}: no dev", bus.num, dev.num);
+                                trace!("PCI {:>02X}:{:>02X}: no dev", bus_num, dev_num);
                                 continue 'dev;
                         }
                     },
