@@ -5,7 +5,8 @@
 name = "AHCI storage"
 class = 1
 subclass = 6
-command = ["ahcid", "$NAME", "$BAR5", "$BARSIZE5", "$IRQ"]
+command = ["ahcid"]
+use_channel = true
 
 # ided
 [[drivers]]

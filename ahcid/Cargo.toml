@@ -14,3 +14,4 @@ redox_syscall = "0.4"
 
 block-io-wrapper = { path = "../block-io-wrapper" }
 common = { path = "../common" }
+pcid = { path = "../pcid" }
