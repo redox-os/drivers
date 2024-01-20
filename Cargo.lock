@@ -166,6 +166,7 @@ name = "bgad"
 version = "0.1.0"
 dependencies = [
  "orbclient",
+ "pcid",
  "redox-daemon",
  "redox_syscall 0.4.1",
 ]
