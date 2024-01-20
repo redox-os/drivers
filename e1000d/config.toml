@@ -2,4 +2,5 @@
 name = "E1000 NIC"
 class = 0x02
 ids = { 0x8086 = [0x1004, 0x100e, 0x100f, 0x1503] }
-command = ["e1000d", "$NAME", "$BAR0", "$BARSIZE0", "$IRQ"]
+command = ["e1000d"]
+use_channel = true

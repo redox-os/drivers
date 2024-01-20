@@ -3,13 +3,14 @@ extern crate netutils;
 extern crate syscall;
 
 use std::cell::RefCell;
-use std::{env, process};
 use std::fs::File;
 use std::io::{ErrorKind, Read, Result, Write};
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
+use std::process;
 use std::sync::Arc;
 
 use event::EventQueue;
+use pcid_interface::{PciBar, PcidServerHandle};
 use syscall::{EventFlags, Packet, SchemeBlockMut};
 
 pub mod device;
@@ -58,19 +59,23 @@ fn handle_update(
 }
 
 fn main() {
-    let mut args = env::args().skip(1);
+    let mut pcid_handle =
+        PcidServerHandle::connect_default().expect("e1000d: failed to setup channel to pcid");
+    let pci_config = pcid_handle
+        .fetch_config()
+        .expect("e1000d: failed to fetch config");
 
-    let mut name = args.next().expect("e1000d: no name provided");
+    let mut name = pci_config.func.name();
     name.push_str("_e1000");
 
-    let bar_str = args.next().expect("e1000d: no address provided");
-    let bar = usize::from_str_radix(&bar_str, 16).expect("e1000d: failed to parse address");
+    let bar = match pci_config.func.bars[0] {
+        PciBar::Memory32(addr) => addr as usize,
+        PciBar::Memory64(addr) => addr as usize,
+        PciBar::None | PciBar::Port(_) => unreachable!(),
+    };
+    let bar_size = pci_config.func.bar_sizes[0] as usize;
 
-    let bar_size_str = args.next().expect("e1000d: no address size provided");
-    let bar_size = usize::from_str_radix(&bar_size_str, 16).expect("e1000d: failed to parse address size");
-
-    let irq_str = args.next().expect("e1000d: no irq provided");
-    let irq = irq_str.parse::<u8>().expect("e1000d: failed to parse irq");
+    let irq = pci_config.func.legacy_interrupt_line;
 
     eprintln!(" + E1000 {} on: {:X} size: {} IRQ: {}", name, bar, bar_size, irq);
 
