@@ -3,7 +3,7 @@ use std::ops::Range;
 
 use serde::Deserialize;
 
-use crate::pci::PciHeader;
+use crate::pci::FullDeviceId;
 
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct Config {
@@ -24,21 +24,21 @@ pub struct DriverConfig {
 }
 
 impl DriverConfig {
-    pub fn match_function(&self, header: &PciHeader) -> bool {
+    pub fn match_function(&self, id: &FullDeviceId) -> bool {
         if let Some(class) = self.class {
-            if class != header.class().into() {
+            if class != id.class {
                 return false;
             }
         }
 
         if let Some(subclass) = self.subclass {
-            if subclass != header.subclass() {
+            if subclass != id.subclass {
                 return false;
             }
         }
 
         if let Some(interface) = self.interface {
-            if interface != header.interface() {
+            if interface != id.interface {
                 return false;
             }
         }
@@ -49,12 +49,12 @@ impl DriverConfig {
                 let vendor_without_prefix = vendor.trim_start_matches("0x");
                 let vendor = i64::from_str_radix(vendor_without_prefix, 16).unwrap() as u16;
 
-                if vendor != header.vendor_id() {
+                if vendor != id.vendor_id {
                     continue;
                 }
 
                 for device in devices {
-                    if *device == header.device_id() {
+                    if *device == id.device_id {
                         device_found = true;
                         break;
                     }
@@ -65,22 +65,20 @@ impl DriverConfig {
             }
         } else {
             if let Some(vendor) = self.vendor {
-                if vendor != header.vendor_id() {
+                if vendor != id.vendor_id {
                     return false;
                 }
             }
 
             if let Some(device) = self.device {
-                if device != header.device_id() {
+                if device != id.device_id {
                     return false;
                 }
             }
         }
 
         if let Some(ref device_id_range) = self.device_id_range {
-            if header.device_id() < device_id_range.start
-                || device_id_range.end <= header.device_id()
-            {
+            if id.device_id < device_id_range.start || device_id_range.end <= id.device_id {
                 return false;
             }
         }

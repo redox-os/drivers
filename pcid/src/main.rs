@@ -265,7 +265,7 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, he
     info!("{}", string);
 
     for driver in config.drivers.iter() {
-        if !driver.match_function(&header) {
+        if !driver.match_function(header.full_device_id()) {
             continue;
         }
 
@@ -362,10 +362,9 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, he
             bars,
             bar_sizes,
             addr,
-            devid: header.device_id(),
             legacy_interrupt_line: irq,
             legacy_interrupt_pin,
-            venid: header.vendor_id(),
+            full_device_id: header.full_device_id().clone(),
         };
 
         let subdriver_args = driver_interface::SubdriverArguments {

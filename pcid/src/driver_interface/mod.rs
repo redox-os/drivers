@@ -9,7 +9,7 @@ use thiserror::Error;
 
 pub use crate::pci::cap::Capability;
 pub use crate::pci::msi;
-pub use crate::pci::{PciAddress, PciBar, PciHeader};
+pub use crate::pci::{FullDeviceId, PciAddress, PciBar, PciHeader};
 
 pub mod irq_helpers;
 
@@ -45,10 +45,8 @@ pub struct PciFunction {
     /// Legacy interrupt pin (INTx#), none if INTx# interrupts aren't supported at all.
     pub legacy_interrupt_pin: Option<LegacyInterruptPin>,
 
-    /// Vendor ID
-    pub venid: u16,
-    /// Device ID
-    pub devid: u16,
+    /// All identifying information of the PCI function.
+    pub full_device_id: FullDeviceId,
 }
 impl PciFunction {
     pub fn name(&self) -> String {

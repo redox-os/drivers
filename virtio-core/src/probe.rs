@@ -64,7 +64,7 @@ pub fn probe_device(pcid_handle: &mut PcidServerHandle) -> Result<Device, Error>
     let pci_header = pcid_handle.fetch_header()?;
 
     assert_eq!(
-        pci_config.func.venid, 6900,
+        pci_config.func.full_device_id.vendor_id, 6900,
         "virtio_core::probe_device: not a virtio device"
     );
 

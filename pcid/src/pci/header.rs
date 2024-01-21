@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use super::bar::PciBar;
 use super::class::PciClass;
 use super::func::ConfigReader;
+use super::id::FullDeviceId;
 
 #[derive(Debug, PartialEq)]
 pub enum PciHeaderError {
@@ -31,14 +32,9 @@ bitflags! {
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SharedPciHeader {
-        vendor_id: u16,
-        device_id: u16,
+    full_device_id: FullDeviceId,
         command: u16,
         status: u16,
-        revision: u8,
-        interface: u8,
-        subclass: u8,
-        class: PciClass,
         cache_line_size: u8,
         latency_timer: u8,
         header_type: PciHeaderType,
@@ -127,20 +123,22 @@ impl PciHeader {
             let revision = bytes[8];
             let interface = bytes[9];
             let subclass = bytes[10];
-            let class = PciClass::from(bytes[11]);
+            let class = bytes[11];
             let cache_line_size = bytes[12];
             let latency_timer = bytes[13];
             let header_type = PciHeaderType::from_bits_truncate(bytes[14]);
             let bist = bytes[15];
             let shared = SharedPciHeader {
+                full_device_id: FullDeviceId {
                 vendor_id,
                 device_id,
+                    class,
+                    subclass,
+                    interface,
+                    revision,
+                },
                 command,
                 status,
-                revision,
-                interface,
-                subclass,
-                class,
                 cache_line_size,
                 latency_timer,
                 header_type,
@@ -245,88 +243,56 @@ impl PciHeader {
         }
     }
 
-    /// Return the Vendor ID field.
-    pub fn vendor_id(&self) -> u16 {
+    /// Return all identifying information of the PCI function.
+    pub fn full_device_id(&self) -> &FullDeviceId {
         match self {
-            &PciHeader::General {
-                shared: SharedPciHeader { vendor_id, .. },
+            PciHeader::General {
+                shared:
+                    SharedPciHeader {
+                        full_device_id: device_id,
+                        ..
+                    },
                 ..
             }
-            | &PciHeader::PciToPci {
-                shared: SharedPciHeader { vendor_id, .. },
-                ..
-            } => vendor_id,
-        }
-    }
-
-    /// Return the Device ID field.
-    pub fn device_id(&self) -> u16 {
-        match self {
-            &PciHeader::General {
-                shared: SharedPciHeader { device_id, .. },
-                ..
-            }
-            | &PciHeader::PciToPci {
-                shared: SharedPciHeader { device_id, .. },
+            | PciHeader::PciToPci {
+                shared:
+                    SharedPciHeader {
+                        full_device_id: device_id,
+                        ..
+                    },
                 ..
             } => device_id,
         }
     }
 
+    /// Return the Vendor ID field.
+    pub fn vendor_id(&self) -> u16 {
+        self.full_device_id().vendor_id
+    }
+
+    /// Return the Device ID field.
+    pub fn device_id(&self) -> u16 {
+        self.full_device_id().device_id
+    }
+
     /// Return the Revision field.
     pub fn revision(&self) -> u8 {
-        match self {
-            &PciHeader::General {
-                shared: SharedPciHeader { revision, .. },
-                ..
-            }
-            | &PciHeader::PciToPci {
-                shared: SharedPciHeader { revision, .. },
-                ..
-            } => revision,
-        }
+        self.full_device_id().revision
     }
 
     /// Return the Interface field.
     pub fn interface(&self) -> u8 {
-        match self {
-            &PciHeader::General {
-                shared: SharedPciHeader { interface, .. },
-                ..
-            }
-            | &PciHeader::PciToPci {
-                shared: SharedPciHeader { interface, .. },
-                ..
-            } => interface,
-        }
+        self.full_device_id().interface
     }
 
     /// Return the Subclass field.
     pub fn subclass(&self) -> u8 {
-        match self {
-            &PciHeader::General {
-                shared: SharedPciHeader { subclass, .. },
-                ..
-            }
-            | &PciHeader::PciToPci {
-                shared: SharedPciHeader { subclass, .. },
-                ..
-            } => subclass,
-        }
+        self.full_device_id().subclass
     }
 
     /// Return the Class field.
     pub fn class(&self) -> PciClass {
-        match self {
-            &PciHeader::General {
-                shared: SharedPciHeader { class, .. },
-                ..
-            }
-            | &PciHeader::PciToPci {
-                shared: SharedPciHeader { class, .. },
-                ..
-            } => class,
-        }
+        PciClass::from(self.full_device_id().class)
     }
 
     /// Return the Headers BARs.

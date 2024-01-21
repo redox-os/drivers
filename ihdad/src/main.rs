@@ -185,7 +185,8 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let mut irq_file = get_int_method(&mut pcid_handle).expect("ihdad: no interrupt file");
 
 	{
-		let vend_prod:u32 = ((pci_config.func.venid as u32) << 16) | (pci_config.func.devid as u32);
+		let vend_prod: u32 = ((pci_config.func.full_device_id.vendor_id as u32) << 16)
+            | (pci_config.func.full_device_id.device_id as u32);
 
 		let device = Arc::new(RefCell::new(unsafe { hda::IntelHDA::new(address, vend_prod).expect("ihdad: failed to allocate device") }));
 		let socket_fd = syscall::open(":audiohw", syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK).expect("ihdad: failed to create hda scheme");
