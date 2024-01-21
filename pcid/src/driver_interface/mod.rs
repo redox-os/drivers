@@ -85,11 +85,11 @@ pub enum PciFeature {
     MsiX,
 }
 impl PciFeature {
-    pub fn is_msi(&self) -> bool {
-        if let &Self::Msi = self { true } else { false }
+    pub fn is_msi(self) -> bool {
+        if let Self::Msi = self { true } else { false }
     }
-    pub fn is_msix(&self) -> bool {
-        if let &Self::MsiX = self { true } else { false }
+    pub fn is_msix(self) -> bool {
+        if let Self::MsiX = self { true } else { false }
     }
 }
 #[derive(Debug, Serialize, Deserialize)]
