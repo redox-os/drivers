@@ -9,7 +9,7 @@ use thiserror::Error;
 
 pub use crate::pci::cap::Capability;
 pub use crate::pci::msi;
-pub use crate::pci::{FullDeviceId, PciAddress, PciBar, PciHeader};
+pub use crate::pci::{FullDeviceId, PciAddress, PciBar};
 
 pub mod irq_helpers;
 
@@ -163,7 +163,6 @@ pub enum SetFeatureInfo {
 #[non_exhaustive]
 pub enum PcidClientRequest {
     RequestConfig,
-    RequestHeader,
     RequestFeatures,
     RequestCapabilities,
     EnableFeature(PciFeature),
@@ -186,7 +185,6 @@ pub enum PcidServerResponseError {
 pub enum PcidClientResponse {
     Capabilities(Vec<Capability>),
     Config(SubdriverArguments),
-    Header(PciHeader),
     AllFeatures(Vec<(PciFeature, FeatureStatus)>),
     FeatureEnabled(PciFeature),
     FeatureStatus(PciFeature, FeatureStatus),
@@ -264,13 +262,6 @@ impl PcidServerHandle {
         }
     }
 
-    pub fn fetch_header(&mut self) -> Result<PciHeader> {
-        self.send(&PcidClientRequest::RequestHeader)?;
-        match self.recv()? {
-            PcidClientResponse::Header(a) => Ok(a),
-            other => Err(PcidClientHandleError::InvalidResponse(other)),
-        }
-    }
     pub fn fetch_all_features(&mut self) -> Result<Vec<(PciFeature, FeatureStatus)>> {
         self.send(&PcidClientRequest::RequestFeatures)?;
         match self.recv()? {

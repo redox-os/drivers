@@ -33,9 +33,7 @@ struct Args {
 }
 
 pub struct DriverHandler {
-    config: config::DriverConfig,
     addr: PciAddress,
-    header: PciHeader,
     capabilities: Vec<(u8, PciCapability)>,
 
     state: Arc<State>,
@@ -58,9 +56,6 @@ impl DriverHandler {
             }
             PcidClientRequest::RequestConfig => {
                 PcidClientResponse::Config(args.clone())
-            }
-            PcidClientRequest::RequestHeader => {
-                PcidClientResponse::Header(self.header.clone())
             }
             PcidClientRequest::RequestFeatures => {
                 PcidClientResponse::AllFeatures(self.capabilities.iter().filter_map(|(_, capability)| match capability {
@@ -409,8 +404,6 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, he
                 Ok(mut child) => {
                     let driver_handler = DriverHandler {
                         addr,
-                        config: driver.clone(),
-                        header,
                         state: Arc::clone(&state),
                         capabilities,
                     };
