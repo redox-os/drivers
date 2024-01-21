@@ -85,21 +85,9 @@ fn setup_logging(name: &str) -> Option<&'static RedoxLogger> {
 fn get_int_method(pcid_handle: &mut PcidServerHandle, address: usize) -> (Option<File>, InterruptMethod) {
     let pci_config = pcid_handle.fetch_config().expect("xhcid: failed to fetch config");
 
-    let bar = pci_config.func.bars[0];
+    let bar_ptr = pci_config.func.bars[0].expect_mem() as u64;
     let bar_size = pci_config.func.bar_sizes[0] as u64;
     let irq = pci_config.func.legacy_interrupt_line;
-
-    let bar_ptr = match bar {
-        pcid_interface::PciBar::Memory32(ptr) => match ptr {
-            0 => panic!("BAR 0 is mapped to address 0"),
-            _ => ptr as u64,
-        },
-        pcid_interface::PciBar::Memory64(ptr) => match ptr {
-            0 => panic!("BAR 0 is mapped to address 0"),
-            _ => ptr,
-        },
-        other => panic!("Expected memory bar, found {:?}", other),
-    };
 
     let all_pci_features = pcid_handle.fetch_all_features().expect("xhcid: failed to fetch pci features");
     log::debug!("XHCI PCI FEATURES: {:?}", all_pci_features);
@@ -247,21 +235,9 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let _logger_ref = setup_logging(&name);
 
     log::debug!("XHCI PCI CONFIG: {:?}", pci_config);
-    let bar = pci_config.func.bars[0];
+    let bar_ptr = pci_config.func.bars[0].expect_mem();
     let bar_size = pci_config.func.bar_sizes[0];
     let irq = pci_config.func.legacy_interrupt_line;
-
-    let bar_ptr = match bar {
-        pcid_interface::PciBar::Memory32(ptr) => match ptr {
-            0 => panic!("BAR 0 is mapped to address 0"),
-            _ => ptr as u64,
-        },
-        pcid_interface::PciBar::Memory64(ptr) => match ptr {
-            0 => panic!("BAR 0 is mapped to address 0"),
-            _ => ptr,
-        },
-        other => panic!("Expected memory bar, found {:?}", other),
-    };
 
     let address = unsafe {
         common::physmap(bar_ptr as usize, bar_size as usize, common::Prot::RW, common::MemoryType::Uncacheable)

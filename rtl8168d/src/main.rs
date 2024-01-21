@@ -172,17 +172,7 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle) -> Option<File> {
         let bar = pci_config.func.bars[bir];
         let bar_size = pci_config.func.bar_sizes[bir] as u64;
 
-        let bar_ptr = match bar {
-            pcid_interface::PciBar::Memory32(ptr) => match ptr {
-                0 => panic!("BAR {} is mapped to address 0", bir),
-                _ => ptr as u64,
-            },
-            pcid_interface::PciBar::Memory64(ptr) => match ptr {
-                0 => panic!("BAR {} is mapped to address 0", bir),
-                _ => ptr,
-            },
-            other => panic!("Expected memory bar, found {:?}", other),
-        };
+        let bar_ptr = bar.expect_mem() as u64;
 
         let address = unsafe {
             common::physmap(bar_ptr as usize, bar_size as usize, common::Prot::RW, common::MemoryType::Uncacheable)

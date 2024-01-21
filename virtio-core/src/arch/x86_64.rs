@@ -27,14 +27,8 @@ pub fn enable_msix(pcid_handle: &mut PcidServerHandle) -> Result<File, Error> {
     let pba_base = capability.pba_base_pointer(pci_config.func.bars);
 
     let bir = capability.table_bir() as usize;
-    let bar = pci_config.func.bars[bir];
+    let bar_ptr = pci_config.func.bars[bir].expect_mem() as u64;
     let bar_size = pci_config.func.bar_sizes[bir] as u64;
-
-    let bar_ptr = match bar {
-        PciBar::Memory32(ptr) => ptr.into(),
-        PciBar::Memory64(ptr) => ptr,
-        _ => unreachable!(),
-    };
 
     let address = unsafe {
         common::physmap(
@@ -99,33 +93,31 @@ pub fn probe_legacy_port_transport(
     pci_config: &SubdriverArguments,
     pcid_handle: &mut PcidServerHandle,
 ) -> Result<Device, Error> {
-    if let PciBar::Port(port) = pci_config.func.bars[0] {
-        unsafe { syscall::iopl(3).expect("virtio: failed to set I/O privilege level") };
-        log::warn!("virtio: using legacy transport");
+    let port = pci_config.func.bars[0].expect_port();
 
-        let transport = LegacyTransport::new(port);
+    unsafe { syscall::iopl(3).expect("virtio: failed to set I/O privilege level") };
+    log::warn!("virtio: using legacy transport");
 
-        // Setup interrupts.
-        let all_pci_features = pcid_handle.fetch_all_features()?;
-        let has_msix = all_pci_features
-            .iter()
-            .any(|(feature, _)| feature.is_msix());
+    let transport = LegacyTransport::new(port);
 
-        // According to the virtio specification, the device REQUIRED to support MSI-X.
-        assert!(has_msix, "virtio: device does not support MSI-X");
-        let irq_handle = enable_msix(pcid_handle)?;
+    // Setup interrupts.
+    let all_pci_features = pcid_handle.fetch_all_features()?;
+    let has_msix = all_pci_features
+        .iter()
+        .any(|(feature, _)| feature.is_msix());
 
-        let device = Device {
-            transport,
-            irq_handle,
-            device_space: core::ptr::null_mut(),
-        };
+    // According to the virtio specification, the device REQUIRED to support MSI-X.
+    assert!(has_msix, "virtio: device does not support MSI-X");
+    let irq_handle = enable_msix(pcid_handle)?;
 
-        device.transport.reset();
-        reinit(&device)?;
+    let device = Device {
+        transport,
+        irq_handle,
+        device_space: core::ptr::null_mut(),
+    };
 
-        Ok(device)
-    } else {
-        unreachable!("virtio: legacy transport with non-port IO?")
-    }
+    device.transport.reset();
+    reinit(&device)?;
+
+    Ok(device)
 }

@@ -90,13 +90,7 @@ pub fn probe_device(pcid_handle: &mut PcidServerHandle) -> Result<Device, Error>
             _ => continue,
         }
 
-        let bar = pci_config.func.bars[capability.bar as usize];
-        let addr = match bar {
-            PciBar::Memory32(addr) => addr as usize,
-            PciBar::Memory64(addr) => addr as usize,
-
-            _ => unreachable!("virtio: unsupported bar type: {bar:?}"),
-        };
+        let addr = pci_config.func.bars[capability.bar as usize].expect_mem();
 
         let address = unsafe {
             let addr = addr + capability.offset as usize;

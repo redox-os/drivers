@@ -93,17 +93,7 @@ fn get_int_method(
             match &mut *bar_guard {
                 &mut Some(ref bar) => Ok(bar.ptr),
                 bar_to_set @ &mut None => {
-                    let bar = match function.bars[bir] {
-                        PciBar::Memory32(addr) => match addr {
-                            0 => panic!("BAR {} is mapped to address 0", bir),
-                            _ => addr as u64,
-                        },
-                        PciBar::Memory64(addr) => match addr {
-                            0 => panic!("BAR {} is mapped to address 0", bir),
-                            _ => addr,
-                        },
-                        other => panic!("Expected memory BAR, found {:?}", other),
-                    };
+                    let bar = function.bars[bir].expect_mem();
                     let bar_size = function.bar_sizes[bir];
 
                     let bar = Bar::allocate(bar as usize, bar_size as usize)?;
@@ -303,17 +293,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     let _logger_ref = setup_logging(&scheme_name);
 
-    let bar = match pci_config.func.bars[0] {
-        PciBar::Memory32(mem) => match mem {
-            0 => panic!("BAR 0 is mapped to address 0"),
-            _ => mem as u64,
-        },
-        PciBar::Memory64(mem) => match mem {
-            0 => panic!("BAR 0 is mapped to address 0"),
-            _ => mem,
-        },
-        other => panic!("received a non-memory BAR ({:?})", other),
-    };
+    let bar = pci_config.func.bars[0].expect_mem();
     let bar_size = pci_config.func.bar_sizes[0];
     let irq = pci_config.func.legacy_interrupt_line;
 

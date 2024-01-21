@@ -194,16 +194,9 @@ fn main() {
     let mut name = pci_config.func.name();
     name.push_str("_vbox");
 
-    let bar0 = match pci_config.func.bars[0] {
-        PciBar::Port(port) => port,
-        _ => unreachable!(),
-    };
+    let bar0 = pci_config.func.bars[0].expect_port();
 
-    let bar1 = match pci_config.func.bars[1] {
-        PciBar::Memory32(addr) => addr as usize,
-        PciBar::Memory64(addr) => addr as usize,
-        PciBar::None | PciBar::Port(_) => unreachable!(),
-    };
+    let bar1 = pci_config.func.bars[1].expect_mem();
 
     let irq = pci_config.func.legacy_interrupt_line;
 

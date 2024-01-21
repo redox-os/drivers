@@ -81,11 +81,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let mut name = pci_config.func.name();
     name.push_str("_ahci");
 
-    let bar = match pci_config.func.bars[5] {
-        PciBar::Memory32(addr) => addr as usize,
-        PciBar::Memory64(addr) => addr as usize,
-        PciBar::None | PciBar::Port(_) => unreachable!(),
-    };
+    let bar = pci_config.func.bars[5].expect_mem();
     let bar_size = pci_config.func.bar_sizes[5];
 
     let irq = pci_config.func.legacy_interrupt_line;
