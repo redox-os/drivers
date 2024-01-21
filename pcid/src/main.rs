@@ -269,161 +269,163 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, he
             continue;
         }
 
-        if let Some(ref args) = driver.command {
-            // Enable bus mastering, memory space, and I/O space
-            unsafe {
-                let mut data = pci.read(addr, 0x04);
-                data |= 7;
-                pci.write(addr, 0x04, data);
+        let Some(ref args) = driver.command else {
+            continue;
+        };
+
+        // Enable bus mastering, memory space, and I/O space
+        unsafe {
+            let mut data = pci.read(addr, 0x04);
+            data |= 7;
+            pci.write(addr, 0x04, data);
+        }
+
+        // Set IRQ line to 9 if not set
+        let mut irq;
+        let interrupt_pin;
+
+        unsafe {
+            let mut data = pci.read(addr, 0x3C);
+            irq = (data & 0xFF) as u8;
+            interrupt_pin = ((data & 0x0000_FF00) >> 8) as u8;
+            if irq == 0xFF {
+                irq = 9;
+            }
+            data = (data & 0xFFFFFF00) | irq as u32;
+            pci.write(addr, 0x3C, data);
+        };
+
+        // Find BAR sizes
+        //TODO: support 64-bit BAR sizes?
+        let mut bars = [PciBar::None; 6];
+        let mut bar_sizes = [0; 6];
+        unsafe {
+            let count = match header.header_type() {
+                PciHeaderType::GENERAL => 6,
+                PciHeaderType::PCITOPCI => 2,
+                _ => 0,
+            };
+
+            for i in 0..count {
+                bars[i] = header.get_bar(i);
+
+                let offset = 0x10 + (i as u8) * 4;
+
+                let original = pci.read(addr, offset.into());
+                pci.write(addr, offset.into(), 0xFFFFFFFF);
+
+                let new = pci.read(addr, offset.into());
+                pci.write(addr, offset.into(), original);
+
+                let masked = if new & 1 == 1 {
+                    new & 0xFFFFFFFC
+                } else {
+                    new & 0xFFFFFFF0
+                };
+
+                let size = (!masked).wrapping_add(1);
+                bar_sizes[i] = if size <= 1 {
+                    0
+                } else {
+                    size
+                };
+            }
+        }
+
+        let capabilities = if header.status() & (1 << 4) != 0 {
+            let func = PciFunc {
+                pci: state.preferred_cfg_access(),
+                addr
+            };
+            crate::pci::cap::CapabilitiesIter { inner: crate::pci::cap::CapabilityOffsetsIter::new(header.cap_pointer(), &func) }.collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        debug!("PCI DEVICE CAPABILITIES for {}: {:?}", args.iter().map(|string| string.as_ref()).nth(0).unwrap_or("[unknown]"), capabilities);
+
+        use driver_interface::LegacyInterruptPin;
+
+        let legacy_interrupt_pin = match interrupt_pin {
+            0 => None,
+            1 => Some(LegacyInterruptPin::IntA),
+            2 => Some(LegacyInterruptPin::IntB),
+            3 => Some(LegacyInterruptPin::IntC),
+            4 => Some(LegacyInterruptPin::IntD),
+
+            other => {
+                warn!("pcid: invalid interrupt pin: {}", other);
+                None
+            }
+        };
+
+        let func = driver_interface::PciFunction {
+            bars,
+            bar_sizes,
+            addr,
+            devid: header.device_id(),
+            legacy_interrupt_line: irq,
+            legacy_interrupt_pin,
+            venid: header.vendor_id(),
+        };
+
+        let subdriver_args = driver_interface::SubdriverArguments {
+            func,
+        };
+
+        let mut args = args.iter();
+        if let Some(program) = args.next() {
+            let mut command = Command::new(program);
+            for arg in args {
+                if arg.starts_with("$") {
+                    panic!("support for $VARIABLE has been removed. use pcid_interface instead");
+                }
+                command.arg(arg);
             }
 
-            // Set IRQ line to 9 if not set
-            let mut irq;
-            let interrupt_pin;
+            info!("PCID SPAWN {:?}", command);
 
-            unsafe {
-                let mut data = pci.read(addr, 0x3C);
-                irq = (data & 0xFF) as u8;
-                interrupt_pin = ((data & 0x0000_FF00) >> 8) as u8;
-                if irq == 0xFF {
-                    irq = 9;
-                }
-                data = (data & 0xFFFFFF00) | irq as u32;
-                pci.write(addr, 0x3C, data);
+            // TODO: libc wrapper?
+            let [fds1, fds2] = unsafe {
+                let mut fds1 = [0 as libc::c_int; 2];
+                let mut fds2 = [0 as libc::c_int; 2];
+
+                assert_eq!(libc::pipe(fds1.as_mut_ptr()), 0, "pcid: failed to create pcid->client pipe");
+                assert_eq!(libc::pipe(fds2.as_mut_ptr()), 0, "pcid: failed to create client->pcid pipe");
+
+                [
+                    fds1.map(|c| c as usize),
+                    fds2.map(|c| c as usize),
+                ]
             };
 
-            // Find BAR sizes
-            //TODO: support 64-bit BAR sizes?
-            let mut bars = [PciBar::None; 6];
-            let mut bar_sizes = [0; 6];
-            unsafe {
-                let count = match header.header_type() {
-                    PciHeaderType::GENERAL => 6,
-                    PciHeaderType::PCITOPCI => 2,
-                    _ => 0,
-                };
+            let [pcid_to_client_read, pcid_to_client_write] = fds1;
+            let [pcid_from_client_read, pcid_from_client_write] = fds2;
 
-                for i in 0..count {
-                    bars[i] = header.get_bar(i);
+            let envs = vec![
+                ("PCID_TO_CLIENT_FD", format!("{}", pcid_to_client_read)),
+                ("PCID_FROM_CLIENT_FD", format!("{}", pcid_from_client_write)),
+            ];
 
-                    let offset = 0x10 + (i as u8) * 4;
-
-                    let original = pci.read(addr, offset.into());
-                    pci.write(addr, offset.into(), 0xFFFFFFFF);
-
-                    let new = pci.read(addr, offset.into());
-                    pci.write(addr, offset.into(), original);
-
-                    let masked = if new & 1 == 1 {
-                        new & 0xFFFFFFFC
-                    } else {
-                        new & 0xFFFFFFF0
+            match command.envs(envs).spawn() {
+                Ok(mut child) => {
+                    let driver_handler = DriverHandler {
+                        addr,
+                        config: driver.clone(),
+                        header,
+                        state: Arc::clone(&state),
+                        capabilities,
                     };
-
-                    let size = (!masked).wrapping_add(1);
-                    bar_sizes[i] = if size <= 1 {
-                        0
-                    } else {
-                        size
-                    };
-                }
-            }
-
-            let capabilities = if header.status() & (1 << 4) != 0 {
-                let func = PciFunc {
-                    pci: state.preferred_cfg_access(),
-                    addr
-                };
-                crate::pci::cap::CapabilitiesIter { inner: crate::pci::cap::CapabilityOffsetsIter::new(header.cap_pointer(), &func) }.collect::<Vec<_>>()
-            } else {
-                Vec::new()
-            };
-            debug!("PCI DEVICE CAPABILITIES for {}: {:?}", args.iter().map(|string| string.as_ref()).nth(0).unwrap_or("[unknown]"), capabilities);
-
-            use driver_interface::LegacyInterruptPin;
-
-            let legacy_interrupt_pin = match interrupt_pin {
-                0 => None,
-                1 => Some(LegacyInterruptPin::IntA),
-                2 => Some(LegacyInterruptPin::IntB),
-                3 => Some(LegacyInterruptPin::IntC),
-                4 => Some(LegacyInterruptPin::IntD),
-
-                other => {
-                    warn!("pcid: invalid interrupt pin: {}", other);
-                    None
-                }
-            };
-
-            let func = driver_interface::PciFunction {
-                bars,
-                bar_sizes,
-                addr,
-                devid: header.device_id(),
-                legacy_interrupt_line: irq,
-                legacy_interrupt_pin,
-                venid: header.vendor_id(),
-            };
-
-            let subdriver_args = driver_interface::SubdriverArguments {
-                func,
-            };
-
-            let mut args = args.iter();
-            if let Some(program) = args.next() {
-                let mut command = Command::new(program);
-                for arg in args {
-                    if arg.starts_with("$") {
-                        panic!("support for $VARIABLE has been removed. use pcid_interface instead");
+                    let _handle = thread::spawn(move || {
+                        driver_handler.handle_spawn(pcid_to_client_write, pcid_from_client_read, subdriver_args);
+                    });
+                    // FIXME this currently deadlocks as pcid doesn't daemonize
+                    //state.threads.lock().unwrap().push(handle);
+                    match child.wait() {
+                        Ok(_status) => (),
+                        Err(err) => error!("pcid: failed to wait for {:?}: {}", command, err),
                     }
-                    command.arg(arg);
                 }
-
-                info!("PCID SPAWN {:?}", command);
-
-                // TODO: libc wrapper?
-                let [fds1, fds2] = unsafe {
-                    let mut fds1 = [0 as libc::c_int; 2];
-                    let mut fds2 = [0 as libc::c_int; 2];
-
-                    assert_eq!(libc::pipe(fds1.as_mut_ptr()), 0, "pcid: failed to create pcid->client pipe");
-                    assert_eq!(libc::pipe(fds2.as_mut_ptr()), 0, "pcid: failed to create client->pcid pipe");
-
-                    [
-                        fds1.map(|c| c as usize),
-                        fds2.map(|c| c as usize),
-                    ]
-                };
-
-                let [pcid_to_client_read, pcid_to_client_write] = fds1;
-                let [pcid_from_client_read, pcid_from_client_write] = fds2;
-
-                let envs = vec![
-                    ("PCID_TO_CLIENT_FD", format!("{}", pcid_to_client_read)),
-                    ("PCID_FROM_CLIENT_FD", format!("{}", pcid_from_client_write)),
-                ];
-
-                match command.envs(envs).spawn() {
-                    Ok(mut child) => {
-                        let driver_handler = DriverHandler {
-                            addr,
-                            config: driver.clone(),
-                            header,
-                            state: Arc::clone(&state),
-                            capabilities,
-                        };
-                        let _handle = thread::spawn(move || {
-                            driver_handler.handle_spawn(pcid_to_client_write, pcid_from_client_read, subdriver_args);
-                        });
-                        // FIXME this currently deadlocks as pcid doesn't daemonize
-                        //state.threads.lock().unwrap().push(handle);
-                        match child.wait() {
-                            Ok(_status) => (),
-                            Err(err) => error!("pcid: failed to wait for {:?}: {}", command, err),
-                        }
-                    }
-                    Err(err) => error!("pcid: failed to execute {:?}: {}", command, err)
-                }
+                Err(err) => error!("pcid: failed to execute {:?}: {}", command, err)
             }
         }
     }
