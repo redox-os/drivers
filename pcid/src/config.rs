@@ -3,6 +3,8 @@ use std::ops::Range;
 
 use serde::Deserialize;
 
+use crate::pci::PciHeader;
+
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct Config {
     pub drivers: Vec<DriverConfig>,
@@ -19,4 +21,70 @@ pub struct DriverConfig {
     pub device: Option<u16>,
     pub device_id_range: Option<Range<u16>>,
     pub command: Option<Vec<String>>,
+}
+
+impl DriverConfig {
+    pub fn match_function(&self, header: &PciHeader) -> bool {
+        if let Some(class) = self.class {
+            if class != header.class().into() {
+                return false;
+            }
+        }
+
+        if let Some(subclass) = self.subclass {
+            if subclass != header.subclass() {
+                return false;
+            }
+        }
+
+        if let Some(interface) = self.interface {
+            if interface != header.interface() {
+                return false;
+            }
+        }
+
+        if let Some(ref ids) = self.ids {
+            let mut device_found = false;
+            for (vendor, devices) in ids {
+                let vendor_without_prefix = vendor.trim_start_matches("0x");
+                let vendor = i64::from_str_radix(vendor_without_prefix, 16).unwrap() as u16;
+
+                if vendor != header.vendor_id() {
+                    continue;
+                }
+
+                for device in devices {
+                    if *device == header.device_id() {
+                        device_found = true;
+                        break;
+                    }
+                }
+            }
+            if !device_found {
+                return false;
+            }
+        } else {
+            if let Some(vendor) = self.vendor {
+                if vendor != header.vendor_id() {
+                    return false;
+                }
+            }
+
+            if let Some(device) = self.device {
+                if device != header.device_id() {
+                    return false;
+                }
+            }
+        }
+
+        if let Some(ref device_id_range) = self.device_id_range {
+            if header.device_id() < device_id_range.start
+                || device_id_range.end <= header.device_id()
+            {
+                return false;
+            }
+        }
+
+        true
+    }
 }

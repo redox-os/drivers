@@ -2,8 +2,8 @@ use std::fs::{File, metadata, read_dir};
 use std::io::prelude::*;
 use std::os::unix::io::{FromRawFd, RawFd};
 use std::process::Command;
+use std::thread;
 use std::sync::{Arc, Mutex};
-use std::{i64, thread};
 
 use structopt::StructOpt;
 use log::{debug, error, info, warn, trace};
@@ -265,47 +265,8 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, he
     info!("{}", string);
 
     for driver in config.drivers.iter() {
-        if let Some(class) = driver.class {
-            if class != raw_class { continue; }
-        }
-
-        if let Some(subclass) = driver.subclass {
-            if subclass != header.subclass() { continue; }
-        }
-
-        if let Some(interface) = driver.interface {
-            if interface != header.interface() { continue; }
-        }
-
-        if let Some(ref ids) = driver.ids {
-            let mut device_found = false;
-            for (vendor, devices) in ids {
-                let vendor_without_prefix = vendor.trim_start_matches("0x");
-                let vendor = i64::from_str_radix(vendor_without_prefix, 16).unwrap() as u16;
-
-                if vendor != header.vendor_id() { continue; }
-
-                for device in devices {
-                    if *device == header.device_id() {
-                        device_found = true;
-                        break;
-                    }
-                }
-            }
-            if !device_found { continue; }
-        } else {
-            if let Some(vendor) = driver.vendor {
-                if vendor != header.vendor_id() { continue; }
-            }
-
-            if let Some(device) = driver.device {
-                if device != header.device_id() { continue; }
-            }
-        }
-
-        if let Some(ref device_id_range) = driver.device_id_range {
-            if header.device_id() < device_id_range.start  ||
-               device_id_range.end <= header.device_id() { continue; }
+        if !driver.match_function(&header) {
+            continue;
         }
 
         if let Some(ref args) = driver.command {
