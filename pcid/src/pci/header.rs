@@ -33,12 +33,9 @@ bitflags! {
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SharedPciHeader {
     full_device_id: FullDeviceId,
-        command: u16,
-        status: u16,
-        cache_line_size: u8,
-        latency_timer: u8,
-        header_type: PciHeaderType,
-        bist: u8,
+    command: u16,
+    status: u16,
+    header_type: PciHeaderType,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -46,36 +43,17 @@ pub enum PciHeader {
     General {
         shared: SharedPciHeader,
         bars: [PciBar; 6],
-        cardbus_cis_ptr: u32,
         subsystem_vendor_id: u16,
         subsystem_id: u16,
-        expansion_rom_bar: u32,
         cap_pointer: u8,
         interrupt_line: u8,
         interrupt_pin: u8,
-        min_grant: u8,
-        max_latency: u8,
     },
     PciToPci {
         shared: SharedPciHeader,
         bars: [PciBar; 2],
-        primary_bus_num: u8,
         secondary_bus_num: u8,
-        subordinate_bus_num: u8,
-        secondary_latency_timer: u8,
-        io_base: u8,
-        io_limit: u8,
-        secondary_status: u16,
-        mem_base: u16,
-        mem_limit: u16,
-        prefetch_base: u16,
-        prefetch_limit: u16,
-        prefetch_base_upper: u32,
-        prefetch_limit_upper: u32,
-        io_base_upper: u16,
-        io_limit_upper: u16,
         cap_pointer: u8,
-        expansion_rom: u32,
         interrupt_line: u8,
         interrupt_pin: u8,
         bridge_control: u16,
@@ -124,14 +102,11 @@ impl PciHeader {
             let interface = bytes[9];
             let subclass = bytes[10];
             let class = bytes[11];
-            let cache_line_size = bytes[12];
-            let latency_timer = bytes[13];
             let header_type = PciHeaderType::from_bits_truncate(bytes[14]);
-            let bist = bytes[15];
             let shared = SharedPciHeader {
                 full_device_id: FullDeviceId {
-                vendor_id,
-                device_id,
+                    vendor_id,
+                    device_id,
                     class,
                     subclass,
                     interface,
@@ -139,10 +114,7 @@ impl PciHeader {
                 },
                 command,
                 status,
-                cache_line_size,
-                latency_timer,
                 header_type,
-                bist,
             };
 
             match header_type & PciHeaderType::HEADER_TYPE {
@@ -150,73 +122,35 @@ impl PciHeader {
                     let bytes = unsafe { reader.read_range(16, 48) };
                     let mut bars = [PciBar::None; 6];
                     Self::get_bars(&bytes, &mut bars);
-                    let cardbus_cis_ptr = LittleEndian::read_u32(&bytes[24..28]);
                     let subsystem_vendor_id = LittleEndian::read_u16(&bytes[28..30]);
                     let subsystem_id = LittleEndian::read_u16(&bytes[30..32]);
-                    let expansion_rom_bar = LittleEndian::read_u32(&bytes[32..36]);
                     let cap_pointer = bytes[36];
                     let interrupt_line = bytes[44];
                     let interrupt_pin = bytes[45];
-                    let min_grant = bytes[46];
-                    let max_latency = bytes[47];
                     Ok(PciHeader::General {
                         shared,
                         bars,
-                        cardbus_cis_ptr,
                         subsystem_vendor_id,
                         subsystem_id,
-                        expansion_rom_bar,
                         cap_pointer,
                         interrupt_line,
                         interrupt_pin,
-                        min_grant,
-                        max_latency,
                     })
                 }
                 PciHeaderType::PCITOPCI => {
                     let bytes = unsafe { reader.read_range(16, 48) };
                     let mut bars = [PciBar::None; 2];
                     Self::get_bars(&bytes, &mut bars);
-                    let primary_bus_num = bytes[8];
                     let secondary_bus_num = bytes[9];
-                    let subordinate_bus_num = bytes[10];
-                    let secondary_latency_timer = bytes[11];
-                    let io_base = bytes[12];
-                    let io_limit = bytes[13];
-                    let secondary_status = LittleEndian::read_u16(&bytes[14..16]);
-                    let mem_base = LittleEndian::read_u16(&bytes[16..18]);
-                    let mem_limit = LittleEndian::read_u16(&bytes[18..20]);
-                    let prefetch_base = LittleEndian::read_u16(&bytes[20..22]);
-                    let prefetch_limit = LittleEndian::read_u16(&bytes[22..24]);
-                    let prefetch_base_upper = LittleEndian::read_u32(&bytes[24..28]);
-                    let prefetch_limit_upper = LittleEndian::read_u32(&bytes[28..32]);
-                    let io_base_upper = LittleEndian::read_u16(&bytes[32..34]);
-                    let io_limit_upper = LittleEndian::read_u16(&bytes[34..36]);
                     let cap_pointer = bytes[36];
-                    let expansion_rom = LittleEndian::read_u32(&bytes[40..44]);
                     let interrupt_line = bytes[44];
                     let interrupt_pin = bytes[45];
                     let bridge_control = LittleEndian::read_u16(&bytes[46..48]);
                     Ok(PciHeader::PciToPci {
                         shared,
                         bars,
-                        primary_bus_num,
                         secondary_bus_num,
-                        subordinate_bus_num,
-                        secondary_latency_timer,
-                        io_base,
-                        io_limit,
-                        secondary_status,
-                        mem_base,
-                        mem_limit,
-                        prefetch_base,
-                        prefetch_limit,
-                        prefetch_base_upper,
-                        prefetch_limit_upper,
-                        io_base_upper,
-                        io_limit_upper,
                         cap_pointer,
-                        expansion_rom,
                         interrupt_line,
                         interrupt_pin,
                         bridge_control,
