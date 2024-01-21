@@ -195,9 +195,9 @@ impl DriverHandler {
         let mut pcid_to_client = unsafe { File::from_raw_fd(pcid_to_client_write as RawFd) };
         let mut pcid_from_client = unsafe { File::from_raw_fd(pcid_from_client_read as RawFd) };
 
-            while let Ok(msg) = recv(&mut pcid_from_client) {
-                let response = self.respond(msg, &args);
-                send(&mut pcid_to_client, &response).unwrap();
+        while let Ok(msg) = recv(&mut pcid_from_client) {
+            let response = self.respond(msg, &args);
+            send(&mut pcid_to_client, &response).unwrap();
         }
     }
 }
@@ -420,22 +420,22 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, he
 
                 info!("PCID SPAWN {:?}", command);
 
-                    // TODO: libc wrapper?
-                    let [fds1, fds2] = unsafe {
-                        let mut fds1 = [0 as libc::c_int; 2];
-                        let mut fds2 = [0 as libc::c_int; 2];
+                // TODO: libc wrapper?
+                let [fds1, fds2] = unsafe {
+                    let mut fds1 = [0 as libc::c_int; 2];
+                    let mut fds2 = [0 as libc::c_int; 2];
 
-                        assert_eq!(libc::pipe(fds1.as_mut_ptr()), 0, "pcid: failed to create pcid->client pipe");
-                        assert_eq!(libc::pipe(fds2.as_mut_ptr()), 0, "pcid: failed to create client->pcid pipe");
+                    assert_eq!(libc::pipe(fds1.as_mut_ptr()), 0, "pcid: failed to create pcid->client pipe");
+                    assert_eq!(libc::pipe(fds2.as_mut_ptr()), 0, "pcid: failed to create client->pcid pipe");
 
-                        [
-                            fds1.map(|c| c as usize),
-                            fds2.map(|c| c as usize),
-                        ]
-                    };
+                    [
+                        fds1.map(|c| c as usize),
+                        fds2.map(|c| c as usize),
+                    ]
+                };
 
-                    let [pcid_to_client_read, pcid_to_client_write] = fds1;
-                    let [pcid_from_client_read, pcid_from_client_write] = fds2;
+                let [pcid_to_client_read, pcid_to_client_write] = fds1;
+                let [pcid_from_client_read, pcid_from_client_write] = fds2;
 
                 let envs = vec![
                     ("PCID_TO_CLIENT_FD", format!("{}", pcid_to_client_read)),
@@ -483,22 +483,24 @@ fn setup_logging(verbosity: u8) -> Option<&'static RedoxLogger> {
                 .build()
          );
 
-    match OutputBuilder::in_redox_logging_scheme("bus", "pci", "pcid.log") {
-        Ok(b) => logger = logger.with_output(
-            b.with_filter(log::LevelFilter::Trace)
-                .flush_on_newline(true)
-                .build()
-        ),
-        Err(error) => eprintln!("pcid: failed to open pcid.log"),
-    }
-    match OutputBuilder::in_redox_logging_scheme("bus", "pci", "pcid.ansi.log") {
-        Ok(b) => logger = logger.with_output(
-            b.with_filter(log::LevelFilter::Trace)
-                .with_ansi_escape_codes()
-                .flush_on_newline(true)
-                .build()
-        ),
-        Err(error) => eprintln!("pcid: failed to open pcid.ansi.log"),
+    #[cfg(target_os = "redox")] {
+        match OutputBuilder::in_redox_logging_scheme("bus", "pci", "pcid.log") {
+            Ok(b) => logger = logger.with_output(
+                b.with_filter(log::LevelFilter::Trace)
+                    .flush_on_newline(true)
+                    .build()
+            ),
+            Err(error) => eprintln!("pcid: failed to open pcid.log"),
+        }
+        match OutputBuilder::in_redox_logging_scheme("bus", "pci", "pcid.ansi.log") {
+            Ok(b) => logger = logger.with_output(
+                b.with_filter(log::LevelFilter::Trace)
+                    .with_ansi_escape_codes()
+                    .flush_on_newline(true)
+                    .build()
+            ),
+            Err(error) => eprintln!("pcid: failed to open pcid.ansi.log"),
+        }
     }
 
     match logger.enable() {
