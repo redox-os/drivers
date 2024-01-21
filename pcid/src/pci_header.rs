@@ -2,10 +2,8 @@ use bitflags::bitflags;
 use byteorder::{ByteOrder, LittleEndian};
 use serde::{Deserialize, Serialize};
 
-use super::bar::PciBar;
-use super::class::PciClass;
-use super::func::ConfigReader;
-use super::id::FullDeviceId;
+use crate::pci::{FullDeviceId, PciBar, PciClass};
+use crate::pci::func::ConfigReader;
 
 #[derive(Debug, PartialEq)]
 pub enum PciHeaderError {
@@ -38,6 +36,7 @@ pub struct SharedPciHeader {
     header_type: PciHeaderType,
 }
 
+// FIXME move out of pcid_interface
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum PciHeader {
     General {
@@ -297,9 +296,8 @@ impl<'a> ConfigReader for &'a [u8] {
 #[cfg(test)]
 mod test {
     use super::{PciHeaderError, PciHeader, PciHeaderType};
-    use super::super::func::ConfigReader;
-    use super::super::class::PciClass;
-    use super::super::bar::PciBar;
+    use crate::pci::func::ConfigReader;
+    use crate::pci::{PciBar, PciClass};
 
     const IGB_DEV_BYTES: [u8; 256] = [
         0x86, 0x80, 0x33, 0x15, 0x07, 0x04, 0x10, 0x00, 0x03, 0x00, 0x00, 0x02, 0x10, 0x00, 0x00, 0x00,

@@ -6,14 +6,12 @@ use serde::{Deserialize, Serialize};
 pub use self::bar::PciBar;
 pub use self::class::PciClass;
 pub use self::func::PciFunc;
-pub use self::header::{PciHeader, PciHeaderError, PciHeaderType};
 pub use self::id::FullDeviceId;
 
 mod bar;
 pub mod cap;
 mod class;
 pub mod func;
-pub mod header;
 mod id;
 pub mod msi;
 
