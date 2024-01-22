@@ -207,8 +207,7 @@ fn get_int_method(
         Ok((interrupt_method, interrupt_sources))
     } else if let Some(irq) = function.legacy_interrupt_line {
         // INTx# pin based interrupts.
-        let irq_handle = File::open(format!("irq:{}", irq))
-            .expect("nvmed: failed to open INTx# interrupt line");
+        let irq_handle = irq.irq_handle("nvmed");
         Ok((InterruptMethod::Intx, InterruptSources::Intx(irq_handle)))
     } else {
         panic!("nvmed: no interrupts supported at all")
@@ -224,8 +223,7 @@ fn get_int_method(
 ) -> Result<(InterruptMethod, InterruptSources)> {
     if let Some(irq) = function.legacy_interrupt_line {
         // INTx# pin based interrupts.
-        let irq_handle = File::open(format!("irq:{}", irq))
-            .expect("nvmed: failed to open INTx# interrupt line");
+        let irq_handle = irq.irq_handle("nvmed");
         Ok((InterruptMethod::Intx, InterruptSources::Intx(irq_handle)))
     } else {
         panic!("nvmed: no interrupts supported at all")

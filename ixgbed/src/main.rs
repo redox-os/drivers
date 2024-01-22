@@ -94,8 +94,7 @@ fn main() {
 
         daemon.ready().expect("ixgbed: failed to signal readiness");
 
-        let mut irq_file =
-            File::open(format!("irq:{}", irq)).expect("ixgbed: failed to open IRQ file");
+        let mut irq_file = irq.irq_handle("ixgbed");
 
         let address = unsafe {
             common::physmap(bar, IXGBE_MMIO_SIZE, common::Prot::RW, common::MemoryType::Uncacheable)

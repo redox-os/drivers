@@ -225,7 +225,7 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle) -> File {
         method
     } else if let Some(irq) = pci_config.func.legacy_interrupt_line {
         // legacy INTx# interrupt pins.
-        File::open(format!("irq:{}", irq)).expect("rtl8168d: failed to open legacy IRQ file")
+        irq.irq_handle("rtl8168d")
     } else {
         panic!("rtl8168d: no interrupts supported at all")
     }
@@ -238,7 +238,7 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle) -> File {
 
     if let Some(irq) = pci_config.func.legacy_interrupt_line {
         // legacy INTx# interrupt pins.
-        File::open(format!("irq:{}", irq)).expect("rtl8168d: failed to open legacy IRQ file")
+        irq.irq_handle("rtl8168d")
     } else {
         panic!("rtl8168d: no interrupts supported at all")
     }

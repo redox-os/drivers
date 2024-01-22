@@ -84,11 +84,7 @@ fn main() {
             File::from_raw_fd(socket_fd as RawFd)
         }));
 
-        let irq_fd = syscall::open(
-            format!("irq:{}", irq),
-            syscall::O_RDWR | syscall::O_NONBLOCK
-        ).expect("e1000d: failed to open IRQ file");
-        let mut irq_file = unsafe { File::from_raw_fd(irq_fd as RawFd) };
+        let mut irq_file = irq.irq_handle("e1000d");
 
         let address = unsafe {
             common::physmap(bar, bar_size, common::Prot::RW, common::MemoryType::Uncacheable)

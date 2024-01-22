@@ -86,7 +86,7 @@ fn main() {
 
         unsafe { syscall::iopl(3) }.expect("ac97d: failed to set I/O privilege level to Ring 3");
 
-		let mut irq_file = File::open(format!("irq:{}", irq)).expect("ac97d: failed to open IRQ file");
+		let mut irq_file = irq.irq_handle("ac97d");
 
 		let device = Arc::new(RefCell::new(unsafe { device::Ac97::new(bar0, bar1).expect("ac97d: failed to allocate device") }));
 		let socket_fd = syscall::open(":audiohw", syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK).expect("ac97d: failed to create hda scheme");

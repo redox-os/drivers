@@ -13,6 +13,7 @@ use redox_log::{OutputBuilder, RedoxLogger};
 
 use crate::cfg_access::Pcie;
 use crate::config::Config;
+use crate::driver_interface::LegacyInterruptLine;
 use crate::pci::{PciBar, PciFunc};
 use crate::pci::cap::Capability as PciCapability;
 use crate::pci::func::{ConfigReader, ConfigWriter};
@@ -304,7 +305,11 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, he
         let func = driver_interface::PciFunction {
             bars,
             addr,
-            legacy_interrupt_line: if legacy_interrupt_enabled { Some(irq) } else { None },
+            legacy_interrupt_line: if legacy_interrupt_enabled {
+                Some(LegacyInterruptLine(irq))
+            } else {
+                None
+            },
             full_device_id: header.full_device_id().clone(),
         };
 

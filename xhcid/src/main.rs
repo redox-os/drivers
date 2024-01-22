@@ -197,7 +197,7 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle, address: usize) -> (Option
         log::debug!("Legacy IRQ {}", irq);
 
         // legacy INTx# interrupt pins.
-        (Some(File::open(format!("irq:{}", irq)).expect("xhcid: failed to open legacy IRQ file")), InterruptMethod::Intx)
+        (Some(irq.irq_handle("xhcid")), InterruptMethod::Intx)
     } else {
         // no interrupts at all
         (None, InterruptMethod::Polling)
@@ -211,7 +211,7 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle, address: usize) -> (Option
 
     if let Some(irq) = pci_config.func.legacy_interrupt_line {
         // legacy INTx# interrupt pins.
-        (Some(File::open(format!("irq:{}", irq)).expect("xhcid: failed to open legacy IRQ file")), InterruptMethod::Intx)
+        (Some(irq.irq_handle("xhcid")), InterruptMethod::Intx)
     } else {
         // no interrupts at all
         (None, InterruptMethod::Polling)

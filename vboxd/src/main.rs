@@ -221,7 +221,7 @@ fn main() {
             }
         }
 
-        let mut irq_file = File::open(format!("irq:{}", irq)).expect("vboxd: failed to open IRQ file");
+        let mut irq_file = irq.irq_handle("vboxd");
 
         let mut port = Pio::<u32>::new(bar0 as u16);
         let address = unsafe { common::physmap(bar1, 4096, common::Prot::RW, common::MemoryType::Uncacheable).expect("vboxd: failed to map address") };

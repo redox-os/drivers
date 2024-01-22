@@ -1,3 +1,4 @@
+use std::fmt;
 use std::fs::File;
 use std::io::prelude::*;
 use std::{env, io};
@@ -14,16 +15,20 @@ pub use crate::pci::{FullDeviceId, PciAddress, PciBar};
 pub mod irq_helpers;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-#[repr(u8)]
-pub enum LegacyInterruptPin {
-    /// INTa#
-    IntA = 1,
-    /// INTb#
-    IntB = 2,
-    /// INTc#
-    IntC = 3,
-    /// INTd#
-    IntD = 4,
+pub struct LegacyInterruptLine(pub(crate) u8);
+
+impl LegacyInterruptLine {
+    /// Get an IRQ handle for this interrupt line.
+    pub fn irq_handle(self, driver: &str) -> File {
+        File::open(format!("irq:{}", self.0))
+            .unwrap_or_else(|err| panic!("{driver}: failed to open IRQ file: {err}"))
+    }
+}
+
+impl fmt::Display for LegacyInterruptLine {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -58,7 +63,7 @@ pub struct PciFunction {
     /// the I/O APIC or the 8259 PIC, so that the subdriver can map the interrupt vector directly.
     /// The vector to map is always this field, plus 32.
     /// If INTx# interrupts aren't supported at all this is `None`.
-    pub legacy_interrupt_line: Option<u8>,
+    pub legacy_interrupt_line: Option<LegacyInterruptLine>,
 
     /// All identifying information of the PCI function.
     pub full_device_id: FullDeviceId,
