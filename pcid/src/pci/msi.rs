@@ -203,11 +203,11 @@ impl MsiCapability {
 }
 
 impl MsixCapability {
-    pub const MC_MSIX_ENABLED_BIT: u16 = 1 << 15;
-    pub const MC_MSIX_ENABLED_SHIFT: u8 = 15;
-    pub const MC_FUNCTION_MASK_BIT: u16 = 1 << 14;
-    pub const MC_FUNCTION_MASK_SHIFT: u8 = 14;
-    pub const MC_TABLE_SIZE_MASK: u16 = 0x03FF;
+    const MC_MSIX_ENABLED_BIT: u16 = 1 << 15;
+    const MC_MSIX_ENABLED_SHIFT: u8 = 15;
+    const MC_FUNCTION_MASK_BIT: u16 = 1 << 14;
+    const MC_FUNCTION_MASK_SHIFT: u8 = 14;
+    const MC_TABLE_SIZE_MASK: u16 = 0x03FF;
 
     /// The Message Control field, containing the enabled and function mask bits, as well as the
     /// table size.
@@ -246,8 +246,8 @@ impl MsixCapability {
         new_message_control |= u16::from(function_mask) << Self::MC_FUNCTION_MASK_SHIFT;
         self.set_message_control(new_message_control);
     }
-    pub const TABLE_OFFSET_MASK: u32 = 0xFFFF_FFF8;
-    pub const TABLE_BIR_MASK: u32 = 0x0000_0007;
+    const TABLE_OFFSET_MASK: u32 = 0xFFFF_FFF8;
+    const TABLE_BIR_MASK: u32 = 0x0000_0007;
 
     /// The table offset is guaranteed to be QWORD aligned (8 bytes).
     pub const fn table_offset(&self) -> u32 {
@@ -258,13 +258,8 @@ impl MsixCapability {
         (self.b & Self::TABLE_BIR_MASK) as u8
     }
 
-    pub fn set_table_offset(&mut self, offset: u32) {
-        assert_eq!(offset & Self::TABLE_OFFSET_MASK, offset, "MSI-X table offset has to be QWORD aligned");
-        self.b &= !Self::TABLE_OFFSET_MASK;
-        self.b |= offset;
-    }
-    pub const PBA_OFFSET_MASK: u32 = 0xFFFF_FFF8;
-    pub const PBA_BIR_MASK: u32 = 0x0000_0007;
+    const PBA_OFFSET_MASK: u32 = 0xFFFF_FFF8;
+    const PBA_BIR_MASK: u32 = 0x0000_0007;
 
     /// The Pending Bit Array offset is guaranteed to be QWORD aligned (8 bytes).
     pub const fn pba_offset(&self) -> u32 {
@@ -275,20 +270,12 @@ impl MsixCapability {
         (self.c & Self::PBA_BIR_MASK) as u8
     }
 
-    pub fn set_pba_offset(&mut self, offset: u32) {
-        assert_eq!(offset & Self::PBA_OFFSET_MASK, offset, "MSI-X Pending Bit Array offset has to be QWORD aligned");
-        self.c &= !Self::PBA_OFFSET_MASK;
-        self.c |= offset;
-    }
 
     pub fn table_base_pointer(&self, bars: [PciBar; 6]) -> usize {
         if self.table_bir() > 5 {
             panic!("MSI-X Table BIR contained a reserved enum value: {}", self.table_bir());
         }
         bars[usize::from(self.table_bir())].expect_mem().0 + self.table_offset() as usize
-    }
-    pub fn table_pointer(&self, bars: [PciBar; 6], k: u16) -> usize {
-        self.table_base_pointer(bars) + k as usize * 16
     }
 
     pub fn pba_base_pointer(&self, bars: [PciBar; 6]) -> usize {
@@ -297,40 +284,11 @@ impl MsixCapability {
         }
         bars[usize::from(self.pba_bir())].expect_mem().0 + self.pba_offset() as usize
     }
-    pub fn pba_pointer_dword(&self, bars: [PciBar; 6], k: u16) -> usize {
-        self.pba_base_pointer(bars) + (k as usize / 32) * 4
-    }
-    pub const fn pba_bit_dword(&self, k: u16) -> u8 {
-        (k % 32) as u8
-    }
-
-    pub fn pba_pointer_qword(&self, bars: [PciBar; 6], k: u16) -> usize {
-        self.pba_base_pointer(bars) + (k as usize / 64) * 8
-    }
-    pub const fn pba_bit_qword(&self, k: u16) -> u8 {
-        (k % 64) as u8
-    }
 
     /// Write the first DWORD into configuration space (containing the partially modifiable Message
     /// Control field).
     pub unsafe fn write_a<W: ConfigWriter>(&self, writer: &W, offset: u8) {
         writer.write_u32(u16::from(offset), self.a)
-    }
-    /// Write the second DWORD into configuration space (containing the modifiable table
-    /// offset and the readonly table BIR).
-    pub unsafe fn write_b<W: ConfigWriter>(&self, writer: &W, offset: u8) {
-        writer.write_u32(u16::from(offset + 4), self.a)
-    }
-    /// Write the third DWORD into configuration space (containing the modifiable pending bit array
-    /// offset, and the readonly PBA BIR).
-    pub unsafe fn write_c<W: ConfigWriter>(&self, writer: &W, offset: u8) {
-        writer.write_u32(u16::from(offset + 8), self.a)
-    }
-    /// Write this capability structure back to configuration space.
-    pub unsafe fn write_all<W: ConfigWriter>(&self, writer: &W, offset: u8) {
-        self.write_a(writer, offset);
-        self.write_b(writer, offset);
-        self.write_c(writer, offset);
     }
 }
 
