@@ -1,35 +1,16 @@
 use std::convert::TryInto;
 
-use bitflags::bitflags;
 use pci_types::{
-    Bar as TyBar, ConfigRegionAccess, EndpointHeader, PciAddress, PciHeader as TyPciHeader,
-    PciPciBridgeHeader,
+    Bar as TyBar, ConfigRegionAccess, EndpointHeader, HeaderType, PciAddress,
+    PciHeader as TyPciHeader, PciPciBridgeHeader,
 };
-use serde::{Deserialize, Serialize};
 
 use crate::pci::{FullDeviceId, PciBar, PciClass};
 
 #[derive(Debug, PartialEq)]
 pub enum PciHeaderError {
     NoDevice,
-    UnknownHeaderType(u8),
-}
-
-bitflags! {
-    /// Flags found in the status register of a PCI device
-    #[derive(Serialize, Deserialize)]
-    pub struct PciHeaderType: u8 {
-        /// A general PCI device (Type 0x01).
-        const GENERAL       = 0b00000000;
-        /// A PCI-to-PCI bridge device (Type 0x01).
-        const PCITOPCI      = 0b00000001;
-        /// A PCI-to-PCI bridge device (Type 0x02).
-        const CARDBUSBRIDGE = 0b00000010;
-        /// A multifunction device.
-        const MULTIFUNCTION = 0b01000000;
-        /// Mask used for fetching the header type.
-        const HEADER_TYPE   = 0b00000011;
-    }
+    UnknownHeaderType(HeaderType),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -37,7 +18,6 @@ pub struct SharedPciHeader {
     full_device_id: FullDeviceId,
     command: u16,
     status: u16,
-    header_type: PciHeaderType,
     addr: PciAddress,
 }
 
@@ -73,9 +53,7 @@ impl PciHeader {
         let command = (command_and_status & 0xffff) as u16;
         let status = (command_and_status >> 16) as u16;
         let (revision, class, subclass, interface) = header.revision_and_class(access);
-        let header_type = PciHeaderType::from_bits_truncate(
-            ((unsafe { access.read(addr, 12) } >> 24) & 0xff) as u8,
-        );
+        let header_type = header.header_type(access);
         let shared = SharedPciHeader {
             full_device_id: FullDeviceId {
                 vendor_id,
@@ -87,12 +65,11 @@ impl PciHeader {
             },
             command,
             status,
-            header_type,
             addr,
         };
 
-        match header_type & PciHeaderType::HEADER_TYPE {
-            PciHeaderType::GENERAL => {
+        match header_type {
+            HeaderType::Endpoint => {
                 let endpoint_header = EndpointHeader::from_header(header, access).unwrap();
                 let (subsystem_id, subsystem_vendor_id) = endpoint_header.subsystem(access);
                 let cap_pointer = (unsafe { access.read(addr, 0x34) } & 0xff) as u8;
@@ -103,7 +80,7 @@ impl PciHeader {
                     cap_pointer,
                 })
             }
-            PciHeaderType::PCITOPCI => {
+            HeaderType::PciPciBridge => {
                 let bridge_header = PciPciBridgeHeader::from_header(header, access).unwrap();
                 let secondary_bus_num = bridge_header.secondary_bus_number(access);
                 let cap_pointer = (unsafe { access.read(addr, 0x34) } & 0xff) as u8;
@@ -113,7 +90,7 @@ impl PciHeader {
                     cap_pointer,
                 })
             }
-            id => Err(PciHeaderError::UnknownHeaderType(id.bits())),
+            ty => Err(PciHeaderError::UnknownHeaderType(ty)),
         }
     }
 

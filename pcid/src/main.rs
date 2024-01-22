@@ -15,7 +15,7 @@ use crate::config::Config;
 use crate::pci::{PciBar, PciClass, PciFunc};
 use crate::pci::cap::Capability as PciCapability;
 use crate::pci::func::{ConfigReader, ConfigWriter};
-use crate::pci_header::{PciHeader, PciHeaderError, PciHeaderType};
+use crate::pci_header::{PciHeader, PciHeaderError};
 
 mod cfg_access;
 mod config;
@@ -493,7 +493,7 @@ fn main(args: Args) {
                         }
                     },
                     Err(PciHeaderError::UnknownHeaderType(id)) => {
-                        warn!("pcid: unknown header type: {}", id);
+                        warn!("pcid: unknown header type: {id:?}");
                     }
                 }
             }
