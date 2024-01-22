@@ -1,6 +1,6 @@
 use bitflags::bitflags;
 use byteorder::{ByteOrder, LittleEndian};
-use pci_types::{ConfigRegionAccess, PciAddress};
+use pci_types::{ConfigRegionAccess, PciAddress, PciHeader as TyPciHeader};
 use serde::{Deserialize, Serialize};
 
 use crate::pci::{FullDeviceId, PciBar, PciClass};
@@ -90,96 +90,88 @@ impl PciHeader {
     /// Parse the bytes found in the Configuration Space of the PCI device into
     /// a more usable PciHeader.
     pub fn from_reader(
-        cfg_access: &dyn ConfigRegionAccess,
+        access: &impl ConfigRegionAccess,
         addr: PciAddress,
     ) -> Result<PciHeader, PciHeaderError> {
-        if unsafe { cfg_access.read(addr, 0) } != 0xffffffff {
-            // Read the initial 16 bytes and set variables used by all header types.
-            let bytes = unsafe {
-                let mut ret = Vec::with_capacity(16);
-                for offset in (0..16).step_by(4) {
-                    ret.extend(cfg_access.read(addr, offset).to_le_bytes());
-                }
-                ret
-            };
-            let vendor_id = LittleEndian::read_u16(&bytes[0..2]);
-            let device_id = LittleEndian::read_u16(&bytes[2..4]);
-            let command = LittleEndian::read_u16(&bytes[4..6]);
-            let status = LittleEndian::read_u16(&bytes[6..8]);
-            let revision = bytes[8];
-            let interface = bytes[9];
-            let subclass = bytes[10];
-            let class = bytes[11];
-            let header_type = PciHeaderType::from_bits_truncate(bytes[14]);
-            let shared = SharedPciHeader {
-                full_device_id: FullDeviceId {
-                    vendor_id,
-                    device_id,
-                    class,
-                    subclass,
-                    interface,
-                    revision,
-                },
-                command,
-                status,
-                header_type,
-            };
+        if unsafe { access.read(addr, 0) } == 0xffffffff {
+            return Err(PciHeaderError::NoDevice);
+        }
 
-            match header_type & PciHeaderType::HEADER_TYPE {
-                PciHeaderType::GENERAL => {
-                    let bytes = unsafe {
-                        let mut ret = Vec::with_capacity(48);
-                        for offset in (16..64).step_by(4) {
-                            ret.extend(cfg_access.read(addr, offset).to_le_bytes());
-                        }
-                        ret
-                    };
-                    let mut bars = [PciBar::None; 6];
-                    Self::get_bars(&bytes, &mut bars);
-                    let subsystem_vendor_id = LittleEndian::read_u16(&bytes[28..30]);
-                    let subsystem_id = LittleEndian::read_u16(&bytes[30..32]);
-                    let cap_pointer = bytes[36];
-                    let interrupt_line = bytes[44];
-                    let interrupt_pin = bytes[45];
-                    Ok(PciHeader::General {
-                        shared,
-                        bars,
-                        subsystem_vendor_id,
-                        subsystem_id,
-                        cap_pointer,
-                        interrupt_line,
-                        interrupt_pin,
-                    })
-                }
-                PciHeaderType::PCITOPCI => {
-                    let bytes = unsafe {
-                        let mut ret = Vec::with_capacity(48);
-                        for offset in (16..64).step_by(4) {
-                            ret.extend(cfg_access.read(addr, offset).to_le_bytes());
-                        }
-                        ret
-                    };
-                    let mut bars = [PciBar::None; 2];
-                    Self::get_bars(&bytes, &mut bars);
-                    let secondary_bus_num = bytes[9];
-                    let cap_pointer = bytes[36];
-                    let interrupt_line = bytes[44];
-                    let interrupt_pin = bytes[45];
-                    let bridge_control = LittleEndian::read_u16(&bytes[46..48]);
-                    Ok(PciHeader::PciToPci {
-                        shared,
-                        bars,
-                        secondary_bus_num,
-                        cap_pointer,
-                        interrupt_line,
-                        interrupt_pin,
-                        bridge_control,
-                    })
-                }
-                id => Err(PciHeaderError::UnknownHeaderType(id.bits())),
+        let header = TyPciHeader::new(addr);
+        let (vendor_id, device_id) = header.id(access);
+        let command_and_status = unsafe { access.read(addr, 4) };
+        let command = (command_and_status & 0xffff) as u16;
+        let status = (command_and_status >> 16) as u16;
+        let (revision, class, subclass, interface) = header.revision_and_class(access);
+        let header_type = PciHeaderType::from_bits_truncate(
+            ((unsafe { access.read(addr, 12) } >> 24) & 0xff) as u8,
+        );
+        let shared = SharedPciHeader {
+            full_device_id: FullDeviceId {
+                vendor_id,
+                device_id,
+                class,
+                subclass,
+                interface,
+                revision,
+            },
+            command,
+            status,
+            header_type,
+        };
+
+        match header_type & PciHeaderType::HEADER_TYPE {
+            PciHeaderType::GENERAL => {
+                let bytes = unsafe {
+                    let mut ret = Vec::with_capacity(48);
+                    for offset in (16..64).step_by(4) {
+                        ret.extend(access.read(addr, offset).to_le_bytes());
+                    }
+                    ret
+                };
+                let mut bars = [PciBar::None; 6];
+                Self::get_bars(&bytes, &mut bars);
+                let subsystem_vendor_id = LittleEndian::read_u16(&bytes[28..30]);
+                let subsystem_id = LittleEndian::read_u16(&bytes[30..32]);
+                let cap_pointer = bytes[36];
+                let interrupt_line = bytes[44];
+                let interrupt_pin = bytes[45];
+                Ok(PciHeader::General {
+                    shared,
+                    bars,
+                    subsystem_vendor_id,
+                    subsystem_id,
+                    cap_pointer,
+                    interrupt_line,
+                    interrupt_pin,
+                })
             }
-        } else {
-            Err(PciHeaderError::NoDevice)
+            PciHeaderType::PCITOPCI => {
+                let bytes = unsafe {
+                    let mut ret = Vec::with_capacity(48);
+                    for offset in (16..64).step_by(4) {
+                        ret.extend(access.read(addr, offset).to_le_bytes());
+                    }
+                    ret
+                };
+                let mut bars = [PciBar::None; 2];
+                Self::get_bars(&bytes, &mut bars);
+                let secondary_bus_num = bytes[9];
+                let cap_pointer = bytes[36];
+                let interrupt_line = bytes[44];
+                let interrupt_pin = bytes[45];
+                let bridge_control = LittleEndian::read_u16(&bytes[46..48]);
+                Ok(PciHeader::PciToPci {
+                    shared,
+                    bars,
+                    secondary_bus_num,
+                    cap_pointer,
+                    interrupt_line,
+                    interrupt_pin,
+                    bridge_control,
+                })
+            }
+            id => Err(PciHeaderError::UnknownHeaderType(id.bits())),
         }
     }
 

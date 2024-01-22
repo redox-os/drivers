@@ -74,7 +74,7 @@ impl DriverHandler {
                         None => return PcidClientResponse::Error(PcidServerResponseError::NonexistentFeature(feature)),
                     };
                     unsafe {
-                        with_pci_func_raw(self.state.preferred_cfg_access(), self.addr, |func| {
+                        with_pci_func_raw(&self.state.pcie, self.addr, |func| {
                             capability.set_enabled(true);
                             capability.write_message_control(func, offset);
                         });
@@ -87,7 +87,7 @@ impl DriverHandler {
                         None => return PcidClientResponse::Error(PcidServerResponseError::NonexistentFeature(feature)),
                     };
                     unsafe {
-                        with_pci_func_raw(self.state.preferred_cfg_access(), self.addr, |func| {
+                        with_pci_func_raw(&self.state.pcie, self.addr, |func| {
                             capability.set_msix_enabled(true);
                             capability.write_a(func, offset);
                         });
@@ -147,7 +147,7 @@ impl DriverHandler {
                         info.set_mask_bits(mask_bits);
                     }
                     unsafe {
-                        with_pci_func_raw(self.state.preferred_cfg_access(), self.addr, |func| {
+                        with_pci_func_raw(&self.state.pcie, self.addr, |func| {
                             info.write_all(func, offset);
                         });
                     }
@@ -159,7 +159,7 @@ impl DriverHandler {
                     if let Some(mask) = function_mask {
                         info.set_function_mask(mask);
                         unsafe {
-                            with_pci_func_raw(self.state.preferred_cfg_access(), self.addr, |func| {
+                            with_pci_func_raw(&self.state.pcie, self.addr, |func| {
                                 info.write_a(func, offset);
                             });
                         }
@@ -171,7 +171,7 @@ impl DriverHandler {
             }
             PcidClientRequest::ReadConfig(offset) => {
                 let value = unsafe {
-                    with_pci_func_raw(self.state.preferred_cfg_access(), self.addr, |func| {
+                    with_pci_func_raw(&self.state.pcie, self.addr, |func| {
                         func.read_u32(offset)
                     })
                 };
@@ -179,7 +179,7 @@ impl DriverHandler {
             },
             PcidClientRequest::WriteConfig(offset, value) => {
                 unsafe {
-                    with_pci_func_raw(self.state.preferred_cfg_access(), self.addr, |func| {
+                    with_pci_func_raw(&self.state.pcie, self.addr, |func| {
                         func.write_u32(offset, value);
                     });
                 }
@@ -204,15 +204,8 @@ pub struct State {
     threads: Mutex<Vec<thread::JoinHandle<()>>>,
     pcie: Pcie,
 }
-impl State {
-    fn preferred_cfg_access(&self) -> &dyn ConfigRegionAccess {
-        &self.pcie
-    }
-}
 
 fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, header: PciHeader) {
-    let pci = state.preferred_cfg_access();
-
     let raw_class: u8 = header.class().into();
     let mut string = format!("PCI {} {:>04X}:{:>04X} {:>02X}.{:>02X}.{:>02X}.{:>02X} {:?}",
                              addr, header.vendor_id(), header.device_id(), raw_class,
@@ -273,9 +266,9 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, he
 
         // Enable bus mastering, memory space, and I/O space
         unsafe {
-            let mut data = pci.read(addr, 0x04);
+            let mut data = state.pcie.read(addr, 0x04);
             data |= 7;
-            pci.write(addr, 0x04, data);
+            state.pcie.write(addr, 0x04, data);
         }
 
         // Set IRQ line to 9 if not set
@@ -283,14 +276,14 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, he
         let interrupt_pin;
 
         unsafe {
-            let mut data = pci.read(addr, 0x3C);
+            let mut data = state.pcie.read(addr, 0x3C);
             irq = (data & 0xFF) as u8;
             interrupt_pin = ((data & 0x0000_FF00) >> 8) as u8;
             if irq == 0xFF {
                 irq = 9;
             }
             data = (data & 0xFFFFFF00) | irq as u32;
-            pci.write(addr, 0x3C, data);
+            state.pcie.write(addr, 0x3C, data);
         };
 
         // Find BAR sizes
@@ -309,11 +302,11 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, he
 
                 let offset = 0x10 + (i as u8) * 4;
 
-                let original = pci.read(addr, offset.into());
-                pci.write(addr, offset.into(), 0xFFFFFFFF);
+                let original = state.pcie.read(addr, offset.into());
+                state.pcie.write(addr, offset.into(), 0xFFFFFFFF);
 
-                let new = pci.read(addr, offset.into());
-                pci.write(addr, offset.into(), original);
+                let new = state.pcie.read(addr, offset.into());
+                state.pcie.write(addr, offset.into(), original);
 
                 let masked = if new & 1 == 1 {
                     new & 0xFFFFFFFC
@@ -332,7 +325,7 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, he
 
         let capabilities = if header.status() & (1 << 4) != 0 {
             let func = PciFunc {
-                pci: state.preferred_cfg_access(),
+                pci: &state.pcie,
                 addr
             };
             crate::pci::cap::CapabilitiesIter { inner: crate::pci::cap::CapabilityOffsetsIter::new(header.cap_pointer(), &func) }.collect::<Vec<_>>()
@@ -509,8 +502,6 @@ fn main(args: Args) {
         threads: Mutex::new(Vec::new()),
     });
 
-    let pci = state.preferred_cfg_access();
-
     info!("PCI SG-BS:DV.F VEND:DEVI CL.SC.IN.RV");
 
     // FIXME Use full ACPI for enumerating the host bridges. MCFG only describes the first
@@ -525,7 +516,7 @@ fn main(args: Args) {
         'dev: for dev_num in 0..32 {
             for func_num in 0..8 {
                 let func_addr = PciAddress::new(0, bus_num, dev_num, func_num);
-                match PciHeader::from_reader(pci, func_addr) {
+                match PciHeader::from_reader(&state.pcie, func_addr) {
                     Ok(header) => {
                         handle_parsed_header(Arc::clone(&state), &config, func_addr, header);
                         if let PciHeader::PciToPci { secondary_bus_num, .. } = header {
