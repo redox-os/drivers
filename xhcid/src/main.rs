@@ -85,8 +85,7 @@ fn setup_logging(name: &str) -> Option<&'static RedoxLogger> {
 fn get_int_method(pcid_handle: &mut PcidServerHandle, address: usize) -> (Option<File>, InterruptMethod) {
     let pci_config = pcid_handle.fetch_config().expect("xhcid: failed to fetch config");
 
-    let bar_ptr = pci_config.func.bars[0].expect_mem() as u64;
-    let bar_size = pci_config.func.bar_sizes[0] as u64;
+    let (bar_ptr, bar_size) = pci_config.func.bars[0].expect_mem();
     let irq = pci_config.func.legacy_interrupt_line;
 
     let all_pci_features = pcid_handle.fetch_all_features().expect("xhcid: failed to fetch pci features");
@@ -146,11 +145,11 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle, address: usize) -> (Option
 
         let pba_base = capability.pba_base_pointer(pci_config.func.bars);
 
-        if !(bar_ptr..bar_ptr + bar_size).contains(&(table_base as u64 + table_min_length as u64)) {
+        if !(bar_ptr as u64..bar_ptr as u64 + bar_size as u64).contains(&(table_base as u64 + table_min_length as u64)) {
             panic!("Table {:#x}{:#x} outside of BAR {:#x}:{:#x}", table_base, table_base + table_min_length as usize, bar_ptr, bar_ptr + bar_size);
         }
 
-        if !(bar_ptr..bar_ptr + bar_size).contains(&(pba_base as u64 + pba_min_length as u64)) {
+        if !(bar_ptr as u64..bar_ptr as u64 + bar_size as u64).contains(&(pba_base as u64 + pba_min_length as u64)) {
             panic!("PBA {:#x}{:#x} outside of BAR {:#x}:{:#X}", pba_base, pba_base + pba_min_length as usize, bar_ptr, bar_ptr + bar_size);
         }
 
@@ -235,12 +234,11 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let _logger_ref = setup_logging(&name);
 
     log::debug!("XHCI PCI CONFIG: {:?}", pci_config);
-    let bar_ptr = pci_config.func.bars[0].expect_mem();
-    let bar_size = pci_config.func.bar_sizes[0];
+    let (bar_ptr, bar_size) = pci_config.func.bars[0].expect_mem();
     let irq = pci_config.func.legacy_interrupt_line;
 
     let address = unsafe {
-        common::physmap(bar_ptr as usize, bar_size as usize, common::Prot::RW, common::MemoryType::Uncacheable)
+        common::physmap(bar_ptr, bar_size, common::Prot::RW, common::MemoryType::Uncacheable)
             .expect("xhcid: failed to map address") as usize
     };
 

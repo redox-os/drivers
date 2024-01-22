@@ -54,9 +54,6 @@ pub struct PciFunction {
     /// PCI Base Address Registers
     pub bars: [PciBar; 6],
 
-    /// BAR sizes
-    pub bar_sizes: [u32; 6],
-
     /// Legacy IRQ line: It's the responsibility of pcid to make sure that it be mapped in either
     /// the I/O APIC or the 8259 PIC, so that the subdriver can map the interrupt vector directly.
     /// The vector to map is always this field, plus 32.
@@ -282,6 +279,7 @@ impl PcidServerHandle {
         }
     }
 
+    // FIXME turn into struct with bool fields
     pub fn fetch_all_features(&mut self) -> Result<Vec<(PciFeature, FeatureStatus)>> {
         self.send(&PcidClientRequest::RequestFeatures)?;
         match self.recv()? {

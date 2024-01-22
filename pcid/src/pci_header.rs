@@ -1,6 +1,10 @@
+use std::convert::TryInto;
+
 use bitflags::bitflags;
 use byteorder::{ByteOrder, LittleEndian};
-use pci_types::{ConfigRegionAccess, PciAddress, PciHeader as TyPciHeader};
+use pci_types::{
+    Bar as TyBar, ConfigRegionAccess, EndpointHeader, PciAddress, PciHeader as TyPciHeader,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::pci::{FullDeviceId, PciBar, PciClass};
@@ -28,20 +32,20 @@ bitflags! {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SharedPciHeader {
     full_device_id: FullDeviceId,
     command: u16,
     status: u16,
     header_type: PciHeaderType,
+    addr: PciAddress,
 }
 
 // FIXME move out of pcid_interface
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PciHeader {
     General {
         shared: SharedPciHeader,
-        bars: [PciBar; 6],
         subsystem_vendor_id: u16,
         subsystem_id: u16,
         cap_pointer: u8,
@@ -50,7 +54,6 @@ pub enum PciHeader {
     },
     PciToPci {
         shared: SharedPciHeader,
-        bars: [PciBar; 2],
         secondary_bus_num: u8,
         cap_pointer: u8,
         interrupt_line: u8,
@@ -60,33 +63,6 @@ pub enum PciHeader {
 }
 
 impl PciHeader {
-    fn get_bars(bytes: &[u8], bars: &mut [PciBar]) {
-        let mut i = 0;
-        while i < bars.len() {
-            let offset = i * 4;
-            let bar_bytes = match bytes.get(offset..offset + 4) {
-                Some(some) => some,
-                None => continue,
-            };
-
-            match PciBar::from(LittleEndian::read_u32(bar_bytes)) {
-                PciBar::Memory64(mut addr) => {
-                    let high_bytes = match bytes.get(offset + 4..offset + 8) {
-                        Some(some) => some,
-                        None => continue,
-                    };
-                    addr |= (LittleEndian::read_u32(high_bytes) as u64) << 32;
-                    bars[i] = PciBar::Memory64(addr);
-                    i += 2;
-                }
-                bar => {
-                    bars[i] = bar;
-                    i += 1;
-                }
-            }
-        }
-    }
-
     /// Parse the bytes found in the Configuration Space of the PCI device into
     /// a more usable PciHeader.
     pub fn from_reader(
@@ -118,10 +94,12 @@ impl PciHeader {
             command,
             status,
             header_type,
+            addr,
         };
 
         match header_type & PciHeaderType::HEADER_TYPE {
             PciHeaderType::GENERAL => {
+                let endpoint_header = EndpointHeader::from_header(header, access).unwrap();
                 let bytes = unsafe {
                     let mut ret = Vec::with_capacity(48);
                     for offset in (16..64).step_by(4) {
@@ -129,16 +107,11 @@ impl PciHeader {
                     }
                     ret
                 };
-                let mut bars = [PciBar::None; 6];
-                Self::get_bars(&bytes, &mut bars);
-                let subsystem_vendor_id = LittleEndian::read_u16(&bytes[28..30]);
-                let subsystem_id = LittleEndian::read_u16(&bytes[30..32]);
+                let (subsystem_id, subsystem_vendor_id) = endpoint_header.subsystem(access);
                 let cap_pointer = bytes[36];
-                let interrupt_line = bytes[44];
-                let interrupt_pin = bytes[45];
+                let (interrupt_pin, interrupt_line) = endpoint_header.interrupt(access);
                 Ok(PciHeader::General {
                     shared,
-                    bars,
                     subsystem_vendor_id,
                     subsystem_id,
                     cap_pointer,
@@ -154,8 +127,6 @@ impl PciHeader {
                     }
                     ret
                 };
-                let mut bars = [PciBar::None; 2];
-                Self::get_bars(&bytes, &mut bars);
                 let secondary_bus_num = bytes[9];
                 let cap_pointer = bytes[36];
                 let interrupt_line = bytes[44];
@@ -163,7 +134,6 @@ impl PciHeader {
                 let bridge_control = LittleEndian::read_u16(&bytes[46..48]);
                 Ok(PciHeader::PciToPci {
                     shared,
-                    bars,
                     secondary_bus_num,
                     cap_pointer,
                     interrupt_line,
@@ -242,29 +212,52 @@ impl PciHeader {
     }
 
     /// Return the Headers BARs.
-    pub fn bars(&self) -> &[PciBar] {
-        match self {
-            &PciHeader::General { ref bars, .. } => bars,
-            &PciHeader::PciToPci { ref bars, .. } => bars,
-        }
-    }
+    // FIXME use pci_types::Bar instead
+    pub fn bars(&self, access: &impl ConfigRegionAccess) -> [PciBar; 6] {
+        let endpoint_header = match *self {
+            PciHeader::General {
+                shared: SharedPciHeader { addr, .. },
+                ..
+            } => EndpointHeader::from_header(TyPciHeader::new(addr), access).unwrap(),
+            PciHeader::PciToPci { .. } => unreachable!(),
+        };
 
-    /// Return the BAR at the given index.
-    ///
-    /// # Panics
-    /// This function panics if the requested BAR index is beyond the length of the header
-    /// types BAR array.
-    pub fn get_bar(&self, idx: usize) -> PciBar {
-        match self {
-            &PciHeader::General { bars, .. } => {
-                assert!(idx < 6, "the general PCI device only has 6 BARs");
-                bars[idx]
+        let mut bars = [PciBar::None; 6];
+        let mut skip = false;
+        for i in 0..6 {
+            if skip {
+                skip = false;
+                continue;
             }
-            &PciHeader::PciToPci { bars, .. } => {
-                assert!(idx < 2, "the general PCI device only has 2 BARs");
-                bars[idx]
+            match endpoint_header.bar(i, access) {
+                Some(TyBar::Io { port }) => {
+                    bars[i as usize] = PciBar::Port(port.try_into().unwrap())
+                }
+                Some(TyBar::Memory32 {
+                    address,
+                    size,
+                    prefetchable: _,
+                }) => {
+                    bars[i as usize] = PciBar::Memory32 {
+                        addr: address,
+                        size,
+                    }
+                }
+                Some(TyBar::Memory64 {
+                    address,
+                    size,
+                    prefetchable: _,
+                }) => {
+                    bars[i as usize] = PciBar::Memory64 {
+                        addr: address,
+                        size,
+                    };
+                    skip = true; // Each 64bit memory BAR occupies two slots
+                }
+                None => bars[i as usize] = PciBar::None,
             }
         }
+        bars
     }
 
     /// Return the Interrupt Line field.
@@ -304,7 +297,7 @@ mod test {
     use pci_types::{ConfigRegionAccess, PciAddress};
 
     use super::{PciHeader, PciHeaderError, PciHeaderType};
-    use crate::pci::{PciBar, PciClass};
+    use crate::pci::PciClass;
 
     struct TestCfgAccess<'a> {
         addr: PciAddress,
@@ -365,13 +358,6 @@ mod test {
         assert_eq!(header.interface(), 0);
         assert_eq!(header.class(), PciClass::Network);
         assert_eq!(header.subclass(), 0);
-        assert_eq!(header.bars().len(), 6);
-        assert_eq!(header.get_bar(0), PciBar::Memory32(0xf7500000));
-        assert_eq!(header.get_bar(1), PciBar::None);
-        assert_eq!(header.get_bar(2), PciBar::Port(0xb000));
-        assert_eq!(header.get_bar(3), PciBar::Memory32(0xf7580000));
-        assert_eq!(header.get_bar(4), PciBar::None);
-        assert_eq!(header.get_bar(5), PciBar::None);
         assert_eq!(header.interrupt_line(), 10);
     }
 

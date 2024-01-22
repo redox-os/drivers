@@ -27,13 +27,12 @@ pub fn enable_msix(pcid_handle: &mut PcidServerHandle) -> Result<File, Error> {
     let pba_base = capability.pba_base_pointer(pci_config.func.bars);
 
     let bir = capability.table_bir() as usize;
-    let bar_ptr = pci_config.func.bars[bir].expect_mem() as u64;
-    let bar_size = pci_config.func.bar_sizes[bir] as u64;
+    let (bar_ptr, bar_size) = pci_config.func.bars[bir].expect_mem();
 
     let address = unsafe {
         common::physmap(
-            bar_ptr as usize,
-            bar_size as usize,
+            bar_ptr,
+            bar_size,
             common::Prot::RW,
             common::MemoryType::Uncacheable,
         )? as usize
@@ -41,7 +40,7 @@ pub fn enable_msix(pcid_handle: &mut PcidServerHandle) -> Result<File, Error> {
 
     // Ensure that the table and PBA are be within the BAR.
     {
-        let bar_range = bar_ptr..bar_ptr + bar_size;
+        let bar_range = bar_ptr as u64..bar_ptr as u64 + bar_size as u64;
         assert!(bar_range.contains(&(table_base as u64 + table_min_length as u64)));
         assert!(bar_range.contains(&(pba_base as u64 + pba_min_length as u64)));
     }

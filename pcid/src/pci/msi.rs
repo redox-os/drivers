@@ -285,7 +285,7 @@ impl MsixCapability {
         if self.table_bir() > 5 {
             panic!("MSI-X Table BIR contained a reserved enum value: {}", self.table_bir());
         }
-        bars[usize::from(self.table_bir())].expect_mem() + self.table_offset() as usize
+        bars[usize::from(self.table_bir())].expect_mem().0 + self.table_offset() as usize
     }
     pub fn table_pointer(&self, bars: [PciBar; 6], k: u16) -> usize {
         self.table_base_pointer(bars) + k as usize * 16
@@ -295,7 +295,7 @@ impl MsixCapability {
         if self.pba_bir() > 5 {
             panic!("MSI-X PBA BIR contained a reserved enum value: {}", self.pba_bir());
         }
-        bars[usize::from(self.pba_bir())].expect_mem() + self.pba_offset() as usize
+        bars[usize::from(self.pba_bir())].expect_mem().0 + self.pba_offset() as usize
     }
     pub fn pba_pointer_dword(&self, bars: [PciBar; 6], k: u16) -> usize {
         self.pba_base_pointer(bars) + (k as usize / 32) * 4

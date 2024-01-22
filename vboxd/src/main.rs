@@ -196,7 +196,7 @@ fn main() {
 
     let bar0 = pci_config.func.bars[0].expect_port();
 
-    let bar1 = pci_config.func.bars[1].expect_mem();
+    let (bar1, _) = pci_config.func.bars[1].expect_mem();
 
     let irq = pci_config.func.legacy_interrupt_line;
 

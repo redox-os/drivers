@@ -244,11 +244,12 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, he
         _ => ()
     }
 
-    for (i, bar) in header.bars().iter().enumerate() {
+    let bars = header.bars(&state.pcie);
+    for (i, bar) in bars.iter().enumerate() {
         match bar {
             PciBar::None => {},
-            PciBar::Memory32(addr) => string.push_str(&format!(" {i}={addr:08X}")),
-            PciBar::Memory64(addr) => string.push_str(&format!(" {i}={addr:016X}")),
+            PciBar::Memory32{addr,..} => string.push_str(&format!(" {i}={addr:08X}")),
+            PciBar::Memory64{addr,..} => string.push_str(&format!(" {i}={addr:016X}")),
             PciBar::Port(port) => string.push_str(&format!(" {i}=P{port:04X}")),
         }
     }
@@ -286,43 +287,6 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, he
             state.pcie.write(addr, 0x3C, data);
         };
 
-        // Find BAR sizes
-        //TODO: support 64-bit BAR sizes?
-        let mut bars = [PciBar::None; 6];
-        let mut bar_sizes = [0; 6];
-        unsafe {
-            let count = match header.header_type() {
-                PciHeaderType::GENERAL => 6,
-                PciHeaderType::PCITOPCI => 2,
-                _ => 0,
-            };
-
-            for i in 0..count {
-                bars[i] = header.get_bar(i);
-
-                let offset = 0x10 + (i as u8) * 4;
-
-                let original = state.pcie.read(addr, offset.into());
-                state.pcie.write(addr, offset.into(), 0xFFFFFFFF);
-
-                let new = state.pcie.read(addr, offset.into());
-                state.pcie.write(addr, offset.into(), original);
-
-                let masked = if new & 1 == 1 {
-                    new & 0xFFFFFFFC
-                } else {
-                    new & 0xFFFFFFF0
-                };
-
-                let size = (!masked).wrapping_add(1);
-                bar_sizes[i] = if size <= 1 {
-                    0
-                } else {
-                    size
-                };
-            }
-        }
-
         let capabilities = if header.status() & (1 << 4) != 0 {
             let func = PciFunc {
                 pci: &state.pcie,
@@ -351,7 +315,6 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, he
 
         let func = driver_interface::PciFunction {
             bars,
-            bar_sizes,
             addr,
             legacy_interrupt_line: irq,
             legacy_interrupt_pin,

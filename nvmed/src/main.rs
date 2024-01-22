@@ -9,7 +9,7 @@ use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
 use std::{slice, usize};
 
-use pcid_interface::{PciBar, PciFeature, PciFeatureInfo, PciFunction, PcidServerHandle};
+use pcid_interface::{PciFeature, PciFeatureInfo, PciFunction, PcidServerHandle};
 use syscall::{
     Event, Mmio, Packet, Result, SchemeBlockMut,
     PAGE_SIZE,
@@ -93,10 +93,9 @@ fn get_int_method(
             match &mut *bar_guard {
                 &mut Some(ref bar) => Ok(bar.ptr),
                 bar_to_set @ &mut None => {
-                    let bar = function.bars[bir].expect_mem();
-                    let bar_size = function.bar_sizes[bir];
+                    let (bar, bar_size) = function.bars[bir].expect_mem();
 
-                    let bar = Bar::allocate(bar as usize, bar_size as usize)?;
+                    let bar = Bar::allocate(bar, bar_size)?;
                     *bar_to_set = Some(bar);
                     Ok(bar_to_set.as_ref().unwrap().ptr)
                 }
@@ -293,8 +292,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     let _logger_ref = setup_logging(&scheme_name);
 
-    let bar = pci_config.func.bars[0].expect_mem();
-    let bar_size = pci_config.func.bar_sizes[0];
+    let (bar, bar_size) = pci_config.func.bars[0].expect_mem();
     let irq = pci_config.func.legacy_interrupt_line;
 
     log::debug!("NVME PCI CONFIG: {:?}", pci_config);
@@ -303,16 +301,16 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     let address = unsafe {
         common::physmap(
-            bar as usize,
-            bar_size as usize,
+            bar,
+            bar_size,
             common::Prot { read: true, write: true },
             common::MemoryType::Uncacheable,
         )
         .expect("nvmed: failed to map address")
     } as usize;
     *allocated_bars.0[0].lock().unwrap() = Some(Bar {
-        physical: bar as usize,
-        bar_size: bar_size as usize,
+        physical: bar,
+        bar_size,
         ptr: NonNull::new(address as *mut u8).expect("Physmapping BAR gave nullptr"),
     });
 
