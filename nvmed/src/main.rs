@@ -284,7 +284,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         .fetch_config()
         .expect("nvmed: failed to fetch config");
 
-    let scheme_name = format!("disk.pci-{}-nvme", pci_config.func.addr);
+    let scheme_name = format!("disk.{}-nvme", pci_config.func.name());
 
     let _logger_ref = setup_logging(&scheme_name);
 
