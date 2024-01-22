@@ -1,9 +1,9 @@
 use std::convert::TryInto;
 
 use bitflags::bitflags;
-use byteorder::{ByteOrder, LittleEndian};
 use pci_types::{
     Bar as TyBar, ConfigRegionAccess, EndpointHeader, PciAddress, PciHeader as TyPciHeader,
+    PciPciBridgeHeader,
 };
 use serde::{Deserialize, Serialize};
 
@@ -41,7 +41,6 @@ pub struct SharedPciHeader {
     addr: PciAddress,
 }
 
-// FIXME move out of pcid_interface
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PciHeader {
     General {
@@ -49,16 +48,11 @@ pub enum PciHeader {
         subsystem_vendor_id: u16,
         subsystem_id: u16,
         cap_pointer: u8,
-        interrupt_line: u8,
-        interrupt_pin: u8,
     },
     PciToPci {
         shared: SharedPciHeader,
         secondary_bus_num: u8,
         cap_pointer: u8,
-        interrupt_line: u8,
-        interrupt_pin: u8,
-        bridge_control: u16,
     },
 }
 
@@ -100,62 +94,26 @@ impl PciHeader {
         match header_type & PciHeaderType::HEADER_TYPE {
             PciHeaderType::GENERAL => {
                 let endpoint_header = EndpointHeader::from_header(header, access).unwrap();
-                let bytes = unsafe {
-                    let mut ret = Vec::with_capacity(48);
-                    for offset in (16..64).step_by(4) {
-                        ret.extend(access.read(addr, offset).to_le_bytes());
-                    }
-                    ret
-                };
                 let (subsystem_id, subsystem_vendor_id) = endpoint_header.subsystem(access);
-                let cap_pointer = bytes[36];
-                let (interrupt_pin, interrupt_line) = endpoint_header.interrupt(access);
+                let cap_pointer = (unsafe { access.read(addr, 0x34) } & 0xff) as u8;
                 Ok(PciHeader::General {
                     shared,
                     subsystem_vendor_id,
                     subsystem_id,
                     cap_pointer,
-                    interrupt_line,
-                    interrupt_pin,
                 })
             }
             PciHeaderType::PCITOPCI => {
-                let bytes = unsafe {
-                    let mut ret = Vec::with_capacity(48);
-                    for offset in (16..64).step_by(4) {
-                        ret.extend(access.read(addr, offset).to_le_bytes());
-                    }
-                    ret
-                };
-                let secondary_bus_num = bytes[9];
-                let cap_pointer = bytes[36];
-                let interrupt_line = bytes[44];
-                let interrupt_pin = bytes[45];
-                let bridge_control = LittleEndian::read_u16(&bytes[46..48]);
+                let bridge_header = PciPciBridgeHeader::from_header(header, access).unwrap();
+                let secondary_bus_num = bridge_header.secondary_bus_number(access);
+                let cap_pointer = (unsafe { access.read(addr, 0x34) } & 0xff) as u8;
                 Ok(PciHeader::PciToPci {
                     shared,
                     secondary_bus_num,
                     cap_pointer,
-                    interrupt_line,
-                    interrupt_pin,
-                    bridge_control,
                 })
             }
             id => Err(PciHeaderError::UnknownHeaderType(id.bits())),
-        }
-    }
-
-    /// Return the Header Type.
-    pub fn header_type(&self) -> PciHeaderType {
-        match self {
-            &PciHeader::General {
-                shared: SharedPciHeader { header_type, .. },
-                ..
-            }
-            | &PciHeader::PciToPci {
-                shared: SharedPciHeader { header_type, .. },
-                ..
-            } => header_type,
         }
     }
 
@@ -260,14 +218,6 @@ impl PciHeader {
         bars
     }
 
-    /// Return the Interrupt Line field.
-    pub fn interrupt_line(&self) -> u8 {
-        match self {
-            &PciHeader::General { interrupt_line, .. }
-            | &PciHeader::PciToPci { interrupt_line, .. } => interrupt_line,
-        }
-    }
-
     pub fn status(&self) -> u16 {
         match self {
             &PciHeader::General {
@@ -296,7 +246,7 @@ mod test {
 
     use pci_types::{ConfigRegionAccess, PciAddress};
 
-    use super::{PciHeader, PciHeaderError, PciHeaderType};
+    use super::{PciHeader, PciHeaderError};
     use crate::pci::PciClass;
 
     struct TestCfgAccess<'a> {
@@ -351,14 +301,16 @@ mod test {
             PciAddress::new(0, 2, 4, 0),
         )
         .unwrap();
-        assert_eq!(header.header_type(), PciHeaderType::GENERAL);
+        match header {
+            PciHeader::General { .. } => {}
+            _ => panic!("wrong header type"),
+        }
         assert_eq!(header.device_id(), 0x1533);
         assert_eq!(header.vendor_id(), 0x8086);
         assert_eq!(header.revision(), 3);
         assert_eq!(header.interface(), 0);
         assert_eq!(header.class(), PciClass::Network);
         assert_eq!(header.subclass(), 0);
-        assert_eq!(header.interrupt_line(), 10);
     }
 
     #[test]
