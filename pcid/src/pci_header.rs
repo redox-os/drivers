@@ -5,7 +5,7 @@ use pci_types::{
     PciHeader as TyPciHeader, PciPciBridgeHeader,
 };
 
-use crate::pci::{FullDeviceId, PciBar, PciClass};
+use crate::pci::{FullDeviceId, PciBar};
 
 #[derive(Debug, PartialEq)]
 pub enum PciHeaderError {
@@ -142,8 +142,8 @@ impl PciHeader {
     }
 
     /// Return the Class field.
-    pub fn class(&self) -> PciClass {
-        PciClass::from(self.full_device_id().class)
+    pub fn class(&self) -> u8 {
+        self.full_device_id().class
     }
 
     /// Return the Headers BARs.
@@ -221,10 +221,10 @@ impl PciHeader {
 mod test {
     use std::convert::TryInto;
 
+    use pci_types::device_type::DeviceType;
     use pci_types::{ConfigRegionAccess, PciAddress};
 
     use super::{PciHeader, PciHeaderError};
-    use crate::pci::PciClass;
 
     struct TestCfgAccess<'a> {
         addr: PciAddress,
@@ -286,7 +286,10 @@ mod test {
         assert_eq!(header.vendor_id(), 0x8086);
         assert_eq!(header.revision(), 3);
         assert_eq!(header.interface(), 0);
-        assert_eq!(header.class(), PciClass::Network);
+        assert_eq!(
+            DeviceType::from((header.class(), header.subclass())),
+            DeviceType::EthernetController
+        );
         assert_eq!(header.subclass(), 0);
     }
 

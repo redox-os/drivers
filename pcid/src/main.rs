@@ -5,6 +5,7 @@ use std::process::Command;
 use std::thread;
 use std::sync::{Arc, Mutex};
 
+use pci_types::device_type::DeviceType;
 use pci_types::{ConfigRegionAccess, PciAddress};
 use structopt::StructOpt;
 use log::{debug, error, info, warn, trace};
@@ -12,7 +13,7 @@ use redox_log::{OutputBuilder, RedoxLogger};
 
 use crate::cfg_access::Pcie;
 use crate::config::Config;
-use crate::pci::{PciBar, PciClass, PciFunc};
+use crate::pci::{PciBar, PciFunc};
 use crate::pci::cap::Capability as PciCapability;
 use crate::pci::func::{ConfigReader, ConfigWriter};
 use crate::pci_header::{PciHeader, PciHeaderError};
@@ -210,38 +211,23 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, he
     let mut string = format!("PCI {} {:>04X}:{:>04X} {:>02X}.{:>02X}.{:>02X}.{:>02X} {:?}",
                              addr, header.vendor_id(), header.device_id(), raw_class,
                              header.subclass(), header.interface(), header.revision(), header.class());
-    match header.class() {
-        PciClass::Legacy if header.subclass() == 1 => string.push_str("  VGA CTL"),
-        PciClass::Storage => match header.subclass() {
-            0x01 => {
-                string.push_str(" IDE");
-            },
-            0x06 => if header.interface() == 0 {
-                string.push_str(" SATA VND");
-            } else if header.interface() == 1 {
-                string.push_str(" SATA AHCI");
-            },
-            _ => ()
+    let device_type = DeviceType::from((header.class(), header.subclass()));
+    match device_type {
+        DeviceType::LegacyVgaCompatible => string.push_str("  VGA CTL"),
+        DeviceType::IdeController => string.push_str(" IDE"),
+        DeviceType::SataController => match header.interface() {
+            0 => string.push_str(" SATA VND"),
+            1 => string.push_str(" SATA AHCI"),
+            _ => (),
         },
-        PciClass::SerialBus => match header.subclass() {
-            0x03 => match header.interface() {
-                0x00 => {
-                    string.push_str(" UHCI");
-                },
-                0x10 => {
-                    string.push_str(" OHCI");
-                },
-                0x20 => {
-                    string.push_str(" EHCI");
-                },
-                0x30 => {
-                    string.push_str(" XHCI");
-                },
-                _ => ()
-            },
-            _ => ()
+        DeviceType::UsbController => match header.interface() {
+            0x00 => string.push_str(" UHCI"),
+            0x10 => string.push_str(" OHCI"),
+            0x20 => string.push_str(" EHCI"),
+            0x30 => string.push_str(" XHCI"),
+            _ => (),
         },
-        _ => ()
+        _ => (),
     }
 
     let bars = header.bars(&state.pcie);
