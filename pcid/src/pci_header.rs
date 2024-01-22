@@ -22,13 +22,16 @@ pub struct SharedPciHeader {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PciEndpointHeader {
+    shared: SharedPciHeader,
+    subsystem_vendor_id: u16,
+    subsystem_id: u16,
+    cap_pointer: u8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PciHeader {
-    General {
-        shared: SharedPciHeader,
-        subsystem_vendor_id: u16,
-        subsystem_id: u16,
-        cap_pointer: u8,
-    },
+    General(PciEndpointHeader),
     PciToPci {
         shared: SharedPciHeader,
         secondary_bus_num: u8,
@@ -73,12 +76,12 @@ impl PciHeader {
                 let endpoint_header = EndpointHeader::from_header(header, access).unwrap();
                 let (subsystem_id, subsystem_vendor_id) = endpoint_header.subsystem(access);
                 let cap_pointer = (unsafe { access.read(addr, 0x34) } & 0xff) as u8;
-                Ok(PciHeader::General {
+                Ok(PciHeader::General(PciEndpointHeader {
                     shared,
                     subsystem_vendor_id,
                     subsystem_id,
                     cap_pointer,
-                })
+                }))
             }
             HeaderType::PciPciBridge => {
                 let bridge_header = PciPciBridgeHeader::from_header(header, access).unwrap();
@@ -97,14 +100,14 @@ impl PciHeader {
     /// Return all identifying information of the PCI function.
     pub fn full_device_id(&self) -> &FullDeviceId {
         match self {
-            PciHeader::General {
+            PciHeader::General(PciEndpointHeader {
                 shared:
                     SharedPciHeader {
                         full_device_id: device_id,
                         ..
                     },
                 ..
-            }
+            })
             | PciHeader::PciToPci {
                 shared:
                     SharedPciHeader {
@@ -145,17 +148,18 @@ impl PciHeader {
     pub fn class(&self) -> u8 {
         self.full_device_id().class
     }
+}
+
+impl PciEndpointHeader {
+    pub fn full_device_id(&self) -> &FullDeviceId {
+        &self.shared.full_device_id
+    }
 
     /// Return the Headers BARs.
     // FIXME use pci_types::Bar instead
     pub fn bars(&self, access: &impl ConfigRegionAccess) -> [PciBar; 6] {
-        let endpoint_header = match *self {
-            PciHeader::General {
-                shared: SharedPciHeader { addr, .. },
-                ..
-            } => EndpointHeader::from_header(TyPciHeader::new(addr), access).unwrap(),
-            PciHeader::PciToPci { .. } => unreachable!(),
-        };
+        let endpoint_header =
+            EndpointHeader::from_header(TyPciHeader::new(self.shared.addr), access).unwrap();
 
         let mut bars = [PciBar::None; 6];
         let mut skip = false;
@@ -196,24 +200,11 @@ impl PciHeader {
     }
 
     pub fn status(&self) -> u16 {
-        match self {
-            &PciHeader::General {
-                shared: SharedPciHeader { status, .. },
-                ..
-            }
-            | &PciHeader::PciToPci {
-                shared: SharedPciHeader { status, .. },
-                ..
-            } => status,
-        }
+        self.shared.status
     }
 
     pub fn cap_pointer(&self) -> u8 {
-        match self {
-            &PciHeader::General { cap_pointer, .. } | &PciHeader::PciToPci { cap_pointer, .. } => {
-                cap_pointer
-            }
-        }
+        self.cap_pointer
     }
 }
 

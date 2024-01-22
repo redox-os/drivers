@@ -16,7 +16,7 @@ use crate::config::Config;
 use crate::pci::{PciBar, PciFunc};
 use crate::pci::cap::Capability as PciCapability;
 use crate::pci::func::{ConfigReader, ConfigWriter};
-use crate::pci_header::{PciHeader, PciHeaderError};
+use crate::pci_header::{PciEndpointHeader, PciHeader, PciHeaderError};
 
 mod cfg_access;
 mod config;
@@ -206,7 +206,7 @@ pub struct State {
     pcie: Pcie,
 }
 
-fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, header: PciHeader) {
+fn print_pci_function(addr: PciAddress, header: &PciHeader) {
     let mut string = format!("PCI {} {:>04X}:{:>04X} {:>02X}.{:>02X}.{:>02X}.{:>02X} {:?}",
                              addr, header.vendor_id(), header.device_id(), header.class(),
                              header.subclass(), header.interface(), header.revision(), header.class());
@@ -229,7 +229,9 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, he
         _ => (),
     }
     info!("{}", string);
+}
 
+fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, header: PciEndpointHeader) {
     for driver in config.drivers.iter() {
         if !driver.match_function(header.full_device_id()) {
             continue;
@@ -470,9 +472,21 @@ fn main(args: Args) {
                 let func_addr = PciAddress::new(0, bus_num, dev_num, func_num);
                 match PciHeader::from_reader(&state.pcie, func_addr) {
                     Ok(header) => {
-                        handle_parsed_header(Arc::clone(&state), &config, func_addr, header);
-                        if let PciHeader::PciToPci { secondary_bus_num, .. } = header {
-                            bus_nums.push(secondary_bus_num);
+                        print_pci_function(func_addr, &header);
+                        match header {
+                            PciHeader::General(endpoint_header) => {
+                                handle_parsed_header(
+                                    Arc::clone(&state),
+                                    &config,
+                                    func_addr,
+                                    endpoint_header,
+                                );
+                            }
+                            PciHeader::PciToPci {
+                                secondary_bus_num, ..
+                            } => {
+                                bus_nums.push(secondary_bus_num);
+                            }
                         }
                     }
                     Err(PciHeaderError::NoDevice) => {
