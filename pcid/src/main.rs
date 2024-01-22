@@ -6,7 +6,7 @@ use std::thread;
 use std::sync::{Arc, Mutex};
 
 use pci_types::device_type::DeviceType;
-use pci_types::{ConfigRegionAccess, PciAddress};
+use pci_types::{CommandRegister, ConfigRegionAccess, PciAddress};
 use structopt::StructOpt;
 use log::{debug, error, info, warn, trace};
 use redox_log::{OutputBuilder, RedoxLogger};
@@ -256,12 +256,14 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, he
             info!("    BAR{}", string);
         }
 
+        let endpoint_header = header.endpoint_header(&state.pcie);
+
         // Enable bus mastering, memory space, and I/O space
-        unsafe {
-            let mut data = state.pcie.read(addr, 0x04);
-            data |= 7;
-            state.pcie.write(addr, 0x04, data);
-        }
+        endpoint_header.update_command(&state.pcie, |cmd| {
+            cmd | CommandRegister::BUS_MASTER_ENABLE
+                | CommandRegister::MEMORY_ENABLE
+                | CommandRegister::IO_ENABLE
+        });
 
         // Set IRQ line to 9 if not set
         let mut irq;
@@ -278,7 +280,7 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, he
             state.pcie.write(addr, 0x3C, data);
         };
 
-        let capabilities = if header.status() & (1 << 4) != 0 {
+        let capabilities = if endpoint_header.status(&state.pcie).has_capability_list() {
             let func = PciFunc {
                 pci: &state.pcie,
                 addr

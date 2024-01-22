@@ -16,8 +16,6 @@ pub enum PciHeaderError {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SharedPciHeader {
     full_device_id: FullDeviceId,
-    command: u16,
-    status: u16,
     addr: PciAddress,
 }
 
@@ -52,9 +50,6 @@ impl PciHeader {
 
         let header = TyPciHeader::new(addr);
         let (vendor_id, device_id) = header.id(access);
-        let command_and_status = unsafe { access.read(addr, 4) };
-        let command = (command_and_status & 0xffff) as u16;
-        let status = (command_and_status >> 16) as u16;
         let (revision, class, subclass, interface) = header.revision_and_class(access);
         let header_type = header.header_type(access);
         let shared = SharedPciHeader {
@@ -66,8 +61,6 @@ impl PciHeader {
                 interface,
                 revision,
             },
-            command,
-            status,
             addr,
         };
 
@@ -151,6 +144,10 @@ impl PciHeader {
 }
 
 impl PciEndpointHeader {
+    pub fn endpoint_header(&self, access: &impl ConfigRegionAccess) -> EndpointHeader {
+        EndpointHeader::from_header(TyPciHeader::new(self.shared.addr), access).unwrap()
+    }
+
     pub fn full_device_id(&self) -> &FullDeviceId {
         &self.shared.full_device_id
     }
@@ -158,8 +155,7 @@ impl PciEndpointHeader {
     /// Return the Headers BARs.
     // FIXME use pci_types::Bar instead
     pub fn bars(&self, access: &impl ConfigRegionAccess) -> [PciBar; 6] {
-        let endpoint_header =
-            EndpointHeader::from_header(TyPciHeader::new(self.shared.addr), access).unwrap();
+        let endpoint_header = self.endpoint_header(access);
 
         let mut bars = [PciBar::None; 6];
         let mut skip = false;
@@ -197,10 +193,6 @@ impl PciEndpointHeader {
             }
         }
         bars
-    }
-
-    pub fn status(&self) -> u16 {
-        self.shared.status
     }
 
     pub fn cap_pointer(&self) -> u8 {
