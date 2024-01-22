@@ -2,8 +2,7 @@ use bitflags::bitflags;
 use byteorder::{ByteOrder, LittleEndian};
 use serde::{Deserialize, Serialize};
 
-use crate::pci::{FullDeviceId, PciBar, PciClass};
-use crate::pci::func::ConfigReader;
+use crate::pci::{CfgAccess, FullDeviceId, PciAddress, PciBar, PciClass};
 
 #[derive(Debug, PartialEq)]
 pub enum PciHeaderError {
@@ -89,10 +88,19 @@ impl PciHeader {
 
     /// Parse the bytes found in the Configuration Space of the PCI device into
     /// a more usable PciHeader.
-    pub fn from_reader<T: ConfigReader>(reader: T) -> Result<PciHeader, PciHeaderError> {
-        if unsafe { reader.read_u32(0) } != 0xffffffff {
+    pub fn from_reader(
+        cfg_access: &dyn CfgAccess,
+        addr: PciAddress,
+    ) -> Result<PciHeader, PciHeaderError> {
+        if unsafe { cfg_access.read(addr, 0) } != 0xffffffff {
             // Read the initial 16 bytes and set variables used by all header types.
-            let bytes = unsafe { reader.read_range(0, 16) };
+            let bytes = unsafe {
+                let mut ret = Vec::with_capacity(16);
+                for offset in (0..16).step_by(4) {
+                    ret.extend(cfg_access.read(addr, offset).to_le_bytes());
+                }
+                ret
+            };
             let vendor_id = LittleEndian::read_u16(&bytes[0..2]);
             let device_id = LittleEndian::read_u16(&bytes[2..4]);
             let command = LittleEndian::read_u16(&bytes[4..6]);
@@ -118,7 +126,13 @@ impl PciHeader {
 
             match header_type & PciHeaderType::HEADER_TYPE {
                 PciHeaderType::GENERAL => {
-                    let bytes = unsafe { reader.read_range(16, 48) };
+                    let bytes = unsafe {
+                        let mut ret = Vec::with_capacity(48);
+                        for offset in (16..64).step_by(4) {
+                            ret.extend(cfg_access.read(addr, offset).to_le_bytes());
+                        }
+                        ret
+                    };
                     let mut bars = [PciBar::None; 6];
                     Self::get_bars(&bytes, &mut bars);
                     let subsystem_vendor_id = LittleEndian::read_u16(&bytes[28..30]);
@@ -137,7 +151,13 @@ impl PciHeader {
                     })
                 }
                 PciHeaderType::PCITOPCI => {
-                    let bytes = unsafe { reader.read_range(16, 48) };
+                    let bytes = unsafe {
+                        let mut ret = Vec::with_capacity(48);
+                        for offset in (16..64).step_by(4) {
+                            ret.extend(cfg_access.read(addr, offset).to_le_bytes());
+                        }
+                        ret
+                    };
                     let mut bars = [PciBar::None; 2];
                     Self::get_bars(&bytes, &mut bars);
                     let secondary_bus_num = bytes[9];
@@ -285,19 +305,29 @@ impl PciHeader {
 }
 
 #[cfg(test)]
-impl<'a> ConfigReader for &'a [u8] {
-    unsafe fn read_u32(&self, offset: u16) -> u32 {
-        let offset = offset as usize;
-        assert!(offset < self.len());
-        LittleEndian::read_u32(&self[offset..offset + 4])
-    }
-}
-
-#[cfg(test)]
 mod test {
-    use super::{PciHeaderError, PciHeader, PciHeaderType};
-    use crate::pci::func::ConfigReader;
-    use crate::pci::{PciBar, PciClass};
+    use std::convert::TryInto;
+
+    use super::{PciHeader, PciHeaderError, PciHeaderType};
+    use crate::pci::{CfgAccess, PciAddress, PciBar, PciClass};
+
+    struct TestCfgAccess<'a> {
+        addr: PciAddress,
+        bytes: &'a [u8],
+    }
+
+    impl CfgAccess for TestCfgAccess<'_> {
+        unsafe fn read(&self, addr: PciAddress, offset: u16) -> u32 {
+            assert_eq!(addr, self.addr);
+            let offset = offset as usize;
+            assert!(offset < self.bytes.len());
+            u32::from_le_bytes(self.bytes[offset..offset + 4].try_into().unwrap())
+        }
+
+        unsafe fn write(&self, _addr: PciAddress, _offset: u16, _value: u32) {
+            unreachable!("should not write during tests");
+        }
+    }
 
     const IGB_DEV_BYTES: [u8; 256] = [
         0x86, 0x80, 0x33, 0x15, 0x07, 0x04, 0x10, 0x00, 0x03, 0x00, 0x00, 0x02, 0x10, 0x00, 0x00, 0x00,
@@ -320,7 +350,14 @@ mod test {
 
     #[test]
     fn tset_parse_igb_dev() {
-        let header = PciHeader::from_reader(&IGB_DEV_BYTES[..]).unwrap();
+        let header = PciHeader::from_reader(
+            &TestCfgAccess {
+                addr: PciAddress::new(0, 2, 4, 0),
+                bytes: &IGB_DEV_BYTES,
+            },
+            PciAddress::new(0, 2, 4, 0),
+        )
+        .unwrap();
         assert_eq!(header.header_type(), PciHeaderType::GENERAL);
         assert_eq!(header.device_id(), 0x1533);
         assert_eq!(header.vendor_id(), 0x8086);
@@ -340,38 +377,16 @@ mod test {
 
     #[test]
     fn test_parse_nonexistent() {
-        let bytes = [
-            0xff, 0xff, 0xff, 0xff,
-            0xff, 0xff, 0xff, 0xff
-        ];
-        assert_eq!(PciHeader::from_reader(&bytes[..]), Err(PciHeaderError::NoDevice));
+        let bytes = &[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff];
+        assert_eq!(
+            PciHeader::from_reader(
+                &TestCfgAccess {
+                    addr: PciAddress::new(0, 2, 4, 0),
+                    bytes,
+                },
+                PciAddress::new(0, 2, 4, 0),
+            ),
+            Err(PciHeaderError::NoDevice)
+        );
     }
-
-    #[test]
-    fn test_read_range() {
-        let res = unsafe { (&IGB_DEV_BYTES[..]).read_range(0, 4) };
-        assert_eq!(res, &[0x86, 0x80, 0x33, 0x15][..]);
-
-        let res = unsafe { (&IGB_DEV_BYTES[..]).read_range(16, 32) };
-        let expected = [
-            0x00, 0x00, 0x50, 0xf7, 0x00, 0x00, 0x00, 0x00,
-            0x01, 0xb0, 0x00, 0x00, 0x00, 0x00, 0x58, 0xf7,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0xd9, 0x15, 0x33, 0x15
-        ];
-        assert_eq!(res, expected);
-    }
-
-    macro_rules! read_range_should_panic {
-        ($name:ident, $len:expr) => {
-            #[test]
-            #[should_panic(expected = "invalid range length")]
-            fn $name() {
-                let _ = unsafe { (&IGB_DEV_BYTES[..]).read_range(0, $len) };
-            }
-        }
-    }
-
-    read_range_should_panic!(test_short_len, 2);
-    read_range_should_panic!(test_not_mod_4_len, 7);
 }

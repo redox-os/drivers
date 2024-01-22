@@ -524,8 +524,7 @@ fn main(args: Args) {
         'dev: for dev_num in 0..32 {
             for func_num in 0..8 {
                 let func_addr = PciAddress::new(0, bus_num, dev_num, func_num);
-                let func = PciFunc { pci, addr: func_addr };
-                match PciHeader::from_reader(func) {
+                match PciHeader::from_reader(pci, func_addr) {
                     Ok(header) => {
                         handle_parsed_header(Arc::clone(&state), &config, func_addr, header);
                         if let PciHeader::PciToPci { secondary_bus_num, .. } = header {
