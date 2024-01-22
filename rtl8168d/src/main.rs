@@ -169,36 +169,23 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle) -> Option<File> {
         let pba_base = capability.pba_base_pointer(pci_config.func.bars);
 
         let bir = capability.table_bir() as usize;
-        let bar = pci_config.func.bars[bir];
-        let bar_size = pci_config.func.bar_sizes[bir] as u64;
-
-        let bar_ptr = match bar {
-            pcid_interface::PciBar::Memory32(ptr) => match ptr {
-                0 => panic!("BAR {} is mapped to address 0", bir),
-                _ => ptr as u64,
-            },
-            pcid_interface::PciBar::Memory64(ptr) => match ptr {
-                0 => panic!("BAR {} is mapped to address 0", bir),
-                _ => ptr,
-            },
-            other => panic!("Expected memory bar, found {:?}", other),
-        };
+        let (bar_ptr, bar_size) = pci_config.func.bars[bir].expect_mem();
 
         let address = unsafe {
-            common::physmap(bar_ptr as usize, bar_size as usize, common::Prot::RW, common::MemoryType::Uncacheable)
+            common::physmap(bar_ptr, bar_size, common::Prot::RW, common::MemoryType::Uncacheable)
                 .expect("rtl8168d: failed to map address") as usize
         };
 
-        if !(bar_ptr..bar_ptr + bar_size).contains(&(table_base as u64 + table_min_length as u64)) {
+        if !(bar_ptr as u64..bar_ptr as u64 + bar_size as u64).contains(&(table_base as u64 + table_min_length as u64)) {
             panic!("Table {:#x}{:#x} outside of BAR {:#x}:{:#x}", table_base, table_base + table_min_length as usize, bar_ptr, bar_ptr + bar_size);
         }
 
-        if !(bar_ptr..bar_ptr + bar_size).contains(&(pba_base as u64 + pba_min_length as u64)) {
+        if !(bar_ptr as u64..bar_ptr as u64 + bar_size as u64).contains(&(pba_base as u64 + pba_min_length as u64)) {
             panic!("PBA {:#x}{:#x} outside of BAR {:#x}:{:#X}", pba_base, pba_base + pba_min_length as usize, bar_ptr, bar_ptr + bar_size);
         }
 
-        let virt_table_base = ((table_base - bar_ptr as usize) + address) as *mut MsixTableEntry;
-        let virt_pba_base = ((pba_base - bar_ptr as usize) + address) as *mut u64;
+        let virt_table_base = ((table_base - bar_ptr) + address) as *mut MsixTableEntry;
+        let virt_pba_base = ((pba_base - bar_ptr) + address) as *mut u64;
 
         let mut info = MsixInfo {
             virt_table_base: NonNull::new(virt_table_base).unwrap(),
@@ -309,20 +296,14 @@ fn find_bar(pci_config: &SubdriverArguments) -> Option<(usize, usize)> {
     // RTL8168 uses BAR2, RTL8169 uses BAR1, search in that order
     for &barnum in &[2, 1] {
         match pci_config.func.bars[barnum] {
-            pcid_interface::PciBar::Memory32(ptr) => match ptr {
-                0 => log::warn!("BAR {} is mapped to address 0", barnum),
-                _ => return Some((
-                    ptr.try_into().unwrap(),
-                    pci_config.func.bar_sizes[barnum].try_into().unwrap()
-                )),
-            },
-            pcid_interface::PciBar::Memory64(ptr) => match ptr {
-                0 => log::warn!("BAR {} is mapped to address 0", barnum),
-                _ => return Some((
-                    ptr.try_into().unwrap(),
-                    pci_config.func.bar_sizes[barnum].try_into().unwrap()
-                )),
-            },
+            pcid_interface::PciBar::Memory32 { addr, size } => return Some((
+                addr.try_into().unwrap(),
+                size.try_into().unwrap()
+            )),
+            pcid_interface::PciBar::Memory64 { addr, size } => return Some((
+                addr.try_into().unwrap(),
+                size.try_into().unwrap()
+            )),
             other => log::warn!("BAR {} is {:?} instead of memory BAR", barnum, other),
         }
     }

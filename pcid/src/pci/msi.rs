@@ -219,13 +219,9 @@ impl MsixCapability {
         self.a &= 0x0000_FFFF;
         self.a |= u32::from(message_control) << 16;
     }
-    /// Returns the MSI-X table size, subtracted by one.
-    pub const fn table_size_raw(&self) -> u16 {
-        self.message_control() & Self::MC_TABLE_SIZE_MASK
-    }
     /// Returns the MSI-X table size.
     pub const fn table_size(&self) -> u16 {
-        self.table_size_raw() + 1
+        (self.message_control() & Self::MC_TABLE_SIZE_MASK) + 1
     }
     /// Returns the MSI-X enabled bit, which enables MSI-X if the MSI enable bit is also set in the
     /// MSI capability structure.
@@ -289,20 +285,7 @@ impl MsixCapability {
         if self.table_bir() > 5 {
             panic!("MSI-X Table BIR contained a reserved enum value: {}", self.table_bir());
         }
-        let base = bars[usize::from(self.table_bir())];
-
-        //TODO: ensure type conversions are safe
-        match base {
-            PciBar::Memory32(ptr) => {
-                ptr as usize + self.table_offset() as usize
-            },
-            PciBar::Memory64(ptr) => {
-                ptr as usize + self.table_offset() as usize
-            },
-            _ => {
-                panic!("MSI-X Table BIR referenced a non-memory BAR: {:?}", base);
-            }
-        }
+        bars[usize::from(self.table_bir())].expect_mem().0 + self.table_offset() as usize
     }
     pub fn table_pointer(&self, bars: [PciBar; 6], k: u16) -> usize {
         self.table_base_pointer(bars) + k as usize * 16
@@ -312,20 +295,7 @@ impl MsixCapability {
         if self.pba_bir() > 5 {
             panic!("MSI-X PBA BIR contained a reserved enum value: {}", self.pba_bir());
         }
-        let base = bars[usize::from(self.pba_bir())];
-
-        //TODO: ensure type conversions are safe
-        match base {
-            PciBar::Memory32(ptr) => {
-                ptr as usize + self.pba_offset() as usize
-            },
-            PciBar::Memory64(ptr) => {
-                ptr as usize + self.pba_offset() as usize
-            },
-            _ => {
-                panic!("MSI-X PBA BIR referenced a non-memory BAR: {:?}", base);
-            }
-        }
+        bars[usize::from(self.pba_bir())].expect_mem().0 + self.pba_offset() as usize
     }
     pub fn pba_pointer_dword(&self, bars: [PciBar; 6], k: u16) -> usize {
         self.pba_base_pointer(bars) + (k as usize / 32) * 4

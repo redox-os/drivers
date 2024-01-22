@@ -2,8 +2,8 @@ use std::sync::Mutex;
 use std::{fmt, fs, io, mem, ptr, slice};
 
 use log::info;
+use pci_types::{ConfigRegionAccess, PciAddress};
 
-use crate::pci::{CfgAccess, PciAddress};
 use fallback::Pci;
 
 mod fallback;
@@ -221,7 +221,11 @@ impl Pcie {
     }
 }
 
-impl CfgAccess for Pcie {
+impl ConfigRegionAccess for Pcie {
+    fn function_exists(&self, _address: PciAddress) -> bool {
+        todo!();
+    }
+
     unsafe fn read(&self, address: PciAddress, offset: u16) -> u32 {
         let _guard = self.lock.lock().unwrap();
 

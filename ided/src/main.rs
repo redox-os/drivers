@@ -86,10 +86,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     info!("IDE PCI CONFIG: {:?}", pci_config);
 
-    let busmaster_base = match pci_config.func.bars[4] {
-        PciBar::Port(port) => port,
-        other => panic!("TODO: IDE busmaster BAR {:#x?}", other),
-    };
+    let busmaster_base = pci_config.func.bars[4].expect_port();
     let (primary, primary_irq) = if pci_config.func.full_device_id.interface & 1 != 0 {
         panic!("TODO: IDE primary channel is PCI native");
     } else {

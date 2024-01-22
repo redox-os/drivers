@@ -11,33 +11,31 @@ pub fn probe_legacy_port_transport(
     pci_header: &PciHeader,
     pcid_handle: &mut PcidServerHandle,
 ) -> Result<Device, Error> {
-    if let PciBar::Port(port) = pci_header.get_bar(0) {
-        unsafe { syscall::iopl(3).expect("virtio: failed to set I/O privilege level") };
-        log::warn!("virtio: using legacy transport");
+    let port = pci_header.get_bar(0).expect_port();
 
-        let transport = LegacyTransport::new(port);
+    unsafe { syscall::iopl(3).expect("virtio: failed to set I/O privilege level") };
+    log::warn!("virtio: using legacy transport");
 
-        // Setup interrupts.
-        let all_pci_features = pcid_handle.fetch_all_features()?;
-        let has_msix = all_pci_features
-            .iter()
-            .any(|(feature, _)| feature.is_msix());
+    let transport = LegacyTransport::new(port);
 
-        // According to the virtio specification, the device REQUIRED to support MSI-X.
-        assert!(has_msix, "virtio: device does not support MSI-X");
-        let irq_handle = enable_msix(pcid_handle)?;
+    // Setup interrupts.
+    let all_pci_features = pcid_handle.fetch_all_features()?;
+    let has_msix = all_pci_features
+        .iter()
+        .any(|(feature, _)| feature.is_msix());
 
-        let device = Device {
-            transport,
-            irq_handle,
-            device_space: core::ptr::null_mut(),
-        };
+    // According to the virtio specification, the device REQUIRED to support MSI-X.
+    assert!(has_msix, "virtio: device does not support MSI-X");
+    let irq_handle = enable_msix(pcid_handle)?;
 
-        device.transport.reset();
-        reinit(&device)?;
+    let device = Device {
+        transport,
+        irq_handle,
+        device_space: core::ptr::null_mut(),
+    };
 
-        Ok(device)
-    } else {
-        unreachable!("virtio: legacy transport with non-port IO?")
-    }
+    device.transport.reset();
+    reinit(&device)?;
+
+    Ok(device)
 }

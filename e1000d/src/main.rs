@@ -10,7 +10,7 @@ use std::process;
 use std::sync::Arc;
 
 use event::EventQueue;
-use pcid_interface::{PciBar, PcidServerHandle};
+use pcid_interface::PcidServerHandle;
 use syscall::{EventFlags, Packet, SchemeBlockMut};
 
 pub mod device;
@@ -68,12 +68,7 @@ fn main() {
     let mut name = pci_config.func.name();
     name.push_str("_e1000");
 
-    let bar = match pci_config.func.bars[0] {
-        PciBar::Memory32(addr) => addr as usize,
-        PciBar::Memory64(addr) => addr as usize,
-        PciBar::None | PciBar::Port(_) => unreachable!(),
-    };
-    let bar_size = pci_config.func.bar_sizes[0] as usize;
+    let (bar, bar_size) = pci_config.func.bars[0].expect_mem();
 
     let irq = pci_config.func.legacy_interrupt_line;
 

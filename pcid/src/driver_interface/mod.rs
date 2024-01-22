@@ -26,16 +26,33 @@ pub enum LegacyInterruptPin {
     IntD = 4,
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "PciAddress")]
+struct PciAddressDef {
+    #[serde(getter = "PciAddress::segment")]
+    segment: u16,
+    #[serde(getter = "PciAddress::bus")]
+    bus: u8,
+    #[serde(getter = "PciAddress::device")]
+    device: u8,
+    #[serde(getter = "PciAddress::function")]
+    function: u8,
+}
+
+impl From<PciAddressDef> for PciAddress {
+    fn from(value: PciAddressDef) -> Self {
+        PciAddress::new(value.segment, value.bus, value.device, value.function)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct PciFunction {
     /// Address of the PCI function.
+    #[serde(with = "PciAddressDef")]
     pub addr: PciAddress,
 
     /// PCI Base Address Registers
     pub bars: [PciBar; 6],
-
-    /// BAR sizes
-    pub bar_sizes: [u32; 6],
 
     /// Legacy IRQ line: It's the responsibility of pcid to make sure that it be mapped in either
     /// the I/O APIC or the 8259 PIC, so that the subdriver can map the interrupt vector directly.
@@ -262,6 +279,7 @@ impl PcidServerHandle {
         }
     }
 
+    // FIXME turn into struct with bool fields
     pub fn fetch_all_features(&mut self) -> Result<Vec<(PciFeature, FeatureStatus)>> {
         self.send(&PcidClientRequest::RequestFeatures)?;
         match self.recv()? {

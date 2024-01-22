@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::thread;
 
 use event::EventQueue;
-use pcid_interface::{PciBar, PcidServerHandle};
+use pcid_interface::PcidServerHandle;
 use std::time::Duration;
 use syscall::{EventFlags, Packet, SchemeBlockMut};
 
@@ -76,11 +76,7 @@ fn main() {
     let mut name = pci_config.func.name();
     name.push_str("_ixgbe");
 
-    let bar = match pci_config.func.bars[0] {
-        PciBar::Memory32(addr) => addr as usize,
-        PciBar::Memory64(addr) => addr as usize,
-        PciBar::None | PciBar::Port(_) => unreachable!(),
-    };
+    let (bar, _) = pci_config.func.bars[0].expect_mem();
 
     let irq = pci_config.func.legacy_interrupt_line;
 
