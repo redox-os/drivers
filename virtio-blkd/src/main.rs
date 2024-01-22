@@ -116,7 +116,7 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
     // 0x1001 - virtio-blk
     let pci_config = pcid_handle.fetch_config()?;
 
-    assert_eq!(pci_config.func.devid, 0x1001);
+    assert_eq!(pci_config.func.full_device_id.device_id, 0x1001);
     log::info!("virtio-blk: initiating startup sequence :^)");
 
     let device = virtio_core::probe_device(&mut pcid_handle)?;

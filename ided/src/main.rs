@@ -86,17 +86,16 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     info!("IDE PCI CONFIG: {:?}", pci_config);
 
-    let pci_header = pcid_handle.fetch_header().expect("ided: failed to fetch PCI header");
-    let busmaster_base = match pci_header.get_bar(4) {
+    let busmaster_base = match pci_config.func.bars[4] {
         PciBar::Port(port) => port,
         other => panic!("TODO: IDE busmaster BAR {:#x?}", other),
     };
-    let (primary, primary_irq) = if pci_header.interface() & 1 != 0 {
+    let (primary, primary_irq) = if pci_config.func.full_device_id.interface & 1 != 0 {
         panic!("TODO: IDE primary channel is PCI native");
     } else {
         (Channel::primary_compat(busmaster_base).unwrap(), 14)
     };
-    let (secondary, secondary_irq) = if pci_header.interface() & 1 != 0 {
+    let (secondary, secondary_irq) = if pci_config.func.full_device_id.interface & 1 != 0 {
         panic!("TODO: IDE secondary channel is PCI native");
     } else {
         (Channel::secondary_compat(busmaster_base + 8).unwrap(), 15)

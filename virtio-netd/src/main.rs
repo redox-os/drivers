@@ -38,7 +38,7 @@ fn deamon(deamon: redox_daemon::Daemon) -> Result<(), Error> {
     // 0x1000 - virtio-net
     let pci_config = pcid_handle.fetch_config()?;
 
-    assert_eq!(pci_config.func.devid, 0x1000);
+    assert_eq!(pci_config.func.full_device_id.device_id, 0x1000);
     log::info!("virtio-net: initiating startup sequence :^)");
 
     let device = virtio_core::probe_device(&mut pcid_handle)?;

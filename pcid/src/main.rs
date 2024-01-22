@@ -2,8 +2,8 @@ use std::fs::{File, metadata, read_dir};
 use std::io::prelude::*;
 use std::os::unix::io::{FromRawFd, RawFd};
 use std::process::Command;
+use std::thread;
 use std::sync::{Arc, Mutex};
-use std::{i64, thread};
 
 use structopt::StructOpt;
 use log::{debug, error, info, warn, trace};
@@ -33,9 +33,7 @@ struct Args {
 }
 
 pub struct DriverHandler {
-    config: config::DriverConfig,
     addr: PciAddress,
-    header: PciHeader,
     capabilities: Vec<(u8, PciCapability)>,
 
     state: Arc<State>,
@@ -58,9 +56,6 @@ impl DriverHandler {
             }
             PcidClientRequest::RequestConfig => {
                 PcidClientResponse::Config(args.clone())
-            }
-            PcidClientRequest::RequestHeader => {
-                PcidClientResponse::Header(self.header.clone())
             }
             PcidClientRequest::RequestFeatures => {
                 PcidClientResponse::AllFeatures(self.capabilities.iter().filter_map(|(_, capability)| match capability {
@@ -195,9 +190,9 @@ impl DriverHandler {
         let mut pcid_to_client = unsafe { File::from_raw_fd(pcid_to_client_write as RawFd) };
         let mut pcid_from_client = unsafe { File::from_raw_fd(pcid_from_client_read as RawFd) };
 
-            while let Ok(msg) = recv(&mut pcid_from_client) {
-                let response = self.respond(msg, &args);
-                send(&mut pcid_to_client, &response).unwrap();
+        while let Ok(msg) = recv(&mut pcid_from_client) {
+            let response = self.respond(msg, &args);
+            send(&mut pcid_to_client, &response).unwrap();
         }
     }
 }
@@ -265,204 +260,164 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, he
     info!("{}", string);
 
     for driver in config.drivers.iter() {
-        if let Some(class) = driver.class {
-            if class != raw_class { continue; }
+        if !driver.match_function(header.full_device_id()) {
+            continue;
         }
 
-        if let Some(subclass) = driver.subclass {
-            if subclass != header.subclass() { continue; }
+        let Some(ref args) = driver.command else {
+            continue;
+        };
+
+        // Enable bus mastering, memory space, and I/O space
+        unsafe {
+            let mut data = pci.read(addr, 0x04);
+            data |= 7;
+            pci.write(addr, 0x04, data);
         }
 
-        if let Some(interface) = driver.interface {
-            if interface != header.interface() { continue; }
-        }
+        // Set IRQ line to 9 if not set
+        let mut irq;
+        let interrupt_pin;
 
-        if let Some(ref ids) = driver.ids {
-            let mut device_found = false;
-            for (vendor, devices) in ids {
-                let vendor_without_prefix = vendor.trim_start_matches("0x");
-                let vendor = i64::from_str_radix(vendor_without_prefix, 16).unwrap() as u16;
-
-                if vendor != header.vendor_id() { continue; }
-
-                for device in devices {
-                    if *device == header.device_id() {
-                        device_found = true;
-                        break;
-                    }
-                }
+        unsafe {
+            let mut data = pci.read(addr, 0x3C);
+            irq = (data & 0xFF) as u8;
+            interrupt_pin = ((data & 0x0000_FF00) >> 8) as u8;
+            if irq == 0xFF {
+                irq = 9;
             }
-            if !device_found { continue; }
+            data = (data & 0xFFFFFF00) | irq as u32;
+            pci.write(addr, 0x3C, data);
+        };
+
+        // Find BAR sizes
+        //TODO: support 64-bit BAR sizes?
+        let mut bars = [PciBar::None; 6];
+        let mut bar_sizes = [0; 6];
+        unsafe {
+            let count = match header.header_type() {
+                PciHeaderType::GENERAL => 6,
+                PciHeaderType::PCITOPCI => 2,
+                _ => 0,
+            };
+
+            for i in 0..count {
+                bars[i] = header.get_bar(i);
+
+                let offset = 0x10 + (i as u8) * 4;
+
+                let original = pci.read(addr, offset.into());
+                pci.write(addr, offset.into(), 0xFFFFFFFF);
+
+                let new = pci.read(addr, offset.into());
+                pci.write(addr, offset.into(), original);
+
+                let masked = if new & 1 == 1 {
+                    new & 0xFFFFFFFC
+                } else {
+                    new & 0xFFFFFFF0
+                };
+
+                let size = (!masked).wrapping_add(1);
+                bar_sizes[i] = if size <= 1 {
+                    0
+                } else {
+                    size
+                };
+            }
+        }
+
+        let capabilities = if header.status() & (1 << 4) != 0 {
+            let func = PciFunc {
+                pci: state.preferred_cfg_access(),
+                addr
+            };
+            crate::pci::cap::CapabilitiesIter { inner: crate::pci::cap::CapabilityOffsetsIter::new(header.cap_pointer(), &func) }.collect::<Vec<_>>()
         } else {
-            if let Some(vendor) = driver.vendor {
-                if vendor != header.vendor_id() { continue; }
+            Vec::new()
+        };
+        debug!("PCI DEVICE CAPABILITIES for {}: {:?}", args.iter().map(|string| string.as_ref()).nth(0).unwrap_or("[unknown]"), capabilities);
+
+        use driver_interface::LegacyInterruptPin;
+
+        let legacy_interrupt_pin = match interrupt_pin {
+            0 => None,
+            1 => Some(LegacyInterruptPin::IntA),
+            2 => Some(LegacyInterruptPin::IntB),
+            3 => Some(LegacyInterruptPin::IntC),
+            4 => Some(LegacyInterruptPin::IntD),
+
+            other => {
+                warn!("pcid: invalid interrupt pin: {}", other);
+                None
             }
+        };
 
-            if let Some(device) = driver.device {
-                if device != header.device_id() { continue; }
-            }
-        }
+        let func = driver_interface::PciFunction {
+            bars,
+            bar_sizes,
+            addr,
+            legacy_interrupt_line: irq,
+            legacy_interrupt_pin,
+            full_device_id: header.full_device_id().clone(),
+        };
 
-        if let Some(ref device_id_range) = driver.device_id_range {
-            if header.device_id() < device_id_range.start  ||
-               device_id_range.end <= header.device_id() { continue; }
-        }
+        let subdriver_args = driver_interface::SubdriverArguments {
+            func,
+        };
 
-        if let Some(ref args) = driver.command {
-            // Enable bus mastering, memory space, and I/O space
-            unsafe {
-                let mut data = pci.read(addr, 0x04);
-                data |= 7;
-                pci.write(addr, 0x04, data);
-            }
-
-            // Set IRQ line to 9 if not set
-            let mut irq;
-            let interrupt_pin;
-
-            unsafe {
-                let mut data = pci.read(addr, 0x3C);
-                irq = (data & 0xFF) as u8;
-                interrupt_pin = ((data & 0x0000_FF00) >> 8) as u8;
-                if irq == 0xFF {
-                    irq = 9;
+        let mut args = args.iter();
+        if let Some(program) = args.next() {
+            let mut command = Command::new(program);
+            for arg in args {
+                if arg.starts_with("$") {
+                    panic!("support for $VARIABLE has been removed. use pcid_interface instead");
                 }
-                data = (data & 0xFFFFFF00) | irq as u32;
-                pci.write(addr, 0x3C, data);
+                command.arg(arg);
+            }
+
+            info!("PCID SPAWN {:?}", command);
+
+            // TODO: libc wrapper?
+            let [fds1, fds2] = unsafe {
+                let mut fds1 = [0 as libc::c_int; 2];
+                let mut fds2 = [0 as libc::c_int; 2];
+
+                assert_eq!(libc::pipe(fds1.as_mut_ptr()), 0, "pcid: failed to create pcid->client pipe");
+                assert_eq!(libc::pipe(fds2.as_mut_ptr()), 0, "pcid: failed to create client->pcid pipe");
+
+                [
+                    fds1.map(|c| c as usize),
+                    fds2.map(|c| c as usize),
+                ]
             };
 
-            // Find BAR sizes
-            //TODO: support 64-bit BAR sizes?
-            let mut bars = [PciBar::None; 6];
-            let mut bar_sizes = [0; 6];
-            unsafe {
-                let count = match header.header_type() {
-                    PciHeaderType::GENERAL => 6,
-                    PciHeaderType::PCITOPCI => 2,
-                    _ => 0,
-                };
+            let [pcid_to_client_read, pcid_to_client_write] = fds1;
+            let [pcid_from_client_read, pcid_from_client_write] = fds2;
 
-                for i in 0..count {
-                    bars[i] = header.get_bar(i);
+            let envs = vec![
+                ("PCID_TO_CLIENT_FD", format!("{}", pcid_to_client_read)),
+                ("PCID_FROM_CLIENT_FD", format!("{}", pcid_from_client_write)),
+            ];
 
-                    let offset = 0x10 + (i as u8) * 4;
-
-                    let original = pci.read(addr, offset.into());
-                    pci.write(addr, offset.into(), 0xFFFFFFFF);
-
-                    let new = pci.read(addr, offset.into());
-                    pci.write(addr, offset.into(), original);
-
-                    let masked = if new & 1 == 1 {
-                        new & 0xFFFFFFFC
-                    } else {
-                        new & 0xFFFFFFF0
+            match command.envs(envs).spawn() {
+                Ok(mut child) => {
+                    let driver_handler = DriverHandler {
+                        addr,
+                        state: Arc::clone(&state),
+                        capabilities,
                     };
-
-                    let size = (!masked).wrapping_add(1);
-                    bar_sizes[i] = if size <= 1 {
-                        0
-                    } else {
-                        size
-                    };
-                }
-            }
-
-            let capabilities = if header.status() & (1 << 4) != 0 {
-                let func = PciFunc {
-                    pci: state.preferred_cfg_access(),
-                    addr
-                };
-                crate::pci::cap::CapabilitiesIter { inner: crate::pci::cap::CapabilityOffsetsIter::new(header.cap_pointer(), &func) }.collect::<Vec<_>>()
-            } else {
-                Vec::new()
-            };
-            debug!("PCI DEVICE CAPABILITIES for {}: {:?}", args.iter().map(|string| string.as_ref()).nth(0).unwrap_or("[unknown]"), capabilities);
-
-            use driver_interface::LegacyInterruptPin;
-
-            let legacy_interrupt_pin = match interrupt_pin {
-                0 => None,
-                1 => Some(LegacyInterruptPin::IntA),
-                2 => Some(LegacyInterruptPin::IntB),
-                3 => Some(LegacyInterruptPin::IntC),
-                4 => Some(LegacyInterruptPin::IntD),
-
-                other => {
-                    warn!("pcid: invalid interrupt pin: {}", other);
-                    None
-                }
-            };
-
-            let func = driver_interface::PciFunction {
-                bars,
-                bar_sizes,
-                addr,
-                devid: header.device_id(),
-                legacy_interrupt_line: irq,
-                legacy_interrupt_pin,
-                venid: header.vendor_id(),
-            };
-
-            let subdriver_args = driver_interface::SubdriverArguments {
-                func,
-            };
-
-            let mut args = args.iter();
-            if let Some(program) = args.next() {
-                let mut command = Command::new(program);
-                for arg in args {
-                    if arg.starts_with("$") {
-                        panic!("support for $VARIABLE has been removed. use pcid_interface instead");
+                    let _handle = thread::spawn(move || {
+                        driver_handler.handle_spawn(pcid_to_client_write, pcid_from_client_read, subdriver_args);
+                    });
+                    // FIXME this currently deadlocks as pcid doesn't daemonize
+                    //state.threads.lock().unwrap().push(handle);
+                    match child.wait() {
+                        Ok(_status) => (),
+                        Err(err) => error!("pcid: failed to wait for {:?}: {}", command, err),
                     }
-                    command.arg(arg);
                 }
-
-                info!("PCID SPAWN {:?}", command);
-
-                    // TODO: libc wrapper?
-                    let [fds1, fds2] = unsafe {
-                        let mut fds1 = [0 as libc::c_int; 2];
-                        let mut fds2 = [0 as libc::c_int; 2];
-
-                        assert_eq!(libc::pipe(fds1.as_mut_ptr()), 0, "pcid: failed to create pcid->client pipe");
-                        assert_eq!(libc::pipe(fds2.as_mut_ptr()), 0, "pcid: failed to create client->pcid pipe");
-
-                        [
-                            fds1.map(|c| c as usize),
-                            fds2.map(|c| c as usize),
-                        ]
-                    };
-
-                    let [pcid_to_client_read, pcid_to_client_write] = fds1;
-                    let [pcid_from_client_read, pcid_from_client_write] = fds2;
-
-                let envs = vec![
-                    ("PCID_TO_CLIENT_FD", format!("{}", pcid_to_client_read)),
-                    ("PCID_FROM_CLIENT_FD", format!("{}", pcid_from_client_write)),
-                ];
-
-                match command.envs(envs).spawn() {
-                    Ok(mut child) => {
-                        let driver_handler = DriverHandler {
-                            addr,
-                            config: driver.clone(),
-                            header,
-                            state: Arc::clone(&state),
-                            capabilities,
-                        };
-                        let _handle = thread::spawn(move || {
-                            driver_handler.handle_spawn(pcid_to_client_write, pcid_from_client_read, subdriver_args);
-                        });
-                        // FIXME this currently deadlocks as pcid doesn't daemonize
-                        //state.threads.lock().unwrap().push(handle);
-                        match child.wait() {
-                            Ok(_status) => (),
-                            Err(err) => error!("pcid: failed to wait for {:?}: {}", command, err),
-                        }
-                    }
-                    Err(err) => error!("pcid: failed to execute {:?}: {}", command, err)
-                }
+                Err(err) => error!("pcid: failed to execute {:?}: {}", command, err)
             }
         }
     }
@@ -483,22 +438,24 @@ fn setup_logging(verbosity: u8) -> Option<&'static RedoxLogger> {
                 .build()
          );
 
-    match OutputBuilder::in_redox_logging_scheme("bus", "pci", "pcid.log") {
-        Ok(b) => logger = logger.with_output(
-            b.with_filter(log::LevelFilter::Trace)
-                .flush_on_newline(true)
-                .build()
-        ),
-        Err(error) => eprintln!("pcid: failed to open pcid.log"),
-    }
-    match OutputBuilder::in_redox_logging_scheme("bus", "pci", "pcid.ansi.log") {
-        Ok(b) => logger = logger.with_output(
-            b.with_filter(log::LevelFilter::Trace)
-                .with_ansi_escape_codes()
-                .flush_on_newline(true)
-                .build()
-        ),
-        Err(error) => eprintln!("pcid: failed to open pcid.ansi.log"),
+    #[cfg(target_os = "redox")] {
+        match OutputBuilder::in_redox_logging_scheme("bus", "pci", "pcid.log") {
+            Ok(b) => logger = logger.with_output(
+                b.with_filter(log::LevelFilter::Trace)
+                    .flush_on_newline(true)
+                    .build()
+            ),
+            Err(error) => eprintln!("pcid: failed to open pcid.log"),
+        }
+        match OutputBuilder::in_redox_logging_scheme("bus", "pci", "pcid.ansi.log") {
+            Ok(b) => logger = logger.with_output(
+                b.with_filter(log::LevelFilter::Trace)
+                    .with_ansi_escape_codes()
+                    .flush_on_newline(true)
+                    .build()
+            ),
+            Err(error) => eprintln!("pcid: failed to open pcid.ansi.log"),
+        }
     }
 
     match logger.enable() {

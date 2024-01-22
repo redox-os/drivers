@@ -96,10 +96,10 @@ pub fn enable_msix(pcid_handle: &mut PcidServerHandle) -> Result<File, Error> {
 }
 
 pub fn probe_legacy_port_transport(
-    pci_header: &PciHeader,
+    pci_config: &SubdriverArguments,
     pcid_handle: &mut PcidServerHandle,
 ) -> Result<Device, Error> {
-    if let PciBar::Port(port) = pci_header.get_bar(0) {
+    if let PciBar::Port(port) = pci_config.func.bars[0] {
         unsafe { syscall::iopl(3).expect("virtio: failed to set I/O privilege level") };
         log::warn!("virtio: using legacy transport");
 

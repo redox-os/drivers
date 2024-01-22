@@ -61,10 +61,9 @@ fn enable_msix(pcid_handle: &mut PcidServerHandle) -> Result<File, Error> {
 /// This function panics if the device is not a virtio device.
 pub fn probe_device(pcid_handle: &mut PcidServerHandle) -> Result<Device, Error> {
     let pci_config = pcid_handle.fetch_config()?;
-    let pci_header = pcid_handle.fetch_header()?;
 
     assert_eq!(
-        pci_config.func.venid, 6900,
+        pci_config.func.full_device_id.vendor_id, 6900,
         "virtio_core::probe_device: not a virtio device"
     );
 
@@ -91,7 +90,7 @@ pub fn probe_device(pcid_handle: &mut PcidServerHandle) -> Result<Device, Error>
             _ => continue,
         }
 
-        let bar = pci_header.get_bar(capability.bar as usize);
+        let bar = pci_config.func.bars[capability.bar as usize];
         let addr = match bar {
             PciBar::Memory32(addr) => addr as usize,
             PciBar::Memory64(addr) => addr as usize,
@@ -189,7 +188,7 @@ pub fn probe_device(pcid_handle: &mut PcidServerHandle) -> Result<Device, Error>
 
         Ok(device)
     } else {
-        crate::arch::probe_legacy_port_transport(&pci_header, pcid_handle)
+        crate::arch::probe_legacy_port_transport(&pci_config, pcid_handle)
     }
 }
 
