@@ -196,9 +196,9 @@ checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
 
 [[package]]
 name = "bitflags"
-version = "2.4.0"
+version = "2.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4682ae6287fcf752ecaabbfcc7b6f9b72aa33933dc23a554d853aea8eea8635"
+checksum = "ed570934406eb16438a4e976b1b4500774099c13b8cb96eec99f620f05090ddf"
 
 [[package]]
 name = "bitvec"
@@ -527,7 +527,7 @@ version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8283e7331b8c93b9756e0cfdbcfb90312852f953c6faf9bf741e684cc3b6ad69"
 dependencies = [
- "bitflags 2.4.0",
+ "bitflags 2.4.2",
  "crc",
  "log",
  "uuid",
@@ -698,7 +698,7 @@ version = "0.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "85c833ca1e66078851dba29046874e38f08b2c883700aa29a03ddd3b23814ee8"
 dependencies = [
- "bitflags 2.4.0",
+ "bitflags 2.4.2",
  "libc",
  "redox_syscall 0.4.1",
 ]
@@ -957,6 +957,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pci_types"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "831e5bebf010674bc2e8070b892948120d4c453c71f37387e1ffea5636620dbe"
+dependencies = [
+ "bit_field",
+ "bitflags 2.4.2",
+]
+
+[[package]]
 name = "pcid"
 version = "0.1.0"
 dependencies = [
@@ -968,6 +978,7 @@ dependencies = [
  "libc",
  "log",
  "paw",
+ "pci_types",
  "plain",
  "redox-log",
  "redox_syscall 0.4.1",
@@ -1151,7 +1162,7 @@ version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "475e252d7add4825405d2248d530d33e22364ac5477eab816b56efbeec1e2712"
 dependencies = [
- "bitflags 2.4.0",
+ "bitflags 2.4.2",
  "libredox",
  "redox_syscall 0.4.1",
 ]
@@ -1727,7 +1738,7 @@ dependencies = [
 name = "virtio-core"
 version = "0.1.0"
 dependencies = [
- "bitflags 2.4.0",
+ "bitflags 2.4.2",
  "common",
  "crossbeam-queue",
  "futures",

@@ -1,8 +1,9 @@
 use bitflags::bitflags;
 use byteorder::{ByteOrder, LittleEndian};
+use pci_types::{ConfigRegionAccess, PciAddress};
 use serde::{Deserialize, Serialize};
 
-use crate::pci::{CfgAccess, FullDeviceId, PciAddress, PciBar, PciClass};
+use crate::pci::{FullDeviceId, PciBar, PciClass};
 
 #[derive(Debug, PartialEq)]
 pub enum PciHeaderError {
@@ -89,7 +90,7 @@ impl PciHeader {
     /// Parse the bytes found in the Configuration Space of the PCI device into
     /// a more usable PciHeader.
     pub fn from_reader(
-        cfg_access: &dyn CfgAccess,
+        cfg_access: &dyn ConfigRegionAccess,
         addr: PciAddress,
     ) -> Result<PciHeader, PciHeaderError> {
         if unsafe { cfg_access.read(addr, 0) } != 0xffffffff {
@@ -308,15 +309,21 @@ impl PciHeader {
 mod test {
     use std::convert::TryInto;
 
+    use pci_types::{ConfigRegionAccess, PciAddress};
+
     use super::{PciHeader, PciHeaderError, PciHeaderType};
-    use crate::pci::{CfgAccess, PciAddress, PciBar, PciClass};
+    use crate::pci::{PciBar, PciClass};
 
     struct TestCfgAccess<'a> {
         addr: PciAddress,
         bytes: &'a [u8],
     }
 
-    impl CfgAccess for TestCfgAccess<'_> {
+    impl ConfigRegionAccess for TestCfgAccess<'_> {
+        fn function_exists(&self, _address: PciAddress) -> bool {
+            unreachable!();
+        }
+
         unsafe fn read(&self, addr: PciAddress, offset: u16) -> u32 {
             assert_eq!(addr, self.addr);
             let offset = offset as usize;
@@ -329,6 +336,7 @@ mod test {
         }
     }
 
+    #[rustfmt::skip]
     const IGB_DEV_BYTES: [u8; 256] = [
         0x86, 0x80, 0x33, 0x15, 0x07, 0x04, 0x10, 0x00, 0x03, 0x00, 0x00, 0x02, 0x10, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x50, 0xf7, 0x00, 0x00, 0x00, 0x00, 0x01, 0xb0, 0x00, 0x00, 0x00, 0x00, 0x58, 0xf7,

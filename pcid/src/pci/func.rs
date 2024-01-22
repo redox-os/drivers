@@ -1,6 +1,5 @@
 use byteorder::{ByteOrder, LittleEndian};
-
-use super::{CfgAccess, PciAddress};
+use pci_types::{ConfigRegionAccess, PciAddress};
 
 pub trait ConfigReader {
     unsafe fn read_range(&self, offset: u16, len: u16) -> Vec<u8> {
@@ -33,7 +32,7 @@ pub trait ConfigWriter {
 }
 
 pub struct PciFunc<'pci> {
-    pub pci: &'pci dyn CfgAccess,
+    pub pci: &'pci dyn ConfigRegionAccess,
     pub addr: PciAddress,
 }
 

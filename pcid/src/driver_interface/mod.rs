@@ -26,9 +26,29 @@ pub enum LegacyInterruptPin {
     IntD = 4,
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "PciAddress")]
+struct PciAddressDef {
+    #[serde(getter = "PciAddress::segment")]
+    segment: u16,
+    #[serde(getter = "PciAddress::bus")]
+    bus: u8,
+    #[serde(getter = "PciAddress::device")]
+    device: u8,
+    #[serde(getter = "PciAddress::function")]
+    function: u8,
+}
+
+impl From<PciAddressDef> for PciAddress {
+    fn from(value: PciAddressDef) -> Self {
+        PciAddress::new(value.segment, value.bus, value.device, value.function)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct PciFunction {
     /// Address of the PCI function.
+    #[serde(with = "PciAddressDef")]
     pub addr: PciAddress,
 
     /// PCI Base Address Registers

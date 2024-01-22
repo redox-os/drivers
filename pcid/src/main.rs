@@ -5,13 +5,14 @@ use std::process::Command;
 use std::thread;
 use std::sync::{Arc, Mutex};
 
+use pci_types::{ConfigRegionAccess, PciAddress};
 use structopt::StructOpt;
 use log::{debug, error, info, warn, trace};
 use redox_log::{OutputBuilder, RedoxLogger};
 
 use crate::cfg_access::Pcie;
 use crate::config::Config;
-use crate::pci::{CfgAccess, PciAddress, PciBar, PciClass, PciFunc};
+use crate::pci::{PciBar, PciClass, PciFunc};
 use crate::pci::cap::Capability as PciCapability;
 use crate::pci::func::{ConfigReader, ConfigWriter};
 use crate::pci_header::{PciHeader, PciHeaderError, PciHeaderType};
@@ -40,7 +41,7 @@ pub struct DriverHandler {
 
     state: Arc<State>,
 }
-fn with_pci_func_raw<T, F: FnOnce(&PciFunc) -> T>(pci: &dyn CfgAccess, addr: PciAddress, function: F) -> T {
+fn with_pci_func_raw<T, F: FnOnce(&PciFunc) -> T>(pci: &dyn ConfigRegionAccess, addr: PciAddress, function: F) -> T {
     let func = PciFunc {
         pci,
         addr,
@@ -204,7 +205,7 @@ pub struct State {
     pcie: Pcie,
 }
 impl State {
-    fn preferred_cfg_access(&self) -> &dyn CfgAccess {
+    fn preferred_cfg_access(&self) -> &dyn ConfigRegionAccess {
         &self.pcie
     }
 }
