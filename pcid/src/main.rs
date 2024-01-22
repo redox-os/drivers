@@ -207,9 +207,8 @@ pub struct State {
 }
 
 fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, header: PciHeader) {
-    let raw_class: u8 = header.class().into();
     let mut string = format!("PCI {} {:>04X}:{:>04X} {:>02X}.{:>02X}.{:>02X}.{:>02X} {:?}",
-                             addr, header.vendor_id(), header.device_id(), raw_class,
+                             addr, header.vendor_id(), header.device_id(), header.class(),
                              header.subclass(), header.interface(), header.revision(), header.class());
     let device_type = DeviceType::from((header.class(), header.subclass()));
     match device_type {
@@ -229,17 +228,6 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, he
         },
         _ => (),
     }
-
-    let bars = header.bars(&state.pcie);
-    for (i, bar) in bars.iter().enumerate() {
-        match bar {
-            PciBar::None => {},
-            PciBar::Memory32{addr,..} => string.push_str(&format!(" {i}={addr:08X}")),
-            PciBar::Memory64{addr,..} => string.push_str(&format!(" {i}={addr:016X}")),
-            PciBar::Port(port) => string.push_str(&format!(" {i}=P{port:04X}")),
-        }
-    }
-
     info!("{}", string);
 
     for driver in config.drivers.iter() {
@@ -250,6 +238,21 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, he
         let Some(ref args) = driver.command else {
             continue;
         };
+
+        let mut string = String::new();
+        let bars = header.bars(&state.pcie);
+        for (i, bar) in bars.iter().enumerate() {
+            match bar {
+                PciBar::None => {},
+                PciBar::Memory32 { addr, .. } => string.push_str(&format!(" {i}={addr:08X}")),
+                PciBar::Memory64 { addr, .. } => string.push_str(&format!(" {i}={addr:016X}")),
+                PciBar::Port(port) => string.push_str(&format!(" {i}=P{port:04X}")),
+            }
+        }
+
+        if !string.is_empty() {
+            info!("    BAR{}", string);
+        }
 
         // Enable bus mastering, memory space, and I/O space
         unsafe {
