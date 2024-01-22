@@ -74,10 +74,8 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
 }
 
 #[cfg(target_arch = "x86_64")]
-fn get_int_method(pcid_handle: &mut PcidServerHandle) -> Option<File> {
+fn get_int_method(pcid_handle: &mut PcidServerHandle) -> File {
     let pci_config = pcid_handle.fetch_config().expect("ihdad: failed to fetch config");
-
-    let irq = pci_config.func.legacy_interrupt_line;
 
     let all_pci_features = pcid_handle.fetch_all_features().expect("ihdad: failed to fetch pci features");
     log::debug!("PCI FEATURES: {:?}", all_pci_features);
@@ -123,30 +121,27 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle) -> Option<File> {
         pcid_handle.enable_feature(PciFeature::Msi).expect("ihdad: failed to enable MSI");
         log::debug!("Enabled MSI");
 
-        Some(interrupt_handle)
-    } else if pci_config.func.legacy_interrupt_pin.is_some() {
+        interrupt_handle
+    } else if let Some(irq) = pci_config.func.legacy_interrupt_line {
         log::debug!("Legacy IRQ {}", irq);
 
         // legacy INTx# interrupt pins.
-        Some(File::open(format!("irq:{}", irq)).expect("ihdad: failed to open legacy IRQ file"))
+        File::open(format!("irq:{}", irq)).expect("ihdad: failed to open legacy IRQ file")
     } else {
-        // no interrupts at all
-        None
+        panic!("ihdad: no interrupts supported at all")
     }
 }
 
 //TODO: MSI on non-x86_64?
 #[cfg(not(target_arch = "x86_64"))]
-fn get_int_method(pcid_handle: &mut PcidServerHandle) -> Option<File> {
+fn get_int_method(pcid_handle: &mut PcidServerHandle) -> File {
     let pci_config = pcid_handle.fetch_config().expect("ihdad: failed to fetch config");
-    let irq = pci_config.func.legacy_interrupt_line;
 
-    if pci_config.func.legacy_interrupt_pin.is_some() {
+    if let Some(irq) = pci_config.func.legacy_interrupt_line {
         // legacy INTx# interrupt pins.
-        Some(File::open(format!("irq:{}", irq)).expect("ihdad: failed to open legacy IRQ file"))
+        File::open(format!("irq:{}", irq)).expect("ihdad: failed to open legacy IRQ file")
     } else {
-        // no interrupts at all
-        None
+        panic!("ihdad: no interrupts supported at all")
     }
 }
 
@@ -170,7 +165,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 	};
 
     //TODO: MSI-X
-    let mut irq_file = get_int_method(&mut pcid_handle).expect("ihdad: no interrupt file");
+    let mut irq_file = get_int_method(&mut pcid_handle);
 
 	{
 		let vend_prod: u32 = ((pci_config.func.full_device_id.vendor_id as u32) << 16)

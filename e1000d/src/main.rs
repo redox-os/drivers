@@ -70,7 +70,7 @@ fn main() {
 
     let (bar, bar_size) = pci_config.func.bars[0].expect_mem();
 
-    let irq = pci_config.func.legacy_interrupt_line;
+    let irq = pci_config.func.legacy_interrupt_line.expect("e1000d: no legacy interrupts supported");
 
     eprintln!(" + E1000 {} on: {:X} size: {} IRQ: {}", name, bar, bar_size, irq);
 

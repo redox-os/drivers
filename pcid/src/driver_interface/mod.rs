@@ -57,10 +57,8 @@ pub struct PciFunction {
     /// Legacy IRQ line: It's the responsibility of pcid to make sure that it be mapped in either
     /// the I/O APIC or the 8259 PIC, so that the subdriver can map the interrupt vector directly.
     /// The vector to map is always this field, plus 32.
-    pub legacy_interrupt_line: u8,
-
-    /// Legacy interrupt pin (INTx#), none if INTx# interrupts aren't supported at all.
-    pub legacy_interrupt_pin: Option<LegacyInterruptPin>,
+    /// If INTx# interrupts aren't supported at all this is `None`.
+    pub legacy_interrupt_line: Option<u8>,
 
     /// All identifying information of the PCI function.
     pub full_device_id: FullDeviceId,

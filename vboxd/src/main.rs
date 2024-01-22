@@ -198,7 +198,7 @@ fn main() {
 
     let (bar1, _) = pci_config.func.bars[1].expect_mem();
 
-    let irq = pci_config.func.legacy_interrupt_line;
+    let irq = pci_config.func.legacy_interrupt_line.expect("vboxd: no legacy interrupts supported");
 
     print!("{}", format!(" + VirtualBox {} on: {:X}, {:X}, IRQ {}\n", name, bar0, bar1, irq));
 

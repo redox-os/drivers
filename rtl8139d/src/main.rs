@@ -108,10 +108,8 @@ impl MsixInfo {
 }
 
 #[cfg(target_arch = "x86_64")]
-fn get_int_method(pcid_handle: &mut PcidServerHandle) -> Option<File> {
+fn get_int_method(pcid_handle: &mut PcidServerHandle) -> File {
     let pci_config = pcid_handle.fetch_config().expect("rtl8139d: failed to fetch config");
-
-    let irq = pci_config.func.legacy_interrupt_line;
 
     let all_pci_features = pcid_handle.fetch_all_features().expect("rtl8139d: failed to fetch pci features");
     log::info!("PCI FEATURES: {:?}", all_pci_features);
@@ -157,7 +155,7 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle) -> Option<File> {
         pcid_handle.enable_feature(PciFeature::Msi).expect("rtl8139d: failed to enable MSI");
         log::info!("Enabled MSI");
 
-        Some(interrupt_handle)
+        interrupt_handle
     } else if msix_enabled {
         let capability = match pcid_handle.feature_info(PciFeature::MsiX).expect("rtl8139d: failed to retrieve the MSI-X capability structure from pcid") {
             PciFeatureInfo::Msi(_) => panic!(),
@@ -220,34 +218,31 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle) -> Option<File> {
             table_entry_pointer.msg_data.write(msg_data);
             table_entry_pointer.vec_ctl.writef(MsixTableEntry::VEC_CTL_MASK_BIT, false);
 
-            Some(interrupt_handle)
+            interrupt_handle
         };
 
         pcid_handle.enable_feature(PciFeature::MsiX).expect("rtl8139d: failed to enable MSI-X");
         log::info!("Enabled MSI-X");
 
         method
-    } else if pci_config.func.legacy_interrupt_pin.is_some() {
+    } else if let Some(irq) = pci_config.func.legacy_interrupt_line {
         // legacy INTx# interrupt pins.
-        Some(File::open(format!("irq:{}", irq)).expect("rtl8139d: failed to open legacy IRQ file"))
+        File::open(format!("irq:{}", irq)).expect("rtl8139d: failed to open legacy IRQ file")
     } else {
-        // no interrupts at all
-        None
+        panic!("rtl8139d: no interrupts supported at all")
     }
 }
 
 //TODO: MSI on non-x86_64?
 #[cfg(not(target_arch = "x86_64"))]
-fn get_int_method(pcid_handle: &mut PcidServerHandle) -> Option<File> {
+fn get_int_method(pcid_handle: &mut PcidServerHandle) -> File {
     let pci_config = pcid_handle.fetch_config().expect("rtl8139d: failed to fetch config");
-    let irq = pci_config.func.legacy_interrupt_line;
 
-    if pci_config.func.legacy_interrupt_pin.is_some() {
+    if let Some(irq) = pci_config.func.legacy_interrupt_line {
         // legacy INTx# interrupt pins.
-        Some(File::open(format!("irq:{}", irq)).expect("rtl8139d: failed to open legacy IRQ file"))
+        File::open(format!("irq:{}", irq)).expect("rtl8139d: failed to open legacy IRQ file")
     } else {
-        // no interrupts at all
-        None
+        panic!("rtl8139d: no interrupts supported at all")
     }
 }
 
@@ -340,7 +335,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     }));
 
     //TODO: MSI-X
-    let mut irq_file = get_int_method(&mut pcid_handle).expect("rtl8139d: no interrupt file");
+    let mut irq_file = get_int_method(&mut pcid_handle);
 
     {
         let device = Arc::new(RefCell::new(unsafe {

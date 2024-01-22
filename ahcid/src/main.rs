@@ -83,7 +83,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     let (bar, bar_size) = pci_config.func.bars[5].expect_mem();
 
-    let irq = pci_config.func.legacy_interrupt_line;
+    let irq = pci_config.func.legacy_interrupt_line.expect("ahcid: no legacy interrupts supported");
 
     let _logger_ref = setup_logging(&name);
 

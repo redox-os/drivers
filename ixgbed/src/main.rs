@@ -78,7 +78,7 @@ fn main() {
 
     let (bar, _) = pci_config.func.bars[0].expect_mem();
 
-    let irq = pci_config.func.legacy_interrupt_line;
+    let irq = pci_config.func.legacy_interrupt_line.expect("ixgbed: no legacy interrupts supported");
 
     println!(" + IXGBE {} on: {:X} IRQ: {}", name, bar, irq);
 

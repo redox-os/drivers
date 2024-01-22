@@ -205,14 +205,13 @@ fn get_int_method(
         pcid_handle.enable_feature(PciFeature::Msi).unwrap();
 
         Ok((interrupt_method, interrupt_sources))
-    } else if function.legacy_interrupt_pin.is_some() {
+    } else if let Some(irq) = function.legacy_interrupt_line {
         // INTx# pin based interrupts.
-        let irq_handle = File::open(format!("irq:{}", function.legacy_interrupt_line))
+        let irq_handle = File::open(format!("irq:{}", irq))
             .expect("nvmed: failed to open INTx# interrupt line");
         Ok((InterruptMethod::Intx, InterruptSources::Intx(irq_handle)))
     } else {
-        // No interrupts at all
-        todo!("handling of no interrupts")
+        panic!("nvmed: no interrupts supported at all")
     }
 }
 
@@ -223,14 +222,13 @@ fn get_int_method(
     function: &PciFunction,
     allocated_bars: &AllocatedBars,
 ) -> Result<(InterruptMethod, InterruptSources)> {
-    if function.legacy_interrupt_pin.is_some() {
+    if let Some(irq) = function.legacy_interrupt_line {
         // INTx# pin based interrupts.
-        let irq_handle = File::open(format!("irq:{}", function.legacy_interrupt_line))
+        let irq_handle = File::open(format!("irq:{}", irq))
             .expect("nvmed: failed to open INTx# interrupt line");
         Ok((InterruptMethod::Intx, InterruptSources::Intx(irq_handle)))
     } else {
-        // No interrupts at all
-        todo!("handling of no interrupts")
+        panic!("nvmed: no interrupts supported at all")
     }
 }
 

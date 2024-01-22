@@ -76,7 +76,7 @@ fn main() {
 	let bar0 = pci_config.func.bars[0].expect_port();
 	let bar1 = pci_config.func.bars[1].expect_port();
 
-	let irq = pci_config.func.legacy_interrupt_line;
+	let irq = pci_config.func.legacy_interrupt_line.expect("ac97d: no legacy interrupts supported");
 
 	print!("{}", format!(" + ac97 {} on: {:X}, {:X}, IRQ {}\n", name, bar0, bar1, irq));
 
