@@ -73,6 +73,24 @@ impl PciFunction {
         // FIXME stop replacing : with - once it is a valid character in scheme names
         format!("pci-{}", self.addr).replace(':', "-")
     }
+
+    pub fn display(&self) -> String {
+        let mut string = self.name();
+        let mut first = true;
+        for (i, bar) in self.bars.iter().enumerate() {
+            if !bar.is_none() {
+                if first {
+                    first = false;
+                    string.push_str(" on:");
+                }
+                string.push_str(&format!(" {i}={}", bar.display()));
+            }
+        }
+        if let Some(irq) = self.legacy_interrupt_line {
+            string.push_str(&format!(" IRQ: {irq}"));
+        }
+        string
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

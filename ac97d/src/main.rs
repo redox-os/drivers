@@ -78,7 +78,7 @@ fn main() {
 
 	let irq = pci_config.func.legacy_interrupt_line.expect("ac97d: no legacy interrupts supported");
 
-	print!("{}", format!(" + ac97 {} on: {:X}, {:X}, IRQ {}\n", name, bar0, bar1, irq));
+	println!(" + ac97 {}", pci_config.func.display());
 
 	// Daemonize
     redox_daemon::Daemon::new(move |daemon| {

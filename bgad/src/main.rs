@@ -25,7 +25,7 @@ fn main() {
     let mut name = pci_config.func.name();
     name.push_str("_bga");
 
-    println!(" + BGA {}", name);
+    println!(" + BGA {}", pci_config.func.display());
 
     redox_daemon::Daemon::new(move |daemon| {
         unsafe { iopl(3).unwrap() };

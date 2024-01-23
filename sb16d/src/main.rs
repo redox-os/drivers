@@ -68,7 +68,7 @@ fn main() {
     let addr_str = args.next().unwrap_or("220".to_string());
     let addr = u16::from_str_radix(&addr_str, 16).expect("sb16: failed to parse address");
 
-    print!("{}", format!(" + sb16 at 0x{:X}\n", addr));
+    println!(" + sb16 at 0x{:X}\n", addr);
 
     // Daemonize
     redox_daemon::Daemon::new(move |daemon| {

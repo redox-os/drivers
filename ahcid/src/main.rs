@@ -83,13 +83,12 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     name.push_str("_ahci");
 
     let bar = &pci_config.func.bars[5];
-    let (bar_ptr, bar_size) = bar.expect_mem();
 
     let irq = pci_config.func.legacy_interrupt_line.expect("ahcid: no legacy interrupts supported");
 
     let _logger_ref = setup_logging(&name);
 
-    info!(" + AHCI {} on: {} size: {} IRQ: {}", name, bar_ptr, bar_size, irq);
+    info!(" + AHCI {}", pci_config.func.display());
 
     let address = unsafe { bar.physmap_mem("ahcid") };
     {

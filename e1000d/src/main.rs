@@ -69,11 +69,10 @@ fn main() {
     name.push_str("_e1000");
 
     let bar = &pci_config.func.bars[0];
-    let (bar_ptr, bar_size) = bar.expect_mem();
 
     let irq = pci_config.func.legacy_interrupt_line.expect("e1000d: no legacy interrupts supported");
 
-    eprintln!(" + E1000 {} on: {:X} size: {} IRQ: {}", name, bar_ptr, bar_size, irq);
+    eprintln!(" + E1000 {}", pci_config.func.display());
 
     redox_daemon::Daemon::new(move |daemon| {
         let socket_fd = syscall::open(

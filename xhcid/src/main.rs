@@ -233,16 +233,12 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     log::debug!("XHCI PCI CONFIG: {:?}", pci_config);
     let bar = &pci_config.func.bars[0];
-    let (bar_ptr, _) = bar.expect_mem();
 
     let address = unsafe { bar.physmap_mem("xhcid") } as usize;
 
-    let (mut irq_file, interrupt_method) = get_int_method(&mut pcid_handle, address);
+    let (irq_file, interrupt_method) = get_int_method(&mut pcid_handle, address);
 
-    print!(
-        "{}",
-        format!(" + XHCI {} on: {:016X}\n", name, bar_ptr)
-    );
+    println!(" + XHCI {}", pci_config.func.display());
 
     let scheme_name = format!("usb.{}", name);
     let socket_fd = syscall::open(

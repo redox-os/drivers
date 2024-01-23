@@ -11,6 +11,15 @@ pub enum PciBar {
 }
 
 impl PciBar {
+    pub fn display(&self) -> String {
+        match self {
+            PciBar::None => format!("<none>"),
+            PciBar::Memory32 { addr, .. } => format!("{addr:08X}"),
+            PciBar::Memory64 { addr, .. } => format!("{addr:016X}"),
+            PciBar::Port(port) => format!("P{port:04X}"),
+        }
+    }
+
     pub fn is_none(&self) -> bool {
         match self {
             &PciBar::None => true,

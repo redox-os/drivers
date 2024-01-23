@@ -316,7 +316,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     name.push_str("_rtl8139");
 
     let (bar_ptr, bar_size) = find_bar(&pci_config).expect("rtl8139d: failed to find BAR");
-    log::info!(" + RTL8139 {} on: {:#X} size: {}", name, bar_ptr, bar_size);
+    log::info!(" + RTL8139 {}", pci_config.func.display());
 
     let address = unsafe {
         common::physmap(bar_ptr, bar_size, common::Prot::RW, common::MemoryType::Uncacheable)

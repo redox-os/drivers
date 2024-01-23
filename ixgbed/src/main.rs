@@ -80,7 +80,7 @@ fn main() {
 
     let irq = pci_config.func.legacy_interrupt_line.expect("ixgbed: no legacy interrupts supported");
 
-    println!(" + IXGBE {} on: {:X} IRQ: {}", name, bar, irq);
+    println!(" + IXGBE {}", pci_config.func.display());
 
     redox_daemon::Daemon::new(move |daemon| {
         let socket_fd = syscall::open(

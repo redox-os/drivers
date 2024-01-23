@@ -32,7 +32,7 @@ fn main() {
     let irq_str = args.next().expect("alxd: no irq provided");
     let irq = irq_str.parse::<u8>().expect("alxd: failed to parse irq");
 
-    print!("{}", format!(" + ALX {} on: {:X}, IRQ: {}\n", name, bar, irq));
+    println!(" + ALX {} on: {:X}, IRQ: {}\n", name, bar, irq);
 
     // Daemonize
     redox_daemon::Daemon::new(move |daemon| {

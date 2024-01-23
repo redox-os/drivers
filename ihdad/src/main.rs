@@ -156,9 +156,8 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     name.push_str("_ihda");
 
     let bar = &pci_config.func.bars[0];
-    let (bar_ptr, bar_size) = bar.expect_mem();
 
-    log::info!(" + IHDA {} on: {:#X} size: {}", name, bar_ptr, bar_size);
+    log::info!(" + IHDA {}", pci_config.func.display());
 
 	let address = unsafe { bar.physmap_mem("ihdad") } as usize;
 

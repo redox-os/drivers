@@ -197,11 +197,10 @@ fn main() {
     let bar0 = pci_config.func.bars[0].expect_port();
 
     let bar1 = &pci_config.func.bars[1];
-    let (bar1_ptr, _) = bar1.expect_mem();
 
     let irq = pci_config.func.legacy_interrupt_line.expect("vboxd: no legacy interrupts supported");
 
-    print!("{}", format!(" + VirtualBox {} on: {:X}, {:X}, IRQ {}\n", name, bar0, bar1_ptr, irq));
+    println!(" + VirtualBox {}", pci_config.func.display());
 
     // Daemonize
     redox_daemon::Daemon::new(move |daemon| {

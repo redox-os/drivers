@@ -245,11 +245,8 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, he
         let mut string = String::new();
         let bars = header.bars(&state.pcie);
         for (i, bar) in bars.iter().enumerate() {
-            match bar {
-                PciBar::None => {},
-                PciBar::Memory32 { addr, .. } => string.push_str(&format!(" {i}={addr:08X}")),
-                PciBar::Memory64 { addr, .. } => string.push_str(&format!(" {i}={addr:016X}")),
-                PciBar::Port(port) => string.push_str(&format!(" {i}=P{port:04X}")),
+            if !bar.is_none() {
+                string.push_str(&format!(" {i}={}", bar.display()));
             }
         }
 
