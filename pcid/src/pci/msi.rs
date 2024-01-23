@@ -352,11 +352,11 @@ pub mod x86_64 {
     }
 
     // TODO: should the reserved field be preserved?
-    pub const fn message_address(destination_id: u8, rh: bool, dm: bool) -> u32 {
+    pub const fn message_address(destination_id: u8, redirect_hint: bool, dest_mode_logical: bool) -> u32 {
         0xFEE0_0000u32
             | ((destination_id as u32) << 12)
-            | ((rh as u32) << 3)
-            | ((dm as u32) << 2)
+            | ((redirect_hint as u32) << 3)
+            | ((dest_mode_logical as u32) << 2)
     }
     pub const fn message_data(trigger_mode: TriggerMode, level_trigger_mode: LevelTriggerMode, delivery_mode: DeliveryMode, vector: u8) -> u32 {
         ((trigger_mode as u32) << 15)
