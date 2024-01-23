@@ -6,7 +6,6 @@ extern crate spin;
 extern crate syscall;
 extern crate event;
 
-use std::convert::TryFrom;
 use std::usize;
 use std::fs::File;
 use std::io::{ErrorKind, Read, Write, Result};
@@ -17,7 +16,7 @@ use std::sync::Arc;
 
 use event::EventQueue;
 use pcid_interface::{MsiSetFeatureInfo, PcidServerHandle, PciFeature, PciFeatureInfo, SetFeatureInfo};
-use pcid_interface::irq_helpers::{read_bsp_apic_id, allocate_single_interrupt_vector};
+use pcid_interface::irq_helpers::{read_bsp_apic_id, allocate_single_interrupt_vector_for_msi};
 use redox_log::{OutputBuilder, RedoxLogger};
 
 pub mod hda;
@@ -91,8 +90,6 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle) -> File {
     }
 
     if msi_enabled && !msix_enabled {
-        use pcid_interface::msi::x86_64::{DeliveryMode, self as x86_64_msix};
-
         let capability = match pcid_handle.feature_info(PciFeature::Msi).expect("ihdad: failed to retrieve the MSI capability structure from pcid") {
             PciFeatureInfo::Msi(s) => s,
             PciFeatureInfo::MsiX(_) => panic!(),
@@ -103,17 +100,11 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle) -> File {
         // pcid_interface, so that this can be shared between nvmed, xhcid, ixgebd, etc..
 
         let destination_id = read_bsp_apic_id().expect("ihdad: failed to read BSP apic id");
-        let lapic_id = u8::try_from(destination_id).expect("CPU id didn't fit inside u8");
-        let msg_addr = x86_64_msix::message_address(lapic_id, false, false);
-
-        let (vector, interrupt_handle) = allocate_single_interrupt_vector(destination_id).expect("ihdad: failed to allocate interrupt vector").expect("ihdad: no interrupt vectors left");
-        let msg_data = x86_64_msix::message_data_edge_triggered(DeliveryMode::Fixed, vector);
+        let (msg_addr_and_data, interrupt_handle) = allocate_single_interrupt_vector_for_msi(destination_id);
 
         let set_feature_info = MsiSetFeatureInfo {
             multi_message_enable: Some(0),
-            message_address: Some(msg_addr),
-            message_upper_address: Some(0),
-            message_data: Some(msg_data as u16),
+            message_address_and_data: Some(msg_addr_and_data),
             mask_bits: None,
         };
         pcid_handle.set_feature_info(SetFeatureInfo::Msi(set_feature_info)).expect("ihdad: failed to set feature info");

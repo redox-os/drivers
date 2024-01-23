@@ -4,7 +4,24 @@ use super::bar::PciBar;
 pub use super::cap::{MsiCapability, MsixCapability};
 use super::func::{ConfigReader, ConfigWriter};
 
+use serde::{Deserialize, Serialize};
 use syscall::{Io, Mmio};
+
+/// The address and data to use for MSI and MSI-X.
+///
+/// For MSI using this only works when you need a single interrupt vector.
+/// For MSI-X you can have a single [MsiEntry] for each interrupt vector.
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct MsiAddrAndData {
+    pub(crate) addr: u64,
+    pub(crate) data: u32,
+}
+
+impl MsiAddrAndData {
+    pub fn new(addr: u64, data: u32) -> Self {
+        MsiAddrAndData { addr, data }
+    }
+}
 
 impl MsiCapability {
     pub const MC_PVT_CAPABLE_BIT: u16 = 1 << 8;
@@ -352,11 +369,11 @@ pub mod x86_64 {
     }
 
     // TODO: should the reserved field be preserved?
-    pub const fn message_address(destination_id: u8, redirect_hint: bool, dest_mode_logical: bool) -> u32 {
-        0xFEE0_0000u32
-            | ((destination_id as u32) << 12)
-            | ((redirect_hint as u32) << 3)
-            | ((dest_mode_logical as u32) << 2)
+    pub const fn message_address(destination_id: u8, redirect_hint: bool, dest_mode_logical: bool) -> u64 {
+        0x0000_0000_FEE0_0000u64
+            | ((destination_id as u64) << 12)
+            | ((redirect_hint as u64) << 3)
+            | ((dest_mode_logical as u64) << 2)
     }
     pub const fn message_data(trigger_mode: TriggerMode, level_trigger_mode: LevelTriggerMode, delivery_mode: DeliveryMode, vector: u8) -> u32 {
         ((trigger_mode as u32) << 15)
@@ -407,6 +424,12 @@ impl MsixTableEntry {
     }
     pub fn unmask(&mut self) {
         self.set_masked(false);
+    }
+
+    pub fn write_addr_and_data(&mut self, entry: MsiAddrAndData) {
+        self.set_addr_lo(entry.addr as u32);
+        self.set_addr_hi((entry.addr >> 32) as u32);
+        self.set_msg_data(entry.data);
     }
 }
 

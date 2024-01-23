@@ -127,25 +127,14 @@ fn get_int_method(
         capability_struct.set_msix_enabled(true); // only affects our local mirror of the cap
 
         let (msix_vector_number, irq_handle) = {
-            use msi_x86_64::DeliveryMode;
-            use pcid_interface::msi::x86_64 as msi_x86_64;
-
             let entry: &mut MsixTableEntry = &mut table_entries[0];
 
             let bsp_cpu_id =
                 irq_helpers::read_bsp_apic_id().expect("nvmed: failed to read APIC ID");
-            let bsp_lapic_id = bsp_cpu_id
-                .try_into()
-                .expect("nvmed: BSP local apic ID couldn't fit inside u8");
-            let (vector, irq_handle) = irq_helpers::allocate_single_interrupt_vector(bsp_cpu_id)
-                .expect("nvmed: failed to allocate single MSI-X interrupt vector")
-                .expect("nvmed: no interrupt vectors left on BSP");
-
-            let msg_addr = msi_x86_64::message_address(bsp_lapic_id, false, false);
-            let msg_data = msi_x86_64::message_data_edge_triggered(DeliveryMode::Fixed, vector);
-
-            entry.set_addr_lo(msg_addr);
-            entry.set_msg_data(msg_data);
+            let (msg_addr_and_data, irq_handle) =
+                irq_helpers::allocate_single_interrupt_vector_for_msi(bsp_cpu_id);
+            entry.write_addr_and_data(msg_addr_and_data);
+            entry.unmask();
 
             (0, irq_handle)
         };
@@ -166,27 +155,15 @@ fn get_int_method(
         };
 
         let (msi_vector_number, irq_handle) = {
-            use msi_x86_64::DeliveryMode;
-            use pcid_interface::msi::x86_64 as msi_x86_64;
             use pcid_interface::{MsiSetFeatureInfo, SetFeatureInfo};
 
             let bsp_cpu_id =
                 irq_helpers::read_bsp_apic_id().expect("nvmed: failed to read BSP APIC ID");
-            let bsp_lapic_id = bsp_cpu_id
-                .try_into()
-                .expect("nvmed: BSP local apic ID couldn't fit inside u8");
-            let (vector, irq_handle) = irq_helpers::allocate_single_interrupt_vector(bsp_cpu_id)
-                .expect("nvmed: failed to allocate single MSI interrupt vector")
-                .expect("nvmed: no interrupt vectors left on BSP");
-
-            let msg_addr = msi_x86_64::message_address(bsp_lapic_id, false, false);
-            let msg_data =
-                msi_x86_64::message_data_edge_triggered(DeliveryMode::Fixed, vector) as u16;
+            let (msg_addr_and_data, irq_handle) =
+                irq_helpers::allocate_single_interrupt_vector_for_msi(bsp_cpu_id);
 
             pcid_handle.set_feature_info(SetFeatureInfo::Msi(MsiSetFeatureInfo {
-                message_address: Some(msg_addr),
-                message_upper_address: Some(0),
-                message_data: Some(msg_data),
+                message_address_and_data: Some(msg_addr_and_data),
                 multi_message_enable: Some(0), // enable 2^0=1 vectors
                 mask_bits: None,
             })).unwrap();

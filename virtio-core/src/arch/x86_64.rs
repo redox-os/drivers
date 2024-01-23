@@ -1,10 +1,8 @@
 use crate::{legacy_transport::LegacyTransport, reinit, transport::Error, Device};
 
-use pcid_interface::irq_helpers::{allocate_single_interrupt_vector, read_bsp_apic_id};
-use pcid_interface::msi::{self, MsixTableEntry};
+use pcid_interface::irq_helpers::{allocate_single_interrupt_vector_for_msi, read_bsp_apic_id};
+use pcid_interface::msi::MsixTableEntry;
 use std::{fs::File, ptr::NonNull};
-
-use syscall::Io;
 
 use crate::{probe::MsixInfo, MSIX_PRIMARY_VECTOR};
 
@@ -36,25 +34,10 @@ pub fn enable_msix(pcid_handle: &mut PcidServerHandle) -> Result<File, Error> {
         let table_entry_pointer = info.table_entry_pointer(MSIX_PRIMARY_VECTOR as usize);
 
         let destination_id = read_bsp_apic_id().expect("virtio_core: `read_bsp_apic_id()` failed");
-        let lapic_id = u8::try_from(destination_id).unwrap();
-
-        let rh = false;
-        let dm = false;
-        let addr = msi::x86_64::message_address(lapic_id, rh, dm);
-
-        let (vector, interrupt_handle) = allocate_single_interrupt_vector(destination_id)
-            .unwrap()
-            .expect("virtio_core: interrupt vector exhaustion");
-
-        let msg_data =
-            msi::x86_64::message_data_edge_triggered(msi::x86_64::DeliveryMode::Fixed, vector);
-
-        table_entry_pointer.addr_lo.write(addr);
-        table_entry_pointer.addr_hi.write(0);
-        table_entry_pointer.msg_data.write(msg_data);
-        table_entry_pointer
-            .vec_ctl
-            .writef(MsixTableEntry::VEC_CTL_MASK_BIT, false);
+        let (msg_addr_and_data, interrupt_handle) =
+            allocate_single_interrupt_vector_for_msi(destination_id);
+        table_entry_pointer.write_addr_and_data(msg_addr_and_data);
+        table_entry_pointer.unmask();
 
         interrupt_handle
     };
