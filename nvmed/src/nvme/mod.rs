@@ -122,7 +122,6 @@ impl InterruptMethod {
 pub struct MsixCfg {
     pub cap: MsixCapability,
     pub table: &'static mut [MsixTableEntry],
-    pub pba: &'static mut [Mmio<u64>],
 }
 
 #[repr(packed)]

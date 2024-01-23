@@ -20,7 +20,6 @@ pub fn enable_msix(pcid_handle: &mut PcidServerHandle) -> Result<File, Error> {
     };
     capability.validate(pci_config.func.bars);
 
-    assert_eq!(capability.table_bir(), capability.pba_bir());
     let bar = &pci_config.func.bars[capability.table_bir() as usize];
     let bar_address = unsafe { bar.physmap_mem("virtio-core") } as usize;
     let virt_table_base = (bar_address + capability.table_offset() as usize) as *mut MsixTableEntry;

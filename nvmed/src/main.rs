@@ -109,21 +109,12 @@ fn get_int_method(
         }
         let table_bar_base: *mut u8 =
             bar_base(allocated_bars, function, capability_struct.table_bir())?.as_ptr();
-        let pba_bar_base: *mut u8 =
-            bar_base(allocated_bars, function, capability_struct.pba_bir())?.as_ptr();
         let table_base =
             unsafe { table_bar_base.offset(capability_struct.table_offset() as isize) };
-        let pba_base = unsafe { pba_bar_base.offset(capability_struct.pba_offset() as isize) };
 
         let vector_count = capability_struct.table_size();
         let table_entries: &'static mut [MsixTableEntry] = unsafe {
             slice::from_raw_parts_mut(table_base as *mut MsixTableEntry, vector_count as usize)
-        };
-        let pba_entries: &'static mut [Mmio<u64>] = unsafe {
-            slice::from_raw_parts_mut(
-                table_base as *mut Mmio<u64>,
-                (vector_count as usize + 63) / 64,
-            )
         };
 
         // Mask all interrupts in case some earlier driver/os already unmasked them (according to
@@ -162,7 +153,6 @@ fn get_int_method(
         let interrupt_method = InterruptMethod::MsiX(MsixCfg {
             cap: capability_struct,
             table: table_entries,
-            pba: pba_entries,
         });
         let interrupt_sources =
             InterruptSources::MsiX(std::iter::once((msix_vector_number, irq_handle)).collect());

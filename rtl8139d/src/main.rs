@@ -81,7 +81,6 @@ where
 
 pub struct MsixInfo {
     pub virt_table_base: NonNull<MsixTableEntry>,
-    pub virt_pba_base: NonNull<u64>,
     pub capability: MsixCapability,
 }
 
@@ -92,18 +91,6 @@ impl MsixInfo {
     pub fn table_entry_pointer(&mut self, k: usize) -> &mut MsixTableEntry {
         assert!(k < self.capability.table_size() as usize);
         unsafe { self.table_entry_pointer_unchecked(k) }
-    }
-    pub unsafe fn pba_pointer_unchecked(&mut self, k: usize) -> &mut u64 {
-        &mut *self.virt_pba_base.as_ptr().offset(k as isize)
-    }
-    pub fn pba_pointer(&mut self, k: usize) -> &mut u64 {
-        assert!(k < self.capability.table_size() as usize);
-        unsafe { self.pba_pointer_unchecked(k) }
-    }
-    pub fn pba(&mut self, k: usize) -> bool {
-        let byte = k / 64;
-        let bit = k % 64;
-        *self.pba_pointer(byte) & (1 << bit) != 0
     }
 }
 
@@ -163,16 +150,13 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle) -> File {
         };
         capability.validate(pci_config.func.bars);
 
-        assert_eq!(capability.table_bir(), capability.pba_bir());
         let bar = &pci_config.func.bars[capability.table_bir() as usize];
         let bar_address = unsafe { bar.physmap_mem("rtl8139d") } as usize;
 
         let virt_table_base = (bar_address + capability.table_offset() as usize) as *mut MsixTableEntry;
-        let virt_pba_base = (bar_address + capability.pba_offset() as usize) as *mut u64;
 
         let mut info = MsixInfo {
             virt_table_base: NonNull::new(virt_table_base).unwrap(),
-            virt_pba_base: NonNull::new(virt_pba_base).unwrap(),
             capability,
         };
 

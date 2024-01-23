@@ -138,13 +138,10 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle, bar0_address: usize) -> (O
         capability.validate(pci_config.func.bars);
 
         assert_eq!(capability.table_bir(), 0);
-        assert_eq!(capability.pba_bir(), 0);
         let virt_table_base = (bar0_address + capability.table_offset() as usize) as *mut MsixTableEntry;
-        let virt_pba_base = (bar0_address + capability.pba_offset() as usize) as *mut u64;
 
         let mut info = xhci::MsixInfo {
             virt_table_base: NonNull::new(virt_table_base).unwrap(),
-            virt_pba_base: NonNull::new(virt_pba_base).unwrap(),
             capability,
         };
 
