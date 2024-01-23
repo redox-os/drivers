@@ -204,37 +204,40 @@ impl MsiCapability {
 
 impl MsixCapability {
     pub fn validate(&self, bars: [PciBar; 6]) {
+        if self.table_bir() > 5 {
+            panic!("MSI-X Table BIR contained a reserved enum value: {}", self.table_bir());
+        }
+        if self.pba_bir() > 5 {
+            panic!("MSI-X PBA BIR contained a reserved enum value: {}", self.pba_bir());
+        }
+
         let table_size = self.table_size();
-        let table_base = self.table_base_pointer(bars);
+        let table_offset = self.table_offset() as usize;
         let table_min_length = table_size * 16;
+
+        let pba_offset = self.pba_offset() as usize;
         let pba_min_length = table_size.div_ceil(8);
 
-        let pba_base = self.pba_base_pointer(bars);
-
-        let bir = self.table_bir() as usize;
-        let bar = &bars[bir];
-        let (bar_ptr, bar_size) = bar.expect_mem();
+        let (_, table_bar_size) = bars[self.table_bir() as usize].expect_mem();
+        let (_, pba_bar_size) = bars[self.pba_bir() as usize].expect_mem();
 
         // Ensure that the table and PBA are within the BAR.
-        let bar_range = bar_ptr as u64..bar_ptr as u64 + bar_size as u64;
 
-        if !bar_range.contains(&(table_base as u64 + table_min_length as u64)) {
+        if !(0..table_bar_size as u64).contains(&(table_offset as u64 + table_min_length as u64)) {
             panic!(
-                "Table {:#x}{:#x} outside of BAR {:#x}:{:#x}",
-                table_base,
-                table_base + table_min_length as usize,
-                bar_ptr,
-                bar_ptr + bar_size
+                "Table {:#x}:{:#x} outside of BAR with length {:#x}",
+                table_offset,
+                table_offset + table_min_length as usize,
+                table_bar_size
             );
         }
 
-        if !bar_range.contains(&(pba_base as u64 + pba_min_length as u64)) {
+        if !(0..pba_bar_size as u64).contains(&(pba_offset as u64 + pba_min_length as u64)) {
             panic!(
-                "PBA {:#x}{:#x} outside of BAR {:#x}:{:#X}",
-                pba_base,
-                pba_base + pba_min_length as usize,
-                bar_ptr,
-                bar_ptr + bar_size
+                "PBA {:#x}:{:#x} outside of BAR with length {:#x}",
+                pba_offset,
+                pba_offset + pba_min_length as usize,
+                pba_bar_size
             );
         }
     }
@@ -306,20 +309,6 @@ impl MsixCapability {
         (self.c & Self::PBA_BIR_MASK) as u8
     }
 
-
-    pub fn table_base_pointer(&self, bars: [PciBar; 6]) -> usize {
-        if self.table_bir() > 5 {
-            panic!("MSI-X Table BIR contained a reserved enum value: {}", self.table_bir());
-        }
-        bars[usize::from(self.table_bir())].expect_mem().0 + self.table_offset() as usize
-    }
-
-    pub fn pba_base_pointer(&self, bars: [PciBar; 6]) -> usize {
-        if self.pba_bir() > 5 {
-            panic!("MSI-X PBA BIR contained a reserved enum value: {}", self.pba_bir());
-        }
-        bars[usize::from(self.pba_bir())].expect_mem().0 + self.pba_offset() as usize
-    }
 
     /// Write the first DWORD into configuration space (containing the partially modifiable Message
     /// Control field).

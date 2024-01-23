@@ -162,18 +162,13 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle) -> File {
             PciFeatureInfo::MsiX(s) => s,
         };
         capability.validate(pci_config.func.bars);
-        let table_base = capability.table_base_pointer(pci_config.func.bars);
 
-        let pba_base = capability.pba_base_pointer(pci_config.func.bars);
+        assert_eq!(capability.table_bir(), capability.pba_bir());
+        let bar = &pci_config.func.bars[capability.table_bir() as usize];
+        let bar_address = unsafe { bar.physmap_mem("rtl8139d") } as usize;
 
-        let bir = capability.table_bir() as usize;
-        let bar = &pci_config.func.bars[bir];
-        let (bar_ptr, _) = bar.expect_mem();
-
-        let address = unsafe { bar.physmap_mem("rtl8139d") } as usize;
-
-        let virt_table_base = ((table_base - bar_ptr) + address) as *mut MsixTableEntry;
-        let virt_pba_base = ((pba_base - bar_ptr) + address) as *mut u64;
+        let virt_table_base = (bar_address + capability.table_offset() as usize) as *mut MsixTableEntry;
+        let virt_pba_base = (bar_address + capability.pba_offset() as usize) as *mut u64;
 
         let mut info = MsixInfo {
             virt_table_base: NonNull::new(virt_table_base).unwrap(),

@@ -82,10 +82,8 @@ fn setup_logging(name: &str) -> Option<&'static RedoxLogger> {
 }
 
 #[cfg(target_arch = "x86_64")]
-fn get_int_method(pcid_handle: &mut PcidServerHandle, address: usize) -> (Option<File>, InterruptMethod) {
+fn get_int_method(pcid_handle: &mut PcidServerHandle, bar0_address: usize) -> (Option<File>, InterruptMethod) {
     let pci_config = pcid_handle.fetch_config().expect("xhcid: failed to fetch config");
-
-    let (bar_ptr, bar_size) = pci_config.func.bars[0].expect_mem();
 
     let all_pci_features = pcid_handle.fetch_all_features().expect("xhcid: failed to fetch pci features");
     log::debug!("XHCI PCI FEATURES: {:?}", all_pci_features);
@@ -139,11 +137,10 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle, address: usize) -> (Option
         };
         capability.validate(pci_config.func.bars);
 
-        let table_base = capability.table_base_pointer(pci_config.func.bars);
-        let pba_base = capability.pba_base_pointer(pci_config.func.bars);
-
-        let virt_table_base = ((table_base - bar_ptr as usize) + address) as *mut MsixTableEntry;
-        let virt_pba_base = ((pba_base - bar_ptr as usize) + address) as *mut u64;
+        assert_eq!(capability.table_bir(), 0);
+        assert_eq!(capability.pba_bir(), 0);
+        let virt_table_base = (bar0_address + capability.table_offset() as usize) as *mut MsixTableEntry;
+        let virt_pba_base = (bar0_address + capability.pba_offset() as usize) as *mut u64;
 
         let mut info = xhci::MsixInfo {
             virt_table_base: NonNull::new(virt_table_base).unwrap(),
