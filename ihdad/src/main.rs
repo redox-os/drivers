@@ -155,14 +155,12 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let mut name = pci_config.func.name();
     name.push_str("_ihda");
 
-    let (bar_ptr, bar_size) = pci_config.func.bars[0].expect_mem();
+    let bar = &pci_config.func.bars[0];
+    let (bar_ptr, bar_size) = bar.expect_mem();
 
     log::info!(" + IHDA {} on: {:#X} size: {}", name, bar_ptr, bar_size);
 
-	let address = unsafe {
-		common::physmap(bar_ptr, bar_size, common::Prot::RW, common::MemoryType::Uncacheable)
-			.expect("ihdad: failed to map address") as usize
-	};
+	let address = unsafe { bar.physmap_mem("ihdad") } as usize;
 
     //TODO: MSI-X
     let mut irq_file = get_int_method(&mut pcid_handle);

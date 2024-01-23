@@ -68,11 +68,12 @@ fn main() {
     let mut name = pci_config.func.name();
     name.push_str("_e1000");
 
-    let (bar, bar_size) = pci_config.func.bars[0].expect_mem();
+    let bar = &pci_config.func.bars[0];
+    let (bar_ptr, bar_size) = bar.expect_mem();
 
     let irq = pci_config.func.legacy_interrupt_line.expect("e1000d: no legacy interrupts supported");
 
-    eprintln!(" + E1000 {} on: {:X} size: {} IRQ: {}", name, bar, bar_size, irq);
+    eprintln!(" + E1000 {} on: {:X} size: {} IRQ: {}", name, bar_ptr, bar_size, irq);
 
     redox_daemon::Daemon::new(move |daemon| {
         let socket_fd = syscall::open(
@@ -86,10 +87,7 @@ fn main() {
 
         let mut irq_file = irq.irq_handle("e1000d");
 
-        let address = unsafe {
-            common::physmap(bar, bar_size, common::Prot::RW, common::MemoryType::Uncacheable)
-                .expect("e1000d: failed to map address")
-        } as usize;
+        let address = unsafe { bar.physmap_mem("e1000d") } as usize;
         {
             let device = Arc::new(RefCell::new(unsafe {
                 device::Intel8254x::new(address).expect("e1000d: failed to allocate device")

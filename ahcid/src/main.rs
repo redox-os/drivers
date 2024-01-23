@@ -82,22 +82,16 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let mut name = pci_config.func.name();
     name.push_str("_ahci");
 
-    let (bar, bar_size) = pci_config.func.bars[5].expect_mem();
+    let bar = &pci_config.func.bars[5];
+    let (bar_ptr, bar_size) = bar.expect_mem();
 
     let irq = pci_config.func.legacy_interrupt_line.expect("ahcid: no legacy interrupts supported");
 
     let _logger_ref = setup_logging(&name);
 
-    info!(" + AHCI {} on: {} size: {} IRQ: {}", name, bar, bar_size, irq);
+    info!(" + AHCI {} on: {} size: {} IRQ: {}", name, bar_ptr, bar_size, irq);
 
-    let address = unsafe {
-        common::physmap(
-            bar,
-            bar_size,
-            common::Prot { read: true, write: true },
-            common::MemoryType::Uncacheable,
-        ).expect("ahcid: failed to map address")
-    };
+    let address = unsafe { bar.physmap_mem("ahcid") };
     {
         let scheme_name = format!("disk.{}", name);
         let socket_fd = syscall::open(

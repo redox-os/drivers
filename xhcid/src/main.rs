@@ -232,12 +232,10 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let _logger_ref = setup_logging(&name);
 
     log::debug!("XHCI PCI CONFIG: {:?}", pci_config);
-    let (bar_ptr, bar_size) = pci_config.func.bars[0].expect_mem();
+    let bar = &pci_config.func.bars[0];
+    let (bar_ptr, _) = bar.expect_mem();
 
-    let address = unsafe {
-        common::physmap(bar_ptr, bar_size, common::Prot::RW, common::MemoryType::Uncacheable)
-            .expect("xhcid: failed to map address") as usize
-    };
+    let address = unsafe { bar.physmap_mem("xhcid") } as usize;
 
     let (mut irq_file, interrupt_method) = get_int_method(&mut pcid_handle, address);
 

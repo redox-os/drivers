@@ -48,7 +48,12 @@ impl Bar {
 
 impl Drop for Bar {
     fn drop(&mut self) {
-        let _ = unsafe { syscall::funmap(self.physical, self.bar_size.next_multiple_of(PAGE_SIZE)) };
+        let _ = unsafe {
+            syscall::funmap(
+                self.ptr.as_ptr() as usize,
+                self.bar_size.next_multiple_of(PAGE_SIZE),
+            )
+        };
     }
 }
 
@@ -288,24 +293,16 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     let _logger_ref = setup_logging(&scheme_name);
 
-    let (bar, bar_size) = pci_config.func.bars[0].expect_mem();
-    let irq = pci_config.func.legacy_interrupt_line;
+    let bar = &pci_config.func.bars[0];
+    let (bar_ptr, bar_size) = bar.expect_mem();
 
     log::debug!("NVME PCI CONFIG: {:?}", pci_config);
 
     let allocated_bars = AllocatedBars::default();
 
-    let address = unsafe {
-        common::physmap(
-            bar,
-            bar_size,
-            common::Prot { read: true, write: true },
-            common::MemoryType::Uncacheable,
-        )
-        .expect("nvmed: failed to map address")
-    } as usize;
+    let address = unsafe { bar.physmap_mem("nvmed") } as usize;
     *allocated_bars.0[0].lock().unwrap() = Some(Bar {
-        physical: bar,
+        physical: bar_ptr,
         bar_size,
         ptr: NonNull::new(address as *mut u8).expect("Physmapping BAR gave nullptr"),
     });
