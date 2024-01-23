@@ -137,20 +137,10 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle, address: usize) -> (Option
             PciFeatureInfo::Msi(_) => panic!(),
             PciFeatureInfo::MsiX(s) => s,
         };
-        let table_size = capability.table_size();
+        capability.validate(pci_config.func.bars);
+
         let table_base = capability.table_base_pointer(pci_config.func.bars);
-        let table_min_length = table_size * 16;
-        let pba_min_length = crate::xhci::scheme::div_round_up(table_size, 8);
-
         let pba_base = capability.pba_base_pointer(pci_config.func.bars);
-
-        if !(bar_ptr as u64..bar_ptr as u64 + bar_size as u64).contains(&(table_base as u64 + table_min_length as u64)) {
-            panic!("Table {:#x}{:#x} outside of BAR {:#x}:{:#x}", table_base, table_base + table_min_length as usize, bar_ptr, bar_ptr + bar_size);
-        }
-
-        if !(bar_ptr as u64..bar_ptr as u64 + bar_size as u64).contains(&(pba_base as u64 + pba_min_length as u64)) {
-            panic!("PBA {:#x}{:#x} outside of BAR {:#x}:{:#X}", pba_base, pba_base + pba_min_length as usize, bar_ptr, bar_ptr + bar_size);
-        }
 
         let virt_table_base = ((table_base - bar_ptr as usize) + address) as *mut MsixTableEntry;
         let virt_pba_base = ((pba_base - bar_ptr as usize) + address) as *mut u64;

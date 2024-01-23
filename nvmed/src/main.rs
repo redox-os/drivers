@@ -88,6 +88,7 @@ fn get_int_method(
             PciFeatureInfo::MsiX(msix) => msix,
             _ => unreachable!(),
         };
+        capability_struct.validate(function.bars);
         fn bar_base(
             allocated_bars: &AllocatedBars,
             function: &PciFunction,

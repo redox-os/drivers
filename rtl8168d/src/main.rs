@@ -159,26 +159,15 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle) -> File {
             PciFeatureInfo::Msi(_) => panic!(),
             PciFeatureInfo::MsiX(s) => s,
         };
-        let table_size = capability.table_size();
+        capability.validate(pci_config.func.bars);
         let table_base = capability.table_base_pointer(pci_config.func.bars);
-        let table_min_length = table_size * 16;
-        let pba_min_length = div_round_up(table_size, 8);
-
         let pba_base = capability.pba_base_pointer(pci_config.func.bars);
 
         let bir = capability.table_bir() as usize;
         let bar = &pci_config.func.bars[bir];
-        let (bar_ptr, bar_size) = bar.expect_mem();
+        let (bar_ptr, _) = bar.expect_mem();
 
         let address = unsafe { bar.physmap_mem("rtl8168d") } as usize;
-
-        if !(bar_ptr as u64..bar_ptr as u64 + bar_size as u64).contains(&(table_base as u64 + table_min_length as u64)) {
-            panic!("Table {:#x}{:#x} outside of BAR {:#x}:{:#x}", table_base, table_base + table_min_length as usize, bar_ptr, bar_ptr + bar_size);
-        }
-
-        if !(bar_ptr as u64..bar_ptr as u64 + bar_size as u64).contains(&(pba_base as u64 + pba_min_length as u64)) {
-            panic!("PBA {:#x}{:#x} outside of BAR {:#x}:{:#X}", pba_base, pba_base + pba_min_length as usize, bar_ptr, bar_ptr + bar_size);
-        }
 
         let virt_table_base = ((table_base - bar_ptr) + address) as *mut MsixTableEntry;
         let virt_pba_base = ((pba_base - bar_ptr) + address) as *mut u64;

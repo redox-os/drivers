@@ -203,6 +203,42 @@ impl MsiCapability {
 }
 
 impl MsixCapability {
+    pub fn validate(&self, bars: [PciBar; 6]) {
+        let table_size = self.table_size();
+        let table_base = self.table_base_pointer(bars);
+        let table_min_length = table_size * 16;
+        let pba_min_length = table_size.div_ceil(8);
+
+        let pba_base = self.pba_base_pointer(bars);
+
+        let bir = self.table_bir() as usize;
+        let bar = &bars[bir];
+        let (bar_ptr, bar_size) = bar.expect_mem();
+
+        // Ensure that the table and PBA are within the BAR.
+        let bar_range = bar_ptr as u64..bar_ptr as u64 + bar_size as u64;
+
+        if !bar_range.contains(&(table_base as u64 + table_min_length as u64)) {
+            panic!(
+                "Table {:#x}{:#x} outside of BAR {:#x}:{:#x}",
+                table_base,
+                table_base + table_min_length as usize,
+                bar_ptr,
+                bar_ptr + bar_size
+            );
+        }
+
+        if !bar_range.contains(&(pba_base as u64 + pba_min_length as u64)) {
+            panic!(
+                "PBA {:#x}{:#x} outside of BAR {:#x}:{:#X}",
+                pba_base,
+                pba_base + pba_min_length as usize,
+                bar_ptr,
+                bar_ptr + bar_size
+            );
+        }
+    }
+
     const MC_MSIX_ENABLED_BIT: u16 = 1 << 15;
     const MC_MSIX_ENABLED_SHIFT: u8 = 15;
     const MC_FUNCTION_MASK_BIT: u16 = 1 << 14;

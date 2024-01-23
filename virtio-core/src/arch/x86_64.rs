@@ -18,26 +18,16 @@ pub fn enable_msix(pcid_handle: &mut PcidServerHandle) -> Result<File, Error> {
         PciFeatureInfo::MsiX(capability) => capability,
         _ => unreachable!(),
     };
+    capability.validate(pci_config.func.bars);
 
-    let table_size = capability.table_size();
     let table_base = capability.table_base_pointer(pci_config.func.bars);
-    let table_min_length = table_size * 16;
-    let pba_min_length = table_size.div_ceil(8);
-
-    let pba_base = capability.pba_base_pointer(pci_config.func.bars);
 
     let bir = capability.table_bir() as usize;
     let bar = &pci_config.func.bars[bir];
-    let (bar_ptr, bar_size) = bar.expect_mem();
+    let (bar_ptr, _) = bar.expect_mem();
 
     let address = unsafe { bar.physmap_mem("virtio-core") } as usize;
 
-    // Ensure that the table and PBA are be within the BAR.
-    {
-        let bar_range = bar_ptr as u64..bar_ptr as u64 + bar_size as u64;
-        assert!(bar_range.contains(&(table_base as u64 + table_min_length as u64)));
-        assert!(bar_range.contains(&(pba_base as u64 + pba_min_length as u64)));
-    }
 
     let virt_table_base = ((table_base - bar_ptr as usize) + address) as *mut MsixTableEntry;
 
