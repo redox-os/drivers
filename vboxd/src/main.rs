@@ -196,11 +196,11 @@ fn main() {
 
     let bar0 = pci_config.func.bars[0].expect_port();
 
-    let (bar1, _) = pci_config.func.bars[1].expect_mem();
+    let bar1 = &pci_config.func.bars[1];
 
-    let irq = pci_config.func.legacy_interrupt_line;
+    let irq = pci_config.func.legacy_interrupt_line.expect("vboxd: no legacy interrupts supported");
 
-    print!("{}", format!(" + VirtualBox {} on: {:X}, {:X}, IRQ {}\n", name, bar0, bar1, irq));
+    println!(" + VirtualBox {}", pci_config.func.display());
 
     // Daemonize
     redox_daemon::Daemon::new(move |daemon| {
@@ -221,10 +221,10 @@ fn main() {
             }
         }
 
-        let mut irq_file = File::open(format!("irq:{}", irq)).expect("vboxd: failed to open IRQ file");
+        let mut irq_file = irq.irq_handle("vboxd");
 
         let mut port = Pio::<u32>::new(bar0 as u16);
-        let address = unsafe { common::physmap(bar1, 4096, common::Prot::RW, common::MemoryType::Uncacheable).expect("vboxd: failed to map address") };
+        let address = unsafe { bar1.physmap_mem("vboxd") };
         {
             let vmmdev = unsafe { &mut *(address as *mut VboxVmmDev) };
 

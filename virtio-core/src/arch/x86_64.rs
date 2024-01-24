@@ -27,16 +27,10 @@ pub fn enable_msix(pcid_handle: &mut PcidServerHandle) -> Result<File, Error> {
     let pba_base = capability.pba_base_pointer(pci_config.func.bars);
 
     let bir = capability.table_bir() as usize;
-    let (bar_ptr, bar_size) = pci_config.func.bars[bir].expect_mem();
+    let bar = &pci_config.func.bars[bir];
+    let (bar_ptr, bar_size) = bar.expect_mem();
 
-    let address = unsafe {
-        common::physmap(
-            bar_ptr,
-            bar_size,
-            common::Prot::RW,
-            common::MemoryType::Uncacheable,
-        )? as usize
-    };
+    let address = unsafe { bar.physmap_mem("virtio-core") } as usize;
 
     // Ensure that the table and PBA are be within the BAR.
     {

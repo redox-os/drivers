@@ -11,6 +11,15 @@ pub enum PciBar {
 }
 
 impl PciBar {
+    pub fn display(&self) -> String {
+        match self {
+            PciBar::None => format!("<none>"),
+            PciBar::Memory32 { addr, .. } => format!("{addr:08X}"),
+            PciBar::Memory64 { addr, .. } => format!("{addr:016X}"),
+            PciBar::Port(port) => format!("P{port:04X}"),
+        }
+    }
+
     pub fn is_none(&self) -> bool {
         match self {
             &PciBar::None => true,
@@ -40,5 +49,19 @@ impl PciBar {
             PciBar::Port(_) => panic!("expected memory BAR, found port BAR"),
             PciBar::None => panic!("expected BAR to exist"),
         }
+    }
+
+    pub unsafe fn physmap_mem(&self, driver: &str) -> *mut () {
+        let (bar, bar_size) = self.expect_mem();
+        unsafe {
+            common::physmap(
+                bar,
+                bar_size,
+                common::Prot::RW,
+                // FIXME once the kernel supports this use write-through for prefetchable BAR
+                common::MemoryType::Uncacheable,
+            )
+        }
+        .unwrap_or_else(|err| panic!("{driver}: failed to map BAR at {bar:016X}: {err}"))
     }
 }

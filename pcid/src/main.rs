@@ -13,6 +13,7 @@ use redox_log::{OutputBuilder, RedoxLogger};
 
 use crate::cfg_access::Pcie;
 use crate::config::Config;
+use crate::driver_interface::LegacyInterruptLine;
 use crate::pci::{PciBar, PciFunc};
 use crate::pci::cap::Capability as PciCapability;
 use crate::pci::func::{ConfigReader, ConfigWriter};
@@ -244,11 +245,8 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, he
         let mut string = String::new();
         let bars = header.bars(&state.pcie);
         for (i, bar) in bars.iter().enumerate() {
-            match bar {
-                PciBar::None => {},
-                PciBar::Memory32 { addr, .. } => string.push_str(&format!(" {i}={addr:08X}")),
-                PciBar::Memory64 { addr, .. } => string.push_str(&format!(" {i}={addr:016X}")),
-                PciBar::Port(port) => string.push_str(&format!(" {i}=P{port:04X}")),
+            if !bar.is_none() {
+                string.push_str(&format!(" {i}={}", bar.display()));
             }
         }
 
@@ -280,6 +278,16 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, he
             state.pcie.write(addr, 0x3C, data);
         };
 
+        let legacy_interrupt_enabled = match interrupt_pin {
+            0 => false,
+            1 | 2 | 3 | 4 => true,
+
+            other => {
+                warn!("pcid: invalid interrupt pin: {}", other);
+                false
+            }
+        };
+
         let capabilities = if endpoint_header.status(&state.pcie).has_capability_list() {
             let func = PciFunc {
                 pci: &state.pcie,
@@ -291,26 +299,14 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, he
         };
         debug!("PCI DEVICE CAPABILITIES for {}: {:?}", args.iter().map(|string| string.as_ref()).nth(0).unwrap_or("[unknown]"), capabilities);
 
-        use driver_interface::LegacyInterruptPin;
-
-        let legacy_interrupt_pin = match interrupt_pin {
-            0 => None,
-            1 => Some(LegacyInterruptPin::IntA),
-            2 => Some(LegacyInterruptPin::IntB),
-            3 => Some(LegacyInterruptPin::IntC),
-            4 => Some(LegacyInterruptPin::IntD),
-
-            other => {
-                warn!("pcid: invalid interrupt pin: {}", other);
-                None
-            }
-        };
-
         let func = driver_interface::PciFunction {
             bars,
             addr,
-            legacy_interrupt_line: irq,
-            legacy_interrupt_pin,
+            legacy_interrupt_line: if legacy_interrupt_enabled {
+                Some(LegacyInterruptLine(irq))
+            } else {
+                None
+            },
             full_device_id: header.full_device_id().clone(),
         };
 

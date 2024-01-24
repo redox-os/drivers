@@ -78,9 +78,9 @@ fn main() {
 
     let (bar, _) = pci_config.func.bars[0].expect_mem();
 
-    let irq = pci_config.func.legacy_interrupt_line;
+    let irq = pci_config.func.legacy_interrupt_line.expect("ixgbed: no legacy interrupts supported");
 
-    println!(" + IXGBE {} on: {:X} IRQ: {}", name, bar, irq);
+    println!(" + IXGBE {}", pci_config.func.display());
 
     redox_daemon::Daemon::new(move |daemon| {
         let socket_fd = syscall::open(
@@ -94,8 +94,7 @@ fn main() {
 
         daemon.ready().expect("ixgbed: failed to signal readiness");
 
-        let mut irq_file =
-            File::open(format!("irq:{}", irq)).expect("ixgbed: failed to open IRQ file");
+        let mut irq_file = irq.irq_handle("ixgbed");
 
         let address = unsafe {
             common::physmap(bar, IXGBE_MMIO_SIZE, common::Prot::RW, common::MemoryType::Uncacheable)

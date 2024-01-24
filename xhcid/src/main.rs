@@ -86,7 +86,6 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle, address: usize) -> (Option
     let pci_config = pcid_handle.fetch_config().expect("xhcid: failed to fetch config");
 
     let (bar_ptr, bar_size) = pci_config.func.bars[0].expect_mem();
-    let irq = pci_config.func.legacy_interrupt_line;
 
     let all_pci_features = pcid_handle.fetch_all_features().expect("xhcid: failed to fetch pci features");
     log::debug!("XHCI PCI FEATURES: {:?}", all_pci_features);
@@ -194,11 +193,11 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle, address: usize) -> (Option
         log::debug!("Enabled MSI-X");
 
         method
-    } else if pci_config.func.legacy_interrupt_pin.is_some() {
+    } else if let Some(irq) = pci_config.func.legacy_interrupt_line {
         log::debug!("Legacy IRQ {}", irq);
 
         // legacy INTx# interrupt pins.
-        (Some(File::open(format!("irq:{}", irq)).expect("xhcid: failed to open legacy IRQ file")), InterruptMethod::Intx)
+        (Some(irq.irq_handle("xhcid")), InterruptMethod::Intx)
     } else {
         // no interrupts at all
         (None, InterruptMethod::Polling)
@@ -209,11 +208,10 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle, address: usize) -> (Option
 #[cfg(not(target_arch = "x86_64"))]
 fn get_int_method(pcid_handle: &mut PcidServerHandle, address: usize) -> (Option<File>, InterruptMethod) {
     let pci_config = pcid_handle.fetch_config().expect("xhcid: failed to fetch config");
-    let irq = pci_config.func.legacy_interrupt_line;
 
-    if pci_config.func.legacy_interrupt_pin.is_some() {
+    if let Some(irq) = pci_config.func.legacy_interrupt_line {
         // legacy INTx# interrupt pins.
-        (Some(File::open(format!("irq:{}", irq)).expect("xhcid: failed to open legacy IRQ file")), InterruptMethod::Intx)
+        (Some(irq.irq_handle("xhcid")), InterruptMethod::Intx)
     } else {
         // no interrupts at all
         (None, InterruptMethod::Polling)
@@ -234,20 +232,13 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let _logger_ref = setup_logging(&name);
 
     log::debug!("XHCI PCI CONFIG: {:?}", pci_config);
-    let (bar_ptr, bar_size) = pci_config.func.bars[0].expect_mem();
-    let irq = pci_config.func.legacy_interrupt_line;
+    let bar = &pci_config.func.bars[0];
 
-    let address = unsafe {
-        common::physmap(bar_ptr, bar_size, common::Prot::RW, common::MemoryType::Uncacheable)
-            .expect("xhcid: failed to map address") as usize
-    };
+    let address = unsafe { bar.physmap_mem("xhcid") } as usize;
 
-    let (mut irq_file, interrupt_method) = get_int_method(&mut pcid_handle, address);
+    let (irq_file, interrupt_method) = get_int_method(&mut pcid_handle, address);
 
-    print!(
-        "{}",
-        format!(" + XHCI {} on: {:016X} IRQ: {}\n", name, bar_ptr, irq)
-    );
+    println!(" + XHCI {}", pci_config.func.display());
 
     let scheme_name = format!("usb.{}", name);
     let socket_fd = syscall::open(

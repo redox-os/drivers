@@ -1,3 +1,4 @@
+use std::fmt;
 use std::fs::File;
 use std::io::prelude::*;
 use std::{env, io};
@@ -14,16 +15,20 @@ pub use crate::pci::{FullDeviceId, PciAddress, PciBar};
 pub mod irq_helpers;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-#[repr(u8)]
-pub enum LegacyInterruptPin {
-    /// INTa#
-    IntA = 1,
-    /// INTb#
-    IntB = 2,
-    /// INTc#
-    IntC = 3,
-    /// INTd#
-    IntD = 4,
+pub struct LegacyInterruptLine(pub(crate) u8);
+
+impl LegacyInterruptLine {
+    /// Get an IRQ handle for this interrupt line.
+    pub fn irq_handle(self, driver: &str) -> File {
+        File::open(format!("irq:{}", self.0))
+            .unwrap_or_else(|err| panic!("{driver}: failed to open IRQ file: {err}"))
+    }
+}
+
+impl fmt::Display for LegacyInterruptLine {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -57,10 +62,8 @@ pub struct PciFunction {
     /// Legacy IRQ line: It's the responsibility of pcid to make sure that it be mapped in either
     /// the I/O APIC or the 8259 PIC, so that the subdriver can map the interrupt vector directly.
     /// The vector to map is always this field, plus 32.
-    pub legacy_interrupt_line: u8,
-
-    /// Legacy interrupt pin (INTx#), none if INTx# interrupts aren't supported at all.
-    pub legacy_interrupt_pin: Option<LegacyInterruptPin>,
+    /// If INTx# interrupts aren't supported at all this is `None`.
+    pub legacy_interrupt_line: Option<LegacyInterruptLine>,
 
     /// All identifying information of the PCI function.
     pub full_device_id: FullDeviceId,
@@ -69,6 +72,24 @@ impl PciFunction {
     pub fn name(&self) -> String {
         // FIXME stop replacing : with - once it is a valid character in scheme names
         format!("pci-{}", self.addr).replace(':', "-")
+    }
+
+    pub fn display(&self) -> String {
+        let mut string = self.name();
+        let mut first = true;
+        for (i, bar) in self.bars.iter().enumerate() {
+            if !bar.is_none() {
+                if first {
+                    first = false;
+                    string.push_str(" on:");
+                }
+                string.push_str(&format!(" {i}={}", bar.display()));
+            }
+        }
+        if let Some(irq) = self.legacy_interrupt_line {
+            string.push_str(&format!(" IRQ: {irq}"));
+        }
+        string
     }
 }
 

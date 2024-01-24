@@ -106,10 +106,8 @@ impl MsixInfo {
 }
 
 #[cfg(target_arch = "x86_64")]
-fn get_int_method(pcid_handle: &mut PcidServerHandle) -> Option<File> {
+fn get_int_method(pcid_handle: &mut PcidServerHandle) -> File {
     let pci_config = pcid_handle.fetch_config().expect("rtl8168d: failed to fetch config");
-
-    let irq = pci_config.func.legacy_interrupt_line;
 
     let all_pci_features = pcid_handle.fetch_all_features().expect("rtl8168d: failed to fetch pci features");
     log::info!("PCI FEATURES: {:?}", all_pci_features);
@@ -155,7 +153,7 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle) -> Option<File> {
         pcid_handle.enable_feature(PciFeature::Msi).expect("rtl8168d: failed to enable MSI");
         log::info!("Enabled MSI");
 
-        Some(interrupt_handle)
+        interrupt_handle
     } else if msix_enabled {
         let capability = match pcid_handle.feature_info(PciFeature::MsiX).expect("rtl8168d: failed to retrieve the MSI-X capability structure from pcid") {
             PciFeatureInfo::Msi(_) => panic!(),
@@ -169,12 +167,10 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle) -> Option<File> {
         let pba_base = capability.pba_base_pointer(pci_config.func.bars);
 
         let bir = capability.table_bir() as usize;
-        let (bar_ptr, bar_size) = pci_config.func.bars[bir].expect_mem();
+        let bar = &pci_config.func.bars[bir];
+        let (bar_ptr, bar_size) = bar.expect_mem();
 
-        let address = unsafe {
-            common::physmap(bar_ptr, bar_size, common::Prot::RW, common::MemoryType::Uncacheable)
-                .expect("rtl8168d: failed to map address") as usize
-        };
+        let address = unsafe { bar.physmap_mem("rtl8168d") } as usize;
 
         if !(bar_ptr as u64..bar_ptr as u64 + bar_size as u64).contains(&(table_base as u64 + table_min_length as u64)) {
             panic!("Table {:#x}{:#x} outside of BAR {:#x}:{:#x}", table_base, table_base + table_min_length as usize, bar_ptr, bar_ptr + bar_size);
@@ -218,34 +214,31 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle) -> Option<File> {
             table_entry_pointer.msg_data.write(msg_data);
             table_entry_pointer.vec_ctl.writef(MsixTableEntry::VEC_CTL_MASK_BIT, false);
 
-            Some(interrupt_handle)
+            interrupt_handle
         };
 
         pcid_handle.enable_feature(PciFeature::MsiX).expect("rtl8168d: failed to enable MSI-X");
         log::info!("Enabled MSI-X");
 
         method
-    } else if pci_config.func.legacy_interrupt_pin.is_some() {
+    } else if let Some(irq) = pci_config.func.legacy_interrupt_line {
         // legacy INTx# interrupt pins.
-        Some(File::open(format!("irq:{}", irq)).expect("rtl8168d: failed to open legacy IRQ file"))
+        irq.irq_handle("rtl8168d")
     } else {
-        // no interrupts at all
-        None
+        panic!("rtl8168d: no interrupts supported at all")
     }
 }
 
 //TODO: MSI on non-x86_64?
 #[cfg(not(target_arch = "x86_64"))]
-fn get_int_method(pcid_handle: &mut PcidServerHandle) -> Option<File> {
+fn get_int_method(pcid_handle: &mut PcidServerHandle) -> File {
     let pci_config = pcid_handle.fetch_config().expect("rtl8168d: failed to fetch config");
-    let irq = pci_config.func.legacy_interrupt_line;
 
-    if pci_config.func.legacy_interrupt_pin.is_some() {
+    if let Some(irq) = pci_config.func.legacy_interrupt_line {
         // legacy INTx# interrupt pins.
-        Some(File::open(format!("irq:{}", irq)).expect("rtl8168d: failed to open legacy IRQ file"))
+        irq.irq_handle("rtl8168d")
     } else {
-        // no interrupts at all
-        None
+        panic!("rtl8168d: no interrupts supported at all")
     }
 }
 
@@ -321,7 +314,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     name.push_str("_rtl8168");
 
     let (bar_ptr, bar_size) = find_bar(&pci_config).expect("rtl8168d: failed to find BAR");
-    log::info!(" + RTL8168 {} on: {:#X} size: {}", name, bar_ptr, bar_size);
+    log::info!(" + RTL8168 {}", pci_config.func.display());
 
     let address = unsafe {
         common::physmap(bar_ptr, bar_size, common::Prot::RW, common::MemoryType::Uncacheable)
@@ -338,7 +331,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     }));
 
     //TODO: MSI-X
-    let mut irq_file = get_int_method(&mut pcid_handle).expect("rtl8168d: no interrupt file");
+    let mut irq_file = get_int_method(&mut pcid_handle);
 
     {
         let device = Arc::new(RefCell::new(unsafe {
