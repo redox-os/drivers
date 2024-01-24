@@ -6,7 +6,7 @@ use std::thread;
 use std::sync::{Arc, Mutex};
 
 use pci_types::device_type::DeviceType;
-use pci_types::{ConfigRegionAccess, PciAddress};
+use pci_types::{CommandRegister, ConfigRegionAccess, PciAddress};
 use structopt::StructOpt;
 use log::{debug, error, info, warn, trace};
 use redox_log::{OutputBuilder, RedoxLogger};
@@ -16,7 +16,7 @@ use crate::config::Config;
 use crate::pci::{PciBar, PciFunc};
 use crate::pci::cap::Capability as PciCapability;
 use crate::pci::func::{ConfigReader, ConfigWriter};
-use crate::pci_header::{PciHeader, PciHeaderError};
+use crate::pci_header::{PciEndpointHeader, PciHeader, PciHeaderError};
 
 mod cfg_access;
 mod config;
@@ -206,10 +206,9 @@ pub struct State {
     pcie: Pcie,
 }
 
-fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, header: PciHeader) {
-    let raw_class: u8 = header.class().into();
+fn print_pci_function(addr: PciAddress, header: &PciHeader) {
     let mut string = format!("PCI {} {:>04X}:{:>04X} {:>02X}.{:>02X}.{:>02X}.{:>02X} {:?}",
-                             addr, header.vendor_id(), header.device_id(), raw_class,
+                             addr, header.vendor_id(), header.device_id(), header.class(),
                              header.subclass(), header.interface(), header.revision(), header.class());
     let device_type = DeviceType::from((header.class(), header.subclass()));
     match device_type {
@@ -229,19 +228,10 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, he
         },
         _ => (),
     }
-
-    let bars = header.bars(&state.pcie);
-    for (i, bar) in bars.iter().enumerate() {
-        match bar {
-            PciBar::None => {},
-            PciBar::Memory32{addr,..} => string.push_str(&format!(" {i}={addr:08X}")),
-            PciBar::Memory64{addr,..} => string.push_str(&format!(" {i}={addr:016X}")),
-            PciBar::Port(port) => string.push_str(&format!(" {i}=P{port:04X}")),
-        }
-    }
-
     info!("{}", string);
+}
 
+fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, header: PciEndpointHeader) {
     for driver in config.drivers.iter() {
         if !driver.match_function(header.full_device_id()) {
             continue;
@@ -251,12 +241,29 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, he
             continue;
         };
 
-        // Enable bus mastering, memory space, and I/O space
-        unsafe {
-            let mut data = state.pcie.read(addr, 0x04);
-            data |= 7;
-            state.pcie.write(addr, 0x04, data);
+        let mut string = String::new();
+        let bars = header.bars(&state.pcie);
+        for (i, bar) in bars.iter().enumerate() {
+            match bar {
+                PciBar::None => {},
+                PciBar::Memory32 { addr, .. } => string.push_str(&format!(" {i}={addr:08X}")),
+                PciBar::Memory64 { addr, .. } => string.push_str(&format!(" {i}={addr:016X}")),
+                PciBar::Port(port) => string.push_str(&format!(" {i}=P{port:04X}")),
+            }
         }
+
+        if !string.is_empty() {
+            info!("    BAR{}", string);
+        }
+
+        let endpoint_header = header.endpoint_header(&state.pcie);
+
+        // Enable bus mastering, memory space, and I/O space
+        endpoint_header.update_command(&state.pcie, |cmd| {
+            cmd | CommandRegister::BUS_MASTER_ENABLE
+                | CommandRegister::MEMORY_ENABLE
+                | CommandRegister::IO_ENABLE
+        });
 
         // Set IRQ line to 9 if not set
         let mut irq;
@@ -273,7 +280,7 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, he
             state.pcie.write(addr, 0x3C, data);
         };
 
-        let capabilities = if header.status() & (1 << 4) != 0 {
+        let capabilities = if endpoint_header.status(&state.pcie).has_capability_list() {
             let func = PciFunc {
                 pci: &state.pcie,
                 addr
@@ -467,9 +474,21 @@ fn main(args: Args) {
                 let func_addr = PciAddress::new(0, bus_num, dev_num, func_num);
                 match PciHeader::from_reader(&state.pcie, func_addr) {
                     Ok(header) => {
-                        handle_parsed_header(Arc::clone(&state), &config, func_addr, header);
-                        if let PciHeader::PciToPci { secondary_bus_num, .. } = header {
-                            bus_nums.push(secondary_bus_num);
+                        print_pci_function(func_addr, &header);
+                        match header {
+                            PciHeader::General(endpoint_header) => {
+                                handle_parsed_header(
+                                    Arc::clone(&state),
+                                    &config,
+                                    func_addr,
+                                    endpoint_header,
+                                );
+                            }
+                            PciHeader::PciToPci {
+                                secondary_bus_num, ..
+                            } => {
+                                bus_nums.push(secondary_bus_num);
+                            }
                         }
                     }
                     Err(PciHeaderError::NoDevice) => {
