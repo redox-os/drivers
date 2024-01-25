@@ -109,6 +109,7 @@ fn handle_parsed_header(
 fn enable_function(
     pcie: &Pcie,
     endpoint_header: &mut EndpointHeader,
+    capabilities: &mut [PciCapability],
 ) -> Option<LegacyInterruptLine> {
     // Enable bus mastering, memory space, and I/O space
     endpoint_header.update_command(pcie, |cmd| {
@@ -116,6 +117,19 @@ fn enable_function(
             | CommandRegister::MEMORY_ENABLE
             | CommandRegister::IO_ENABLE
     });
+
+    // Disable MSI and MSI-X in case a previous driver instance enabled them.
+    for capability in capabilities {
+        match capability {
+            PciCapability::Msi(capability) => {
+                capability.set_enabled(false, pcie);
+            }
+            PciCapability::MsiX(capability) => {
+                capability.set_enabled(false, pcie);
+            }
+            _ => {}
+        }
+    }
 
     // Set IRQ line to 9 if not set
     let mut irq = 0xFF;
