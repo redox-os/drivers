@@ -163,22 +163,12 @@ pub struct MsiSetFeatureInfo {
     /// is the log2 of the interrupt vectors, minus one. Can only be 0b000..=0b101.
     pub multi_message_enable: Option<u8>,
 
-    /// The system-specific message address, must be DWORD aligned.
+    /// The system-specific message address and data.
     ///
     /// The message address contains things like the CPU that will be targeted, at least on
-    /// x86_64.
-    pub message_address: Option<u32>,
-
-    /// The upper 32 bits of the 64-bit message address. Not guaranteed to exist, and is
-    /// reserved on x86_64 (currently).
-    pub message_upper_address: Option<u32>,
-
-    /// The message data, containing the actual interrupt vector (lower 8 bits), etc.
-    ///
-    /// The spec mentions that the lower N bits can be modified, where N is the multi message
-    /// enable, which means that the vector set here has to be aligned to that number, and that
-    /// all vectors in that range have to be allocated.
-    pub message_data: Option<u16>,
+    /// x86_64. The message data contains the actual interrupt vector (lower 8 bits) and
+    /// the kind of interrupt, at least on x86_64.
+    pub message_address_and_data: Option<msi::MsiAddrAndData>,
 
     /// A bitmap of the vectors that are masked. This field is not guaranteed (and not likely,
     /// at least according to the feature flags I got from QEMU), to exist.

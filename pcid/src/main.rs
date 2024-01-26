@@ -14,7 +14,7 @@ use redox_log::{OutputBuilder, RedoxLogger};
 use crate::cfg_access::Pcie;
 use crate::config::Config;
 use crate::driver_interface::LegacyInterruptLine;
-use crate::pci::{PciBar, PciFunc};
+use crate::pci::PciFunc;
 use crate::pci::cap::Capability as PciCapability;
 use crate::pci::func::{ConfigReader, ConfigWriter};
 use crate::pci_header::{PciEndpointHeader, PciHeader, PciHeaderError};
@@ -130,20 +130,22 @@ impl DriverHandler {
                         info.set_multi_message_enable(mme);
 
                     }
-                    if let Some(message_addr) = info_to_set.message_address {
+                    if let Some(message_addr_and_data) = info_to_set.message_address_and_data {
+                        let message_addr = message_addr_and_data.addr;
                         if message_addr & 0b11 != 0 {
                             return PcidClientResponse::Error(PcidServerResponseError::InvalidBitPattern);
                         }
-                        info.set_message_address(message_addr);
-                    }
-                    if let Some(message_addr_upper) = info_to_set.message_upper_address {
-                        info.set_message_upper_address(message_addr_upper);
-                    }
-                    if let Some(message_data) = info_to_set.message_data {
-                        if message_data & ((1 << info.multi_message_enable()) - 1) != 0 {
+                        info.set_message_address(message_addr as u32);
+                        info.set_message_upper_address((message_addr >> 32) as u32);
+                        if message_addr_and_data.data & ((1 << info.multi_message_enable()) - 1) != 0 {
                             return PcidClientResponse::Error(PcidServerResponseError::InvalidBitPattern);
                         }
-                        info.set_message_data(message_data);
+                        info.set_message_data(
+                            message_addr_and_data
+                                .data
+                                .try_into()
+                                .expect("pcid: MSI message data too big"),
+                        );
                     }
                     if let Some(mask_bits) = info_to_set.mask_bits {
                         info.set_mask_bits(mask_bits);

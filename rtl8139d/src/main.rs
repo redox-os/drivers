@@ -5,7 +5,7 @@ extern crate netutils;
 extern crate syscall;
 
 use std::cell::RefCell;
-use std::convert::{TryFrom, TryInto};
+use std::convert::TryInto;
 use std::{env, process};
 use std::fs::File;
 use std::io::{ErrorKind, Read, Result, Write};
@@ -15,11 +15,10 @@ use std::sync::Arc;
 
 use event::EventQueue;
 use pcid_interface::{MsiSetFeatureInfo, PcidServerHandle, PciFeature, PciFeatureInfo, SetFeatureInfo, SubdriverArguments};
-use pcid_interface::irq_helpers::{read_bsp_apic_id, allocate_single_interrupt_vector};
+use pcid_interface::irq_helpers::{read_bsp_apic_id, allocate_single_interrupt_vector_for_msi};
 use pcid_interface::msi::{MsixCapability, MsixTableEntry};
 use redox_log::{RedoxLogger, OutputBuilder};
 use syscall::{EventFlags, Packet, SchemeBlockMut};
-use syscall::io::Io;
 
 pub mod device;
 
@@ -81,7 +80,6 @@ where
 
 pub struct MsixInfo {
     pub virt_table_base: NonNull<MsixTableEntry>,
-    pub virt_pba_base: NonNull<u64>,
     pub capability: MsixCapability,
 }
 
@@ -92,18 +90,6 @@ impl MsixInfo {
     pub fn table_entry_pointer(&mut self, k: usize) -> &mut MsixTableEntry {
         assert!(k < self.capability.table_size() as usize);
         unsafe { self.table_entry_pointer_unchecked(k) }
-    }
-    pub unsafe fn pba_pointer_unchecked(&mut self, k: usize) -> &mut u64 {
-        &mut *self.virt_pba_base.as_ptr().offset(k as isize)
-    }
-    pub fn pba_pointer(&mut self, k: usize) -> &mut u64 {
-        assert!(k < self.capability.table_size() as usize);
-        unsafe { self.pba_pointer_unchecked(k) }
-    }
-    pub fn pba(&mut self, k: usize) -> bool {
-        let byte = k / 64;
-        let bit = k % 64;
-        *self.pba_pointer(byte) & (1 << bit) != 0
     }
 }
 
@@ -125,8 +111,6 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle) -> File {
     }
 
     if msi_enabled && !msix_enabled {
-        use pcid_interface::msi::x86_64::{DeliveryMode, self as x86_64_msix};
-
         let capability = match pcid_handle.feature_info(PciFeature::Msi).expect("rtl8139d: failed to retrieve the MSI capability structure from pcid") {
             PciFeatureInfo::Msi(s) => s,
             PciFeatureInfo::MsiX(_) => panic!(),
@@ -137,17 +121,11 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle) -> File {
         // pcid_interface, so that this can be shared between nvmed, xhcid, ixgebd, etc..
 
         let destination_id = read_bsp_apic_id().expect("rtl8139d: failed to read BSP apic id");
-        let lapic_id = u8::try_from(destination_id).expect("CPU id didn't fit inside u8");
-        let msg_addr = x86_64_msix::message_address(lapic_id, false, false);
-
-        let (vector, interrupt_handle) = allocate_single_interrupt_vector(destination_id).expect("rtl8139d: failed to allocate interrupt vector").expect("rtl8139d: no interrupt vectors left");
-        let msg_data = x86_64_msix::message_data_edge_triggered(DeliveryMode::Fixed, vector);
+        let (msg_addr_and_data, interrupt_handle) = allocate_single_interrupt_vector_for_msi(destination_id);
 
         let set_feature_info = MsiSetFeatureInfo {
             multi_message_enable: Some(0),
-            message_address: Some(msg_addr),
-            message_upper_address: Some(0),
-            message_data: Some(msg_data as u16),
+            message_address_and_data: Some(msg_addr_and_data),
             mask_bits: None,
         };
         pcid_handle.set_feature_info(SetFeatureInfo::Msi(set_feature_info)).expect("rtl8139d: failed to set feature info");
@@ -161,41 +139,21 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle) -> File {
             PciFeatureInfo::Msi(_) => panic!(),
             PciFeatureInfo::MsiX(s) => s,
         };
-        let table_size = capability.table_size();
-        let table_base = capability.table_base_pointer(pci_config.func.bars);
-        let table_min_length = table_size * 16;
-        let pba_min_length = div_round_up(table_size, 8);
+        capability.validate(pci_config.func.bars);
 
-        let pba_base = capability.pba_base_pointer(pci_config.func.bars);
+        let bar = &pci_config.func.bars[capability.table_bir() as usize];
+        let bar_address = unsafe { bar.physmap_mem("rtl8139d") } as usize;
 
-        let bir = capability.table_bir() as usize;
-        let bar = &pci_config.func.bars[bir];
-        let (bar_ptr, bar_size) = bar.expect_mem();
-
-        let address = unsafe { bar.physmap_mem("rtl8139d") } as usize;
-
-        if !(bar_ptr as u64..bar_ptr as u64 + bar_size as u64).contains(&(table_base as u64 + table_min_length as u64)) {
-            panic!("Table {:#x}{:#x} outside of BAR {:#x}:{:#x}", table_base, table_base + table_min_length as usize, bar_ptr, bar_ptr + bar_size);
-        }
-
-        if !(bar_ptr as u64..bar_ptr as u64 + bar_size as u64).contains(&(pba_base as u64 + pba_min_length as u64)) {
-            panic!("PBA {:#x}{:#x} outside of BAR {:#x}:{:#X}", pba_base, pba_base + pba_min_length as usize, bar_ptr, bar_ptr + bar_size);
-        }
-
-        let virt_table_base = ((table_base - bar_ptr) + address) as *mut MsixTableEntry;
-        let virt_pba_base = ((pba_base - bar_ptr) + address) as *mut u64;
+        let virt_table_base = (bar_address + capability.table_offset() as usize) as *mut MsixTableEntry;
 
         let mut info = MsixInfo {
             virt_table_base: NonNull::new(virt_table_base).unwrap(),
-            virt_pba_base: NonNull::new(virt_pba_base).unwrap(),
             capability,
         };
 
         // Allocate one msi vector.
 
         let method = {
-            use pcid_interface::msi::x86_64::{DeliveryMode, self as x86_64_msix};
-
             // primary interrupter
             let k = 0;
 
@@ -203,18 +161,10 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle) -> File {
             let table_entry_pointer = info.table_entry_pointer(k);
 
             let destination_id = read_bsp_apic_id().expect("rtl8139d: failed to read BSP apic id");
-            let lapic_id = u8::try_from(destination_id).expect("rtl8139d: CPU id couldn't fit inside u8");
-            let rh = false;
-            let dm = false;
-            let addr = x86_64_msix::message_address(lapic_id, rh, dm);
-
-            let (vector, interrupt_handle) = allocate_single_interrupt_vector(destination_id).expect("rtl8139d: failed to allocate interrupt vector").expect("rtl8139d: no interrupt vectors left");
-            let msg_data = x86_64_msix::message_data_edge_triggered(DeliveryMode::Fixed, vector);
-
-            table_entry_pointer.addr_lo.write(addr);
-            table_entry_pointer.addr_hi.write(0);
-            table_entry_pointer.msg_data.write(msg_data);
-            table_entry_pointer.vec_ctl.writef(MsixTableEntry::VEC_CTL_MASK_BIT, false);
+            let (msg_addr_and_data, interrupt_handle) =
+                allocate_single_interrupt_vector_for_msi(destination_id);
+            table_entry_pointer.write_addr_and_data(msg_addr_and_data);
+            table_entry_pointer.unmask();
 
             interrupt_handle
         };

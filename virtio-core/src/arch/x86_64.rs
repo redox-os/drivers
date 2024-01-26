@@ -1,10 +1,8 @@
 use crate::{legacy_transport::LegacyTransport, reinit, transport::Error, Device};
 
-use pcid_interface::irq_helpers::{allocate_single_interrupt_vector, read_bsp_apic_id};
-use pcid_interface::msi::{self, MsixTableEntry};
+use pcid_interface::irq_helpers::{allocate_single_interrupt_vector_for_msi, read_bsp_apic_id};
+use pcid_interface::msi::MsixTableEntry;
 use std::{fs::File, ptr::NonNull};
-
-use syscall::Io;
 
 use crate::{probe::MsixInfo, MSIX_PRIMARY_VECTOR};
 
@@ -18,28 +16,11 @@ pub fn enable_msix(pcid_handle: &mut PcidServerHandle) -> Result<File, Error> {
         PciFeatureInfo::MsiX(capability) => capability,
         _ => unreachable!(),
     };
+    capability.validate(pci_config.func.bars);
 
-    let table_size = capability.table_size();
-    let table_base = capability.table_base_pointer(pci_config.func.bars);
-    let table_min_length = table_size * 16;
-    let pba_min_length = table_size.div_ceil(8);
-
-    let pba_base = capability.pba_base_pointer(pci_config.func.bars);
-
-    let bir = capability.table_bir() as usize;
-    let bar = &pci_config.func.bars[bir];
-    let (bar_ptr, bar_size) = bar.expect_mem();
-
-    let address = unsafe { bar.physmap_mem("virtio-core") } as usize;
-
-    // Ensure that the table and PBA are be within the BAR.
-    {
-        let bar_range = bar_ptr as u64..bar_ptr as u64 + bar_size as u64;
-        assert!(bar_range.contains(&(table_base as u64 + table_min_length as u64)));
-        assert!(bar_range.contains(&(pba_base as u64 + pba_min_length as u64)));
-    }
-
-    let virt_table_base = ((table_base - bar_ptr as usize) + address) as *mut MsixTableEntry;
+    let bar = &pci_config.func.bars[capability.table_bir() as usize];
+    let bar_address = unsafe { bar.physmap_mem("virtio-core") } as usize;
+    let virt_table_base = (bar_address + capability.table_offset() as usize) as *mut MsixTableEntry;
 
     let mut info = MsixInfo {
         virt_table_base: NonNull::new(virt_table_base).unwrap(),
@@ -53,25 +34,10 @@ pub fn enable_msix(pcid_handle: &mut PcidServerHandle) -> Result<File, Error> {
         let table_entry_pointer = info.table_entry_pointer(MSIX_PRIMARY_VECTOR as usize);
 
         let destination_id = read_bsp_apic_id().expect("virtio_core: `read_bsp_apic_id()` failed");
-        let lapic_id = u8::try_from(destination_id).unwrap();
-
-        let rh = false;
-        let dm = false;
-        let addr = msi::x86_64::message_address(lapic_id, rh, dm);
-
-        let (vector, interrupt_handle) = allocate_single_interrupt_vector(destination_id)
-            .unwrap()
-            .expect("virtio_core: interrupt vector exhaustion");
-
-        let msg_data =
-            msi::x86_64::message_data_edge_triggered(msi::x86_64::DeliveryMode::Fixed, vector);
-
-        table_entry_pointer.addr_lo.write(addr);
-        table_entry_pointer.addr_hi.write(0);
-        table_entry_pointer.msg_data.write(msg_data);
-        table_entry_pointer
-            .vec_ctl
-            .writef(MsixTableEntry::VEC_CTL_MASK_BIT, false);
+        let (msg_addr_and_data, interrupt_handle) =
+            allocate_single_interrupt_vector_for_msi(destination_id);
+        table_entry_pointer.write_addr_and_data(msg_addr_and_data);
+        table_entry_pointer.unmask();
 
         interrupt_handle
     };

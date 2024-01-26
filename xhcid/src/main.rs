@@ -12,8 +12,8 @@ use std::sync::{Arc, Mutex};
 use std::env;
 
 use pcid_interface::{MsiSetFeatureInfo, PcidServerHandle, PciFeature, PciFeatureInfo, SetFeatureInfo};
-use pcid_interface::irq_helpers::{read_bsp_apic_id, allocate_single_interrupt_vector};
-use pcid_interface::msi::{MsiCapability, MsixCapability, MsixTableEntry};
+use pcid_interface::irq_helpers::{read_bsp_apic_id, allocate_single_interrupt_vector_for_msi};
+use pcid_interface::msi::MsixTableEntry;
 
 use event::{Event, EventQueue};
 use redox_log::{RedoxLogger, OutputBuilder};
@@ -82,10 +82,8 @@ fn setup_logging(name: &str) -> Option<&'static RedoxLogger> {
 }
 
 #[cfg(target_arch = "x86_64")]
-fn get_int_method(pcid_handle: &mut PcidServerHandle, address: usize) -> (Option<File>, InterruptMethod) {
+fn get_int_method(pcid_handle: &mut PcidServerHandle, bar0_address: usize) -> (Option<File>, InterruptMethod) {
     let pci_config = pcid_handle.fetch_config().expect("xhcid: failed to fetch config");
-
-    let (bar_ptr, bar_size) = pci_config.func.bars[0].expect_mem();
 
     let all_pci_features = pcid_handle.fetch_all_features().expect("xhcid: failed to fetch pci features");
     log::debug!("XHCI PCI FEATURES: {:?}", all_pci_features);
@@ -101,8 +99,6 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle, address: usize) -> (Option
     }
 
     if msi_enabled && !msix_enabled {
-        use pcid_interface::msi::x86_64::{DeliveryMode, self as x86_64_msix};
-
         let mut capability = match pcid_handle.feature_info(PciFeature::Msi).expect("xhcid: failed to retrieve the MSI capability structure from pcid") {
             PciFeatureInfo::Msi(s) => s,
             PciFeatureInfo::MsiX(_) => panic!(),
@@ -113,17 +109,11 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle, address: usize) -> (Option
         // pcid_interface, so that this can be shared between nvmed, xhcid, ixgebd, etc..
 
         let destination_id = read_bsp_apic_id().expect("xhcid: failed to read BSP apic id");
-        let lapic_id = u8::try_from(destination_id).expect("CPU id didn't fit inside u8");
-        let msg_addr = x86_64_msix::message_address(lapic_id, false, false);
-
-        let (vector, interrupt_handle) = allocate_single_interrupt_vector(destination_id).expect("xhcid: failed to allocate interrupt vector").expect("xhcid: no interrupt vectors left");
-        let msg_data = x86_64_msix::message_data_edge_triggered(DeliveryMode::Fixed, vector);
+        let (msg_addr_and_data, interrupt_handle) = allocate_single_interrupt_vector_for_msi(destination_id);
 
         let set_feature_info = MsiSetFeatureInfo {
             multi_message_enable: Some(0),
-            message_address: Some(msg_addr),
-            message_upper_address: Some(0),
-            message_data: Some(msg_data as u16),
+            message_address_and_data: Some(msg_addr_and_data),
             mask_bits: None,
         };
         pcid_handle.set_feature_info(SetFeatureInfo::Msi(set_feature_info)).expect("xhcid: failed to set feature info");
@@ -137,35 +127,19 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle, address: usize) -> (Option
             PciFeatureInfo::Msi(_) => panic!(),
             PciFeatureInfo::MsiX(s) => s,
         };
-        let table_size = capability.table_size();
-        let table_base = capability.table_base_pointer(pci_config.func.bars);
-        let table_min_length = table_size * 16;
-        let pba_min_length = crate::xhci::scheme::div_round_up(table_size, 8);
+        capability.validate(pci_config.func.bars);
 
-        let pba_base = capability.pba_base_pointer(pci_config.func.bars);
-
-        if !(bar_ptr as u64..bar_ptr as u64 + bar_size as u64).contains(&(table_base as u64 + table_min_length as u64)) {
-            panic!("Table {:#x}{:#x} outside of BAR {:#x}:{:#x}", table_base, table_base + table_min_length as usize, bar_ptr, bar_ptr + bar_size);
-        }
-
-        if !(bar_ptr as u64..bar_ptr as u64 + bar_size as u64).contains(&(pba_base as u64 + pba_min_length as u64)) {
-            panic!("PBA {:#x}{:#x} outside of BAR {:#x}:{:#X}", pba_base, pba_base + pba_min_length as usize, bar_ptr, bar_ptr + bar_size);
-        }
-
-        let virt_table_base = ((table_base - bar_ptr as usize) + address) as *mut MsixTableEntry;
-        let virt_pba_base = ((pba_base - bar_ptr as usize) + address) as *mut u64;
+        assert_eq!(capability.table_bir(), 0);
+        let virt_table_base = (bar0_address + capability.table_offset() as usize) as *mut MsixTableEntry;
 
         let mut info = xhci::MsixInfo {
             virt_table_base: NonNull::new(virt_table_base).unwrap(),
-            virt_pba_base: NonNull::new(virt_pba_base).unwrap(),
             capability,
         };
 
         // Allocate one msi vector.
 
         let method = {
-            use pcid_interface::msi::x86_64::{DeliveryMode, self as x86_64_msix};
-
             // primary interrupter
             let k = 0;
 
@@ -173,18 +147,9 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle, address: usize) -> (Option
             let table_entry_pointer = info.table_entry_pointer(k);
 
             let destination_id = read_bsp_apic_id().expect("xhcid: failed to read BSP apic id");
-            let lapic_id = u8::try_from(destination_id).expect("xhcid: CPU id couldn't fit inside u8");
-            let rh = false;
-            let dm = false;
-            let addr = x86_64_msix::message_address(lapic_id, rh, dm);
-
-            let (vector, interrupt_handle) = allocate_single_interrupt_vector(destination_id).expect("xhcid: failed to allocate interrupt vector").expect("xhcid: no interrupt vectors left");
-            let msg_data = x86_64_msix::message_data_edge_triggered(DeliveryMode::Fixed, vector);
-
-            table_entry_pointer.addr_lo.write(addr);
-            table_entry_pointer.addr_hi.write(0);
-            table_entry_pointer.msg_data.write(msg_data);
-            table_entry_pointer.vec_ctl.writef(MsixTableEntry::VEC_CTL_MASK_BIT, false);
+            let (msg_addr_and_data, interrupt_handle) = allocate_single_interrupt_vector_for_msi(destination_id);
+            table_entry_pointer.write_addr_and_data(msg_addr_and_data);
+            table_entry_pointer.unmask();
 
             (Some(interrupt_handle), InterruptMethod::MsiX(Mutex::new(info)))
         };
