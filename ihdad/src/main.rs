@@ -16,7 +16,9 @@ use std::sync::Arc;
 
 use event::EventQueue;
 use pcid_interface::{MsiSetFeatureInfo, PcidServerHandle, PciFeature, PciFeatureInfo, SetFeatureInfo};
-use pcid_interface::irq_helpers::{read_bsp_apic_id, allocate_single_interrupt_vector_for_msi};
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+use pcid_interface::irq_helpers::allocate_single_interrupt_vector_for_msi;
+use pcid_interface::irq_helpers::read_bsp_apic_id;
 use redox_log::{OutputBuilder, RedoxLogger};
 
 pub mod hda;
