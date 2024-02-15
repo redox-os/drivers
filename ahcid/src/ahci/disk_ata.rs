@@ -142,11 +142,23 @@ impl Disk for DiskATA {
     }
 
     fn read(&mut self, block: u64, buffer: &mut [u8]) -> Result<Option<usize>> {
-        self.request(block, BufferKind::Read(buffer))
+        //TODO: FIGURE OUT WHY INTERRUPTS CAUSE HANGS
+        loop {
+            match self.request(block, BufferKind::Read(buffer))? {
+                Some(count) => return Ok(Some(count)),
+                None => std::thread::yield_now()
+            }
+        }
     }
 
     fn write(&mut self, block: u64, buffer: &[u8]) -> Result<Option<usize>> {
-        self.request(block, BufferKind::Write(buffer))
+        //TODO: FIGURE OUT WHY INTERRUPTS CAUSE HANGS
+        loop {
+            match self.request(block, BufferKind::Write(buffer))? {
+                Some(count) => return Ok(Some(count)),
+                None => std::thread::yield_now()
+            }
+        }
     }
 
     fn block_length(&mut self) -> Result<u32> {
