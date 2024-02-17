@@ -69,7 +69,7 @@ pub enum CfgType {
 const_assert_eq!(core::mem::size_of::<CfgType>(), 1);
 
 #[derive(Debug)]
-#[repr(C)]
+#[repr(C, packed)]
 pub struct CommonCfg {
     // About the whole device.
     /// The driver uses this to select which feature bits device_feature shows.
