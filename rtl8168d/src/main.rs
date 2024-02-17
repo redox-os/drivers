@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use event::EventQueue;
 use pcid_interface::{MsiSetFeatureInfo, PcidServerHandle, PciFeature, PciFeatureInfo, SetFeatureInfo, SubdriverArguments};
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 use pcid_interface::irq_helpers::allocate_single_interrupt_vector_for_msi;
 use pcid_interface::irq_helpers::read_bsp_apic_id;
 use pcid_interface::msi::{MsixCapability, MsixTableEntry};
