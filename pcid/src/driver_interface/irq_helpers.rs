@@ -156,7 +156,7 @@ pub fn allocate_single_interrupt_vector(cpu_id: usize) -> io::Result<Option<(u8,
     Ok(Some((base, files.pop().unwrap())))
 }
 
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 pub fn allocate_single_interrupt_vector_for_msi(cpu_id: usize) -> (MsiAddrAndData, File) {
     use crate::pci::msi::x86_64 as x86_64_msix;
 
