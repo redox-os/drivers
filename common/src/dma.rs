@@ -1,4 +1,4 @@
-use std::mem::{self, MaybeUninit, size_of};
+use std::mem::{self, size_of, MaybeUninit};
 use std::ops::{Deref, DerefMut};
 use std::ptr;
 
@@ -23,13 +23,21 @@ const DMA_MEMTY: MemoryType = {
 fn alloc_and_map(len: usize) -> Result<(usize, *mut ())> {
     assert_eq!(len % PAGE_SIZE, 0);
     unsafe {
-        let fd = syscall::open(format!("memory:zeroed@{DMA_MEMTY}?phys_contiguous"), syscall::O_CLOEXEC)?;
-        let virt = syscall::fmap(fd, &syscall::Map {
-            offset: 0, // ignored
-            address: 0, // ignored
-            size: len,
-            flags: syscall::MapFlags::MAP_PRIVATE | syscall::MapFlags::PROT_READ | syscall::MapFlags::PROT_WRITE,
-        });
+        let fd = syscall::open(
+            format!("memory:zeroed@{DMA_MEMTY}?phys_contiguous"),
+            syscall::O_CLOEXEC,
+        )?;
+        let virt = syscall::fmap(
+            fd,
+            &syscall::Map {
+                offset: 0,  // ignored
+                address: 0, // ignored
+                size: len,
+                flags: syscall::MapFlags::MAP_PRIVATE
+                    | syscall::MapFlags::PROT_READ
+                    | syscall::MapFlags::PROT_WRITE,
+            },
+        );
         let _ = syscall::close(fd);
         let virt = virt?;
         let phys = syscall::virttophys(virt)?;
@@ -57,13 +65,21 @@ impl<T> Dma<T> {
     pub fn zeroed() -> Result<Dma<MaybeUninit<T>>> {
         let aligned_len = size_of::<T>().next_multiple_of(PAGE_SIZE);
         let (phys, virt) = alloc_and_map(aligned_len)?;
-        Ok(Dma { phys, virt: virt.cast(), aligned_len })
+        Ok(Dma {
+            phys,
+            virt: virt.cast(),
+            aligned_len,
+        })
     }
 }
 
 impl<T> Dma<MaybeUninit<T>> {
     pub unsafe fn assume_init(self) -> Dma<T> {
-        let Dma { phys, aligned_len, virt } = self;
+        let Dma {
+            phys,
+            aligned_len,
+            virt,
+        } = self;
         mem::forget(self);
 
         Dma {
@@ -81,13 +97,24 @@ impl<T: ?Sized> Dma<T> {
 
 impl<T> Dma<[T]> {
     pub fn zeroed_slice(count: usize) -> Result<Dma<[MaybeUninit<T>]>> {
-        let aligned_len = count.checked_mul(size_of::<T>()).unwrap().next_multiple_of(PAGE_SIZE);
+        let aligned_len = count
+            .checked_mul(size_of::<T>())
+            .unwrap()
+            .next_multiple_of(PAGE_SIZE);
         let (phys, virt) = alloc_and_map(aligned_len)?;
 
-        Ok(Dma { phys, aligned_len, virt: ptr::slice_from_raw_parts_mut(virt.cast(), count) })
+        Ok(Dma {
+            phys,
+            aligned_len,
+            virt: ptr::slice_from_raw_parts_mut(virt.cast(), count),
+        })
     }
     pub unsafe fn cast_slice<U>(self) -> Dma<[U]> {
-        let Dma { phys, virt, aligned_len } = self;
+        let Dma {
+            phys,
+            virt,
+            aligned_len,
+        } = self;
         core::mem::forget(self);
 
         Dma {
@@ -99,7 +126,11 @@ impl<T> Dma<[T]> {
 }
 impl<T> Dma<[MaybeUninit<T>]> {
     pub unsafe fn assume_init(self) -> Dma<[T]> {
-        let &Dma { phys, aligned_len, virt } = &self;
+        let &Dma {
+            phys,
+            aligned_len,
+            virt,
+        } = &self;
         mem::forget(self);
 
         Dma {

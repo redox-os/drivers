@@ -1,7 +1,7 @@
 use std::sync::Mutex;
-use std::{fmt, fs, io, mem, ptr, slice};
+use std::{fmt, fs, io, mem, ptr};
 
-use log::info;
+use common::{MemoryType, PhysBorrowed, Prot};
 use pci_types::{ConfigRegionAccess, PciAddress};
 
 use fallback::Pci;
@@ -11,7 +11,7 @@ mod fallback;
 pub const MCFG_NAME: [u8; 4] = *b"MCFG";
 
 #[repr(packed)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct Mcfg {
     // base sdt fields
     name: [u8; 4],
@@ -24,8 +24,6 @@ pub struct Mcfg {
     creator_id: [u8; 4],
     creator_revision: u32,
     _rsvd: [u8; 8],
-
-    base_addrs: [PcieAlloc; 0],
 }
 unsafe impl plain::Plain for Mcfg {}
 
@@ -42,9 +40,14 @@ pub struct PcieAlloc {
 }
 unsafe impl plain::Plain for PcieAlloc {}
 
+#[derive(Debug)]
+struct PcieAllocs<'a>(&'a [PcieAlloc]);
+
 impl Mcfg {
-    fn with<T>(f: impl FnOnce(&Mcfg) -> io::Result<T>) -> io::Result<T> {
+    fn with<T>(f: impl FnOnce(&Mcfg, PcieAllocs<'_>) -> io::Result<T>) -> io::Result<T> {
         let table_dir = fs::read_dir("acpi:tables")?;
+
+        // TODO: validate/print MCFG?
 
         for table_direntry in table_dir {
             let table_path = table_direntry?.path();
@@ -59,7 +62,7 @@ impl Mcfg {
             if table_filename.get(0..4) == Some(&MCFG_NAME) {
                 let bytes = fs::read(table_path)?.into_boxed_slice();
                 match Mcfg::parse(&*bytes) {
-                    Some(mcfg) => return f(mcfg),
+                    Some((mcfg, allocs)) => return f(mcfg, allocs),
                     None => {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidData,
@@ -76,129 +79,136 @@ impl Mcfg {
         ))
     }
 
-    fn parse<'a>(bytes: &'a [u8]) -> Option<&'a Mcfg> {
-        let mcfg = plain::from_bytes::<Mcfg>(bytes).ok()?;
-        if mcfg.length as usize > bytes.len() {
+    fn parse<'a>(bytes: &'a [u8]) -> Option<(&'a Mcfg, PcieAllocs<'a>)> {
+        if bytes.len() < mem::size_of::<Mcfg>() {
             return None;
         }
-        Some(mcfg)
-    }
+        let (header_bytes, allocs_bytes) = bytes.split_at(mem::size_of::<Mcfg>());
 
-    fn at_bus(&self, bus: u8) -> Option<&PcieAlloc> {
-        Some(
-            self.base_addr_structs()
-                .iter()
-                .find(|addr_struct| (addr_struct.start_bus..=addr_struct.end_bus).contains(&bus))?,
-        )
-    }
-
-    fn base_addr_structs(&self) -> &[PcieAlloc] {
-        let total_length = self.length as usize;
-        let len = total_length - mem::size_of::<Mcfg>();
-        // safe because the length cannot be changed arbitrarily
-        unsafe {
-            slice::from_raw_parts(
-                &self.base_addrs as *const PcieAlloc,
-                len / mem::size_of::<PcieAlloc>(),
-            )
+        let mcfg =
+            plain::from_bytes::<Mcfg>(header_bytes).expect("packed -> align 1, checked size");
+        if mcfg.length as usize != bytes.len() {
+            log::warn!("MCFG {mcfg:?} length mismatch, expected {}", bytes.len());
+            return None;
         }
-    }
-}
+        // TODO: Allow invalid bytes not divisible by PcieAlloc?
 
-impl fmt::Debug for Mcfg {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("Mcfg")
-            .field("name", &self.name)
-            .field("length", &{ self.length })
-            .field("revision", &self.revision)
-            .field("checksum", &self.checksum)
-            .field("oem_id", &self.oem_id)
-            .field("oem_table_id", &{ self.oem_table_id })
-            .field("oem_revision", &{ self.oem_revision })
-            .field("creator_revision", &{ self.creator_revision })
-            .field("creator_id", &self.creator_id)
-            .field("base_addrs", &self.base_addr_structs())
-            .finish()
+        let allocs_len =
+            allocs_bytes.len() / mem::size_of::<PcieAlloc>() * mem::size_of::<PcieAlloc>();
+
+        let allocs = plain::slice_from_bytes::<PcieAlloc>(&allocs_bytes[..allocs_len])
+            .expect("packed -> align 1, checked size");
+        Some((mcfg, PcieAllocs(allocs)))
     }
 }
 
 pub struct Pcie {
     lock: Mutex<()>,
-    bus_maps: Vec<Option<(*mut u32, usize)>>,
+    allocs: Vec<Alloc>,
     fallback: Pci,
 }
+struct Alloc {
+    seg: u16,
+    start_bus: u8,
+    end_bus: u8,
+    mem: PhysBorrowed,
+}
+
 unsafe impl Send for Pcie {}
 unsafe impl Sync for Pcie {}
 
+const BYTES_PER_BUS: usize = 1 << 20;
+
 impl Pcie {
     pub fn new() -> Self {
-        match Mcfg::with(|mcfg| {
-            let alloc_maps = (0..=255)
-                .map(|bus| {
-                    if let Some(alloc) = mcfg.at_bus(bus) {
-                        Some(unsafe { Self::physmap_pcie_bus(alloc, bus) })
-                    } else {
-                        None
-                    }
+        match Mcfg::with(|mcfg, allocs| {
+            log::info!("MCFG {mcfg:?} ALLOCS {allocs:?}");
+            let mut allocs = allocs
+                .0
+                .iter()
+                .filter_map(|desc| {
+                    Some(Alloc {
+                        seg: desc.seg_group_num,
+                        start_bus: desc.start_bus,
+                        end_bus: desc.end_bus,
+                        mem: PhysBorrowed::map(
+                            desc.base_addr.try_into().ok()?,
+                            BYTES_PER_BUS
+                                * (usize::from(desc.end_bus) - usize::from(desc.start_bus) + 1),
+                            Prot::RW,
+                            MemoryType::Uncacheable,
+                        )
+                        .inspect_err(|err| {
+                            log::error!(
+                                "failed to map seg {} bus {}..={}: {}",
+                                { desc.seg_group_num },
+                                { desc.start_bus },
+                                { desc.end_bus },
+                                err
+                            )
+                        })
+                        .ok()?,
+                    })
                 })
                 .collect::<Vec<_>>();
 
+            allocs.sort_by_key(|alloc| (alloc.seg, alloc.start_bus));
+
             Ok(Self {
                 lock: Mutex::new(()),
-                bus_maps: alloc_maps,
+                allocs,
                 fallback: Pci::new(),
             })
         }) {
             Ok(pcie) => pcie,
             Err(error) => {
-                info!("Couldn't retrieve PCIe info, perhaps the kernel is not compiled with acpi? Using the PCI 3.0 configuration space instead. Error: {:?}", error);
+                log::warn!("Couldn't retrieve PCIe info, perhaps the kernel is not compiled with acpi? Using the PCI 3.0 configuration space instead. Error: {:?}", error);
                 Self {
                     lock: Mutex::new(()),
-                    bus_maps: vec![],
+                    allocs: Vec::new(),
                     fallback: Pci::new(),
                 }
             }
         }
     }
-
-    unsafe fn physmap_pcie_bus(alloc: &PcieAlloc, bus: u8) -> (*mut u32, usize) {
-        let base_phys = alloc.base_addr as usize + (((bus - alloc.start_bus) as usize) << 20);
-        let map_size = 1 << 20;
-        let ptr = common::physmap(
-            base_phys,
-            map_size,
-            common::Prot {
-                read: true,
-                write: true,
-            },
-            common::MemoryType::Uncacheable,
-        )
-        .unwrap_or_else(|error| {
-            panic!(
-                "failed to physmap pcie configuration space for segment {} bus {} @ {:p}: {:?}",
-                { alloc.seg_group_num },
-                bus,
-                base_phys as *const u32,
-                error,
-            )
-        }) as *mut u32;
-        (ptr, map_size)
+    fn bus_addr(&self, seg: u16, bus: u8) -> Option<*mut u32> {
+        let alloc = match self
+            .allocs
+            .binary_search_by_key(&(seg, bus), |alloc| (alloc.seg, alloc.start_bus))
+        {
+            Ok(present_idx) => &self.allocs[present_idx],
+            Err(0) => return None,
+            Err(above_idx) => {
+                let below_alloc = &self.allocs[above_idx - 1];
+                if bus > below_alloc.end_bus {
+                    return None;
+                }
+                below_alloc
+            }
+        };
+        let bus_off = bus - alloc.start_bus;
+        Some(unsafe {
+            alloc
+                .mem
+                .as_ptr()
+                .cast::<u8>()
+                .add(usize::from(bus_off) * BYTES_PER_BUS)
+                .cast::<u32>()
+        })
     }
 
-    fn bus_addr_offset_in_bytes(address: PciAddress, offset: u16) -> usize {
+    fn bus_addr_offset_in_dwords(address: PciAddress, offset: u16) -> usize {
         assert_eq!(offset & 0xFFFC, offset, "pcie offset not dword-aligned");
         assert_eq!(offset & 0x0FFF, offset, "pcie offset larger than 4095");
 
-        ((address.device() as usize) << 15)
+        (((address.device() as usize) << 15)
             | ((address.function() as usize) << 12)
-            | (offset as usize)
+            | (offset as usize))
+            >> 2
     }
-    unsafe fn with_pointer<T, F: FnOnce(Option<&mut u32>) -> T>(
-        &self,
-        address: PciAddress,
-        offset: u16,
-        f: F,
-    ) -> T {
+    // TODO: A safer interface, using e.g. a VolatileCell or Volatile<'a>. The PhysBorrowed wrapper
+    // can possibly deref to or provide a Volatile<T>.
+    fn mmio_addr(&self, address: PciAddress, offset: u16) -> Option<*mut u32> {
         assert_eq!(
             address.segment(),
             0,
@@ -207,17 +217,8 @@ impl Pcie {
 
         assert_eq!(offset & 0xFC, offset, "pci offset is not aligned");
 
-        let bus_addr = match self.bus_maps.get(address.bus() as usize) {
-            Some(Some(bus_addr)) => bus_addr,
-            Some(None) | None => return f(None),
-        };
-        let virt_pointer = unsafe {
-            // FIXME use byte_add once stable
-            (bus_addr.0 as *mut u8).add(Self::bus_addr_offset_in_bytes(address, 0)) as *mut u32
-        };
-        f(Some(&mut *virt_pointer.offset(
-            (offset as usize / mem::size_of::<u32>()) as isize,
-        )))
+        let bus_addr = self.bus_addr(address.segment(), address.bus())?;
+        Some(unsafe { bus_addr.add(Self::bus_addr_offset_in_dwords(address, offset)) })
     }
 }
 
@@ -229,30 +230,18 @@ impl ConfigRegionAccess for Pcie {
     unsafe fn read(&self, address: PciAddress, offset: u16) -> u32 {
         let _guard = self.lock.lock().unwrap();
 
-        self.with_pointer(address, offset, |pointer| match pointer {
-            Some(address) => ptr::read_volatile::<u32>(address),
+        match self.mmio_addr(address, offset) {
+            Some(addr) => addr.read_volatile(),
             None => self.fallback.read(address, offset),
-        })
+        }
     }
 
     unsafe fn write(&self, address: PciAddress, offset: u16, value: u32) {
         let _guard = self.lock.lock().unwrap();
 
-        self.with_pointer(address, offset, |pointer| match pointer {
-            Some(address) => ptr::write_volatile::<u32>(address, value),
-            None => {
-                self.fallback.write(address, offset, value);
-            }
-        });
-    }
-}
-
-impl Drop for Pcie {
-    fn drop(&mut self) {
-        for &map in &self.bus_maps {
-            if let Some((ptr, size)) = map {
-                let _ = unsafe { syscall::funmap(ptr as usize, size) };
-            }
+        match self.mmio_addr(address, offset) {
+            Some(addr) => addr.write_volatile(value),
+            None => self.fallback.write(address, offset, value),
         }
     }
 }
