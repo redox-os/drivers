@@ -1,3 +1,6 @@
+// Already stabilized, TODO: remove when Redox's rustc is updated
+#![feature(result_option_inspect)]
+
 use std::fs::{File, metadata, read_dir};
 use std::io::prelude::*;
 use std::os::unix::io::{FromRawFd, RawFd};
