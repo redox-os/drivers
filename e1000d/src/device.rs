@@ -1,13 +1,10 @@
-use std::collections::BTreeMap;
 use std::convert::TryInto;
 use std::{cmp, mem, ptr, slice};
 
+use driver_network::NetworkAdapter;
 use netutils::setcfg;
 
-use syscall::error::{Error, Result, EACCES, EBADF, EINVAL, EWOULDBLOCK};
-use syscall::flag::{EventFlags, MODE_FILE, O_NONBLOCK};
-use syscall::scheme::SchemeBlockMut;
-use syscall::Stat;
+use syscall::error::Result;
 
 use common::dma::Dma;
 
@@ -109,8 +106,6 @@ pub struct Intel8254x {
     transmit_ring_free: usize,
     transmit_index: usize,
     transmit_clean_index: usize,
-    next_id: usize,
-    pub handles: BTreeMap<usize, Handle>,
 }
 
 #[derive(Copy, Clone)]
@@ -123,48 +118,22 @@ fn wrap_ring(index: usize, ring_size: usize) -> usize {
     (index + 1) & (ring_size - 1)
 }
 
-impl SchemeBlockMut for Intel8254x {
-    fn open(&mut self, path: &str, flags: usize, uid: u32, _gid: u32) -> Result<Option<usize>> {
-        if uid != 0 {
-            return Err(Error::new(EACCES));
-        }
-
-        let handle = match path {
-            "" => Handle::Data { flags },
-            "mac" => Handle::Mac { offset: 0 },
-            _ => return Err(Error::new(EINVAL)),
-        };
-
-        self.next_id += 1;
-        self.handles.insert(self.next_id, handle);
-        Ok(Some(self.next_id))
+impl NetworkAdapter for Intel8254x {
+    fn mac_address(&mut self) -> [u8; 6] {
+        self.mac_address
     }
 
-    fn dup(&mut self, id: usize, buf: &[u8]) -> Result<Option<usize>> {
-        if !buf.is_empty() {
-            return Err(Error::new(EINVAL));
+    fn available_for_read(&mut self) -> usize {
+        let desc = unsafe { &*(self.receive_ring.as_ptr().add(self.receive_index) as *const Rd) };
+
+        if desc.status & RD_DD == RD_DD {
+            return desc.length as usize;
         }
 
-        let handle = *self.handles.get(&id).ok_or(Error::new(EBADF))?;
-        self.next_id += 1;
-        self.handles.insert(self.next_id, handle);
-        Ok(Some(self.next_id))
+        0
     }
 
-    fn read(&mut self, id: usize, buf: &mut [u8]) -> Result<Option<usize>> {
-        let handle = self.handles.get_mut(&id).ok_or(Error::new(EBADF))?;
-
-        let flags = match *handle {
-            Handle::Data { flags } => flags,
-            Handle::Mac { ref mut offset } => {
-                let data = &self.mac_address[*offset..];
-                let i = cmp::min(buf.len(), data.len());
-                buf[..i].copy_from_slice(&data[..i]);
-                *offset += i;
-                return Ok(Some(i));
-            }
-        };
-
+    fn read_packet(&mut self, buf: &mut [u8]) -> Result<Option<usize>> {
         let desc = unsafe { &mut *(self.receive_ring.as_ptr().add(self.receive_index) as *mut Rd) };
 
         if desc.status & RD_DD == RD_DD {
@@ -181,21 +150,10 @@ impl SchemeBlockMut for Intel8254x {
             return Ok(Some(i));
         }
 
-        if flags & O_NONBLOCK == O_NONBLOCK {
-            Err(Error::new(EWOULDBLOCK))
-        } else {
-            Ok(None)
-        }
+        Ok(None)
     }
 
-    fn write(&mut self, id: usize, buf: &[u8]) -> Result<Option<usize>> {
-        let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
-
-        match handle {
-            Handle::Data { .. } => {}
-            Handle::Mac { .. } => return Err(Error::new(EINVAL)),
-        }
-
+    fn write_packet(&mut self, buf: &[u8]) -> Result<usize> {
         if self.transmit_ring_free == 0 {
             loop {
                 let desc = unsafe {
@@ -245,54 +203,7 @@ impl SchemeBlockMut for Intel8254x {
 
         unsafe { self.write_reg(TDT, self.transmit_index as u32) };
 
-        Ok(Some(i))
-    }
-
-    fn fevent(&mut self, id: usize, _flags: EventFlags) -> Result<Option<EventFlags>> {
-        let _handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
-        Ok(Some(EventFlags::empty()))
-    }
-
-    fn fpath(&mut self, id: usize, buf: &mut [u8]) -> Result<Option<usize>> {
-        let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
-
-        let scheme_path = match handle {
-            Handle::Data { .. } => &b"network:"[..],
-            Handle::Mac { .. } => &b"network:mac"[..],
-        };
-
-        let mut i = 0;
-        while i < buf.len() && i < scheme_path.len() {
-            buf[i] = scheme_path[i];
-            i += 1;
-        }
-        Ok(Some(i))
-    }
-
-    fn fstat(&mut self, id: usize, stat: &mut Stat) -> Result<Option<usize>> {
-        let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
-
-        match handle {
-            Handle::Data { .. } => {
-                stat.st_mode = MODE_FILE | 0o700;
-            }
-            Handle::Mac { .. } => {
-                stat.st_mode = MODE_FILE | 0o400;
-                stat.st_size = 6;
-            }
-        }
-
-        Ok(Some(0))
-    }
-
-    fn fsync(&mut self, id: usize) -> Result<Option<usize>> {
-        let _handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
-        Ok(Some(0))
-    }
-
-    fn close(&mut self, id: usize) -> Result<Option<usize>> {
-        self.handles.remove(&id).ok_or(Error::new(EBADF))?;
-        Ok(Some(0))
+        Ok(i)
     }
 }
 
@@ -317,8 +228,6 @@ impl Intel8254x {
             transmit_ring_free: 16,
             transmit_index: 0,
             transmit_clean_index: 0,
-            next_id: 0,
-            handles: BTreeMap::new(),
         };
 
         module.init();
@@ -329,16 +238,6 @@ impl Intel8254x {
     pub unsafe fn irq(&self) -> bool {
         let icr = self.read_reg(ICR);
         icr != 0
-    }
-
-    pub fn next_read(&self) -> usize {
-        let desc = unsafe { &*(self.receive_ring.as_ptr().add(self.receive_index) as *const Rd) };
-
-        if desc.status & RD_DD == RD_DD {
-            return desc.length as usize;
-        }
-
-        0
     }
 
     pub unsafe fn read_reg(&self, register: u32) -> u32 {

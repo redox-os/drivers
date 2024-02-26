@@ -373,11 +373,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "driver-network"
+version = "0.1.0"
+dependencies = [
+ "redox_event 0.1.0",
+ "redox_syscall 0.4.1",
+]
+
+[[package]]
 name = "e1000d"
 version = "0.1.0"
 dependencies = [
  "bitflags 1.3.2",
  "common",
+ "driver-network",
  "netutils",
  "pcid",
  "redox-daemon",
@@ -664,6 +673,7 @@ version = "1.0.0"
 dependencies = [
  "bitflags 1.3.2",
  "common",
+ "driver-network",
  "netutils",
  "pcid",
  "redox-daemon",
@@ -1218,6 +1228,7 @@ version = "0.1.0"
 dependencies = [
  "bitflags 1.3.2",
  "common",
+ "driver-network",
  "log",
  "netutils",
  "pcid",
@@ -1233,6 +1244,7 @@ version = "0.1.0"
 dependencies = [
  "bitflags 1.3.2",
  "common",
+ "driver-network",
  "log",
  "netutils",
  "pcid",

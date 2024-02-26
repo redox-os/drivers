@@ -1,26 +1,25 @@
 #![feature(int_roundings)]
 
-extern crate event;
-extern crate netutils;
-extern crate syscall;
-
 use std::cell::RefCell;
-use std::convert::TryInto;
-use std::{env, process};
+use std::convert::{Infallible, TryInto};
 use std::fs::File;
-use std::io::{ErrorKind, Read, Result, Write};
-use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
+use std::io::{Read, Result, Write};
+use std::os::unix::io::AsRawFd;
 use std::ptr::NonNull;
-use std::sync::Arc;
+use std::rc::Rc;
 
+use driver_network::NetworkScheme;
 use event::EventQueue;
-use pcid_interface::{MsiSetFeatureInfo, PcidServerHandle, PciFeature, PciFeatureInfo, SetFeatureInfo, SubdriverArguments};
 #[cfg(target_arch = "x86_64")]
 use pcid_interface::irq_helpers::allocate_single_interrupt_vector_for_msi;
 use pcid_interface::irq_helpers::read_bsp_apic_id;
 use pcid_interface::msi::{MsixCapability, MsixTableEntry};
-use redox_log::{RedoxLogger, OutputBuilder};
-use syscall::{EventFlags, Packet, SchemeBlockMut};
+use pcid_interface::{
+    MsiSetFeatureInfo, PciFeature, PciFeatureInfo, PcidServerHandle, SetFeatureInfo,
+    SubdriverArguments,
+};
+use redox_log::{OutputBuilder, RedoxLogger};
+use syscall::EventFlags;
 
 pub mod device;
 
@@ -196,49 +195,6 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle) -> File {
     }
 }
 
-fn handle_update(
-    socket: &mut File,
-    device: &mut device::Rtl8139,
-    todo: &mut Vec<Packet>,
-) -> Result<bool> {
-    // Handle any blocked packets
-    let mut i = 0;
-    while i < todo.len() {
-        if let Some(a) = device.handle(&todo[i]) {
-            let mut packet = todo.remove(i);
-            packet.a = a;
-            socket.write(&packet)?;
-        } else {
-            i += 1;
-        }
-    }
-
-    // Check that the socket is empty
-    loop {
-        let mut packet = Packet::default();
-        match socket.read(&mut packet) {
-            Ok(0) => return Ok(true),
-            Ok(_) => (),
-            Err(err) => {
-                if err.kind() == ErrorKind::WouldBlock {
-                    break;
-                } else {
-                    return Err(err);
-                }
-            }
-        }
-
-        if let Some(a) = device.handle(&packet) {
-            packet.a = a;
-            socket.write(&packet)?;
-        } else {
-            todo.push(packet);
-        }
-    }
-
-    Ok(false)
-}
-
 fn find_bar(pci_config: &SubdriverArguments) -> Option<(usize, usize)> {
     // RTL8139 uses BAR2, RTL8169 uses BAR1, search in that order
     for &barnum in &[2, 1] {
@@ -275,119 +231,62 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
             .expect("rtl8139d: failed to map address") as usize
     };
 
-    let socket_fd = syscall::open(
-        ":network",
-        syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK,
-    )
-    .expect("rtl8139d: failed to create network scheme");
-    let socket = Arc::new(RefCell::new(unsafe {
-        File::from_raw_fd(socket_fd as RawFd)
-    }));
-
     //TODO: MSI-X
     let mut irq_file = get_int_method(&mut pcid_handle);
 
-    {
-        let device = Arc::new(RefCell::new(unsafe {
-            device::Rtl8139::new(address).expect("rtl8139d: failed to allocate device")
-        }));
+    let device =
+        unsafe { device::Rtl8139::new(address).expect("rtl8139d: failed to allocate device") };
 
-        let mut event_queue =
-            EventQueue::<usize>::new().expect("rtl8139d: failed to create event queue");
+    let scheme = Rc::new(RefCell::new(NetworkScheme::new(device, "network")));
 
-        syscall::setrens(0, 0).expect("rtl8139d: failed to enter null namespace");
+    let mut event_queue =
+        EventQueue::<Infallible>::new().expect("rtl8139d: failed to create event queue");
 
-        daemon.ready().expect("rtl8139d: failed to mark daemon as ready");
+    syscall::setrens(0, 0).expect("rtl8139d: failed to enter null namespace");
 
-        let todo = Arc::new(RefCell::new(Vec::<Packet>::new()));
+    daemon
+        .ready()
+        .expect("rtl8139d: failed to mark daemon as ready");
 
-        let device_irq = device.clone();
-        let socket_irq = socket.clone();
-        let todo_irq = todo.clone();
-        event_queue
-            .add(
-                irq_file.as_raw_fd(),
-                move |_event| -> Result<Option<usize>> {
-                    let mut irq = [0; 8];
-                    irq_file.read(&mut irq)?;
-                    //TODO: This may be causing spurious interrupts
-                    if unsafe { device_irq.borrow_mut().irq() } {
-                        irq_file.write(&mut irq)?;
+    let scheme_irq = scheme.clone();
+    event_queue
+        .add(
+            irq_file.as_raw_fd(),
+            move |_event| -> Result<Option<Infallible>> {
+                let mut irq = [0; 8];
+                irq_file.read(&mut irq)?;
+                //TODO: This may be causing spurious interrupts
+                if unsafe { scheme_irq.borrow_mut().adapter_mut().irq() } {
+                    irq_file.write(&mut irq)?;
 
-                        if handle_update(
-                            &mut socket_irq.borrow_mut(),
-                            &mut device_irq.borrow_mut(),
-                            &mut todo_irq.borrow_mut(),
-                        )? {
-                            return Ok(Some(0));
-                        }
-
-                        let next_read = device_irq.borrow().next_read();
-                        if next_read > 0 {
-                            return Ok(Some(next_read));
-                        }
-                    }
-                    Ok(None)
-                },
-            )
-            .expect("rtl8139d: failed to catch events on IRQ file");
-
-        let device_packet = device.clone();
-        let socket_packet = socket.clone();
-        event_queue
-            .add(socket_fd as RawFd, move |_event| -> Result<Option<usize>> {
-                if handle_update(
-                    &mut socket_packet.borrow_mut(),
-                    &mut device_packet.borrow_mut(),
-                    &mut todo.borrow_mut(),
-                )? {
-                    return Ok(Some(0));
+                    return scheme_irq.borrow_mut().tick().map(|()| None);
                 }
-
-                let next_read = device_packet.borrow().next_read();
-                if next_read > 0 {
-                    return Ok(Some(next_read));
-                }
-
                 Ok(None)
-            })
-            .expect("rtl8139d: failed to catch events on scheme file");
+            },
+        )
+        .expect("rtl8139d: failed to catch events on IRQ file");
 
-        let send_events = |event_count| {
-            for (handle_id, _handle) in device.borrow().handles.iter() {
-                socket
-                    .borrow_mut()
-                    .write(&Packet {
-                        id: 0,
-                        pid: 0,
-                        uid: 0,
-                        gid: 0,
-                        a: syscall::number::SYS_FEVENT,
-                        b: *handle_id,
-                        c: syscall::flag::EVENT_READ.bits(),
-                        d: event_count,
-                    })
-                    .expect("rtl8139d: failed to write event");
-            }
-        };
+    let scheme_packet = scheme.clone();
+    event_queue
+        .add(
+            scheme.borrow().event_handle(),
+            move |_event| -> Result<Option<Infallible>> {
+                scheme_packet.borrow_mut().tick().map(|()| None)
+            },
+        )
+        .expect("rtl8139d: failed to catch events on scheme file");
 
-        for event_count in event_queue
-            .trigger_all(event::Event { fd: 0, flags: EventFlags::empty() })
-            .expect("rtl8139d: failed to trigger events")
-        {
-            send_events(event_count);
-        }
+    event_queue
+        .trigger_all(event::Event {
+            fd: 0,
+            flags: EventFlags::empty(),
+        })
+        .expect("rtl8139d: failed to trigger events");
 
-        loop {
-            let event_count = event_queue.run().expect("rtl8139d: failed to handle events");
-            if event_count == 0 {
-                //TODO: Handle todo
-                break;
-            }
-            send_events(event_count);
-        }
-    }
-    process::exit(0);
+    #[allow(unreachable_code)]
+    match event_queue
+        .run()
+        .expect("rtl8139d: failed to handle events") {}
 }
 
 fn main() {
