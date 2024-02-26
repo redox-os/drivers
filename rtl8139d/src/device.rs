@@ -124,12 +124,12 @@ pub struct Rtl8139 {
     receive_i: usize,
     transmit_buffer: [Dma<[Mmio<u8>; 1792]>; 4],
     transmit_i: usize,
+    mac_address: [u8; 6],
 }
 
 impl NetworkAdapter for Rtl8139 {
     fn mac_address(&mut self) -> [u8; 6] {
-        // FIXME read from the network adapter itself
-        [0xfe; 6] // FE-FE-FE-FE-FE-FE
+        self.mac_address
     }
 
     fn available_for_read(&mut self) -> usize {
@@ -221,6 +221,7 @@ impl Rtl8139 {
                 .try_into()
                 .unwrap_or_else(|_| unreachable!()),
             transmit_i: 0,
+            mac_address: [0; 6],
         };
 
         module.init();
@@ -272,6 +273,7 @@ impl Rtl8139 {
                     (mac_high >> 8) as u8];
         println!("   - MAC: {:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
         let _ = setcfg("mac", &format!("{:>02X}-{:>02X}-{:>02X}-{:>02X}-{:>02X}-{:>02X}\n", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]));
+        self.mac_address = mac;
 
         // Reset - this will disable tx and rx, reinitialize FIFOs, and set the system buffer pointer to the initial value
         println!("  - Reset");

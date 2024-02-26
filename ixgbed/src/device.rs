@@ -21,6 +21,7 @@ pub struct Intel8259x {
     transmit_ring_free: usize,
     transmit_index: usize,
     transmit_clean_index: usize,
+    mac_address: [u8; 6],
 }
 
 fn wrap_ring(index: usize, ring_size: usize) -> usize {
@@ -29,8 +30,7 @@ fn wrap_ring(index: usize, ring_size: usize) -> usize {
 
 impl NetworkAdapter for Intel8259x {
     fn mac_address(&mut self) -> [u8; 6] {
-        // FIXME read from the network adapter itself
-        [0xfe; 6] // FE-FE-FE-FE-FE-FE
+        self.mac_address
     }
 
     fn available_for_read(&mut self) -> usize {
@@ -145,6 +145,7 @@ impl Intel8259x {
             transmit_ring_free: 32,
             transmit_index: 0,
             transmit_clean_index: 0,
+            mac_address: [0; 6],
         };
 
         module.init();
@@ -192,7 +193,7 @@ impl Intel8259x {
 
     /// Sets the mac address of this device.
     #[allow(dead_code)]
-    pub fn set_mac_addr(&self, mac: [u8; 6]) {
+    pub fn set_mac_addr(&mut self, mac: [u8; 6]) {
         let low: u32 = u32::from(mac[0])
             + (u32::from(mac[1]) << 8)
             + (u32::from(mac[2]) << 16)
@@ -201,6 +202,8 @@ impl Intel8259x {
 
         self.write_reg(IXGBE_RAL(0), low);
         self.write_reg(IXGBE_RAH(0), high);
+
+        self.mac_address = mac;
     }
 
     /// Returns the register at `self.base` + `register`.
@@ -289,6 +292,7 @@ impl Intel8259x {
                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
             ),
         );
+        self.mac_address = mac;
 
         // section 4.6.3 - wait for EEPROM auto read completion
         self.wait_write_reg(IXGBE_EEC, IXGBE_EEC_ARD);

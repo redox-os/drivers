@@ -78,12 +78,12 @@ pub struct Rtl8168 {
     transmit_i: usize,
     transmit_buffer_h: [Dma<[Mmio<u8>; 7552]>; 1],
     transmit_ring_h: Dma<[Td; 1]>,
+    mac_address: [u8; 6],
 }
 
 impl NetworkAdapter for Rtl8168 {
     fn mac_address(&mut self) -> [u8; 6] {
-        // FIXME read from the network adapter itself
-        [0xfe; 6] // FE-FE-FE-FE-FE-FE
+        self.mac_address
     }
 
     fn available_for_read(&mut self) -> usize {
@@ -192,6 +192,7 @@ impl Rtl8168 {
             transmit_i: 0,
             transmit_buffer_h: [Dma::zeroed()?.assume_init()],
             transmit_ring_h: Dma::zeroed()?.assume_init(),
+            mac_address: [0; 6],
         };
 
         module.init();
@@ -232,6 +233,7 @@ impl Rtl8168 {
                     (mac_high >> 8) as u8];
         println!("   - MAC: {:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
         let _ = setcfg("mac", &format!("{:>02X}-{:>02X}-{:>02X}-{:>02X}-{:>02X}-{:>02X}\n", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]));
+        self.mac_address = mac;
 
         // Reset - this will disable tx and rx, reinitialize FIFOs, and set the system buffer pointer to the initial value
         println!("  - Reset");
