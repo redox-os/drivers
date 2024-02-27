@@ -30,6 +30,7 @@ pub trait NetworkAdapter {
 
 pub struct NetworkScheme<T: NetworkAdapter> {
     adapter: T,
+    _scheme_name: String,
     scheme: File,
     next_id: usize,
     handles: BTreeMap<usize, Handle>,
@@ -44,6 +45,8 @@ enum Handle {
 
 impl<T: NetworkAdapter> NetworkScheme<T> {
     pub fn new(adapter: T, scheme_name: &str) -> Self {
+        assert_eq!(scheme_name, "network"); // FIXME update fpath before removing this assertion
+
         let scheme_fd = syscall::open(
             format!(":{scheme_name}"),
             syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK,
@@ -53,6 +56,7 @@ impl<T: NetworkAdapter> NetworkScheme<T> {
 
         NetworkScheme {
             adapter,
+            _scheme_name: scheme_name.to_owned(),
             scheme,
             next_id: 0,
             handles: BTreeMap::new(),
@@ -215,6 +219,7 @@ impl<T: NetworkAdapter> SchemeBlockMut for NetworkScheme<T> {
         let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
         let scheme_path = match handle {
+            // FIXME use self.scheme_name instead of hardcoding "network"
             Handle::Data { .. } => &b"network:"[..],
             Handle::Mac { .. } => &b"network:mac"[..],
         };

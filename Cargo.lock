@@ -1796,6 +1796,7 @@ name = "virtio-netd"
 version = "0.1.0"
 dependencies = [
  "common",
+ "driver-network",
  "futures",
  "log",
  "netutils",

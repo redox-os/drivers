@@ -2,15 +2,12 @@ mod scheme;
 
 use std::fs::File;
 use std::io::{Read, Write};
-use std::os::fd::{FromRawFd, RawFd};
+use std::mem;
 
+use driver_network::NetworkScheme;
 use pcid_interface::PcidServerHandle;
 
-use syscall::{Packet, SchemeBlockMut};
-
-use virtio_core::transport::{Error, Transport};
-
-use scheme::NetworkScheme;
+use scheme::VirtioNet;
 
 pub const VIRTIO_NET_F_MAC: u32 = 5;
 
@@ -30,7 +27,7 @@ static_assertions::const_assert_eq!(core::mem::size_of::<VirtHeader>(), 12);
 
 const MAX_BUFFER_LEN: usize = 65535;
 
-fn deamon(deamon: redox_daemon::Daemon) -> Result<(), Error> {
+fn deamon(daemon: redox_daemon::Daemon) -> Result<(), Box<dyn std::error::Error>> {
     let mut pcid_handle = PcidServerHandle::connect_default()?;
 
     // Double check that we have the right device.
@@ -45,20 +42,30 @@ fn deamon(deamon: redox_daemon::Daemon) -> Result<(), Error> {
     let device_space = device.device_space;
 
     // Negotiate device features:
-    let mac_addr = if device.transport.check_device_feature(VIRTIO_NET_F_MAC) {
-        let mac = (0..6)
-            .map(|i| unsafe { core::ptr::read_volatile(device_space.add(i)) })
-            .collect::<Vec<u8>>();
+    let mac_address = if device.transport.check_device_feature(VIRTIO_NET_F_MAC) {
+        let mac = unsafe {
+            [
+                core::ptr::read_volatile(device_space.add(0)),
+                core::ptr::read_volatile(device_space.add(1)),
+                core::ptr::read_volatile(device_space.add(2)),
+                core::ptr::read_volatile(device_space.add(3)),
+                core::ptr::read_volatile(device_space.add(4)),
+                core::ptr::read_volatile(device_space.add(5)),
+            ]
+        };
 
-        let mac_str = format!(
-            "{:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}",
-            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
+        log::info!(
+            "virtio-net: device MAC is {:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}",
+            mac[0],
+            mac[1],
+            mac[2],
+            mac[3],
+            mac[4],
+            mac[5]
         );
 
-        log::info!("virtio-net: device MAC is {mac_str}");
-
         device.transport.ack_driver_feature(VIRTIO_NET_F_MAC);
-        mac_str
+        mac
     } else {
         unimplemented!()
     };
@@ -85,35 +92,38 @@ fn deamon(deamon: redox_daemon::Daemon) -> Result<(), Error> {
     let mut name = pci_config.func.name();
     name.push_str("_virtio_net");
 
-    // Create the network scheme.
-    //
-    // FIXME(andypython): It should be fine to have multiple network devices.
-    let socket_fd = syscall::open(
-        &format!(":network"),
-        syscall::O_RDWR | syscall::O_CREAT | syscall::O_CLOEXEC,
-    )
-    .map_err(Error::SyscallError)?;
+    let device = VirtioNet::new(mac_address, rx_queue, tx_queue);
+    let mut scheme = NetworkScheme::new(device, "network");
 
-    let mut socket_fd = unsafe { File::from_raw_fd(socket_fd as RawFd) };
-    let mut scheme = NetworkScheme::new(rx_queue, tx_queue);
+    let _ = netutils::setcfg(
+        "mac",
+        &format!(
+            "{:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}",
+            mac_address[0],
+            mac_address[1],
+            mac_address[2],
+            mac_address[3],
+            mac_address[4],
+            mac_address[5]
+        ),
+    );
 
-    let _ = netutils::setcfg("mac", &mac_addr);
+    let mut event_queue = File::open("event:")?;
+    event_queue.write(&syscall::Event {
+        id: scheme.event_handle() as usize,
+        flags: syscall::EVENT_READ,
+        data: 0,
+    })?;
 
-    deamon.ready().expect("virtio-netd: failed to deamonize");
+    syscall::setrens(0, 0).expect("virtio-netd: failed to enter null namespace");
+
+    daemon.ready().expect("virtio-netd: failed to daemonize");
+
+    scheme.tick()?;
 
     loop {
-        let mut packet = Packet::default();
-        socket_fd
-            .read(&mut packet)
-            .expect("virtio-netd: failed to read packet");
-
-        let result = scheme.handle(&mut packet);
-        // `packet.a` contains the return value.
-        packet.a = result.expect("virtio-netd: failed to handle packet");
-
-        socket_fd
-            .write(&packet)
-            .expect("virtio-netd: failed to write packet");
+        event_queue.read(&mut [0; mem::size_of::<syscall::Event>()])?; // Wait for event
+        scheme.tick()?;
     }
 }
 
