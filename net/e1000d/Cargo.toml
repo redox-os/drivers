@@ -1,12 +1,14 @@
 [package]
-name = "alxd"
+name = "e1000d"
 version = "0.1.0"
 edition = "2018"
 
 [dependencies]
 bitflags = "1"
+redox-daemon = "0.1"
 redox_event = { git = "https://gitlab.redox-os.org/redox-os/event.git" }
 redox_syscall = "0.4"
-redox-daemon = "0.1"
 
-common = { path = "../common" }
+common = { path = "../../common" }
+driver-network = { path = "../driver-network" }
+pcid = { path = "../../pcid" }
