@@ -95,19 +95,6 @@ fn deamon(daemon: redox_daemon::Daemon) -> Result<(), Box<dyn std::error::Error>
     let device = VirtioNet::new(mac_address, rx_queue, tx_queue);
     let mut scheme = NetworkScheme::new(device, "network");
 
-    let _ = netutils::setcfg(
-        "mac",
-        &format!(
-            "{:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}",
-            mac_address[0],
-            mac_address[1],
-            mac_address[2],
-            mac_address[3],
-            mac_address[4],
-            mac_address[5]
-        ),
-    );
-
     let mut event_queue = File::open("event:")?;
     event_queue.write(&syscall::Event {
         id: scheme.event_handle() as usize,

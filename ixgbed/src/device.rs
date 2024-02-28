@@ -6,7 +6,6 @@ use driver_network::NetworkAdapter;
 use syscall::error::Result;
 
 use common::dma::Dma;
-use netutils::setcfg;
 
 use crate::ixgbe::*;
 
@@ -285,13 +284,6 @@ impl Intel8259x {
             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
         );
 
-        let _ = setcfg(
-            "mac",
-            &format!(
-                "{:>02X}-{:>02X}-{:>02X}-{:>02X}-{:>02X}-{:>02X}\n",
-                mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
-            ),
-        );
         self.mac_address = mac;
 
         // section 4.6.3 - wait for EEPROM auto read completion
