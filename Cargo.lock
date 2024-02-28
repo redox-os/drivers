@@ -43,7 +43,7 @@ version = "0.1.0"
 dependencies = [
  "bitflags 1.3.2",
  "block-io-wrapper",
- "byteorder 1.4.3",
+ "byteorder",
  "common",
  "log",
  "partitionlib",
@@ -59,7 +59,6 @@ version = "0.1.0"
 dependencies = [
  "bitflags 1.3.2",
  "common",
- "netutils",
  "redox-daemon",
  "redox_event 0.1.0",
  "redox_syscall 0.4.1",
@@ -72,7 +71,7 @@ source = "git+https://github.com/rw-vanc/acpi.git?branch=cumulative#e4eb93891367
 dependencies = [
  "bit_field",
  "bitvec",
- "byteorder 1.4.3",
+ "byteorder",
  "log",
  "spinning_top",
 ]
@@ -116,11 +115,6 @@ name = "anyhow"
 version = "1.0.75"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a4668cab20f66d8d020e1fbc0ebe47217433c1b6c8f2040faf858554e394ace6"
-
-[[package]]
-name = "arg_parser"
-version = "0.1.0"
-source = "git+https://gitlab.redox-os.org/redox-os/arg-parser.git#1c434b55f3e1a0375ebcca85b3e88db7378e82fa"
 
 [[package]]
 name = "arrayvec"
@@ -221,12 +215,6 @@ name = "bumpalo"
 version = "3.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a3e2c3daef883ecc1b5d58c15adae93470a91d425f3532ba1695849656af3fc1"
-
-[[package]]
-name = "byteorder"
-version = "0.5.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fc10e8cc6b2580fda3f36eb6dc5316657f812a3df879a44a66fc9f0fdbc4855"
 
 [[package]]
 name = "byteorder"
@@ -333,16 +321,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "crossbeam-channel"
-version = "0.5.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a33c2bf77f2df06183c3aa30d1e96c0695a313d4f9c453cc3762a6db39f99200"
-dependencies = [
- "cfg-if 1.0.0",
- "crossbeam-utils 0.8.16",
-]
-
-[[package]]
 name = "crossbeam-queue"
 version = "0.3.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -387,7 +365,6 @@ dependencies = [
  "bitflags 1.3.2",
  "common",
  "driver-network",
- "netutils",
  "pcid",
  "redox-daemon",
  "redox_event 0.1.0",
@@ -527,7 +504,7 @@ checksum = "be4136b2a15dd319360be1c07d9933517ccf0be8f16bf62a3bee4f0d618df427"
 dependencies = [
  "cfg-if 1.0.0",
  "libc",
- "wasi 0.11.0+wasi-snapshot-preview1",
+ "wasi",
 ]
 
 [[package]]
@@ -604,17 +581,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "idna"
-version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "38f09e0f0b1fb55fdee1f17470ad800da77af5186a1a76c026b679358b7e844e"
-dependencies = [
- "matches",
- "unicode-bidi",
- "unicode-normalization",
-]
-
-[[package]]
 name = "ihdad"
 version = "0.1.0"
 dependencies = [
@@ -674,7 +640,6 @@ dependencies = [
  "bitflags 1.3.2",
  "common",
  "driver-network",
- "netutils",
  "pcid",
  "redox-daemon",
  "redox_event 0.1.0",
@@ -750,12 +715,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b5e6163cb8c49088c2c36f57875e58ccd8c87c7427f7fbd50ea6710b2f3f2e8f"
 
 [[package]]
-name = "matches"
-version = "0.1.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2532096657941c2fea9c289d370a250971c689d4f143798ff67113ec042024a5"
-
-[[package]]
 name = "maybe-uninit"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -766,43 +725,6 @@ name = "memchr"
 version = "2.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f232d6ef707e1956a43342693d2a31e72989554d58299d7a88738cc95b0d35c"
-
-[[package]]
-name = "net2"
-version = "0.2.37"
-source = "git+https://gitlab.redox-os.org/redox-os/net2-rs.git?branch=master#db0604dcb0a355e6b2fa5bcaad8f175bd6aeb5aa"
-dependencies = [
- "cfg-if 0.1.10",
- "libc",
- "winapi",
-]
-
-[[package]]
-name = "netutils"
-version = "0.1.0"
-source = "git+https://gitlab.redox-os.org/redox-os/netutils.git#d1998d5aa2809b7f0c433f2df3125eecfbfa5c86"
-dependencies = [
- "arg_parser",
- "libc",
- "net2",
- "ntpclient",
- "pbr",
- "redox-daemon",
- "redox_event 0.1.0",
- "redox_syscall 0.3.5",
- "redox_termios",
- "termion",
- "url",
-]
-
-[[package]]
-name = "ntpclient"
-version = "0.0.1"
-source = "git+https://github.com/willem66745/ntpclient-rust#7e3bdf60eb940825789a8da5181025320e3050b0"
-dependencies = [
- "byteorder 0.5.3",
- "time",
-]
 
 [[package]]
 name = "num-derive"
@@ -838,7 +760,7 @@ dependencies = [
  "bitflags 1.3.2",
  "block-io-wrapper",
  "common",
- "crossbeam-channel 0.4.4",
+ "crossbeam-channel",
  "futures",
  "log",
  "partitionlib",
@@ -966,17 +888,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f0b59668fe80c5afe998f0c0bf93322bf2cd66cafeeb80581f291716f3467f2"
 
 [[package]]
-name = "pbr"
-version = "1.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed5827dfa0d69b6c92493d6c38e633bbaa5937c153d0d7c28bf12313f8c6d514"
-dependencies = [
- "crossbeam-channel 0.5.8",
- "libc",
- "winapi",
-]
-
-[[package]]
 name = "pci_types"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -993,7 +904,7 @@ dependencies = [
  "bincode",
  "bit_field",
  "bitflags 1.3.2",
- "byteorder 1.4.3",
+ "byteorder",
  "common",
  "libc",
  "log",
@@ -1016,12 +927,6 @@ dependencies = [
  "redox-daemon",
  "redox_syscall 0.4.1",
 ]
-
-[[package]]
-name = "percent-encoding"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "31010dd2e1ac33d5b46a5b413495239882813e0369f8ed8a5e266f173602f831"
 
 [[package]]
 name = "pin-project-lite"
@@ -1230,7 +1135,6 @@ dependencies = [
  "common",
  "driver-network",
  "log",
- "netutils",
  "pcid",
  "redox-daemon",
  "redox-log",
@@ -1246,7 +1150,6 @@ dependencies = [
  "common",
  "driver-network",
  "log",
- "netutils",
  "pcid",
  "redox-daemon",
  "redox-log",
@@ -1527,32 +1430,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "time"
-version = "0.1.45"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b797afad3f312d1c66a56d11d0316f916356d11bd158fbc6ca6389ff6bf805a"
-dependencies = [
- "libc",
- "wasi 0.10.0+wasi-snapshot-preview1",
- "winapi",
-]
-
-[[package]]
-name = "tinyvec"
-version = "1.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "87cc5ceb3875bb20c2890005a4e226a4651264a5c75edb2421b52861a0a0cb50"
-dependencies = [
- "tinyvec_macros",
-]
-
-[[package]]
-name = "tinyvec_macros"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
-
-[[package]]
 name = "toml"
 version = "0.5.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1596,25 +1473,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "unicode-bidi"
-version = "0.3.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92888ba5573ff080736b3648696b70cafad7d250551175acbaa4e0385b3e1460"
-
-[[package]]
 name = "unicode-ident"
 version = "1.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "301abaae475aa91687eb82514b328ab47a211a533026cb25fc3e519b86adfc3c"
-
-[[package]]
-name = "unicode-normalization"
-version = "0.1.22"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c5713f0fc4b5db668a2ac63cdb7bb4469d8c9fed047b1d0292cc7b0ce2ba921"
-dependencies = [
- "tinyvec",
-]
 
 [[package]]
 name = "unicode-segmentation"
@@ -1627,17 +1489,6 @@ name = "unicode-width"
 version = "0.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c0edd1e5b14653f783770bce4a4dabb4a5108a5370a5f5d8cfe8710c361f6c8b"
-
-[[package]]
-name = "url"
-version = "1.7.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd4e7c0d531266369519a4aa4f399d748bd37043b00bde1e4ff1f60a120b355a"
-dependencies = [
- "idna",
- "matches",
- "percent-encoding",
-]
 
 [[package]]
 name = "usbctl"
@@ -1799,7 +1650,6 @@ dependencies = [
  "driver-network",
  "futures",
  "log",
- "netutils",
  "pcid",
  "redox-daemon",
  "redox_syscall 0.4.1",
@@ -1815,12 +1665,6 @@ checksum = "4f42f536e22f7fcbb407639765c8fd78707a33109301f834a594758bedd6e8cf"
 dependencies = [
  "utf8parse",
 ]
-
-[[package]]
-name = "wasi"
-version = "0.10.0+wasi-snapshot-preview1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a143597ca7c7793eff794def352d41792a93c481eb1042423ff7ff72ba2c31f"
 
 [[package]]
 name = "wasi"
@@ -1995,7 +1839,7 @@ dependencies = [
  "bitflags 1.3.2",
  "chashmap",
  "common",
- "crossbeam-channel 0.4.4",
+ "crossbeam-channel",
  "futures",
  "lazy_static",
  "log",

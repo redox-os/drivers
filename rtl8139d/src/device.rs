@@ -6,7 +6,6 @@ use syscall::error::{Error, EIO, EMSGSIZE, Result};
 use syscall::io::{Mmio, Io, ReadOnly};
 
 use common::dma::Dma;
-use netutils::setcfg;
 
 const RX_BUFFER_SIZE: usize = 64 * 1024;
 
@@ -272,7 +271,6 @@ impl Rtl8139 {
                     mac_high as u8,
                     (mac_high >> 8) as u8];
         println!("   - MAC: {:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-        let _ = setcfg("mac", &format!("{:>02X}-{:>02X}-{:>02X}-{:>02X}-{:>02X}-{:>02X}\n", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]));
         self.mac_address = mac;
 
         // Reset - this will disable tx and rx, reinitialize FIFOs, and set the system buffer pointer to the initial value

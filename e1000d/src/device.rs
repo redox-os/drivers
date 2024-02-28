@@ -2,7 +2,6 @@ use std::convert::TryInto;
 use std::{cmp, mem, ptr, slice};
 
 use driver_network::NetworkAdapter;
-use netutils::setcfg;
 
 use syscall::error::Result;
 
@@ -296,13 +295,6 @@ impl Intel8254x {
             )
         );
         self.mac_address = mac;
-        let _ = setcfg(
-            "mac",
-            &format!(
-                "{:>02X}-{:>02X}-{:>02X}-{:>02X}-{:>02X}-{:>02X}\n",
-                mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
-            ),
-        );
 
         //
         // MTA => 0;
