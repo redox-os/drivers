@@ -232,7 +232,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let device =
         unsafe { device::Rtl8168::new(address).expect("rtl8168d: failed to allocate device") };
 
-    let scheme = Rc::new(RefCell::new(NetworkScheme::new(device, "network")));
+    let scheme = Rc::new(RefCell::new(NetworkScheme::new(device, format!("network.{name}"))));
 
     let mut event_queue =
         EventQueue::<Infallible>::new().expect("rtl8168d: failed to create event queue");
