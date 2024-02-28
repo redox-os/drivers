@@ -50,7 +50,7 @@ fn main() {
         let device = device::Intel8259x::new(address, IXGBE_MMIO_SIZE)
             .expect("ixgbed: failed to allocate device");
 
-        let scheme = Rc::new(RefCell::new(NetworkScheme::new(device, "network")));
+        let scheme = Rc::new(RefCell::new(NetworkScheme::new(device, format!("network.{name}"))));
 
         let mut event_queue =
             EventQueue::<Infallible>::new().expect("ixgbed: failed to create event queue");

@@ -30,7 +30,7 @@ pub trait NetworkAdapter {
 
 pub struct NetworkScheme<T: NetworkAdapter> {
     adapter: T,
-    _scheme_name: String,
+    scheme_name: String,
     scheme: File,
     next_id: usize,
     handles: BTreeMap<usize, Handle>,
@@ -44,9 +44,8 @@ enum Handle {
 }
 
 impl<T: NetworkAdapter> NetworkScheme<T> {
-    pub fn new(adapter: T, scheme_name: &str) -> Self {
-        assert_eq!(scheme_name, "network"); // FIXME update fpath before removing this assertion
-
+    pub fn new(adapter: T, scheme_name: String) -> Self {
+        assert!(scheme_name.starts_with("network"));
         let scheme_fd = syscall::open(
             format!(":{scheme_name}"),
             syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK,
@@ -56,7 +55,7 @@ impl<T: NetworkAdapter> NetworkScheme<T> {
 
         NetworkScheme {
             adapter,
-            _scheme_name: scheme_name.to_owned(),
+            scheme_name,
             scheme,
             next_id: 0,
             handles: BTreeMap::new(),
@@ -218,17 +217,33 @@ impl<T: NetworkAdapter> SchemeBlockMut for NetworkScheme<T> {
     fn fpath(&mut self, id: usize, buf: &mut [u8]) -> Result<Option<usize>> {
         let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
-        let scheme_path = match handle {
-            // FIXME use self.scheme_name instead of hardcoding "network"
-            Handle::Data { .. } => &b"network:"[..],
-            Handle::Mac { .. } => &b"network:mac"[..],
-        };
-
         let mut i = 0;
-        while i < buf.len() && i < scheme_path.len() {
-            buf[i] = scheme_path[i];
+
+        let scheme_name = self.scheme_name.as_bytes();
+        let mut j = 0;
+        while i < buf.len() && j < scheme_name.len() {
+            buf[i] = scheme_name[j];
+            i += 1;
+            j += 1;
+        }
+
+        if i < buf.len() {
+            buf[i] = b':';
             i += 1;
         }
+
+        let path = match handle {
+            Handle::Data { .. } => &b""[..],
+            Handle::Mac { .. } => &b"mac"[..],
+        };
+
+        j = 0;
+        while i < buf.len() && j < path.len() {
+            buf[i] = path[j];
+            i += 1;
+            j += 1;
+        }
+
         Ok(Some(i))
     }
 

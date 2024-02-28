@@ -38,7 +38,7 @@ fn main() {
         let device =
             unsafe { device::Intel8254x::new(address).expect("e1000d: failed to allocate device") };
 
-        let scheme = Rc::new(RefCell::new(NetworkScheme::new(device, "network")));
+        let scheme = Rc::new(RefCell::new(NetworkScheme::new(device, format!("network.{name}"))));
 
         let mut event_queue =
             EventQueue::<Infallible>::new().expect("e1000d: failed to create event queue");
