@@ -1,9 +1,6 @@
-use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use syscall::Error as SysError;
-use syscall::*;
+use driver_network::NetworkAdapter;
 
 use common::dma::Dma;
 
@@ -12,26 +9,29 @@ use virtio_core::transport::Queue;
 
 use crate::{VirtHeader, MAX_BUFFER_LEN};
 
-pub struct NetworkScheme<'a> {
+pub struct VirtioNet<'a> {
+    mac_address: [u8; 6],
+
     /// Reciever Queue.
     rx: Arc<Queue<'a>>,
     rx_buffers: Vec<Dma<[u8]>>,
 
     /// Transmiter Queue.
     tx: Arc<Queue<'a>>,
-    /// File descriptor handles.
-    handles: BTreeMap<usize, usize>,
-    next_id: AtomicUsize,
 
     recv_head: u16,
 }
 
-impl<'a> NetworkScheme<'a> {
-    pub fn new(rx: Arc<Queue<'a>>, tx: Arc<Queue<'a>>) -> Self {
+impl<'a> VirtioNet<'a> {
+    pub fn new(mac_address: [u8; 6], rx: Arc<Queue<'a>>, tx: Arc<Queue<'a>>) -> Self {
         // Populate all of the `rx_queue` with buffers to maximize performence.
         let mut rx_buffers = vec![];
         for i in 0..(rx.descriptor_len() as usize) {
-            rx_buffers.push(unsafe { Dma::<[u8]>::zeroed_slice(MAX_BUFFER_LEN).unwrap().assume_init() });
+            rx_buffers.push(unsafe {
+                Dma::<[u8]>::zeroed_slice(MAX_BUFFER_LEN)
+                    .unwrap()
+                    .assume_init()
+            });
 
             let chain = ChainBuilder::new()
                 .chain(Buffer::new_unsized(&rx_buffers[i]).flags(DescriptorFlags::WRITE_ONLY))
@@ -41,12 +41,11 @@ impl<'a> NetworkScheme<'a> {
         }
 
         Self {
+            mac_address,
+
             rx,
             rx_buffers,
             tx,
-
-            handles: BTreeMap::new(),
-            next_id: AtomicUsize::new(0),
 
             recv_head: 0,
         }
@@ -82,45 +81,27 @@ impl<'a> NetworkScheme<'a> {
     }
 }
 
-impl<'a> SchemeBlockMut for NetworkScheme<'a> {
-    fn open(
-        &mut self,
-        _path: &str,
-        flags: usize,
-        uid: u32,
-        _gid: u32,
-    ) -> syscall::Result<Option<usize>> {
-        if uid != 0 {
-            return Err(SysError::new(EACCES));
-        }
-
-        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-        self.handles.insert(id, flags);
-
-        Ok(Some(id))
+impl<'a> NetworkAdapter for VirtioNet<'a> {
+    fn mac_address(&mut self) -> [u8; 6] {
+        self.mac_address
     }
 
-    fn read(&mut self, id: usize, buf: &mut [u8]) -> syscall::Result<Option<usize>> {
-        let flags = *self.handles.get(&id).ok_or(SysError::new(EBADF))?;
+    fn available_for_read(&mut self) -> usize {
+        (self.rx.used.head_index() - self.recv_head).into()
+    }
+
+    fn read_packet(&mut self, buf: &mut [u8]) -> syscall::Result<Option<usize>> {
         let bytes = self.try_recv(buf);
 
         if bytes != 0 {
             // We read some bytes.
             Ok(Some(bytes))
-        } else if flags & O_NONBLOCK == O_NONBLOCK {
-            // We are in non-blocking mode.
-            Err(SysError::new(EWOULDBLOCK))
         } else {
-            // Block
-            unimplemented!()
+            Ok(None)
         }
     }
 
-    fn write(&mut self, id: usize, buffer: &[u8]) -> syscall::Result<Option<usize>> {
-        if self.handles.get(&id).is_none() {
-            return Err(SysError::new(EBADF));
-        }
-
+    fn write_packet(&mut self, buffer: &[u8]) -> syscall::Result<usize> {
         let header = unsafe { Dma::<VirtHeader>::zeroed()?.assume_init() };
 
         let mut payload = unsafe { Dma::<[u8]>::zeroed_slice(buffer.len())?.assume_init() };
@@ -132,34 +113,6 @@ impl<'a> SchemeBlockMut for NetworkScheme<'a> {
             .build();
 
         futures::executor::block_on(self.tx.send(chain));
-        Ok(Some(buffer.len()))
-    }
-
-    fn dup(&mut self, _old_id: usize, _buf: &[u8]) -> syscall::Result<Option<usize>> {
-        unimplemented!()
-    }
-
-    fn fevent(
-        &mut self,
-        id: usize,
-        _flags: syscall::EventFlags,
-    ) -> syscall::Result<Option<syscall::EventFlags>> {
-        if self.handles.get(&id).is_none() {
-            return Err(SysError::new(EBADF));
-        }
-
-        Ok(Some(syscall::EventFlags::empty()))
-    }
-
-    fn fpath(&mut self, _id: usize, _buf: &mut [u8]) -> syscall::Result<Option<usize>> {
-        unimplemented!()
-    }
-
-    fn fsync(&mut self, _id: usize) -> syscall::Result<Option<usize>> {
-        unimplemented!()
-    }
-
-    fn close(&mut self, _id: usize) -> syscall::Result<Option<usize>> {
-        unimplemented!()
+        Ok(buffer.len())
     }
 }

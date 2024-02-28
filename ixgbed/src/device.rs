@@ -1,11 +1,9 @@
-use std::collections::BTreeMap;
 use std::convert::TryInto;
 use std::time::{Duration, Instant};
 use std::{cmp, mem, ptr, slice, thread};
 
-use syscall::error::{Error, Result, EACCES, EBADF, EINVAL, EWOULDBLOCK};
-use syscall::flag::{EventFlags, O_NONBLOCK};
-use syscall::scheme::SchemeBlockMut;
+use driver_network::NetworkAdapter;
+use syscall::error::Result;
 
 use common::dma::Dma;
 use netutils::setcfg;
@@ -23,42 +21,23 @@ pub struct Intel8259x {
     transmit_ring_free: usize,
     transmit_index: usize,
     transmit_clean_index: usize,
-    next_id: usize,
-    pub handles: BTreeMap<usize, usize>,
+    mac_address: [u8; 6],
 }
 
 fn wrap_ring(index: usize, ring_size: usize) -> usize {
     (index + 1) & (ring_size - 1)
 }
 
-impl SchemeBlockMut for Intel8259x {
-    fn open(&mut self, _path: &str, flags: usize, uid: u32, _gid: u32) -> Result<Option<usize>> {
-        if uid == 0 {
-            self.next_id += 1;
-            self.handles.insert(self.next_id, flags);
-            Ok(Some(self.next_id))
-        } else {
-            Err(Error::new(EACCES))
-        }
+impl NetworkAdapter for Intel8259x {
+    fn mac_address(&mut self) -> [u8; 6] {
+        self.mac_address
     }
 
-    fn dup(&mut self, id: usize, buf: &[u8]) -> Result<Option<usize>> {
-        if !buf.is_empty() {
-            return Err(Error::new(EINVAL));
-        }
-
-        let flags = {
-            let flags = self.handles.get(&id).ok_or_else(|| Error::new(EBADF))?;
-            *flags
-        };
-        self.next_id += 1;
-        self.handles.insert(self.next_id, flags);
-        Ok(Some(self.next_id))
+    fn available_for_read(&mut self) -> usize {
+        self.next_read()
     }
 
-    fn read(&mut self, id: usize, buf: &mut [u8]) -> Result<Option<usize>> {
-        let flags = self.handles.get(&id).ok_or_else(|| Error::new(EBADF))?;
-
+    fn read_packet(&mut self, buf: &mut [u8]) -> Result<Option<usize>> {
         let desc = unsafe {
             &mut *(self.receive_ring.as_ptr().add(self.receive_index) as *mut ixgbe_adv_rx_desc)
         };
@@ -86,16 +65,10 @@ impl SchemeBlockMut for Intel8259x {
             return Ok(Some(i));
         }
 
-        if flags & O_NONBLOCK == O_NONBLOCK {
-            Err(Error::new(EWOULDBLOCK))
-        } else {
-            Ok(None)
-        }
+        Ok(None)
     }
 
-    fn write(&mut self, id: usize, buf: &[u8]) -> Result<Option<usize>> {
-        let _flags = self.handles.get(&id).ok_or_else(|| Error::new(EBADF))?;
-
+    fn write_packet(&mut self, buf: &[u8]) -> Result<usize> {
         if self.transmit_ring_free == 0 {
             loop {
                 let desc = unsafe {
@@ -145,31 +118,7 @@ impl SchemeBlockMut for Intel8259x {
 
         self.write_reg(IXGBE_TDT(0), self.transmit_index as u32);
 
-        Ok(Some(i))
-    }
-
-    fn fevent(&mut self, id: usize, _flags: EventFlags) -> Result<Option<EventFlags>> {
-        let _flags = self.handles.get(&id).ok_or_else(|| Error::new(EBADF))?;
-        Ok(Some(EventFlags::empty()))
-    }
-
-    fn fpath(&mut self, id: usize, buf: &mut [u8]) -> Result<Option<usize>> {
-        let _flags = self.handles.get(&id).ok_or_else(|| Error::new(EBADF))?;
-
-        let scheme_path = b"network:";
-        let i = cmp::min(buf.len(), scheme_path.len());
-        buf[..i].copy_from_slice(&scheme_path[..i]);
-        Ok(Some(i))
-    }
-
-    fn fsync(&mut self, id: usize) -> Result<Option<usize>> {
-        let _flags = self.handles.get(&id).ok_or_else(|| Error::new(EBADF))?;
-        Ok(Some(0))
-    }
-
-    fn close(&mut self, id: usize) -> Result<Option<usize>> {
-        self.handles.remove(&id).ok_or_else(|| Error::new(EBADF))?;
-        Ok(Some(0))
+        Ok(i)
     }
 }
 
@@ -196,8 +145,7 @@ impl Intel8259x {
             transmit_ring_free: 32,
             transmit_index: 0,
             transmit_clean_index: 0,
-            next_id: 0,
-            handles: BTreeMap::new(),
+            mac_address: [0; 6],
         };
 
         module.init();
@@ -245,7 +193,7 @@ impl Intel8259x {
 
     /// Sets the mac address of this device.
     #[allow(dead_code)]
-    pub fn set_mac_addr(&self, mac: [u8; 6]) {
+    pub fn set_mac_addr(&mut self, mac: [u8; 6]) {
         let low: u32 = u32::from(mac[0])
             + (u32::from(mac[1]) << 8)
             + (u32::from(mac[2]) << 16)
@@ -254,6 +202,8 @@ impl Intel8259x {
 
         self.write_reg(IXGBE_RAL(0), low);
         self.write_reg(IXGBE_RAH(0), high);
+
+        self.mac_address = mac;
     }
 
     /// Returns the register at `self.base` + `register`.
@@ -342,6 +292,7 @@ impl Intel8259x {
                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
             ),
         );
+        self.mac_address = mac;
 
         // section 4.6.3 - wait for EEPROM auto read completion
         self.wait_write_reg(IXGBE_EEC, IXGBE_EEC_ARD);

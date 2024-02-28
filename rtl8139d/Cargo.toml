@@ -13,4 +13,5 @@ redox-daemon = "0.1"
 redox-log = "0.1"
 
 common = { path = "../common" }
+driver-network = { path = "../driver-network" }
 pcid = { path = "../pcid" }

@@ -1,14 +1,9 @@
-// Supports Realtek RTL8168, RTL8169, and other compatible devices
-// See https://people.freebsd.org/~wpaul/RealTek/rtl8169spec-121.pdf
-
 use std::mem;
 use std::convert::TryInto;
-use std::collections::BTreeMap;
 
-use syscall::error::{Error, EACCES, EBADF, EINVAL, EMSGSIZE, EWOULDBLOCK, Result};
-use syscall::flag::{EventFlags, O_NONBLOCK};
+use driver_network::NetworkAdapter;
+use syscall::error::{Error, Result, EMSGSIZE};
 use syscall::io::{Mmio, Io, ReadOnly};
-use syscall::scheme::SchemeBlockMut;
 
 use common::dma::Dma;
 use netutils::setcfg;
@@ -83,38 +78,20 @@ pub struct Rtl8168 {
     transmit_i: usize,
     transmit_buffer_h: [Dma<[Mmio<u8>; 7552]>; 1],
     transmit_ring_h: Dma<[Td; 1]>,
-    next_id: usize,
-    pub handles: BTreeMap<usize, usize>
+    mac_address: [u8; 6],
 }
 
-impl SchemeBlockMut for Rtl8168 {
-    fn open(&mut self, _path: &str, flags: usize, uid: u32, _gid: u32) -> Result<Option<usize>> {
-        if uid == 0 {
-            self.next_id += 1;
-            self.handles.insert(self.next_id, flags);
-            Ok(Some(self.next_id))
-        } else {
-            Err(Error::new(EACCES))
-        }
+impl NetworkAdapter for Rtl8168 {
+    fn mac_address(&mut self) -> [u8; 6] {
+        self.mac_address
     }
 
-    fn dup(&mut self, id: usize, buf: &[u8]) -> Result<Option<usize>> {
-        if ! buf.is_empty() {
-            return Err(Error::new(EINVAL));
-        }
-
-        let flags = {
-            let flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
-            *flags
-        };
-        self.next_id += 1;
-        self.handles.insert(self.next_id, flags);
-        Ok(Some(self.next_id))
+    fn available_for_read(&mut self) -> usize {
+        self.next_read()
     }
 
-    fn read(&mut self, id: usize, buf: &mut [u8]) -> Result<Option<usize>> {
-        let flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
+    fn read_packet(&mut self, buf: &mut [u8]) -> Result<Option<usize>> {
         if self.receive_i >= self.receive_ring.len() {
             self.receive_i = 0;
         }
@@ -137,16 +114,12 @@ impl SchemeBlockMut for Rtl8168 {
             self.receive_i += 1;
 
             Ok(Some(i))
-        } else if flags & O_NONBLOCK == O_NONBLOCK {
-            Err(Error::new(EWOULDBLOCK))
         } else {
             Ok(None)
         }
     }
 
-    fn write(&mut self, id: usize, buf: &[u8]) -> Result<Option<usize>> {
-        let _flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
-
+    fn write_packet(&mut self, buf: &[u8]) -> Result<usize> {
         loop {
             if self.transmit_i >= self.transmit_ring.len() {
                 self.transmit_i = 0;
@@ -177,38 +150,11 @@ impl SchemeBlockMut for Rtl8168 {
 
                 self.transmit_i += 1;
 
-                return Ok(Some(i));
+                return Ok(i);
             }
 
             std::hint::spin_loop();
         }
-    }
-
-    fn fevent(&mut self, id: usize, _flags: EventFlags) -> Result<Option<EventFlags>> {
-        let _flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
-        Ok(Some(EventFlags::empty()))
-    }
-
-    fn fpath(&mut self, id: usize, buf: &mut [u8]) -> Result<Option<usize>> {
-        let _flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
-
-        let mut i = 0;
-        let scheme_path = b"network:";
-        while i < buf.len() && i < scheme_path.len() {
-            buf[i] = scheme_path[i];
-            i += 1;
-        }
-        Ok(Some(i))
-    }
-
-    fn fsync(&mut self, id: usize) -> Result<Option<usize>> {
-        let _flags = self.handles.get(&id).ok_or(Error::new(EBADF))?;
-        Ok(Some(0))
-    }
-
-    fn close(&mut self, id: usize) -> Result<Option<usize>> {
-        self.handles.remove(&id).ok_or(Error::new(EBADF))?;
-        Ok(Some(0))
     }
 }
 
@@ -246,8 +192,7 @@ impl Rtl8168 {
             transmit_i: 0,
             transmit_buffer_h: [Dma::zeroed()?.assume_init()],
             transmit_ring_h: Dma::zeroed()?.assume_init(),
-            next_id: 0,
-            handles: BTreeMap::new(),
+            mac_address: [0; 6],
         };
 
         module.init();
@@ -288,6 +233,7 @@ impl Rtl8168 {
                     (mac_high >> 8) as u8];
         println!("   - MAC: {:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
         let _ = setcfg("mac", &format!("{:>02X}-{:>02X}-{:>02X}-{:>02X}-{:>02X}-{:>02X}\n", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]));
+        self.mac_address = mac;
 
         // Reset - this will disable tx and rx, reinitialize FIFOs, and set the system buffer pointer to the initial value
         println!("  - Reset");
