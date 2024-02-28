@@ -11,10 +11,10 @@ futures = { version = "0.3.28", features = ["executor"] }
 anyhow = "1.0.71"
 paste = "1.0.13"
 
-common = { path = "../common" }
-virtio-core = { path = "../virtio-core" }
-pcid = { path = "../pcid" }
-inputd = { path = "../inputd" }
+common = { path = "../../common" }
+virtio-core = { path = "../../virtio-core" }
+pcid = { path = "../../pcid" }
+inputd = { path = "../../inputd" }
 
 redox-daemon = "0.1"
 redox_syscall = "0.4"

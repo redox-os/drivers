@@ -1,25 +1,25 @@
 [workspace]
 members = [
     "acpid",
-    "bgad",
     "common",
-    "fbcond",
     "pcid",
     "ps2d",
     "vboxd",
-    "vesad",
     "xhcid",
     "usbctl",
     "usbhidd",
     "inputd",
-
-    "virtio-gpud",
     "virtio-core",
 
     "audio/ac97d",
     "audio/ihdad",
     "audio/pcspkrd",
     "audio/sb16d",
+
+    "graphics/bgad",
+    "graphics/fbcond",
+    "graphics/vesad",
+    "graphics/virtio-gpud",
 
     "net/alxd",
     "net/driver-network",
