@@ -16,8 +16,8 @@ partitionlib = { git = "https://gitlab.redox-os.org/redox-os/partitionlib.git" }
 smallvec = "1"
 
 block-io-wrapper = { path = "../block-io-wrapper" }
-common = { path = "../common" }
-pcid = { path = "../pcid" }
+common = { path = "../../common" }
+pcid = { path = "../../pcid" }
 
 [features]
 default = ["async"]

@@ -2,15 +2,10 @@
 members = [
     "ac97d",
     "acpid",
-    "ahcid",
     "bgad",
-    "block-io-wrapper",
     "common",
     "fbcond",
-    "ided",
     "ihdad",
-    "nvmed",
-    "lived", # TODO: not really a driver...
     "pcid",
     "pcspkrd",
     "ps2d",
@@ -20,10 +15,8 @@ members = [
     "xhcid",
     "usbctl",
     "usbhidd",
-    "usbscsid",
     "inputd",
 
-    "virtio-blkd",
     "virtio-gpud",
     "virtio-core",
 
@@ -35,7 +28,14 @@ members = [
     "net/rtl8168d",
     "net/virtio-netd",
 
-    "bcm2835-sdhcid",
+    "storage/ahcid",
+    "storage/bcm2835-sdhcid",
+    "storage/block-io-wrapper",
+    "storage/ided",
+    "storage/lived", # TODO: not really a driver...
+    "storage/nvmed",
+    "storage/usbscsid",
+    "storage/virtio-blkd",
 ]
 
 [profile.release]
