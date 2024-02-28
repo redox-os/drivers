@@ -5,7 +5,7 @@ edition = "2018"
 
 [dependencies]
 bitflags = "1"
-common = { path = "../common" }
+common = { path = "../../common" }
 log = "0.4"
 redox-daemon = "0.1"
 redox-log = "0.1"

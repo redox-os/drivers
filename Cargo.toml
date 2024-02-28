@@ -1,15 +1,11 @@
 [workspace]
 members = [
-    "ac97d",
     "acpid",
     "bgad",
     "common",
     "fbcond",
-    "ihdad",
     "pcid",
-    "pcspkrd",
     "ps2d",
-    "sb16d",
     "vboxd",
     "vesad",
     "xhcid",
@@ -19,6 +15,11 @@ members = [
 
     "virtio-gpud",
     "virtio-core",
+
+    "audio/ac97d",
+    "audio/ihdad",
+    "audio/pcspkrd",
+    "audio/sb16d",
 
     "net/alxd",
     "net/driver-network",
