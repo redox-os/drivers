@@ -1,5 +1,5 @@
 [package]
-name = "rtl8139d"
+name = "rtl8168d"
 version = "0.1.0"
 edition = "2018"
 
@@ -11,6 +11,6 @@ redox_syscall = "0.4"
 redox-daemon = "0.1"
 redox-log = "0.1"
 
-common = { path = "../common" }
+common = { path = "../../common" }
 driver-network = { path = "../driver-network" }
-pcid = { path = "../pcid" }
+pcid = { path = "../../pcid" }
