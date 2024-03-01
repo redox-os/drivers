@@ -8,4 +8,4 @@ orbclient = "0.3.27"
 redox-daemon = "0.1"
 redox_syscall = "0.4"
 
-pcid = { path = "../pcid" }
+pcid = { path = "../../pcid" }

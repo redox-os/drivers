@@ -13,4 +13,4 @@ plain = "0.2"
 redox-daemon = "0.1"
 redox_syscall = "0.4"
 thiserror = "1"
-xhcid = { path = "../xhcid" }
+xhcid = { path = "../../xhcid" }
