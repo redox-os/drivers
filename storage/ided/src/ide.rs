@@ -5,6 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use driver_block::Disk;
 use syscall::{
     error::{Error, Result, EIO},
     io::{Io, Pio, ReadOnly, WriteOnly},
@@ -151,14 +152,6 @@ impl Channel {
 
         Ok(())
     }
-}
-
-pub trait Disk {
-    fn id(&self) -> usize;
-    fn size(&mut self) -> u64;
-    fn read(&mut self, block: u64, buffer: &mut [u8]) -> Result<Option<usize>>;
-    fn write(&mut self, block: u64, buffer: &[u8]) -> Result<Option<usize>>;
-    fn block_length(&mut self) -> Result<u32>;
 }
 
 pub struct AtaDisk {

@@ -15,8 +15,8 @@ redox_syscall = "0.4"
 partitionlib = { git = "https://gitlab.redox-os.org/redox-os/partitionlib.git" }
 smallvec = "1"
 
-block-io-wrapper = { path = "../block-io-wrapper" }
 common = { path = "../../common" }
+driver-block = { path = "../driver-block" }
 pcid = { path = "../../pcid" }
 
 [features]

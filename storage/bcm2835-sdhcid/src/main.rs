@@ -1,15 +1,15 @@
 use std::{fs::File, io::{Read, Write}, process};
 
+use driver_block::Disk;
 use fdt::{Fdt, node::FdtNode};
 use syscall::{Packet, SchemeBlockMut};
 
-use crate::sd::Disk;
 use crate::scheme::DiskScheme;
 
 mod sd;
 mod scheme;
 
-#[cfg(target_os = "redox")] 
+#[cfg(target_os = "redox")]
 fn get_dtb() -> Vec<u8> {
     std::fs::read("kernel.dtb:").unwrap()
 }
@@ -48,7 +48,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     };
     println!("ioremap 0x{:08x} to 0x{:08x} 2222", reg.starting_address as usize, addr);
     let mut sdhci = sd::SdHostCtrl::new(addr);
-    unsafe { 
+    unsafe {
         sdhci.init();
         /*
         let mut buf1 = [0u32; 512];

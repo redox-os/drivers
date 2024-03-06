@@ -3,107 +3,21 @@ use std::{cmp, str};
 use std::convert::{TryFrom};
 use std::fmt::Write;
 use std::io::prelude::*;
-use std::io::SeekFrom;
-use std::io;
 use std::sync::{Arc, Mutex};
 
+use driver_block::{Disk, DiskWrapper};
 use syscall::{
     Error, EACCES, EBADF, EINVAL, EISDIR, ENOENT, ENOLCK, EOVERFLOW, Result,
     Io, SchemeBlockMut, Stat, MODE_DIR, MODE_FILE, O_DIRECTORY,
     O_STAT, SEEK_CUR, SEEK_END, SEEK_SET};
 
-use crate::ide::{Channel, Disk};
-
-use partitionlib::{LogicalBlockSize, PartitionTable};
+use crate::ide::Channel;
 
 #[derive(Clone)]
 enum Handle {
     List(Vec<u8>, usize), // Dir contents buffer, position
     Disk(usize, usize), // Disk index, position
     Partition(usize, u32, usize), // Disk index, partition index, position
-}
-
-pub struct DiskWrapper {
-    disk: Box<dyn Disk>,
-    pt: Option<PartitionTable>,
-}
-
-impl DiskWrapper {
-    fn pt(disk: &mut dyn Disk) -> Option<PartitionTable> {
-        let bs = match disk.block_length() {
-            Ok(512) => LogicalBlockSize::Lb512,
-            Ok(4096) => LogicalBlockSize::Lb4096,
-            _ => return None,
-        };
-        struct Device<'a, 'b> { disk: &'a mut dyn Disk, offset: u64, block_bytes: &'b mut [u8] }
-
-        impl<'a, 'b> Seek for Device<'a, 'b> {
-            fn seek(&mut self, from: SeekFrom) -> io::Result<u64> {
-                let size = i64::try_from(self.disk.size()).or(Err(io::Error::new(io::ErrorKind::Other, "Disk larger than 2^63 - 1 bytes")))?;
-
-                self.offset = match from {
-                    SeekFrom::Start(new_pos) => cmp::min(self.disk.size(), new_pos),
-                    SeekFrom::Current(new_pos) => cmp::max(0, cmp::min(size, self.offset as i64 + new_pos)) as u64,
-                    SeekFrom::End(new_pos) => cmp::max(0, cmp::min(size + new_pos, size)) as u64,
-                };
-
-                Ok(self.offset)
-            }
-        }
-        // TODO: Perhaps this impl should be used in the rest of the scheme.
-        impl<'a, 'b> Read for Device<'a, 'b> {
-            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-                let blksize = self.disk.block_length().map_err(|err| io::Error::from_raw_os_error(err.errno))?;
-                let size_in_blocks = self.disk.size() / u64::from(blksize);
-
-                let disk = &mut self.disk;
-
-                let read_block = |block: u64, block_bytes: &mut [u8]| {
-                    if block >= size_in_blocks {
-                        return Err(io::Error::from_raw_os_error(syscall::EOVERFLOW));
-                    }
-                    loop {
-                         match disk.read(block, block_bytes) {
-                             Ok(Some(bytes)) => {
-                                 assert_eq!(bytes, block_bytes.len());
-                                 assert_eq!(bytes, blksize as usize);
-                                 return Ok(());
-                             }
-                             Ok(None) => { std::thread::yield_now(); continue }
-                             Err(err) => return Err(io::Error::from_raw_os_error(err.errno)),
-                         }
-                     }
-                };
-                let bytes_read = block_io_wrapper::read(self.offset, blksize, buf, self.block_bytes, read_block)?;
-
-                self.offset += bytes_read as u64;
-                Ok(bytes_read)
-            }
-        }
-
-        let mut block_bytes = [0u8; 4096];
-
-        partitionlib::get_partitions(&mut Device { disk, offset: 0, block_bytes: &mut block_bytes[..bs.into()] }, bs).ok().flatten()
-    }
-    fn new(mut disk: Box<dyn Disk>) -> Self {
-        Self {
-            pt: Self::pt(&mut *disk),
-            disk,
-        }
-    }
-}
-
-impl std::ops::Deref for DiskWrapper {
-    type Target = dyn Disk;
-
-    fn deref(&self) -> &Self::Target {
-        &*self.disk
-    }
-}
-impl std::ops::DerefMut for DiskWrapper {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut *self.disk
-    }
 }
 
 pub struct DiskScheme {

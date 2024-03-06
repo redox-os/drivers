@@ -1,3 +1,4 @@
+use driver_block::Disk;
 use log::{error, info};
 use pcid_interface::{PciBar, PcidServerHandle};
 use redox_log::{OutputBuilder, RedoxLogger};
@@ -18,7 +19,7 @@ use syscall::{
 };
 
 use crate::{
-    ide::{AtaCommand, AtaDisk, Channel, Disk},
+    ide::{AtaCommand, AtaDisk, Channel},
     scheme::DiskScheme,
 };
 

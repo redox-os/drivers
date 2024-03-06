@@ -96,7 +96,7 @@ impl DiskWrapper {
                         }
                     }
                 };
-                let bytes_read = block_io_wrapper::read(
+                let bytes_read = driver_block::block_read(
                     self.offset,
                     blksize
                         .try_into()

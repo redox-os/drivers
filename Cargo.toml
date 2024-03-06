@@ -31,7 +31,7 @@ members = [
 
     "storage/ahcid",
     "storage/bcm2835-sdhcid",
-    "storage/block-io-wrapper",
+    "storage/driver-block",
     "storage/ided",
     "storage/lived", # TODO: not really a driver...
     "storage/nvmed",

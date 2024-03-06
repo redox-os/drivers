@@ -1,6 +1,6 @@
 use std::{sync::{Mutex, RwLock}, time::{self, Duration}, thread};
 use syscall::{io::Mmio, Io, Error, Result, EINVAL};
-use core::ptr::{read_volatile, write_volatile};
+use driver_block::Disk;
 
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
@@ -17,7 +17,7 @@ pub(crate) unsafe fn wait_cycles(mut n: usize) {
 #[inline(always)]
 pub(crate) unsafe fn wait_msec(mut n: usize) {
     use core::arch::asm;
-    
+
     let mut f: usize;
     let mut t: usize;
     let mut r: usize;
@@ -185,7 +185,7 @@ pub struct SdHostCtrl {
 impl SdHostCtrl {
     pub fn new(address: usize) -> Self {
         SdHostCtrl {
-            regs: RwLock::new(unsafe { &mut *(address as *mut SdHostCtrlRegs)}), 
+            regs: RwLock::new(unsafe { &mut *(address as *mut SdHostCtrlRegs)}),
             host_spec_ver: 0,
             cid: [0; 4],
             csd: [0; 4],
@@ -228,7 +228,7 @@ impl SdHostCtrl {
                 return ;
             }
         }
-        
+
         let regs = self.regs.get_mut().unwrap();
         regs.irpt_en.write(0xffff_ffff);
         regs.irpt_mask.write(0xffff_ffff);
@@ -518,7 +518,7 @@ impl SdHostCtrl {
             self.cid[1] = regs.resp1.read();
             self.cid[2] = regs.resp2.read();
             self.cid[3] = regs.resp3.read();
-            
+
             //FIXME: wrong implement, see CMD_SEND_CSD for detail
             return Ok(reg_val);
         } else if code == CMD_SEND_CSD {
@@ -526,7 +526,7 @@ impl SdHostCtrl {
             let tmp1 = regs.resp1.read();
             let tmp2 = regs.resp2.read();
             let tmp3 = regs.resp3.read();
-            
+
             self.csd[0] = tmp3 << 8 | tmp2 >> 24;
             self.csd[1] = tmp2 << 8 | tmp1 >> 24;
             self.csd[2] = tmp1 << 8 | tmp0 >> 24;
@@ -711,14 +711,6 @@ impl SdHostCtrl {
         }
         Ok((num * 512) as usize)
     }
-}
-
-pub trait Disk {
-    fn id(&self) -> usize;
-    fn size(&mut self) -> u64;
-    fn read(&mut self, block:u64, buffer: &mut [u8]) -> syscall::error::Result<Option<usize>>;
-    fn write(&mut self, block:u64, buffer: &[u8]) -> syscall::error::Result<Option<usize>>;
-    fn block_length(&mut self) -> syscall::error::Result<u32>;
 }
 
 impl Disk for SdHostCtrl {

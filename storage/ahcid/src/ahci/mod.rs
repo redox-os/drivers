@@ -1,6 +1,6 @@
+use driver_block::Disk;
 use log::{error, info};
 use syscall::io::Io;
-use syscall::error::Result;
 
 use self::disk_ata::DiskATA;
 use self::disk_atapi::DiskATAPI;
@@ -10,14 +10,6 @@ pub mod disk_ata;
 pub mod disk_atapi;
 pub mod fis;
 pub mod hba;
-
-pub trait Disk {
-    fn id(&self) -> usize;
-    fn size(&mut self) -> u64;
-    fn read(&mut self, block: u64, buffer: &mut [u8]) -> Result<Option<usize>>;
-    fn write(&mut self, block: u64, buffer: &[u8]) -> Result<Option<usize>>;
-    fn block_length(&mut self) -> Result<u32>;
-}
 
 pub fn disks(base: usize, name: &str) -> (&'static mut HbaMem, Vec<Box<dyn Disk>>) {
     let hba_mem = unsafe { &mut *(base as *mut HbaMem) };
