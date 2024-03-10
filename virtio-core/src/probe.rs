@@ -71,7 +71,7 @@ pub fn probe_device(pcid_handle: &mut PcidServerHandle) -> Result<Device, Error>
     let mut notify_addr = None;
     let mut device_addr = None;
 
-    for capability in pcid_handle
+    for raw_capability in pcid_handle
         .get_capabilities()?
         .iter()
         .filter_map(|capability| {
@@ -83,7 +83,7 @@ pub fn probe_device(pcid_handle: &mut PcidServerHandle) -> Result<Device, Error>
         })
     {
         // SAFETY: We have verified that the length of the data is correct.
-        let capability = unsafe { &*(capability.data.as_ptr() as *const PciCapability) };
+        let capability = unsafe { &*(raw_capability.data.as_ptr() as *const PciCapability) };
 
         match capability.cfg_type {
             CfgType::Common | CfgType::Notify | CfgType::Device => {}
@@ -123,7 +123,7 @@ pub fn probe_device(pcid_handle: &mut PcidServerHandle) -> Result<Device, Error>
                 // SAFETY: The capability type is `Notify`, so its safe to access
                 //         the `notify_multiplier` field.
                 let multiplier = unsafe {
-                    (&*(capability as *const PciCapability as *const PciCapabilityNotify))
+                    (&*(raw_capability.data.as_ptr() as *const PciCapability as *const PciCapabilityNotify))
                         .notify_off_multiplier()
                 };
                 notify_addr = Some((address, multiplier));

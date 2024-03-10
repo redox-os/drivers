@@ -148,7 +148,7 @@ impl<'a> DiskScheme<'a> {
                 };
 
                 let bytes_read =
-                    block_io_wrapper::read(self.offset, 512, buf, self.block_bytes, read_block)
+                    driver_block::block_read(self.offset, 512, buf, self.block_bytes, read_block)
                         .unwrap();
                 self.offset += bytes_read as u64;
                 Ok(bytes_read)

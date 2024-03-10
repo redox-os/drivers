@@ -50,7 +50,7 @@ impl<T: NetworkAdapter> NetworkScheme<T> {
             format!(":{scheme_name}"),
             syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK,
         )
-        .expect("e1000d: failed to create network scheme");
+        .expect("failed to create network scheme");
         let scheme = unsafe { File::from_raw_fd(scheme_fd as RawFd) };
 
         NetworkScheme {
