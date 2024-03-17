@@ -16,6 +16,7 @@ bincode = "1.2"
 bitflags = "1"
 bit_field = "0.10"
 byteorder = "1.2"
+fdt = { git = "https://gitlab.redox-os.org/rosehuds/fdt.git" }
 libc = "0.2"
 log = "0.4"
 paw = "1.0"
