@@ -1,12 +1,93 @@
 use std::sync::Mutex;
-use std::{fmt, fs, io, mem, ptr};
+use std::{fs, io, mem};
 
 use common::{MemoryType, PhysBorrowed, Prot};
+use fdt::{DeviceTree, Node};
 use pci_types::{ConfigRegionAccess, PciAddress};
 
 use fallback::Pci;
 
 mod fallback;
+
+pub fn root_cell_sz(dt: &fdt::DeviceTree) -> Option<(u32, u32)> {
+    let root_node = dt.nodes().nth(0).unwrap();
+    let address_cells = root_node
+        .properties()
+        .find(|p| p.name.contains("#address-cells"))
+        .unwrap();
+    let size_cells = root_node
+        .properties()
+        .find(|p| p.name.contains("#size-cells"))
+        .unwrap();
+
+    Some((
+        u32::from_be_bytes(<[u8; 4]>::try_from(address_cells.data).unwrap()),
+        u32::from_be_bytes(<[u8; 4]>::try_from(size_cells.data).unwrap()),
+    ))
+}
+
+pub fn find_compatible_fdt_node<'a>(
+    dt: &'a fdt::DeviceTree<'a>,
+    compat_string: &str,
+) -> Option<Node<'a, 'a>> {
+    for node in dt.nodes() {
+        if let Some(compatible) = node.properties().find(|p| p.name.contains("compatible")) {
+            let s = core::str::from_utf8(compatible.data).unwrap();
+            if s.contains(compat_string) {
+                return Some(node);
+            }
+        }
+    }
+    None
+}
+
+// https://elinux.org/Device_Tree_Usage has a lot of useful information
+fn locate_ecam_dtb<T>(f: impl FnOnce(PcieAllocs<'_>) -> io::Result<T>) -> io::Result<T> {
+    let dtb = fs::read("kernel.dtb:")?;
+    let dt = DeviceTree::new(&dtb).map_err(|err| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid device tree: {err:?}"),
+        )
+    })?;
+
+    let node = find_compatible_fdt_node(&dt, "pci-host-ecam-generic").ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            "couldn't find pci-host-ecam-generic node in device tree",
+        )
+    })?;
+
+    let (address_cells, size_cells) = root_cell_sz(&dt).unwrap();
+    let reg = node.properties().find(|p| p.name.contains("reg")).unwrap();
+    assert_eq!(reg.data.len(), ((address_cells + size_cells) * 4) as usize);
+
+    let address = if address_cells == 1 {
+        u32::from_be_bytes(<[u8; 4]>::try_from(&reg.data[0..4]).unwrap()).into()
+    } else if address_cells == 2 {
+        u64::from_be_bytes(<[u8; 8]>::try_from(&reg.data[0..8]).unwrap())
+    } else {
+        panic!();
+    };
+
+    let bus_range = node
+        .properties()
+        .find(|p| p.name.contains("bus-range"))
+        .unwrap();
+    assert_eq!(bus_range.data.len(), 8);
+    let start_bus = u32::from_be_bytes(<[u8; 4]>::try_from(&bus_range.data[0..4]).unwrap());
+    let end_bus = u32::from_be_bytes(<[u8; 4]>::try_from(&bus_range.data[4..8]).unwrap());
+
+    // FIXME respect the BAR remappings in the ranges property
+
+    f(PcieAllocs(&[PcieAlloc {
+        base_addr: address,
+        seg_group_num: 0,
+        start_bus: start_bus.try_into().unwrap(),
+        end_bus: end_bus.try_into().unwrap(),
+        _rsvd: [0; 4],
+    }]))
+}
 
 pub const MCFG_NAME: [u8; 4] = *b"MCFG";
 
@@ -44,7 +125,7 @@ unsafe impl plain::Plain for PcieAlloc {}
 struct PcieAllocs<'a>(&'a [PcieAlloc]);
 
 impl Mcfg {
-    fn with<T>(f: impl FnOnce(&Mcfg, PcieAllocs<'_>) -> io::Result<T>) -> io::Result<T> {
+    fn with<T>(f: impl FnOnce(PcieAllocs<'_>) -> io::Result<T>) -> io::Result<T> {
         let table_dir = fs::read_dir("acpi:tables")?;
 
         // TODO: validate/print MCFG?
@@ -62,7 +143,10 @@ impl Mcfg {
             if table_filename.get(0..4) == Some(&MCFG_NAME) {
                 let bytes = fs::read(table_path)?.into_boxed_slice();
                 match Mcfg::parse(&*bytes) {
-                    Some((mcfg, allocs)) => return f(mcfg, allocs),
+                    Some((mcfg, allocs)) => {
+                        log::info!("MCFG {mcfg:?} ALLOCS {allocs:?}");
+                        return f(allocs);
+                    }
                     None => {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidData,
@@ -121,56 +205,67 @@ const BYTES_PER_BUS: usize = 1 << 20;
 
 impl Pcie {
     pub fn new() -> Self {
-        match Mcfg::with(|mcfg, allocs| {
-            log::info!("MCFG {mcfg:?} ALLOCS {allocs:?}");
-            let mut allocs = allocs
-                .0
-                .iter()
-                .filter_map(|desc| {
-                    Some(Alloc {
-                        seg: desc.seg_group_num,
-                        start_bus: desc.start_bus,
-                        end_bus: desc.end_bus,
-                        mem: PhysBorrowed::map(
-                            desc.base_addr.try_into().ok()?,
-                            BYTES_PER_BUS
-                                * (usize::from(desc.end_bus) - usize::from(desc.start_bus) + 1),
-                            Prot::RW,
-                            MemoryType::Uncacheable,
-                        )
-                        .inspect_err(|err| {
-                            log::error!(
-                                "failed to map seg {} bus {}..={}: {}",
-                                { desc.seg_group_num },
-                                { desc.start_bus },
-                                { desc.end_bus },
-                                err
-                            )
-                        })
-                        .ok()?,
-                    })
-                })
-                .collect::<Vec<_>>();
-
-            allocs.sort_by_key(|alloc| (alloc.seg, alloc.start_bus));
-
-            Ok(Self {
-                lock: Mutex::new(()),
-                allocs,
-                fallback: Pci::new(),
-            })
-        }) {
+        match Mcfg::with(Self::from_allocs) {
             Ok(pcie) => pcie,
-            Err(error) => {
-                log::warn!("Couldn't retrieve PCIe info, perhaps the kernel is not compiled with acpi? Using the PCI 3.0 configuration space instead. Error: {:?}", error);
-                Self {
-                    lock: Mutex::new(()),
-                    allocs: Vec::new(),
-                    fallback: Pci::new(),
+            Err(acpi_error) => match locate_ecam_dtb(Self::from_allocs) {
+                Ok(pcie) => pcie,
+                Err(fdt_error) => {
+                    log::warn!(
+                        "Couldn't retrieve PCIe info, perhaps the kernel is not compiled with \
+                        acpi or device tree support? Using the PCI 3.0 configuration space \
+                        instead. ACPI error: {:?} FDT error: {:?}",
+                        acpi_error,
+                        fdt_error
+                    );
+                    Self {
+                        lock: Mutex::new(()),
+                        allocs: Vec::new(),
+                        fallback: Pci::new(),
+                    }
                 }
-            }
+            },
         }
     }
+
+    fn from_allocs(allocs: PcieAllocs<'_>) -> Result<Pcie, io::Error> {
+        let mut allocs = allocs
+            .0
+            .iter()
+            .filter_map(|desc| {
+                Some(Alloc {
+                    seg: desc.seg_group_num,
+                    start_bus: desc.start_bus,
+                    end_bus: desc.end_bus,
+                    mem: PhysBorrowed::map(
+                        desc.base_addr.try_into().ok()?,
+                        BYTES_PER_BUS
+                            * (usize::from(desc.end_bus) - usize::from(desc.start_bus) + 1),
+                        Prot::RW,
+                        MemoryType::Uncacheable,
+                    )
+                    .inspect_err(|err| {
+                        log::error!(
+                            "failed to map seg {} bus {}..={}: {}",
+                            { desc.seg_group_num },
+                            { desc.start_bus },
+                            { desc.end_bus },
+                            err
+                        )
+                    })
+                    .ok()?,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        allocs.sort_by_key(|alloc| (alloc.seg, alloc.start_bus));
+
+        Ok(Self {
+            lock: Mutex::new(()),
+            allocs,
+            fallback: Pci::new(),
+        })
+    }
+
     fn bus_addr(&self, seg: u16, bus: u8) -> Option<*mut u32> {
         let alloc = match self
             .allocs
