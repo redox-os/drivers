@@ -271,11 +271,9 @@ pub fn start_cq_reactor_thread(
     // subsystem can have some room for improvement regarding lowering the latency, but MSI-X allows
     // multiple vectors to point to different CPUs, so that the load can be balanced across the
     // logical processors.
-    thread::spawn(move || {
-        CqReactor::new(nvme, interrupt_sources, receiver)
-            .expect("nvmed: failed to setup CQ reactor")
-            .run()
-    })
+    let reactor = CqReactor::new(nvme, interrupt_sources, receiver)
+            .expect("nvmed: failed to setup CQ reactor");
+    thread::spawn(move || reactor.run())
 }
 
 #[derive(Debug)]
