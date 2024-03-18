@@ -16,7 +16,7 @@ use std::task::{Poll, Waker};
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("syscall failed")]
-    SyscallError(syscall::Error),
+    SyscallError(#[from] libredox::error::Error),
     #[error("pcid client handle error")]
     PcidClientHandle(pcid_interface::PcidClientHandleError),
     #[error("the device is incapable of {0:?}")]
@@ -26,12 +26,6 @@ pub enum Error {
 impl From<pcid_interface::PcidClientHandleError> for Error {
     fn from(value: pcid_interface::PcidClientHandleError) -> Self {
         Self::PcidClientHandle(value)
-    }
-}
-
-impl From<syscall::Error> for Error {
-    fn from(value: syscall::Error) -> Self {
-        Self::SyscallError(value)
     }
 }
 

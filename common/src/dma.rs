@@ -2,9 +2,9 @@ use std::mem::{self, size_of, MaybeUninit};
 use std::ops::{Deref, DerefMut};
 use std::ptr;
 
+use libredox::call::MmapArgs;
+use libredox::{flag, error::Result, Fd};
 use syscall::PAGE_SIZE;
-
-use syscall::Result;
 
 use crate::MemoryType;
 
@@ -20,30 +20,26 @@ const DMA_MEMTY: MemoryType = {
     }
 };
 
-fn alloc_and_map(len: usize) -> Result<(usize, *mut ())> {
-    assert_eq!(len % PAGE_SIZE, 0);
+fn alloc_and_map(length: usize) -> Result<(usize, *mut ())> {
+    assert_eq!(length % PAGE_SIZE, 0);
     unsafe {
-        let fd = syscall::open(
-            format!("memory:zeroed@{DMA_MEMTY}?phys_contiguous"),
-            syscall::O_CLOEXEC,
+        let fd = Fd::open(
+            &format!("memory:zeroed@{DMA_MEMTY}?phys_contiguous"),
+            flag::O_CLOEXEC,
+            0,
         )?;
-        let virt = syscall::fmap(
-            fd,
-            &syscall::Map {
-                offset: 0,  // ignored
-                address: 0, // ignored
-                size: len,
-                flags: syscall::MapFlags::MAP_PRIVATE
-                    | syscall::MapFlags::PROT_READ
-                    | syscall::MapFlags::PROT_WRITE,
-            },
-        );
-        let _ = syscall::close(fd);
-        let virt = virt?;
-        let phys = syscall::virttophys(virt)?;
-        /*for i in 1..len.div_ceil(PAGE_SIZE) {
-            assert_eq!(syscall::virttophys(virt + i * PAGE_SIZE), Ok(phys + i * PAGE_SIZE), "NOT CONTIGUOUS");
-        }*/
+        let virt = libredox::call::mmap(MmapArgs {
+            fd: fd.raw(),
+            offset: 0,  // ignored
+            addr: core::ptr::null_mut(), // ignored
+            length,
+            flags: flag::MAP_PRIVATE,
+            prot: flag::PROT_READ | flag::PROT_WRITE,
+        })?;
+        let phys = syscall::virttophys(virt as usize)?;
+        for i in 1..length.div_ceil(PAGE_SIZE) {
+            debug_assert_eq!(syscall::virttophys(virt as usize + i * PAGE_SIZE), Ok(phys + i * PAGE_SIZE), "NOT CONTIGUOUS");
+        }
         Ok((phys, virt as *mut ()))
     }
 }
@@ -159,7 +155,7 @@ impl<T: ?Sized> Drop for Dma<T> {
     fn drop(&mut self) {
         unsafe {
             ptr::drop_in_place(self.virt);
-            let _ = syscall::funmap(self.virt as *mut u8 as usize, self.aligned_len);
+            let _ = libredox::call::munmap(self.virt as *mut (), self.aligned_len);
         }
     }
 }

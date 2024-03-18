@@ -9,6 +9,7 @@ use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
 use std::{slice, usize};
 
+use libredox::flag;
 use pcid_interface::{PciFeature, PciFeatureInfo, PciFunction, PcidServerHandle};
 use syscall::{
     Event, Mmio, Packet, Result, SchemeBlockMut,
@@ -49,8 +50,8 @@ impl Bar {
 impl Drop for Bar {
     fn drop(&mut self) {
         let _ = unsafe {
-            syscall::funmap(
-                self.ptr.as_ptr() as usize,
+            libredox::call::munmap(
+                self.ptr.as_ptr().cast(),
                 self.bar_size.next_multiple_of(PAGE_SIZE),
             )
         };
@@ -275,9 +276,10 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         ptr: NonNull::new(address as *mut u8).expect("Physmapping BAR gave nullptr"),
     });
 
-    let socket_fd = syscall::open(
+    let socket_fd = libredox::call::open(
         &format!(":{}", scheme_name),
-        syscall::O_RDWR | syscall::O_CREAT | syscall::O_CLOEXEC,
+        flag::O_RDWR | flag::O_CREAT | flag::O_CLOEXEC,
+        0,
     )
     .expect("nvmed: failed to create disk scheme");
     let mut socket_file = unsafe { File::from_raw_fd(socket_fd as RawFd) };
@@ -297,7 +299,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let reactor_thread = nvme::cq_reactor::start_cq_reactor_thread(Arc::clone(&nvme), interrupt_sources, reactor_receiver);
     let namespaces = nvme.init_with_queues();
 
-    syscall::setrens(0, 0).expect("nvmed: failed to enter null namespace");
+    libredox::call::setrens(0, 0).expect("nvmed: failed to enter null namespace");
 
     let mut scheme = DiskScheme::new(scheme_name, nvme, namespaces);
     let mut todo = Vec::new();

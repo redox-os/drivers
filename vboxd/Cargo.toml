@@ -6,8 +6,9 @@ edition = "2018"
 [dependencies]
 orbclient = "0.3.27"
 redox_event = { git = "https://gitlab.redox-os.org/redox-os/event.git" }
-redox_syscall = "0.4"
+redox_syscall = "0.5"
 redox-daemon = "0.1"
 
 common = { path = "../common" }
 pcid = { path = "../pcid" }
+libredox = "0.1.3"
