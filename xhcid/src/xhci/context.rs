@@ -185,7 +185,7 @@ impl ScratchpadBufferArray {
     pub fn new(ac64: bool, entries: u16) -> Result<Self> {
         let mut entries = unsafe { Xhci::alloc_dma_zeroed_unsized_raw(ac64, entries as usize)? };
 
-        let pages = entries.iter_mut().map(|entry: &mut ScratchpadBufferEntry| -> Result<_, syscall::Error> {
+        let pages = entries.iter_mut().map(|entry: &mut ScratchpadBufferEntry| {
             let dma = unsafe { Dma::<[u8; PAGE_SIZE]>::zeroed()?.assume_init() };
             assert_eq!(dma.physical() % PAGE_SIZE, 0);
             entry.set_addr(dma.physical() as u64);

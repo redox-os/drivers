@@ -7,9 +7,8 @@ authors = ["Anhad Singh <andypython@protonmail.com>"]
 [dependencies]
 anyhow = "1.0.71"
 log = "0.4.19"
-redox-daemon = "0.1.2"
+redox-daemon = "0.1.0"
 redox-log = "0.1.1"
-redox_syscall = "0.5"
+redox_syscall = "0.4"
 orbclient = "0.3.27"
 spin = "0.9.8"
-libredox = "0.1.3"

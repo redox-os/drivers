@@ -53,7 +53,7 @@ fn inner(daemon: redox_daemon::Daemon, vt_ids: &[usize]) -> ! {
 
     let mut scheme = FbconScheme::new(vt_ids, &mut event_queue);
 
-    libredox::call::setrens(0, 0).expect("fbcond: failed to enter null namespace");
+    syscall::setrens(0, 0).expect("fbcond: failed to enter null namespace");
 
     daemon.ready().expect("failed to notify parent");
 

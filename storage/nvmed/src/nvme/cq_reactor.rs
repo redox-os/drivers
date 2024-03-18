@@ -65,8 +65,8 @@ struct CqReactor {
 }
 impl CqReactor {
     fn create_event_queue(int_sources: &mut InterruptSources) -> Result<File> {
-        use libredox::flag::*;
-        let fd = libredox::call::open("event:", O_CLOEXEC | O_RDWR, 0)?;
+        use syscall::flag::*;
+        let fd = syscall::open("event:", O_CLOEXEC | O_RDWR)?;
         let mut file = unsafe { File::from_raw_fd(fd as RawFd) };
 
         for (num, irq_handle) in int_sources.iter_mut() {

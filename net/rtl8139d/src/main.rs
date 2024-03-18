@@ -242,7 +242,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let mut event_queue =
         EventQueue::<Infallible>::new().expect("rtl8139d: failed to create event queue");
 
-    libredox::call::setrens(0, 0).expect("rtl8139d: failed to enter null namespace");
+    syscall::setrens(0, 0).expect("rtl8139d: failed to enter null namespace");
 
     daemon
         .ready()
@@ -279,7 +279,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     event_queue
         .trigger_all(event::Event {
             fd: 0,
-            flags: Default::default(),
+            flags: EventFlags::empty(),
         })
         .expect("rtl8139d: failed to trigger events");
 

@@ -8,7 +8,6 @@ use std::io::{Read, Write};
 use std::os::fd::{FromRawFd, RawFd};
 use std::sync::{Arc, Weak};
 
-use libredox::flag;
 use static_assertions::const_assert_eq;
 
 use pcid_interface::*;
@@ -143,10 +142,9 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
 
     let scheme_name = format!("disk.{}", name);
 
-    let socket_fd = libredox::call::open(
+    let socket_fd = syscall::open(
         &format!(":{}", scheme_name),
-        flag::O_RDWR | flag::O_CREAT | flag::O_CLOEXEC,
-        0,
+        syscall::O_RDWR | syscall::O_CREAT | syscall::O_CLOEXEC,
     )
     .map_err(Error::SyscallError)?;
 

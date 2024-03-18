@@ -29,7 +29,7 @@ fn main() {
             next_id: 0,
         };
 
-        libredox::call::setrens(0, 0).expect("pcspkrd: failed to enter null namespace");
+        syscall::setrens(0, 0).expect("pcspkrd: failed to enter null namespace");
 
         loop {
             let mut packet = Packet::default();

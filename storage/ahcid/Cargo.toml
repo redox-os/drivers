@@ -14,4 +14,3 @@ redox_syscall = "0.4"
 common = { path = "../../common" }
 driver-block = { path = "../driver-block" }
 pcid = { path = "../../pcid" }
-libredox = "0.1.3"

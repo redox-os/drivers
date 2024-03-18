@@ -1,8 +1,7 @@
 #![feature(int_roundings)]
 
-use libredox::call::MmapArgs;
-use libredox::{Fd, error::*, errno::EINVAL};
-use libredox::flag::{self, O_CLOEXEC, O_RDONLY, O_RDWR, O_WRONLY};
+use syscall::error::{Error, Result, EINVAL};
+use syscall::flag::{MapFlags, O_CLOEXEC, O_RDONLY, O_RDWR, O_WRONLY};
 use syscall::PAGE_SIZE;
 
 pub mod dma;
@@ -64,23 +63,23 @@ pub unsafe fn physmap(
         (false, true) => O_WRONLY,
         (false, false) => return Err(Error::new(EINVAL)),
     };
-    let mut prot = 0;
-    if read {
-        prot |= flag::PROT_READ;
-    }
-    if write {
-        prot |= flag::PROT_WRITE;
-    }
+    let mut prot = MapFlags::empty();
+    prot.set(MapFlags::PROT_READ, read);
+    prot.set(MapFlags::PROT_WRITE, write);
 
-    let fd = Fd::open(&path, O_CLOEXEC | mode, 0)?;
-    Ok(libredox::call::mmap(MmapArgs {
-        fd: fd.raw(),
-        offset: base_phys as u64,
-        length: len.next_multiple_of(PAGE_SIZE),
-        flags: flag::MAP_SHARED,
-        prot,
-        addr: core::ptr::null_mut(),
-    })? as *mut ())
+    let file = syscall::open(path, O_CLOEXEC | mode)?;
+    let base = syscall::fmap(
+        file,
+        &syscall::Map {
+            offset: base_phys,
+            size: len.next_multiple_of(PAGE_SIZE),
+            flags: MapFlags::MAP_SHARED | prot,
+            address: 0,
+        },
+    );
+    let _ = syscall::close(file);
+
+    Ok(base? as *mut ())
 }
 
 impl std::fmt::Display for MemoryType {
@@ -120,14 +119,7 @@ impl PhysBorrowed {
 impl Drop for PhysBorrowed {
     fn drop(&mut self) {
         unsafe {
-            let _ = libredox::call::munmap(self.mem, self.len);
+            let _ = syscall::funmap(self.mem as usize, self.len);
         }
     }
-}
-
-pub fn acquire_port_io_rights() -> Result<()> {
-    unsafe {
-        syscall::iopl(3)?;
-    }
-    Ok(())
 }

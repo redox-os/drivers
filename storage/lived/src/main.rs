@@ -8,8 +8,6 @@ use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
 use std::str;
 
-use libredox::call::MmapArgs;
-use libredox::flag;
 use slab::Slab;
 use syscall::data::Stat;
 use syscall::{error::*, MapFlags, SchemeMut, Packet};
@@ -65,13 +63,11 @@ impl DiskScheme {
 
         let the_data = unsafe {
             let file = File::open("memory:physical")?;
-            let base = libredox::call::mmap(MmapArgs {
-                fd: file.as_raw_fd() as usize,
-                addr: core::ptr::null_mut(),
-                offset: start as u64,
-                length: size,
-                prot: flag::PROT_READ | flag::PROT_WRITE,
-                flags: flag::MAP_SHARED,
+            let base = syscall::fmap(file.as_raw_fd() as usize, &syscall::Map {
+                address: 0,
+                offset: start,
+                size,
+                flags: MapFlags::PROT_READ | MapFlags::PROT_WRITE | MapFlags::MAP_SHARED,
             }).map_err(|err| anyhow!("failed to mmap livedisk: {}", err))?;
 
             std::slice::from_raw_parts_mut(base as *mut u8, size)

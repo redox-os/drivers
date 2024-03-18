@@ -208,7 +208,7 @@ impl NetworkAdapter for Intel8254x {
 
 fn dma_array<T, const N: usize>() -> Result<[Dma<T>; N]> {
     Ok((0..N)
-        .map(|_| Ok(unsafe { Dma::zeroed()?.assume_init() }))
+        .map(|_| Dma::zeroed().map(|dma| unsafe { dma.assume_init() }))
         .collect::<Result<Vec<_>>>()?
         .try_into()
         .unwrap_or_else(|_| unreachable!()))

@@ -11,14 +11,13 @@ use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
 use std::env;
 
-use libredox::flag;
 use pcid_interface::{MsiSetFeatureInfo, PcidServerHandle, PciFeature, PciFeatureInfo, SetFeatureInfo};
 #[cfg(target_arch = "x86_64")]
 use pcid_interface::irq_helpers::allocate_single_interrupt_vector_for_msi;
 use pcid_interface::irq_helpers::read_bsp_apic_id;
 use pcid_interface::msi::MsixTableEntry;
 
-use event::{Event, RawEventQueue};
+use event::{Event, EventQueue};
 use redox_log::{RedoxLogger, OutputBuilder};
 use syscall::data::Packet;
 use syscall::error::EWOULDBLOCK;
@@ -209,10 +208,9 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     println!(" + XHCI {}", pci_config.func.display());
 
     let scheme_name = format!("usb.{}", name);
-    let socket_fd = libredox::call::open(
+    let socket_fd = syscall::open(
         format!(":{}", scheme_name),
-        flag::O_RDWR | flag::O_CREAT,
-        0,
+        syscall::O_RDWR | syscall::O_CREAT,
     )
     .expect("xhcid: failed to create usb scheme");
     let socket = Arc::new(Mutex::new(unsafe {
@@ -225,38 +223,47 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     xhci::start_irq_reactor(&hci, irq_file);
     futures::executor::block_on(hci.probe()).expect("xhcid: failed to probe");
 
-    //let event_queue = RawEventQueue::new().expect("xhcid: failed to create event queue");
+    let mut event_queue =
+        EventQueue::<()>::new().expect("xhcid: failed to create event queue");
 
-    libredox::call::setrens(0, 0).expect("xhcid: failed to enter null namespace");
+    syscall::setrens(0, 0).expect("xhcid: failed to enter null namespace");
 
     let todo = Arc::new(Mutex::new(Vec::<Packet>::new()));
-    //let todo_futures = Arc::new(Mutex::new(Vec::<Pin<Box<dyn Future<Output = usize> + Send + Sync + 'static>>>::new()));
+    let todo_futures = Arc::new(Mutex::new(Vec::<Pin<Box<dyn Future<Output = usize> + Send + Sync + 'static>>>::new()));
 
-    //let socket_fd = socket.lock().unwrap().as_raw_fd();
-    //event_queue.subscribe(socket_fd as usize, 0, event::EventFlags::READ).unwrap();
-
+    let socket_fd = socket.lock().unwrap().as_raw_fd();
     let socket_packet = socket.clone();
+    event_queue
+        .add(socket_fd, move |_| -> io::Result<Option<()>> {
+            let mut socket = socket_packet.lock().unwrap();
+            let mut todo = todo.lock().unwrap();
 
-    loop {
-        let mut socket = socket_packet.lock().unwrap();
-        let mut todo = todo.lock().unwrap();
+            loop {
+                let mut packet = Packet::default();
+                match socket.read(&mut packet) {
+                    Ok(0) => break,
+                    Ok(_) => (),
+                    Err(err) => return Err(err),
+                }
 
-        let mut packet = Packet::default();
-        match socket.read(&mut packet) {
-            Ok(0) => break,
-            Ok(_) => (),
-            Err(err) => panic!("xhcid failed to read from socket: {err}"),
-        }
+                let a = packet.a;
+                hci.handle(&mut packet);
+                if packet.a == (-EWOULDBLOCK) as usize {
+                    packet.a = a;
+                    todo.push(packet);
+                } else {
+                    socket.write(&packet)?;
+                }
+            }
+            Ok(None)
+        })
+        .expect("xhcid: failed to catch events on scheme file");
 
-        let a = packet.a;
-        hci.handle(&mut packet);
-        if packet.a == (-EWOULDBLOCK) as usize {
-            packet.a = a;
-            todo.push(packet);
-        } else {
-            socket.write(&packet).expect("xhcid failed to write to socket");
-        }
-    }
+    event_queue
+        .trigger_all(Event { fd: 0, flags: EventFlags::empty() })
+        .expect("xhcid: failed to trigger events");
+
+    event_queue.run().expect("xhcid: failed to handle events");
 
     std::process::exit(0);
 }

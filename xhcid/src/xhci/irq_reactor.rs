@@ -14,7 +14,7 @@ use log::{debug, error, info, warn, trace};
 use futures::Stream;
 use syscall::Io;
 
-use event::{Event, EventQueue, RawEventQueue};
+use event::{Event, EventQueue};
 
 use super::Xhci;
 use super::doorbell::Doorbell;
@@ -146,13 +146,12 @@ impl IrqReactor {
         debug!("Running IRQ reactor with IRQ file and event queue");
 
         let hci_clone = Arc::clone(&self.hci);
-        let mut event_queue = RawEventQueue::new().expect("xhcid irq_reactor: failed to create IRQ event queue");
+        let mut event_queue = EventQueue::<()>::new().expect("xhcid irq_reactor: failed to create IRQ event queue");
         let irq_fd = self.irq_file.as_ref().unwrap().as_raw_fd();
-        event_queue.subscribe(irq_fd as usize, 0, event::EventFlags::READ).unwrap();
 
         let mut event_trb_index = { hci_clone.primary_event_ring.lock().unwrap().ring.next_index() };
 
-        for _event in event_queue {
+        event_queue.add(irq_fd, move |_| -> io::Result<Option<()>> {
             trace!("IRQ event queue notified");
             let mut buffer = [0u8; 8];
 
@@ -161,7 +160,7 @@ impl IrqReactor {
             if !self.hci.received_irq() {
                 // continue only when an IRQ to this device was received
                 trace!("no interrupt pending");
-                break;
+                return Ok(None);
             }
 
             trace!("IRQ reactor received an IRQ");
@@ -174,13 +173,13 @@ impl IrqReactor {
 
             let mut count = 0;
 
-            loop {
+            'trb_loop: loop {
                 let event_trb = &mut event_ring.ring.trbs[event_trb_index];
 
                 if event_trb.completion_code() == TrbCompletionCode::Invalid as u8 {
                     if count == 0 { warn!("xhci: Received interrupt, but no event was found in the event ring. Ignoring interrupt.") }
                     // no more events were found, continue the loop
-                    return;
+                    return Ok(None);
                 } else { count += 1 }
 
                 trace!("Found event TRB type {}: {:?}", event_trb.trb_type(), event_trb);
@@ -188,7 +187,7 @@ impl IrqReactor {
                 if self.check_event_ring_full(event_trb.clone()) {
                     info!("Had to resize event TRB, retrying...");
                     hci_clone.event_handler_finished();
-                    return;
+                    return Ok(None);
                 }
 
                 self.handle_requests();
@@ -200,7 +199,8 @@ impl IrqReactor {
 
                 event_trb_index = event_ring.ring.next_index();
             }
-        }
+        }).expect("xhcid: failed to catch irq events");
+        event_queue.run().expect("xhcid: failed to run IRQ event queue");
     }
     fn update_erdp(&self, event_ring: &EventRing) {
         let dequeue_pointer_and_dcs = event_ring.erdp();

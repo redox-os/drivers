@@ -33,7 +33,9 @@ impl Pci {
                     "PCI: couldn't find or access PCIe extended configuration, \
                  and thus falling back to PCI 3.0 io ports"
                 );
-                common::acquire_port_io_rights().expect("pcid: failed to get IO port rights");
+                unsafe {
+                    syscall::iopl(3).expect("pcid: failed to set iopl to 3");
+                }
             }
         });
     }

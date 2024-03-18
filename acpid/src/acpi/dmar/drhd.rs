@@ -35,7 +35,7 @@ impl DerefMut for DrhdPage {
 impl Drop for DrhdPage {
     fn drop(&mut self) {
         unsafe {
-            let _ = libredox::call::munmap(self.virt.cast(), crate::acpi::PAGE_SIZE);
+            let _ = syscall::funmap(self.virt as usize, crate::acpi::PAGE_SIZE);
         }
     }
 }

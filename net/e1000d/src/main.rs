@@ -43,7 +43,7 @@ fn main() {
         let mut event_queue =
             EventQueue::<Infallible>::new().expect("e1000d: failed to create event queue");
 
-        libredox::call::setrens(0, 0).expect("e1000d: failed to enter null namespace");
+        syscall::setrens(0, 0).expect("e1000d: failed to enter null namespace");
 
         daemon
             .ready()
@@ -79,7 +79,7 @@ fn main() {
         event_queue
             .trigger_all(event::Event {
                 fd: 0,
-                flags: Default::default(),
+                flags: EventFlags::empty(),
             })
             .expect("e1000d: failed to trigger events");
 

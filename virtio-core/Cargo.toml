@@ -18,4 +18,3 @@ redox_event = { git = "https://gitlab.redox-os.org/redox-os/event.git" }
 
 common = { path = "../common" }
 pcid = { path = "../pcid" }
-libredox = "0.1.3"

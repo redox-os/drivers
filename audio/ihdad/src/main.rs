@@ -10,7 +10,6 @@ use std::usize;
 use std::fs::File;
 use std::io::{ErrorKind, Read, Write, Result};
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
-use libredox::flag;
 use syscall::{Packet, SchemeBlockMut, EventFlags};
 use std::cell::RefCell;
 use std::sync::Arc;
@@ -163,13 +162,13 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
             | (pci_config.func.full_device_id.device_id as u32);
 
 		let device = Arc::new(RefCell::new(unsafe { hda::IntelHDA::new(address, vend_prod).expect("ihdad: failed to allocate device") }));
-		let socket_fd = libredox::call::open(":audiohw", flag::O_RDWR | flag::O_CREAT | flag::O_NONBLOCK, 0).expect("ihdad: failed to create hda scheme");
+		let socket_fd = syscall::open(":audiohw", syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK).expect("ihdad: failed to create hda scheme");
 		let socket = Arc::new(RefCell::new(unsafe { File::from_raw_fd(socket_fd as RawFd) }));
 		daemon.ready().expect("ihdad: failed to signal readiness");
 
 		let mut event_queue = EventQueue::<usize>::new().expect("ihdad: Could not create event queue.");
 
-        libredox::call::setrens(0, 0).expect("ihdad: failed to enter null namespace");
+        syscall::setrens(0, 0).expect("ihdad: failed to enter null namespace");
 
 		let todo = Arc::new(RefCell::new(Vec::<Packet>::new()));
 

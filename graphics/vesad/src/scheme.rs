@@ -95,7 +95,7 @@ impl DisplayScheme {
         // Unmap old onscreen
         unsafe {
             let slice = mem::take(&mut self.onscreens[fb_i]);
-            libredox::call::munmap(slice.as_mut_ptr().cast(), (slice.len() * 4).next_multiple_of(PAGE_SIZE)).expect("vesad: failed to unmap framebuffer");
+            syscall::funmap(slice.as_mut_ptr() as usize, (slice.len() * 4).next_multiple_of(PAGE_SIZE)).expect("vesad: failed to unmap framebuffer");
         }
 
         // Map new onscreen

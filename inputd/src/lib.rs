@@ -91,7 +91,7 @@ impl Cmd {
     }
 }
 
-pub fn send_comand(file: &mut File, command: Cmd) -> Result<(), libredox::error::Error> {
+pub fn send_comand(file: &mut File, command: Cmd) -> Result<(), syscall::Error> {
     use std::os::fd::AsRawFd;
 
     let mut result = vec![];
@@ -119,7 +119,7 @@ pub fn send_comand(file: &mut File, command: Cmd) -> Result<(), libredox::error:
         }
     };
 
-    let written = libredox::call::write(file.as_raw_fd() as usize, &result)?;
+    let written = syscall::write(file.as_raw_fd() as usize, &result)?;
 
     // XXX: Ensure all of the data is written.
     assert_eq!(written, result.len());

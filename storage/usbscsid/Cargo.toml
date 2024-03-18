@@ -9,7 +9,6 @@ license = "MIT"
 
 [dependencies]
 base64 = "0.11" # Only for debugging
-libredox = "0.1.3"
 plain = "0.2"
 redox-daemon = "0.1"
 redox_syscall = "0.4"

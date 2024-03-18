@@ -113,8 +113,8 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     let acpi_context = self::acpi::AcpiContext::init(physaddrs_iter);
 
-    // TODO: I/O permission bitmap?
-    common::acquire_port_io_rights().expect("acpid: failed to set I/O privilege level to Ring 3");
+    // TODO: I/O permission bitmap
+    unsafe { syscall::iopl(3) }.expect("acpid: failed to set I/O privilege level to Ring 3");
 
     let shutdown_pipe = File::open("kernel.acpi:kstop")
         .expect("acpid: failed to open `kernel.acpi:kstop`");
@@ -136,7 +136,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     daemon.ready().expect("acpid: failed to notify parent");
 
-    libredox::call::setrens(0, 0).expect("acpid: failed to enter null namespace");
+    syscall::setrens(0, 0).expect("acpid: failed to enter null namespace");
 
     let _ = event_queue.write(&Event {
         id: shutdown_pipe.as_raw_fd() as usize,

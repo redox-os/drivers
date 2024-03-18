@@ -4,7 +4,6 @@ use std::io::{ErrorKind, Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd, RawFd};
 use std::{cmp, io};
 
-use libredox::flag;
 use syscall::{
     Error, EventFlags, Packet, Result, SchemeBlockMut, Stat, EACCES, EBADF, EINVAL, EWOULDBLOCK,
     MODE_FILE, O_NONBLOCK,
@@ -47,10 +46,9 @@ enum Handle {
 impl<T: NetworkAdapter> NetworkScheme<T> {
     pub fn new(adapter: T, scheme_name: String) -> Self {
         assert!(scheme_name.starts_with("network"));
-        let scheme_fd = libredox::call::open(
+        let scheme_fd = syscall::open(
             format!(":{scheme_name}"),
-            flag::O_RDWR | flag::O_CREAT | flag::O_NONBLOCK,
-            0,
+            syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK,
         )
         .expect("failed to create network scheme");
         let scheme = unsafe { File::from_raw_fd(scheme_fd as RawFd) };

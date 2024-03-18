@@ -9,7 +9,6 @@ use std::{env, usize};
 use std::fs::File;
 use std::io::{ErrorKind, Read, Write, Result};
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
-use libredox::flag;
 use syscall::{Packet, SchemeBlockMut, EventFlags};
 use std::cell::RefCell;
 use std::sync::Arc;
@@ -75,10 +74,10 @@ fn main() {
     redox_daemon::Daemon::new(move |daemon| {
         let _logger_ref = setup_logging();
 
-        common::acquire_port_io_rights().expect("sb16d: failed to acquire port IO rights");
+        unsafe { syscall::iopl(3) }.expect("sb16d: failed to set I/O privilege level to Ring 3");
 
         let device = Arc::new(RefCell::new(unsafe { device::Sb16::new(addr).expect("sb16d: failed to allocate device") }));
-        let socket_fd = libredox::call::open(":audiohw", flag::O_RDWR | flag::O_CREAT | flag::O_NONBLOCK, 0).expect("sb16d: failed to create hda scheme");
+        let socket_fd = syscall::open(":audiohw", syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK).expect("sb16d: failed to create hda scheme");
         let socket = Arc::new(RefCell::new(unsafe { File::from_raw_fd(socket_fd as RawFd) }));
 
         //TODO: error on multiple IRQs?
@@ -91,15 +90,13 @@ fn main() {
 
         let mut event_queue = EventQueue::<usize>::new().expect("sb16d: Could not create event queue.");
 
-        libredox::call::setrens(0, 0).expect("sb16d: failed to enter null namespace");
+        syscall::setrens(0, 0).expect("sb16d: failed to enter null namespace");
 
         let todo = Arc::new(RefCell::new(Vec::<Packet>::new()));
 
         let todo_irq = todo.clone();
         let device_irq = device.clone();
         let socket_irq = socket.clone();
-
-        // TODO: Use new event queue API
 
         event_queue.add(irq_file.as_raw_fd(), move |_event| -> Result<Option<usize>> {
             let mut irq = [0; 8];

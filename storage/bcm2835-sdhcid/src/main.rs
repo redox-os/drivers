@@ -79,7 +79,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     let scheme_name = ":disk.mmc";
     let mut socket = File::create(scheme_name).expect("mmc: failed to create disk scheme");
-    libredox::call::setrens(0, 0).expect("mmc: failed to enter null namespace");
+    syscall::setrens(0, 0).expect("mmc: failed to enter null namespace");
 
     daemon.ready().expect("mmc: failed to notify parent");
 

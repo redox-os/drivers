@@ -13,7 +13,6 @@ use std::sync::Arc;
 use std::usize;
 
 use event::EventQueue;
-use libredox::flag;
 use pcid_interface::{PciBar, PcidServerHandle};
 use redox_log::{OutputBuilder, RedoxLogger};
 use syscall::{EventFlags, Packet, SchemeBlockMut};
@@ -85,19 +84,19 @@ fn main() {
     redox_daemon::Daemon::new(move |daemon| {
 	    let _logger_ref = setup_logging();
 
-        common::acquire_port_io_rights().expect("ac97d: failed to set I/O privilege level to Ring 3");
+        unsafe { syscall::iopl(3) }.expect("ac97d: failed to set I/O privilege level to Ring 3");
 
 		let mut irq_file = irq.irq_handle("ac97d");
 
 		let device = Arc::new(RefCell::new(unsafe { device::Ac97::new(bar0, bar1).expect("ac97d: failed to allocate device") }));
-		let socket_fd = libredox::call::open(":audiohw", flag::O_RDWR | flag::O_CREAT | flag::O_NONBLOCK, 0).expect("ac97d: failed to create hda scheme");
+		let socket_fd = syscall::open(":audiohw", syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK).expect("ac97d: failed to create hda scheme");
 		let socket = Arc::new(RefCell::new(unsafe { File::from_raw_fd(socket_fd as RawFd) }));
 
         daemon.ready().expect("ac97d: failed to signal readiness");
 
 		let mut event_queue = EventQueue::<usize>::new().expect("ac97d: Could not create event queue.");
 
-        libredox::call::setrens(0, 0).expect("ac97d: failed to enter null namespace");
+        syscall::setrens(0, 0).expect("ac97d: failed to enter null namespace");
 
 		let todo = Arc::new(RefCell::new(Vec::<Packet>::new()));
 
@@ -168,7 +167,7 @@ fn main() {
 
 		for event_count in event_queue.trigger_all(event::Event {
 			fd: 0,
-			flags: Default::default(),
+			flags: EventFlags::empty(),
 		}).expect("ac97d: failed to trigger events") {
 			socket.borrow_mut().write(&Packet {
 				id: 0,

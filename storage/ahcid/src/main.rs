@@ -10,7 +10,6 @@ use std::os::fd::AsRawFd;
 use std::os::unix::io::{FromRawFd, RawFd};
 use std::usize;
 
-use libredox::flag;
 use pcid_interface::PcidServerHandle;
 use syscall::error::{Error, ENODEV};
 use syscall::data::{Event, Packet};
@@ -94,10 +93,9 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let address = unsafe { bar.physmap_mem("ahcid") };
     {
         let scheme_name = format!("disk.{}", name);
-        let socket_fd = libredox::call::open(
+        let socket_fd = syscall::open(
             &format!(":{}", scheme_name),
-            flag::O_RDWR | flag::O_CREAT | flag::O_NONBLOCK
-            0,
+            syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK
         ).expect("ahcid: failed to create disk scheme");
         let mut socket = unsafe { File::from_raw_fd(socket_fd as RawFd) };
 
@@ -106,7 +104,9 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
         let mut event_file = File::open("event:").expect("ahcid: failed to open event file");
 
-        libredox::call::setrens(0, 0).expect("ahcid: failed to enter null namespace");
+        syscall::setrens(0, 0).expect("ahcid: failed to enter null namespace");
+
+        daemon.ready().expect("ahcid: failed to notify parent");
 
         event_file.write(&Event {
             id: socket_fd,
@@ -119,8 +119,6 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
             flags: EVENT_READ,
             data: 0
         }).expect("ahcid: failed to event irq scheme");
-
-        daemon.ready().expect("ahcid: failed to notify parent");
 
         let (hba_mem, disks) = ahci::disks(address as usize, &name);
         let mut scheme = DiskScheme::new(scheme_name, hba_mem, disks);
