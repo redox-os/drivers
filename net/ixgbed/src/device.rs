@@ -129,13 +129,13 @@ impl Intel8259x {
             base,
             size,
             receive_buffer: (0..32)
-                .map(|_| Dma::zeroed().map(|dma| unsafe { dma.assume_init() }))
+                .map(|_| Ok(unsafe { Dma::zeroed()?.assume_init() }))
                 .collect::<Result<Vec<_>>>()?
                 .try_into()
                 .unwrap_or_else(|_| unreachable!()),
             receive_ring: unsafe { Dma::zeroed()?.assume_init() },
             transmit_buffer: (0..32)
-                .map(|_| Dma::zeroed().map(|dma| unsafe { dma.assume_init() }))
+                .map(|_| Ok(unsafe { Dma::zeroed()?.assume_init() }))
                 .collect::<Result<Vec<_>>>()?
                 .try_into()
                 .unwrap_or_else(|_| unreachable!()),

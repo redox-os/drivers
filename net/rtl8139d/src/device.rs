@@ -209,13 +209,13 @@ impl Rtl8139 {
         let regs = Regs::from_base(base);
 
         let mut module = Rtl8139 {
-            regs: regs,
+            regs,
             //TODO: limit to 32-bit
             receive_buffer: Dma::zeroed().map(|dma| dma.assume_init())?,
             receive_i: 0,
             //TODO: limit to 32-bit
             transmit_buffer: (0..4)
-                .map(|_| Dma::zeroed().map(|dma| dma.assume_init()))
+                .map(|_| Ok(Dma::zeroed()?.assume_init()))
                 .collect::<Result<Vec<_>>>()?
                 .try_into()
                 .unwrap_or_else(|_| unreachable!()),

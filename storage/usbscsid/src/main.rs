@@ -3,6 +3,7 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::os::unix::io::{FromRawFd, RawFd};
 
+use libredox::flag;
 use syscall::{Packet, SchemeMut};
 use xhcid_interface::{ConfigureEndpointsReq, DeviceReqData, XhciClientHandle};
 
@@ -84,11 +85,11 @@ fn daemon(daemon: redox_daemon::Daemon, scheme: String, port: usize, protocol: u
 
     // TODO: Let all of the USB drivers syscall clone(2), and xhcid won't have to keep track of all
     // the drivers.
-    let socket_fd = syscall::open(disk_scheme_name, syscall::O_RDWR | syscall::O_CREAT)
+    let socket_fd = libredox::call::open(disk_scheme_name, flag::O_RDWR | flag::O_CREAT, 0)
         .expect("usbscsid: failed to create disk scheme");
     let mut socket_file = unsafe { File::from_raw_fd(socket_fd as RawFd) };
 
-    //syscall::setrens(0, 0).expect("scsid: failed to enter null namespace");
+    //libredox::call::setrens(0, 0).expect("scsid: failed to enter null namespace");
     let mut scsi = Scsi::new(&mut *protocol).expect("usbscsid: failed to setup SCSI");
     println!("SCSI initialized");
     let mut buffer = [0u8; 512];

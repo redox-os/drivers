@@ -11,7 +11,6 @@ use std::fs::File;
 use std::io::{Result, Read, Write};
 
 use pcid_interface::{PciBar, PcidServerHandle};
-use syscall::call::iopl;
 use syscall::flag::EventFlags;
 use syscall::io::{Io, Mmio, Pio};
 
@@ -206,14 +205,14 @@ fn main() {
     redox_daemon::Daemon::new(move |daemon| {
         daemon.ready().expect("failed to signal readiness");
 
-        unsafe { iopl(3).expect("vboxd: failed to get I/O permission"); };
+        common::acquire_port_io_rights().expect("vboxd: failed to get I/O permission");
 
         let mut width = 0;
         let mut height = 0;
         let mut display_opt = File::open("inputd:producer").ok();
         if let Some(ref display) = display_opt {
             let mut buf: [u8; 4096] = [0; 4096];
-            if let Ok(count) = syscall::fpath(display.as_raw_fd() as usize, &mut buf) {
+            if let Ok(count) = libredox::call::fpath(display.as_raw_fd() as usize, &mut buf) {
                 let path = unsafe { String::from_utf8_unchecked(Vec::from(&buf[..count])) };
                 let res = path.split(":").nth(1).unwrap_or("");
                 width = res.split("/").nth(1).unwrap_or("").parse::<u32>().unwrap_or(0);
@@ -245,7 +244,7 @@ fn main() {
 
             let mut event_queue = EventQueue::<()>::new().expect("vboxd: failed to create event queue");
 
-            syscall::setrens(0, 0).expect("vboxd: failed to enter null namespace");
+            libredox::call::setrens(0, 0).expect("vboxd: failed to enter null namespace");
 
             let mut bga = Bga::new();
             let get_mouse = VboxGetMouse::new().expect("vboxd: failed to map GetMouse");
@@ -295,7 +294,7 @@ fn main() {
 
             event_queue.trigger_all(event::Event {
                 fd: 0,
-                flags: EventFlags::empty()
+                flags: Default::default(),
             }).expect("vboxd: failed to trigger events");
 
             event_queue.run().expect("vboxd: failed to run event loop");

@@ -9,3 +9,4 @@ redox-daemon = "0.1"
 redox_syscall = "0.4"
 
 pcid = { path = "../../pcid" }
+libredox = "0.1.3"
