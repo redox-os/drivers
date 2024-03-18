@@ -535,7 +535,7 @@ pub fn main() {
                     .expect("inputd: failed to open consumer handle");
                 let mut display_path = [0; 4096];
 
-                let written = syscall::fpath(handle.as_raw_fd() as usize, &mut display_path)
+                let written = libredox::call::fpath(handle.as_raw_fd() as usize, &mut display_path)
                     .expect("inputd: fpath() failed");
 
                 assert!(written <= display_path.len());
