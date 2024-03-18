@@ -281,7 +281,7 @@ pub struct Alx {
 
 fn dma_array<T, const N: usize>() -> Result<[Dma<T>; N]> {
     Ok((0..N)
-        .map(|_| Dma::zeroed().map(|dma| unsafe { dma.assume_init() }))
+        .map(|_| Ok(Dma::zeroed().map(|dma| unsafe { dma.assume_init() })?))
         .collect::<Result<Vec<_>>>()?
         .try_into()
         .unwrap_or_else(|_| unreachable!()))
@@ -290,7 +290,7 @@ fn dma_array<T, const N: usize>() -> Result<[Dma<T>; N]> {
 impl Alx {
     pub unsafe fn new(base: usize) -> Result<Self> {
         let mut module = Alx {
-            base: base,
+            base,
 
             vendor_id: 0,
             device_id: 0,

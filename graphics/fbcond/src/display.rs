@@ -8,6 +8,7 @@ use std::{
     os::unix::io::{AsRawFd, FromRawFd},
     slice,
 };
+use libredox::flag;
 use syscall::{O_CLOEXEC, O_NONBLOCK, O_RDWR};
 
 // Keep synced with vesad
@@ -22,15 +23,14 @@ pub struct SyncRect {
 
 fn display_fd_map(width: usize, height: usize, display_fd: usize) -> syscall::Result<*mut [u32]> {
     unsafe {
-        let display_ptr = syscall::fmap(
-            display_fd,
-            &syscall::Map {
-                offset: 0,
-                size: (width * height * 4),
-                flags: syscall::PROT_READ | syscall::PROT_WRITE | syscall::MAP_SHARED,
-                address: 0,
-            },
-        )?;
+        let display_ptr = libredox::call::mmap(libredox::call::MmapArgs {
+            fd: display_fd,
+            offset: 0,
+            length: (width * height * 4),
+            prot: flag::PROT_READ | flag::PROT_WRITE,
+            flags: flag::MAP_SHARED,
+            addr: core::ptr::null_mut(),
+        })?;
         let display_slice = slice::from_raw_parts_mut(display_ptr as *mut u32, width * height);
         Ok(display_slice)
     }
@@ -38,7 +38,7 @@ fn display_fd_map(width: usize, height: usize, display_fd: usize) -> syscall::Re
 
 unsafe fn display_fd_unmap(image: *mut [u32], size: usize) {
     // FIXME use image.len() instead of size once it is stable.
-    let _ = syscall::funmap(image as *mut u32 as usize, size * 4);
+    let _ = libredox::call::munmap(image as *mut (), size * 4);
 }
 
 pub struct Display {
@@ -59,7 +59,7 @@ impl Display {
             .open(format!("input:consumer/{vt}"))?;
         let fd = input_handle.as_raw_fd();
 
-        let written = syscall::fpath(fd as usize, &mut buffer)
+        let written = libredox::call::fpath(fd as usize, &mut buffer)
             .expect("init: failed to get the path to the display device");
 
         assert!(written <= buffer.len());
@@ -67,7 +67,7 @@ impl Display {
         let display_path =
             std::str::from_utf8(&buffer[..written]).expect("init: display path UTF-8 check failed");
 
-        let display_file = syscall::open(display_path, O_CLOEXEC | O_NONBLOCK | O_RDWR)
+        let display_file = libredox::call::open(display_path, (O_CLOEXEC | O_NONBLOCK | O_RDWR) as _, 0)
             .map(|socket| unsafe { File::from_raw_fd(socket as RawFd) })
             .unwrap_or_else(|err| {
                 panic!("failed to open display {}: {}", display_path, err);
@@ -75,7 +75,7 @@ impl Display {
 
         let mut buf: [u8; 4096] = [0; 4096];
         let count =
-            syscall::fpath(display_file.as_raw_fd() as usize, &mut buf).unwrap_or_else(|e| {
+            libredox::call::fpath(display_file.as_raw_fd() as usize, &mut buf).unwrap_or_else(|e| {
                 panic!("Could not read display path with fpath(): {e}");
             });
 
@@ -138,7 +138,7 @@ impl Display {
 
     pub fn sync_rect(&mut self, sync_rect: SyncRect) -> syscall::Result<()> {
         unsafe {
-            syscall::write(
+            libredox::call::write(
                 self.display_file.as_raw_fd().as_raw_fd() as usize,
                 slice::from_raw_parts(
                     &sync_rect as *const SyncRect as *const u8,

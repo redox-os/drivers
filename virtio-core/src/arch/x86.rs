@@ -13,7 +13,7 @@ pub fn probe_legacy_port_transport(
 ) -> Result<Device, Error> {
     let port = pci_config.func.bars[0].expect_port();
 
-    unsafe { syscall::iopl(3).expect("virtio: failed to set I/O privilege level") };
+    common::acquire_io_port_rights().expect("virtio: failed to set I/O privilege level");
     log::warn!("virtio: using legacy transport");
 
     let transport = LegacyTransport::new(port);

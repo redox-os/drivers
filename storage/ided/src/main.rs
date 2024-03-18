@@ -1,4 +1,5 @@
 use driver_block::Disk;
+use libredox::flag;
 use log::{error, info};
 use pcid_interface::{PciBar, PcidServerHandle};
 use redox_log::{OutputBuilder, RedoxLogger};
@@ -99,7 +100,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         (Channel::secondary_compat(busmaster_base + 8).unwrap(), 15)
     };
 
-    unsafe { syscall::iopl(3).expect("ided: failed to get I/O privilege") };
+    common::acquire_port_io_rights().expect("ided: failed to get I/O privilege");
 
     //TODO: move this to ide.rs?
     let chans = vec![
@@ -231,27 +232,30 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     }
 
     let scheme_name = format!("disk.{}", name);
-    let socket_fd = syscall::open(
+    let socket_fd = libredox::call::open(
         &format!(":{}", scheme_name),
-        syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK
+        flag::O_RDWR | flag::O_CREAT | flag::O_NONBLOCK,
+        0,
     ).expect("ided: failed to create disk scheme");
     let mut socket = unsafe { File::from_raw_fd(socket_fd as RawFd) };
 
-    let primary_irq_fd = syscall::open(
+    let primary_irq_fd = libredox::call::open(
         &format!("irq:{}", primary_irq),
-        syscall::O_RDWR | syscall::O_NONBLOCK
+        flag::O_RDWR | flag::O_NONBLOCK,
+        0,
     ).expect("ided: failed to open irq file");
     let mut primary_irq_file = unsafe { File::from_raw_fd(primary_irq_fd as RawFd) };
 
-    let secondary_irq_fd = syscall::open(
+    let secondary_irq_fd = libredox::call::open(
         &format!("irq:{}", secondary_irq),
-        syscall::O_RDWR | syscall::O_NONBLOCK
+        flag::O_RDWR | flag::O_NONBLOCK,
+        0,
     ).expect("ided: failed to open irq file");
     let mut secondary_irq_file = unsafe { File::from_raw_fd(secondary_irq_fd as RawFd) };
 
     let mut event_file = File::open("event:").expect("ided: failed to open event file");
 
-    syscall::setrens(0, 0).expect("ided: failed to enter null namespace");
+    libredox::call::setrens(0, 0).expect("ided: failed to enter null namespace");
 
     daemon.ready().expect("ided: failed to notify parent");
 

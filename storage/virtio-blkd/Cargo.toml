@@ -21,3 +21,4 @@ common = { path = "../../common" }
 driver-block = { path = "../driver-block" }
 pcid = { path = "../../pcid" }
 virtio-core = { path = "../../virtio-core" }
+libredox = "0.1.3"

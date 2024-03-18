@@ -320,7 +320,7 @@ impl TextScreen {
             })?;
         }
         self.changed.clear();
-        syscall::fsync(self.display.display_file.as_raw_fd().as_raw_fd() as usize)?;
+        libredox::call::fsync(self.display.display_file.as_raw_fd().as_raw_fd() as usize)?;
 
         Ok(buf.len())
     }

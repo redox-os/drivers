@@ -14,3 +14,4 @@ spin = "0.9"
 
 common = { path = "../../common" }
 pcid = { path = "../../pcid" }
+libredox = "0.1.3"

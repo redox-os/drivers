@@ -42,7 +42,7 @@ fn main() {
 
         scheme.update_size();
 
-        syscall::setrens(0, 0).expect("bgad: failed to enter null namespace");
+        libredox::call::setrens(0, 0).expect("bgad: failed to enter null namespace");
 
         daemon.ready().expect("bgad: failed to notify parent");
 

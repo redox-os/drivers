@@ -14,6 +14,7 @@ use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::sync::Arc;
 
 use event::EventQueue;
+use libredox::flag;
 use syscall::{EventFlags, Packet, SchemeMut};
 use syscall::error::EWOULDBLOCK;
 
@@ -35,7 +36,7 @@ fn main() {
 
     // Daemonize
     redox_daemon::Daemon::new(move |daemon| {
-        let socket_fd = syscall::open(":network", syscall::O_RDWR | syscall::O_CREAT | syscall::O_NONBLOCK).expect("alxd: failed to create network scheme");
+        let socket_fd = libredox::call::open(":network", flag::O_RDWR | flag::O_CREAT | flag::O_NONBLOCK, 0).expect("alxd: failed to create network scheme");
         let socket = Arc::new(RefCell::new(unsafe { File::from_raw_fd(socket_fd as RawFd) }));
 
         daemon.ready().expect("alxd: failed to signal readiness");
@@ -48,7 +49,7 @@ fn main() {
 
             let mut event_queue = EventQueue::<usize>::new().expect("alxd: failed to create event queue");
 
-            syscall::setrens(0, 0).expect("alxd: failed to enter null namespace");
+            libredox::call::setrens(0, 0).expect("alxd: failed to enter null namespace");
 
             let todo = Arc::new(RefCell::new(Vec::<Packet>::new()));
 
@@ -111,7 +112,7 @@ fn main() {
 
             for event_count in event_queue.trigger_all(event::Event {
                 fd: 0,
-    			flags: EventFlags::empty(),
+              flags: Default::default(),
             }).expect("alxd: failed to trigger events") {
                 socket.borrow_mut().write(&Packet {
                     id: 0,
