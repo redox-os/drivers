@@ -12,3 +12,4 @@ common = { path = "../../common" }
 driver-block = { path = "../driver-block" }
 
 redox-daemon = "0.1"
+libredox = "0.1.3"

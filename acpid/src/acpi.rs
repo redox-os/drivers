@@ -105,7 +105,7 @@ impl PhysmapGuard {
         let size = page_count * PAGE_SIZE;
         let virt = unsafe {
             common::physmap(page, size, common::Prot::RO, common::MemoryType::default())
-                .map_err(|error| std::io::Error::from_raw_os_error(error.errno))?
+                .map_err(|error| std::io::Error::from_raw_os_error(error.errno()))?
         };
 
         Ok(Self {
@@ -124,7 +124,7 @@ impl Deref for PhysmapGuard {
 impl Drop for PhysmapGuard {
     fn drop(&mut self) {
         unsafe {
-            let _ = syscall::funmap(self.virt as usize, self.size);
+            let _ = libredox::call::munmap(self.virt as *mut (), self.size);
         }
     }
 }

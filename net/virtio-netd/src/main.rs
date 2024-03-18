@@ -102,7 +102,7 @@ fn deamon(daemon: redox_daemon::Daemon) -> Result<(), Box<dyn std::error::Error>
         data: 0,
     })?;
 
-    syscall::setrens(0, 0).expect("virtio-netd: failed to enter null namespace");
+    libredox::call::setrens(0, 0).expect("virtio-netd: failed to enter null namespace");
 
     daemon.ready().expect("virtio-netd: failed to daemonize");
 

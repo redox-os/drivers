@@ -32,7 +32,7 @@ impl DiskATAPI {
         let mut clb = unsafe { Dma::zeroed()?.assume_init() };
 
         let mut ctbas: [_; 32] = (0..32)
-            .map(|_| Dma::zeroed().map(|dma| unsafe { dma.assume_init() }))
+            .map(|_| Ok(unsafe { Dma::zeroed()?.assume_init() }))
             .collect::<Result<Vec<_>>>()?
             .try_into()
             .unwrap_or_else(|_| unreachable!());
