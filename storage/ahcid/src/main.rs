@@ -96,7 +96,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         let scheme_name = format!("disk.{}", name);
         let socket_fd = libredox::call::open(
             &format!(":{}", scheme_name),
-            flag::O_RDWR | flag::O_CREAT | flag::O_NONBLOCK
+            flag::O_RDWR | flag::O_CREAT | flag::O_NONBLOCK,
             0,
         ).expect("ahcid: failed to create disk scheme");
         let mut socket = unsafe { File::from_raw_fd(socket_fd as RawFd) };

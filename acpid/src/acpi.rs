@@ -105,7 +105,7 @@ impl PhysmapGuard {
         let size = page_count * PAGE_SIZE;
         let virt = unsafe {
             common::physmap(page, size, common::Prot::RO, common::MemoryType::default())
-                .map_err(|error| std::io::Error::from_raw_os_error(error.errno))?
+                .map_err(|error| std::io::Error::from_raw_os_error(error.errno()))?
         };
 
         Ok(Self {

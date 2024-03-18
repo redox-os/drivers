@@ -33,7 +33,7 @@ dependencies = [
  "plain",
  "redox-daemon",
  "redox-log",
- "redox_syscall 0.4.1",
+ "redox_syscall 0.5.1",
  "rustc-hash",
  "serde_json",
  "thiserror",
@@ -52,7 +52,7 @@ dependencies = [
  "pcid",
  "redox-daemon",
  "redox-log",
- "redox_syscall 0.4.1",
+ "redox_syscall 0.5.1",
 ]
 
 [[package]]
@@ -356,7 +356,7 @@ name = "driver-block"
 version = "0.1.0"
 dependencies = [
  "partitionlib",
- "redox_syscall 0.4.1",
+ "redox_syscall 0.5.1",
 ]
 
 [[package]]
@@ -398,7 +398,7 @@ dependencies = [
  "ransid",
  "redox-daemon",
  "redox_event 0.2.1",
- "redox_syscall 0.4.1",
+ "redox_syscall 0.5.1",
 ]
 
 [[package]]
@@ -597,7 +597,7 @@ dependencies = [
  "pcid",
  "redox-daemon",
  "redox-log",
- "redox_syscall 0.4.1",
+ "redox_syscall 0.5.1",
 ]
 
 [[package]]
@@ -793,7 +793,7 @@ dependencies = [
  "pcid",
  "redox-daemon",
  "redox-log",
- "redox_syscall 0.4.1",
+ "redox_syscall 0.5.1",
  "smallvec 1.11.0",
 ]
 
@@ -1638,7 +1638,7 @@ dependencies = [
  "orbclient",
  "ransid",
  "redox-daemon",
- "redox_syscall 0.4.1",
+ "redox_syscall 0.5.1",
 ]
 
 [[package]]
@@ -1655,7 +1655,7 @@ dependencies = [
  "pcid",
  "redox-daemon",
  "redox-log",
- "redox_syscall 0.4.1",
+ "redox_syscall 0.5.1",
  "spin",
  "static_assertions",
  "thiserror",
@@ -1675,7 +1675,7 @@ dependencies = [
  "pcid",
  "redox-log",
  "redox_event 0.1.0",
- "redox_syscall 0.4.1",
+ "redox_syscall 0.5.1",
  "static_assertions",
  "thiserror",
 ]
@@ -1694,7 +1694,7 @@ dependencies = [
  "paste",
  "pcid",
  "redox-daemon",
- "redox_syscall 0.4.1",
+ "redox_syscall 0.5.1",
  "spin",
  "static_assertions",
  "virtio-core",

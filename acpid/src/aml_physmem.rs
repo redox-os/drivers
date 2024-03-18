@@ -17,7 +17,7 @@ impl MappedPage {
     fn new(phys_page: usize) -> std::io::Result<Self> {
         let virt_page = unsafe {
             common::physmap(phys_page, PAGE_SIZE, common::Prot::RO, common::MemoryType::default())
-                .map_err(|error| std::io::Error::from_raw_os_error(error.errno))?
+                .map_err(|error| std::io::Error::from_raw_os_error(error.errno()))?
         } as usize;
         Ok(Self {
             phys_page,

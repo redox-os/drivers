@@ -148,6 +148,7 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
         flag::O_RDWR | flag::O_CREAT | flag::O_CLOEXEC,
         0,
     )
+    .map_err(syscall::Error::from)
     .map_err(Error::SyscallError)?;
 
     let mut socket_file = unsafe { File::from_raw_fd(socket_fd as RawFd) };
