@@ -80,7 +80,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         data: 1
     }).expect("ps2d: failed to event irq:12");
 
-    syscall::setrens(0, 0).expect("ps2d: failed to enter null namespace");
+    libredox::call::setrens(0, 0).expect("ps2d: failed to enter null namespace");
 
     daemon.ready().expect("ps2d: failed to mark daemon as ready");
 

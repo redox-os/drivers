@@ -117,7 +117,7 @@ impl<'a> Display<'a> {
             .next_multiple_of(syscall::PAGE_SIZE);
 
         let mapped = *self.mapped.get().unwrap();
-        let address = unsafe { syscall::virttophys(mapped) }?;
+        let address = (unsafe { syscall::virttophys(mapped) }).map_err(libredox::error::Error::from)?;
 
         self.map_screen_with(0, address, fb_size, mapped).await
     }

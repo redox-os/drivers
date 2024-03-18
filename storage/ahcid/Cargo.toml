@@ -9,8 +9,9 @@ byteorder = "1.2"
 log = "0.4"
 redox-daemon = "0.1"
 redox-log = "0.1"
-redox_syscall = "0.4"
+redox_syscall = "0.5"
 
 common = { path = "../../common" }
 driver-block = { path = "../driver-block" }
 pcid = { path = "../../pcid" }
+libredox = "0.1.3"
