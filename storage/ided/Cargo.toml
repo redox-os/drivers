@@ -6,6 +6,7 @@ edition = "2018"
 [dependencies]
 common = { path = "../../common" }
 driver-block = { path = "../driver-block" }
+libredox = "0.1.3"
 log = "0.4"
 pcid = { path = "../../pcid" }
 redox-daemon = "0.1"

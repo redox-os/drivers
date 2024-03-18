@@ -11,7 +11,6 @@ use std::{mem, process, slice, sync::atomic, task, thread};
 
 use syscall::PAGE_SIZE;
 use syscall::error::{Error, Result, EBADF, EBADMSG, ENOENT, EIO};
-use syscall::flag::{O_RDONLY, PhysallocFlags};
 use syscall::io::Io;
 
 use chashmap::CHashMap;
@@ -236,12 +235,7 @@ impl Xhci {
         let cap = unsafe { &mut *(address as *mut CapabilityRegs) };
         debug!("CAP REGS BASE {:X}", address);
 
-        /*let page_size = {
-            let memory_fd = syscall::open("memory:", O_RDONLY)?;
-            let mut stat = syscall::data::StatVfs::default();
-            syscall::fstatvfs(memory_fd, &mut stat)?;
-            stat.f_bsize as usize
-        };*/
+        //let page_size = ...
 
         let op_base = address + cap.len.read() as usize;
         let op = unsafe { &mut *(op_base as *mut OperationalRegs) };

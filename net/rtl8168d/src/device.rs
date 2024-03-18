@@ -173,9 +173,9 @@ impl Rtl8168 {
         assert_eq!(&regs.mtps as *const _ as usize - base, 0xEC);
 
         let mut module = Rtl8168 {
-            regs: regs,
+            regs,
             receive_buffer: (0..64)
-                .map(|_| Dma::zeroed().map(|dma| dma.assume_init()))
+                .map(|_| Ok(Dma::zeroed()?.assume_init()))
                 .collect::<Result<Vec<_>>>()?
                 .try_into()
                 .unwrap_or_else(|_| unreachable!()),
@@ -183,7 +183,7 @@ impl Rtl8168 {
             receive_ring: Dma::zeroed()?.assume_init(),
             receive_i: 0,
             transmit_buffer: (0..16)
-                .map(|_| Dma::zeroed().map(|dma| dma.assume_init()))
+                .map(|_| Ok(Dma::zeroed()?.assume_init()))
                 .collect::<Result<Vec<_>>>()?
                 .try_into()
                 .unwrap_or_else(|_| unreachable!()),

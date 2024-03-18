@@ -31,3 +31,4 @@ thiserror = "1"
 toml = "0.5"
 
 common = { path = "../common" }
+libredox = "0.1.3"

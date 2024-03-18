@@ -11,6 +11,7 @@ redox-daemon = "0.1"
 
 common = { path = "../../common" }
 inputd = { path = "../../inputd" }
+libredox = "0.1.3"
 
 [features]
 default = []
