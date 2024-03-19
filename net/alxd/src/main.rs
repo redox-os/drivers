@@ -6,16 +6,15 @@
 extern crate event;
 extern crate syscall;
 
-use std::cell::RefCell;
-use std::env;
+use std::{env, iter};
 use std::fs::File;
-use std::io::{Read, Write, Result};
-use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
-use std::sync::Arc;
+use std::io::{Read, Write};
+use std::os::fd::AsRawFd;
+use std::os::unix::io::{FromRawFd, RawFd};
 
-use event::EventQueue;
+use event::{user_data, EventQueue};
 use libredox::flag;
-use syscall::{EventFlags, Packet, SchemeMut};
+use syscall::{Packet, SchemeMut};
 use syscall::error::EWOULDBLOCK;
 
 pub mod device;
@@ -37,7 +36,7 @@ fn main() {
     // Daemonize
     redox_daemon::Daemon::new(move |daemon| {
         let socket_fd = libredox::call::open(":network", flag::O_RDWR | flag::O_CREAT | flag::O_NONBLOCK, 0).expect("alxd: failed to create network scheme");
-        let socket = Arc::new(RefCell::new(unsafe { File::from_raw_fd(socket_fd as RawFd) }));
+        let mut socket = unsafe { File::from_raw_fd(socket_fd as RawFd) };
 
         daemon.ready().expect("alxd: failed to signal readiness");
 
@@ -45,100 +44,78 @@ fn main() {
 
         let address = unsafe { common::physmap(bar, 128*1024, common::Prot::RW, common::MemoryType::Uncacheable).expect("alxd: failed to map address") as usize };
         {
-            let device = Arc::new(RefCell::new(unsafe { device::Alx::new(address).expect("alxd: failed to allocate device") }));
+            let mut device = unsafe { device::Alx::new(address).expect("alxd: failed to allocate device") };
 
-            let mut event_queue = EventQueue::<usize>::new().expect("alxd: failed to create event queue");
+            user_data! {
+                enum Source {
+                    Irq,
+                    Scheme,
+                }
+            }
+
+            let event_queue = EventQueue::<Source>::new().expect("alxd: failed to create event queue");
+            event_queue.subscribe(irq_file.as_raw_fd() as usize, Source::Irq, event::EventFlags::READ).unwrap();
+            event_queue.subscribe(socket_fd, Source::Scheme, event::EventFlags::READ).unwrap();
 
             libredox::call::setrens(0, 0).expect("alxd: failed to enter null namespace");
 
-            let todo = Arc::new(RefCell::new(Vec::<Packet>::new()));
+            let mut todo = Vec::<Packet>::new();
 
-            let device_irq = device.clone();
-            let socket_irq = socket.clone();
-            let todo_irq = todo.clone();
-            event_queue.add(irq_file.as_raw_fd(), move |_event| -> Result<Option<usize>> {
-                let mut irq = [0; 8];
-                irq_file.read(&mut irq)?;
-                if unsafe { device_irq.borrow_mut().intr_legacy() } {
-                    irq_file.write(&mut irq)?;
+            for event in iter::once(Source::Scheme).chain(event_queue.map(|e| e.expect("alxd: failed to get next event").user_data)) {
+                match event {
+                    Source::Irq => {
+                        let mut irq = [0; 8];
+                        irq_file.read(&mut irq).unwrap();
+                        if unsafe { device.intr_legacy() } {
+                            irq_file.write(&mut irq).unwrap();
 
-                    let mut todo = todo_irq.borrow_mut();
-                    let mut i = 0;
-                    while i < todo.len() {
-                        let a = todo[i].a;
-                        device_irq.borrow_mut().handle(&mut todo[i]);
-                        if todo[i].a == (-EWOULDBLOCK) as usize {
-                            todo[i].a = a;
-                            i += 1;
-                        } else {
-                            socket_irq.borrow_mut().write(&mut todo[i])?;
-                            todo.remove(i);
+                            let mut i = 0;
+                            while i < todo.len() {
+                                let a = todo[i].a;
+                                device.handle(&mut todo[i]);
+                                if todo[i].a == (-EWOULDBLOCK) as usize {
+                                    todo[i].a = a;
+                                    i += 1;
+                                } else {
+                                    socket.write(&mut todo[i]).expect("alxd: failed to write to socket");
+                                    todo.remove(i);
+                                }
+                            }
+
+                            /* TODO: Currently a no-op
+                            let next_read = device.next_read();
+                            if next_read > 0 {
+                                return Ok(Some(next_read));
+                            }
+                            */
                         }
                     }
+                    Source::Scheme => {
+                        loop {
+                            let mut packet = Packet::default();
+                            if socket.read(&mut packet).expect("alxd: failed read from socket") == 0 {
+                                break;
+                            }
 
-                    let next_read = device_irq.borrow().next_read();
-                    if next_read > 0 {
-                        return Ok(Some(next_read));
+                            let a = packet.a;
+                            device.handle(&mut packet);
+                            if packet.a == (-EWOULDBLOCK) as usize {
+                                packet.a = a;
+                                todo.push(packet);
+                            } else {
+                                socket.write(&mut packet).expect("alxd: failed to write to socket");
+                            }
+                        }
+
+                        // TODO
+                        /*
+                        let next_read = device.next_read();
+                        if next_read > 0 {
+                            return Ok(Some(next_read));
+                        }
+                        */
                     }
                 }
-                Ok(None)
-            }).expect("alxd: failed to catch events on IRQ file");
-
-            let socket_packet = socket.clone();
-            event_queue.add(socket_fd as RawFd, move |_event| -> Result<Option<usize>> {
-                loop {
-                    let mut packet = Packet::default();
-                    if socket_packet.borrow_mut().read(&mut packet)? == 0 {
-                        break;
-                    }
-
-                    let a = packet.a;
-                    device.borrow_mut().handle(&mut packet);
-                    if packet.a == (-EWOULDBLOCK) as usize {
-                        packet.a = a;
-                        todo.borrow_mut().push(packet);
-                    } else {
-                        socket_packet.borrow_mut().write(&mut packet)?;
-                    }
-                }
-
-                let next_read = device.borrow().next_read();
-                if next_read > 0 {
-                    return Ok(Some(next_read));
-                }
-
-                Ok(None)
-            }).expect("alxd: failed to catch events on IRQ file");
-
-            for event_count in event_queue.trigger_all(event::Event {
-                fd: 0,
-              flags: Default::default(),
-            }).expect("alxd: failed to trigger events") {
-                socket.borrow_mut().write(&Packet {
-                    id: 0,
-                    pid: 0,
-                    uid: 0,
-                    gid: 0,
-                    a: syscall::number::SYS_FEVENT,
-                    b: 0,
-                    c: syscall::flag::EVENT_READ.bits(),
-                    d: event_count
-                }).expect("alxd: failed to write event");
-            }
-
-            loop {
-                let event_count = event_queue.run().expect("alxd: failed to handle events");
-
-                socket.borrow_mut().write(&Packet {
-                    id: 0,
-                    pid: 0,
-                    uid: 0,
-                    gid: 0,
-                    a: syscall::number::SYS_FEVENT,
-                    b: 0,
-                    c: syscall::flag::EVENT_READ.bits(),
-                    d: event_count
-                }).expect("alxd: failed to write event");
             }
         }
         std::process::exit(0);

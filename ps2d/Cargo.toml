@@ -6,6 +6,6 @@ edition = "2018"
 [dependencies]
 bitflags = "1"
 orbclient = "0.3.27"
-redox_syscall = "0.4"
+redox_syscall = "0.5"
 redox-daemon = "0.1"
 libredox = "0.1.3"
