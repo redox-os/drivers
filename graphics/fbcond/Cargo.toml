@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 orbclient = "0.3.27"
 ransid = "0.4"
-redox_event = "0.2"
+redox_event = "0.4"
 redox_syscall = "0.5"
 redox-daemon = "0.1"
 

@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2018"
 
 [dependencies]
-bitflags = "1"
-redox_event = { git = "https://gitlab.redox-os.org/redox-os/event.git" }
+bitflags = "2"
+redox_event = "0.4.1"
 redox_syscall = "0.5"
 redox-daemon = "0.1"
 

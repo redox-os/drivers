@@ -1,10 +1,6 @@
 //#![deny(warnings)]
 
-extern crate event;
-extern crate orbclient;
-extern crate syscall;
-
-use event::EventQueue;
+use event::{user_data, EventQueue};
 use std::mem;
 use std::os::unix::io::AsRawFd;
 use std::fs::File;
@@ -203,8 +199,6 @@ fn main() {
 
     // Daemonize
     redox_daemon::Daemon::new(move |daemon| {
-        daemon.ready().expect("failed to signal readiness");
-
         common::acquire_port_io_rights().expect("vboxd: failed to get I/O permission");
 
         let mut width = 0;
@@ -242,7 +236,16 @@ fn main() {
 
             vmmdev.guest_events.write(VBOX_EVENT_DISPLAY | VBOX_EVENT_MOUSE);
 
-            let mut event_queue = EventQueue::<()>::new().expect("vboxd: failed to create event queue");
+            user_data! {
+                enum Source {
+                    Irq,
+                }
+            }
+
+            let event_queue = EventQueue::<Source>::new().expect("vboxd: Could not create event queue.");
+            event_queue.subscribe(irq_file.as_raw_fd() as usize, Source::Irq, event::EventFlags::READ).unwrap();
+
+            daemon.ready().expect("failed to signal readiness");
 
             libredox::call::setrens(0, 0).expect("vboxd: failed to enter null namespace");
 
@@ -250,13 +253,14 @@ fn main() {
             let get_mouse = VboxGetMouse::new().expect("vboxd: failed to map GetMouse");
             let display_change = VboxDisplayChange::new().expect("vboxd: failed to map DisplayChange");
             let ack_events = VboxAckEvents::new().expect("vboxd: failed to map AckEvents");
-            event_queue.add(irq_file.as_raw_fd(), move |_event| -> Result<Option<()>> {
+
+            for Source::Irq in event_queue.map(|e| e.expect("vboxd: failed to get next event").user_data) {
                 let mut irq = [0; 8];
-                if irq_file.read(&mut irq)? >= irq.len() {
+                if irq_file.read(&mut irq).unwrap() >= irq.len() {
                     let host_events = vmmdev.host_events.read();
                     if host_events != 0 {
                         port.write(ack_events.physical() as u32);
-                        irq_file.write(&irq)?;
+                        irq_file.write(&irq).unwrap();
 
                         if host_events & VBOX_EVENT_DISPLAY == VBOX_EVENT_DISPLAY {
                             port.write(display_change.physical() as u32);
@@ -269,8 +273,8 @@ fn main() {
                                     println!("Display {}, {}", width, height);
                                     bga.set_size(width as u16, height as u16);
                                     let _ = display.write(&orbclient::ResizeEvent {
-                                        width: width,
-                                        height: height,
+                                        width,
+                                        height,
                                     }.to_event());
                                 }
                             }
@@ -289,15 +293,7 @@ fn main() {
                         }
                     }
                 }
-                Ok(None)
-            }).expect("vboxd: failed to poll irq");
-
-            event_queue.trigger_all(event::Event {
-                fd: 0,
-                flags: Default::default(),
-            }).expect("vboxd: failed to trigger events");
-
-            event_queue.run().expect("vboxd: failed to run event loop");
+            }
         }
 
         std::process::exit(0);
