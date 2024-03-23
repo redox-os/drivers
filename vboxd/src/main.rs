@@ -1,7 +1,7 @@
 //#![deny(warnings)]
 
 use event::{user_data, EventQueue};
-use std::mem;
+use std::{iter, mem};
 use std::os::unix::io::AsRawFd;
 use std::fs::File;
 use std::io::{Result, Read, Write};
@@ -254,7 +254,7 @@ fn main() {
             let display_change = VboxDisplayChange::new().expect("vboxd: failed to map DisplayChange");
             let ack_events = VboxAckEvents::new().expect("vboxd: failed to map AckEvents");
 
-            for Source::Irq in event_queue.map(|e| e.expect("vboxd: failed to get next event").user_data) {
+            for Source::Irq in iter::once(Source::Irq).chain(event_queue.map(|e| e.expect("vboxd: failed to get next event").user_data)) {
                 let mut irq = [0; 8];
                 if irq_file.read(&mut irq).unwrap() >= irq.len() {
                     let host_events = vmmdev.host_events.read();

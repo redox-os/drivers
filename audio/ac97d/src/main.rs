@@ -110,8 +110,9 @@ fn main() {
 
         let mut todo = Vec::<Packet>::new();
 
-        'events: for event in event_queue.map(|e| e.expect("ac97d: failed to get next event")) {
-            match event.user_data {
+        let all = [Source::Irq, Source::Scheme];
+        'events: for event in all.into_iter().chain(event_queue.map(|e| e.expect("ac97d: failed to get next event").user_data)) {
+            match event {
                 Source::Irq => {
                     let mut irq = [0; 8];
                     irq_file.read(&mut irq).unwrap();
