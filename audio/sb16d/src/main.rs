@@ -1,14 +1,9 @@
 //#![deny(warnings)]
 
 use std::{env, usize};
-use std::fs::File;
-use std::io::{ErrorKind, Read, Write, Result};
-use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use libredox::errno::{EAGAIN, EWOULDBLOCK};
 use libredox::{flag, Fd};
-use syscall::{Packet, SchemeBlockMut, EventFlags};
-use std::cell::RefCell;
-use std::sync::Arc;
+use syscall::{Packet, SchemeBlockMut};
 
 use event::{user_data, EventQueue};
 use redox_log::{OutputBuilder, RedoxLogger};
@@ -77,7 +72,7 @@ fn main() {
         let socket = Fd::open(":audiohw", flag::O_RDWR | flag::O_CREAT | flag::O_NONBLOCK, 0).expect("sb16d: failed to create hda scheme");
 
         //TODO: error on multiple IRQs?
-        let mut irq_file = match device.irqs.first() {
+        let irq_file = match device.irqs.first() {
             Some(irq) => Fd::open(&format!("irq:{}", irq), flag::O_RDWR, 0).expect("sb16d: failed to open IRQ file"),
             None => panic!("sb16d: no IRQs found"),
         };
@@ -88,7 +83,7 @@ fn main() {
             }
         }
 
-        let mut event_queue = EventQueue::<Source>::new().expect("sb16d: Could not create event queue.");
+        let event_queue = EventQueue::<Source>::new().expect("sb16d: Could not create event queue.");
         event_queue.subscribe(irq_file.raw(), Source::Irq, event::EventFlags::READ).unwrap();
         event_queue.subscribe(socket.raw(), Source::Scheme, event::EventFlags::READ).unwrap();
 
@@ -98,9 +93,10 @@ fn main() {
 
         let mut todo = Vec::<Packet>::new();
 
-        'events: for event_res in event_queue {
-            let event = event_res.expect("sb16d: failed to get next event");
-            match event.user_data {
+        let all = [Source::Irq, Source::Scheme];
+
+        'events: for event in all.into_iter().chain(event_queue.map(|e| e.expect("sb16d: failed to get next event").user_data)) {
+            match event {
                 Source::Irq => {
                     let mut irq = [0; 8];
                     irq_file.read(&mut irq).unwrap();
