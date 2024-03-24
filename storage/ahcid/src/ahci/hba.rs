@@ -289,7 +289,7 @@ impl HbaPort {
     }
 
     pub fn ata_start<F>(&mut self, clb: &mut Dma<[HbaCmdHeader; 32]>, ctbas: &mut [Dma<HbaCmdTable>; 32], callback: F) -> Option<u32>
-              where F: FnOnce(&mut HbaCmdHeader, &mut FisRegH2D, &mut [HbaPrdtEntry; 65536], &mut [Mmio<u8>; 16]) {
+              where F: FnOnce(&mut HbaCmdHeader, &mut FisRegH2D, &mut [HbaPrdtEntry; PRDT_ENTRIES], &mut [Mmio<u8>; 16]) {
 
         //TODO: Should probably remove
         self.is.write(u32::MAX);
@@ -414,8 +414,10 @@ pub struct HbaCmdTable {
     _rsv: [Mmio<u8>; 48], // Reserved
 
     // 0x80
-    prdt_entry: [HbaPrdtEntry; 65536], // Physical region descriptor table entries, 0 ~ 65535
+    prdt_entry: [HbaPrdtEntry; PRDT_ENTRIES], // Physical region descriptor table entries, 0 ~ 65535
 }
+const CMD_TBL_SIZE: usize = 256 * 4096;
+const PRDT_ENTRIES: usize = (CMD_TBL_SIZE - 128) / size_of::<HbaPrdtEntry>();
 
 #[repr(packed)]
 pub struct HbaCmdHeader {
