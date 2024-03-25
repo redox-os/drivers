@@ -8,10 +8,10 @@ license = "MIT"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-bitflags = "1.2"
+bitflags = "2"
 log = "0.4"
-orbclient = "0.3.27"
+orbclient = "0.3.47"
 redox-log = "0.1"
-redox_syscall = "0.4"
+redox_syscall = "0.5"
 ux = "0.1"
 xhcid = { path = "../xhcid" }
