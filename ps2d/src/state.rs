@@ -236,7 +236,7 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
             }
         } else if self.vmmouse {
             for _i in 0..256 {
-                let (status, _, _, _, _, _) = unsafe { vm::cmd(vm::ABSPOINTER_STATUS, 0) };
+                let (status, _, _, _) = unsafe { vm::cmd(vm::ABSPOINTER_STATUS, 0) };
                 //TODO if ((status & VMMOUSE_ERROR) == VMMOUSE_ERROR)
 
                 let queue_length = status & 0xffff;
@@ -249,7 +249,7 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
                     break;
                 }
 
-                let (status, dx, dy, dz, _, _) = unsafe { vm::cmd(vm::ABSPOINTER_DATA, 4) };
+                let (status, dx, dy, dz) = unsafe { vm::cmd(vm::ABSPOINTER_DATA, 4) };
 
                 if self.vmmouse_relative {
                     if dx != 0 || dy != 0 {
