@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 fdt = "0.1.5"
-redox_syscall = "0.4"
+redox_syscall = "0.5"
 common = { path = "../../common" }
 driver-block = { path = "../driver-block" }
 
