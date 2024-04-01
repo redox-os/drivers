@@ -2,7 +2,7 @@ use crate::spec::*;
 use crate::utils::align;
 
 use common::dma::Dma;
-use event::EventQueue;
+use event::{EventQueue, RawEventQueue};
 
 use core::mem::size_of;
 use core::sync::atomic::{AtomicU16, Ordering};
@@ -67,22 +67,15 @@ pub fn spawn_irq_thread(irq_handle: &File, queue: &Arc<Queue<'static>>) {
     let queue_copy = queue.clone();
 
     std::thread::spawn(move || {
-        let mut event_queue = EventQueue::<usize>::new().unwrap();
+        let mut event_queue = RawEventQueue::new().unwrap();
 
-        event_queue
-            .add(irq_fd, move |_| -> Result<Option<usize>, std::io::Error> {
-                // Wake up the tasks waiting on the queue.
-                for (_, task) in queue_copy.waker.lock().unwrap().iter() {
-                    task.wake_by_ref();
-                }
+        event_queue.subscribe(irq_fd as usize, 0, event::EventFlags::READ).unwrap();
 
-                // Wake up the tasks waiting on the queue.
-                Ok(None)
-            })
-            .unwrap();
-
-        loop {
-            event_queue.run().unwrap();
+        for event in event_queue.map(Result::unwrap) {
+            // Wake up the tasks waiting on the queue.
+            for (_, task) in queue_copy.waker.lock().unwrap().iter() {
+                task.wake_by_ref();
+            }
         }
     });
 }

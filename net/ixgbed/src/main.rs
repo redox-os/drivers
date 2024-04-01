@@ -5,7 +5,7 @@ use std::os::unix::io::AsRawFd;
 use std::rc::Rc;
 
 use driver_network::NetworkScheme;
-use event::EventQueue;
+use event::{user_data, EventQueue};
 use pcid_interface::PcidServerHandle;
 use syscall::EventFlags;
 
@@ -50,10 +50,18 @@ fn main() {
         let device = device::Intel8259x::new(address, IXGBE_MMIO_SIZE)
             .expect("ixgbed: failed to allocate device");
 
-        let scheme = Rc::new(RefCell::new(NetworkScheme::new(device, format!("network.{name}"))));
+        let mut scheme = NetworkScheme::new(device, format!("network.{name}"));
 
-        let mut event_queue =
-            EventQueue::<Infallible>::new().expect("ixgbed: failed to create event queue");
+        user_data! {
+            enum Source {
+                Irq,
+                Scheme,
+            }
+        }
+
+        let mut event_queue = EventQueue::<Source>::new().expect("ixgbed: Could not create event queue.");
+        event_queue.subscribe(irq_file.as_raw_fd() as usize, Source::Irq, event::EventFlags::READ).unwrap();
+        event_queue.subscribe(scheme.event_handle() as usize, Source::Scheme, event::EventFlags::READ).unwrap();
 
         libredox::call::setrens(0, 0).expect("ixgbed: failed to enter null namespace");
 
@@ -61,42 +69,25 @@ fn main() {
             .ready()
             .expect("ixgbed: failed to mark daemon as ready");
 
-        let scheme_irq = scheme.clone();
-        event_queue
-            .add(
-                irq_file.as_raw_fd(),
-                move |_event| -> Result<Option<Infallible>> {
+        scheme.tick().unwrap();
+
+        for event in event_queue.map(|e| e.expect("ixgbed: failed to get next event")) {
+            match event.user_data {
+                Source::Irq => {
                     let mut irq = [0; 8];
-                    irq_file.read(&mut irq)?;
-                    if scheme_irq.borrow().adapter().irq() {
-                        irq_file.write(&mut irq)?;
+                    irq_file.read(&mut irq).unwrap();
+                    if scheme.adapter().irq() {
+                        irq_file.write(&mut irq).unwrap();
 
-                        return scheme_irq.borrow_mut().tick().map(|()| None);
+                        scheme.tick().unwrap();
                     }
-                    Ok(None)
-                },
-            )
-            .expect("ixgbed: failed to catch events on IRQ file");
-
-        let scheme_packet = scheme.clone();
-        event_queue
-            .add(
-                scheme.borrow().event_handle(),
-                move |_event| -> Result<Option<Infallible>> {
-                    scheme_packet.borrow_mut().tick().map(|()| None)
-                },
-            )
-            .expect("ixgbed: failed to catch events on scheme file");
-
-        event_queue
-            .trigger_all(event::Event {
-                fd: 0,
-                flags: Default::default(),
-            })
-            .expect("ixgbed: failed to trigger events");
-
-        #[allow(unreachable_code)]
-        match event_queue.run().expect("ixgbed: failed to handle events") {}
+                }
+                Source::Scheme => {
+                    scheme.tick().unwrap();
+                }
+            }
+        }
+        unreachable!()
     })
     .expect("ixgbed: failed to create daemon");
 }

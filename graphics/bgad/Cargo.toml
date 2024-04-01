@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2018"
 
 [dependencies]
-orbclient = "0.3.27"
+orbclient = "0.3.47"
 redox-daemon = "0.1"
-redox_syscall = "0.4"
+redox_syscall = "0.5"
 
 pcid = { path = "../../pcid" }
 libredox = "0.1.3"

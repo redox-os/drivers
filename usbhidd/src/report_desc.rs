@@ -9,6 +9,7 @@ enum Protocol {
 }*/
 
 bitflags! {
+    #[derive(Clone, Copy, Debug)]
     pub struct MainItemFlags: u32 {
         const CONSTANT = 1 << 0;
         const VARIABLE = 1 << 1;
