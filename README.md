@@ -1,73 +1,42 @@
 # Drivers
 
-This document covers the driver details/status.
+This document covers the driver details.
 
-Implemented devices/hardware interfaces:
+## Hardware Interfaces and Devices
 
-- ac97d - Realtek audio chipsets.
-- acpid - ACPI (incomplete).
-
-```
-- Lack of drivers for devices controlled using AML
-- The AML parser does not work on real hardware
-- It doesn't use any ACPI functionality other than S5 shutdown
-- Needs to implement something like "determine the battery status" on real hardware (hard)
-```
-
-- ahcid - SATA.
-- alxd - Atheros ethernet (incomplete).
-
-```
-- Lack of datasheet to finish
-```
-
-- amlserde - a library to provide serialization/deserialization of the AML symbol table from ACPI (incomplete).
-- bgad - Bochs emulator/debugger.
-- block-io-wrapper - Library used by other drivers.
-- e1000d - Intel Gigabit ethernet.
-- ided - IDE.
-- ihdad - Intel HD Audio chipsets.
-- inputd - Multiplexes input from multiple input drivers and provides that to Orbital.
-- ixgbed - Intel 10 Gigabit ethernet.
-- nvmed - NVMe.
-- pcid - PCI.
+- ac97d - Realtek audio chipsets
+- acpid - ACPI interface
+- ahcid - SATA interface
+- alxd - Atheros ethernet
+- amlserde - a library to provide serialization/deserialization of the AML symbol table from ACPI
+- bgad - Bochs emulator and debugger
+- block-io-wrapper - Library used by other drivers
+- e1000d - Intel Gigabit ethernet
+- ided - IDE interface
+- ihdad - Intel HD Audio chipsets
+- inputd - Multiplexes input from multiple input drivers and provides that to Orbital
+- ixgbed - Intel 10 Gigabit ethernet
+- nvmed - NVMe interface
+- pcid - PCI interface with extensions for PCI Express
 - pcspkrd - PC speaker
-- ps2d - PS/2
-- rtl8139d - Realtek ethernet.
-- rtl8168d - Realtek ethernet.
-- sb16d - Sound Blaster audio (incomplete).
+- ps2d - PS/2 interface
+- rtl8139d - Realtek ethernet
+- rtl8168d - Realtek ethernet
+- sb16d - Sound Blaster audio
+- usbctl - USB control
+- usbhidd - USB HID
+- usbscsid - USB SCSI
+- vboxd - VirtualBox guest
+- vesad - VESA interface
+- virtio-blkd - VirtIO block device
+- virtio-core - VirtIO core
+- virtio-gpud - VirtIO GPU device
+- virtio-netd - VirtIO Network device
+- xhcid - xHCI USB controller
 
-```
-- Need to determine a way to allocate memory under 16MiB for use in ISA DMA
-```
+Some drivers are work-in-progress and incomplete, read [this](https://gitlab.redox-os.org/redox-os/drivers/-/issues/41) tracking issue to verify.
 
-- usbctl - USB control (incomplete).
-
-```
-- Missing class drivers for various classes
-```
-
-- usbhidd - USB HID (incomplete).
-
-```
-- Has tons of descriptors that are possible, not all are supported
-```
-
-- usbscsid - USB SCSI (incomplete).
-
-```
-- Missing class drivers for various classes
-```
-
-- vboxd - VirtualBox guest.
-- vesad - VESA.
-- virtio-blkd - VirtIO block device (incomplete).
-- virtio-core - VirtIO core.
-- virtio-gpud - VirtIO GPU device (incomplete).
-- virtio-netd - VirtIO net device (incomplete).
-- xhcid - xHCI (incomplete).
-
-## Interfaces
+## System Interfaces
 
 This section cover the interfaces used by Redox drivers.
 
