@@ -455,7 +455,7 @@ impl Ps2 {
             }
 
             // Clear remaining data
-            self.flush_read("set sample rate");
+            self.flush_read("set scaling");
         }
 
         {
