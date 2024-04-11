@@ -13,5 +13,5 @@ log = "0.4"
 orbclient = "0.3.47"
 redox-log = "0.1"
 redox_syscall = "0.5"
-ux = "0.1"
+rehid = { git = "https://gitlab.redox-os.org/redox-os/rehid.git" }
 xhcid = { path = "../xhcid" }

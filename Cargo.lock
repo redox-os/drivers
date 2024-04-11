@@ -1138,6 +1138,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "20145670ba436b55d91fc92d25e71160fbfbdd57831631c8d7d36377a476f1cb"
 
 [[package]]
+name = "rehid"
+version = "0.1.0"
+source = "git+https://gitlab.redox-os.org/redox-os/rehid.git#9bf6c9ef7cc4f95932fcaabfa3141a24bfd39bbf"
+dependencies = [
+ "bitflags 2.5.0",
+ "ux",
+]
+
+[[package]]
 name = "rtl8139d"
 version = "0.1.0"
 dependencies = [
@@ -1520,7 +1529,7 @@ dependencies = [
  "orbclient",
  "redox-log",
  "redox_syscall 0.5.1",
- "ux",
+ "rehid",
  "xhcid",
 ]
 

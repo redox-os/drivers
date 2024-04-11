@@ -1,5 +1,6 @@
 use std::slice;
 
+use rehid::report_desc::ReportTy;
 use xhcid_interface::{
     DeviceReqData, PortReqRecipient, PortReqTy, XhciClientHandle, XhciClientHandleError,
 };
@@ -10,14 +11,6 @@ const GET_IDLE_REQ: u8 = 0x2;
 const SET_IDLE_REQ: u8 = 0xA;
 const GET_PROTOCOL_REQ: u8 = 0x3;
 const SET_PROTOCOL_REQ: u8 = 0xB;
-
-#[repr(u8)]
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum ReportTy {
-    Input = 1,
-    Output,
-    Feature,
-}
 
 fn concat(hi: u8, lo: u8) -> u16 {
     (u16::from(hi) << 8) | u16::from(lo)
