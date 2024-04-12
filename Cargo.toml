@@ -1,7 +1,9 @@
 [workspace]
 members = [
-    "acpid",
     "common",
+    "executor",
+
+    "acpid",
     "pcid",
     "ps2d",
     "vboxd",
@@ -37,7 +39,7 @@ members = [
     "storage/lived", # TODO: not really a driver...
     "storage/nvmed",
     "storage/usbscsid",
-    "storage/virtio-blkd",
+    "storage/virtio-blkd", "executor",
 ]
 
 [profile.release]
