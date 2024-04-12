@@ -1,5 +1,6 @@
 #![cfg_attr(target_arch = "aarch64", feature(stdsimd))] // Required for yield instruction
 #![feature(int_roundings)]
+#![feature(waker_getters)]
 
 use std::convert::TryInto;
 use std::fs::File;
@@ -286,17 +287,16 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     daemon.ready().expect("nvmed: failed to signal readiness");
 
-    let (reactor_sender, reactor_receiver) = crossbeam_channel::unbounded();
     let (interrupt_method, interrupt_sources) =
         get_int_method(&mut pcid_handle, &pci_config.func, &allocated_bars)
             .expect("nvmed: failed to find a suitable interrupt method");
-    let mut nvme = Nvme::new(address, interrupt_method, pcid_handle, reactor_sender)
+    let mut nvme = Nvme::new(address, interrupt_method, pcid_handle)
         .expect("nvmed: failed to allocate driver data");
     unsafe { nvme.init() }
     log::debug!("Finished base initialization");
     let nvme = Arc::new(nvme);
-    #[cfg(feature = "async")]
-    let reactor_thread = nvme::cq_reactor::start_cq_reactor_thread(Arc::clone(&nvme), interrupt_sources, reactor_receiver);
+
+    let executor = nvme::executor::LocalExecutor::init(Arc::clone(&nvme), interrupt_sources);
     let namespaces = nvme.init_with_queues();
 
     libredox::call::setrens(0, 0).expect("nvmed: failed to enter null namespace");
@@ -333,8 +333,6 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     }
 
     //TODO: destroy NVMe stuff
-    #[cfg(feature = "async")]
-    reactor_thread.join().expect("nvmed: failed to join reactor thread");
 
     std::process::exit(0);
 }
