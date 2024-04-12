@@ -186,7 +186,7 @@ pub struct Nvme {
     next_cqid: AtomicCqId,
 }
 
-struct ThreadCtxt {
+pub struct ThreadCtxt {
     buffer: Dma<[u8; 512 * 4096]>, // 2MB of buffer
     buffer_prp: Dma<[u64; 512]>,   // 4KB of PRP for the buffer
 
@@ -261,13 +261,7 @@ impl Nvme {
     }
 
     pub unsafe fn init(&mut self) {
-        let mut main_ctxt = self.thread_ctxts.get_mut().get_mut(&0).unwrap().lock();
-        let main_ctxt = &mut *main_ctxt;
-
-        for (i, prp) in main_ctxt.buffer_prp.iter_mut().enumerate() {
-            *prp = (main_ctxt.buffer.physical() + i * 4096) as u64;
-        }
-
+        let thread_ctxts = self.thread_ctxts.get_mut();
         {
             let regs = self.regs.read();
             log::debug!("CAP_LOW: {:X}", regs.cap_low.read());
@@ -302,17 +296,20 @@ impl Nvme {
         }
 
         for (qid, iv) in self.cq_ivs.get_mut().iter_mut() {
-            /*let &(ref cq, ref sq_ids) = &*queue.get_mut();
-            let data = &cq.data;
-            log::debug!("completion queue {}: {:X}, {}, (submission queue ids: {:?}", qid, data.physical(), data.len(), sq_ids);*/
+            let ctxt = thread_ctxts.get(&0).unwrap().lock();
+
+            let &(ref cq, ref sq) = ctxt.queues.get(qid).unwrap();
+            log::debug!("iv {iv} [cq {qid}: {:X}, {}] [sq {qid}: {:X}, {}]", cq.data.physical(), cq.data.len(), sq.data.physical(), sq.data.len());
         }
 
-        /*for (qid, (queue, cq_id)) in self.submission_queues.get_mut().iter_mut() {
-            let data = &queue.get_mut().data;
-            log::debug!("submission queue {}: {:X}, {}, attached to CQID: {}", qid, data.physical(), data.len(), cq_id);
-        }*/
-
         {
+            let mut main_ctxt = thread_ctxts.get(&0).unwrap().lock();
+            let main_ctxt = &mut *main_ctxt;
+
+            for (i, prp) in main_ctxt.buffer_prp.iter_mut().enumerate() {
+                *prp = (main_ctxt.buffer.physical() + i * 4096) as u64;
+            }
+
             let regs = self.regs.get_mut();
 
             let (asq, acq) = main_ctxt.queues.get_mut(&0).unwrap();
@@ -500,6 +497,7 @@ impl Nvme {
         log::trace!("preinit");
 
         self.identify_controller();
+
         let nsids = self.identify_namespace_list(0);
 
         log::debug!("first commands");
@@ -512,7 +510,9 @@ impl Nvme {
 
         // TODO: Multiple queues
         self.create_io_completion_queue(1, Some(0));
+        log::trace!("created compq");
         self.create_io_submission_queue(1, 1);
+        log::trace!("created subq");
 
         namespaces
     }

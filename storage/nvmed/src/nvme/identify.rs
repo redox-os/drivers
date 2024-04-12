@@ -191,11 +191,11 @@ impl Nvme {
         //TODO: Use buffer
         let data: Dma<IdentifyNamespaceData> = unsafe { Dma::zeroed().unwrap().assume_init() };
 
-        // println!("  - Attempting to identify namespace {}", nsid);
+        log::debug!("Attempting to identify namespace {}", nsid);
         let comp = self
             .submit_and_complete_admin_command(|cid| NvmeCmd::identify_namespace(cid, data.physical(), nsid));
 
-        // println!("  - Dumping identify namespace");
+        log::debug!("Dumping identify namespace");
 
         let size = data.size_in_blocks();
         let capacity = data.capacity_in_blocks();

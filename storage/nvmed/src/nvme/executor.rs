@@ -116,8 +116,11 @@ impl LocalExecutor {
 
         self.ready_futures.borrow_mut().push_front(idx);
 
-        while retval.borrow().is_none() {
+        loop {
             self.poll();
+            if retval.borrow().is_some() {
+                break;
+            }
             self.react();
         }
 
@@ -141,15 +144,17 @@ impl LocalExecutor {
         // TODO: The kernel should probably do the masking, which should happen before EOI
         // messages to the interrupt controller.
         self.nvme.set_vector_masked(self.vector, true);
-        for (sq_cq_id, (_sq, cq)) in ctxt.queues.iter_mut() {
+        for (sq_cq_id, (sq, cq)) in ctxt.queues.iter_mut() {
             let mut head = None;
 
             while let Some((new_head, cqe)) = cq.complete() {
+                log::trace!("new head {new_head} cqe {cqe:?}");
                 if let Some((fut_idx, comp_ptr)) = self.awaiting_completion.borrow_mut().get_mut(sq_cq_id).and_then(|per_cmd| per_cmd.remove(&{ cqe.cid })) {
                     unsafe {
                         comp_ptr.as_ptr().write(Some(cqe));
                     }
                     self.ready_futures.borrow_mut().push_back(fut_idx);
+                    sq.head = cqe.sq_head;
                 }
                 head = Some(new_head);
             }
@@ -189,6 +194,7 @@ impl Future for NvmeFuture {
 
                 if let Some((cq_id, cmd_id)) = executor.nvme.try_submit_raw(&mut executor.nvme.cur_thread_ctxt().lock(), sq_id, |cmd_id| {
                     cmd.cid = cmd_id;
+                    log::trace!("About to submit {cmd:?}");
                     cmd
                 }, || {
                     awaiting.entry(sq_id).or_default().push_back(idx);
@@ -199,10 +205,14 @@ impl Future for NvmeFuture {
                 task::Poll::Pending
             }
             State::Completing { cq_id, cmd_id } => match this.comp.take() {
-                Some(comp) => task::Poll::Ready(comp),
+                Some(comp) => {
+                    log::trace!("ready!");
+                    task::Poll::Ready(comp)
+                }
 
-                // Shouldn't technically occur
+                // Shouldn't technically be possible
                 None => {
+                    log::trace!("spurious poll");
                     executor.awaiting_completion.borrow_mut().entry(cq_id).or_default().insert(cmd_id, (idx, (&mut this.comp).into()));
                     task::Poll::Pending
                 }
