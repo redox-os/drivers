@@ -1140,9 +1140,10 @@ checksum = "20145670ba436b55d91fc92d25e71160fbfbdd57831631c8d7d36377a476f1cb"
 [[package]]
 name = "rehid"
 version = "0.1.0"
-source = "git+https://gitlab.redox-os.org/redox-os/rehid.git#9bf6c9ef7cc4f95932fcaabfa3141a24bfd39bbf"
+source = "git+https://gitlab.redox-os.org/redox-os/rehid.git#d3c74a8abbdb75d93260883e3378c46b3e875fa9"
 dependencies = [
  "bitflags 2.5.0",
+ "log",
  "ux",
 ]
 

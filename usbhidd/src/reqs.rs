@@ -80,10 +80,7 @@ pub fn set_idle(
         DeviceReqData::NoData,
     )
 }
-pub fn get_protocol(
-    handle: &XhciClientHandle,
-    if_num: u16,
-) -> Result<u8, XhciClientHandleError> {
+pub fn get_protocol(handle: &XhciClientHandle, if_num: u16) -> Result<u8, XhciClientHandleError> {
     let mut protocol = 0;
     let buffer = slice::from_mut(&mut protocol);
     handle.device_request(
