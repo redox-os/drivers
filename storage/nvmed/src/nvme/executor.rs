@@ -29,19 +29,18 @@ pub struct LocalExecutor {
     intx: bool,
 
     // TODO: One IV and SQ/CQ per core (where the admin queue can be managed by the main thread).
-    awaiting_submission: HashMap<SqId, VecDeque<FutIdx>>,
-    awaiting_completion: HashMap<CqId, HashMap<CmdId, (FutIdx, NonNull<NvmeComp>)>>,
-    ready_comp: HashMap<FutIdx, NvmeComp>,
-    ready_futures: VecDeque<FutIdx>,
-    futures: Slab<Pin<Box<dyn Future<Output = ()> + 'static>>>
+    awaiting_submission: RefCell<HashMap<SqId, VecDeque<FutIdx>>>,
+    awaiting_completion: RefCell<HashMap<CqId, HashMap<CmdId, (FutIdx, NonNull<Option<NvmeComp>>)>>>,
+    ready_futures: RefCell<VecDeque<FutIdx>>,
+    futures: RefCell<Slab<Pin<Box<dyn Future<Output = ()> + 'static>>>>,
 }
 
 thread_local! {
-    static THE_EXECUTOR: RefCell<Option<Rc<RefCell<LocalExecutor>>>> = RefCell::new(None);
+    static THE_EXECUTOR: RefCell<Option<Rc<LocalExecutor>>> = RefCell::new(None);
 }
 
 impl LocalExecutor {
-    pub fn init(nvme: Arc<Nvme>, int_sources: InterruptSources) -> Rc<RefCell<Self>> {
+    pub fn init(nvme: Arc<Nvme>, int_sources: InterruptSources) -> Rc<Self> {
         let queue = RawEventQueue::new().expect("failed to allocate event queue for local executor");
 
         // TODO: Multiple CPUs
@@ -54,7 +53,7 @@ impl LocalExecutor {
         queue.subscribe(irq_handle.as_raw_fd() as usize, 0, EventFlags::READ)
             .expect("failed to subscribe to IRQ event");
 
-        let this = Rc::new(RefCell::new(Self {
+        let this = Rc::new(Self {
             nvme,
 
             queue,
@@ -62,48 +61,48 @@ impl LocalExecutor {
             intx,
             irq_handle,
 
-            awaiting_submission: HashMap::new(),
-            awaiting_completion: HashMap::new(),
-            ready_comp: HashMap::new(),
-            ready_futures: VecDeque::new(),
-            futures: Slab::with_capacity(16),
-        }));
+            awaiting_submission: RefCell::new(HashMap::new()),
+            awaiting_completion: RefCell::new(HashMap::new()),
+            ready_futures: RefCell::new(VecDeque::new()),
+            futures: RefCell::new(Slab::with_capacity(16)),
+        });
         THE_EXECUTOR.with(|cell| *cell.borrow_mut() = Some(Rc::clone(&this)));
         this
     }
-    pub fn current() -> Rc<RefCell<LocalExecutor>> {
+    pub fn current() -> Rc<LocalExecutor> {
         THE_EXECUTOR.with(|e| Rc::clone(e.borrow().as_ref().unwrap()))
     }
-    pub fn poll(&mut self) {
-        for future_idx in self.ready_futures.drain(..) {
+    pub fn poll(&self) {
+        for future_idx in self.ready_futures.borrow_mut().drain(..) {
             let waker = waker(future_idx);
 
             struct Wrapper<T>(T);
             impl<T> UnwindSafe for Wrapper<T> {}
 
-            let future = Wrapper(self.futures[future_idx].as_mut());
+            let mut futures = self.futures.borrow_mut();
+            let future = Wrapper(futures[future_idx].as_mut());
             let res = match std::panic::catch_unwind(|| future.0.poll(&mut task::Context::from_waker(&waker))) {
                 Ok(r) => r,
                 Err(_) => {
                     log::error!("Task panicked!");
-                    core::mem::forget(self.futures.remove(future_idx));
+                    core::mem::forget(futures.remove(future_idx));
                     continue;
                 }
             };
             if res.is_ready() {
-                drop(self.futures.remove(future_idx));
+                drop(futures.remove(future_idx));
             }
         }
     }
     pub fn spawn(&mut self, fut: impl IntoFuture<Output = ()> + 'static) {
-        let idx = self.futures.insert(Box::pin(fut.into_future()));
-        self.ready_futures.push_back(idx);
+        let idx = self.futures.borrow_mut().insert(Box::pin(fut.into_future()));
+        self.ready_futures.borrow_mut().push_back(idx);
     }
-    pub fn block_on<'a, O: 'a>(&mut self, fut: impl IntoFuture<Output = O> + 'a) -> O {
+    pub fn block_on<'a, O: 'a>(&self, fut: impl IntoFuture<Output = O> + 'a) -> O {
         let retval = Rc::new(RefCell::new(None));
 
         let retval2 = Rc::clone(&retval);
-        let idx = self.futures.insert({
+        let idx = self.futures.borrow_mut().insert({
             let t1: Pin<Box<dyn Future<Output = ()> + 'a>> = Box::pin(async move {
                 *retval2.borrow_mut() = Some(fut.await);
             });
@@ -115,7 +114,7 @@ impl LocalExecutor {
             t2
         });
 
-        self.ready_futures.push_front(idx);
+        self.ready_futures.borrow_mut().push_front(idx);
 
         while retval.borrow().is_none() {
             self.poll();
@@ -125,32 +124,51 @@ impl LocalExecutor {
         let o = retval.borrow_mut().take().unwrap();
         o
     }
-    fn react(&mut self) {
+    fn react(&self) {
         let _ = self.queue.next_event().expect("failed to get next event");
 
         if self.intx {
             let mut buf = [0_u8; core::mem::size_of::<usize>()];
-            if self.irq_handle.read(&mut buf).unwrap() != 0 {
-                self.irq_handle.write(&buf).unwrap();
+            if (&self.irq_handle).read(&mut buf).unwrap() != 0 {
+                (&self.irq_handle).write(&buf).unwrap();
             }
         }
+
+        let ctxt = self.nvme.cur_thread_ctxt();
+        let mut ctxt = ctxt.lock();
+        let ctxt = &mut *ctxt;
 
         // TODO: The kernel should probably do the masking, which should happen before EOI
         // messages to the interrupt controller.
         self.nvme.set_vector_masked(self.vector, true);
+        for (sq_cq_id, (_sq, cq)) in ctxt.queues.iter_mut() {
+            let mut head = None;
 
-        todo!();
+            while let Some((new_head, cqe)) = cq.complete() {
+                if let Some((fut_idx, comp_ptr)) = self.awaiting_completion.borrow_mut().get_mut(sq_cq_id).and_then(|per_cmd| per_cmd.remove(&{ cqe.cid })) {
+                    unsafe {
+                        comp_ptr.as_ptr().write(Some(cqe));
+                    }
+                    self.ready_futures.borrow_mut().push_back(fut_idx);
+                }
+                head = Some(new_head);
+            }
 
+            if let Some(head) = head {
+                unsafe {
+                    self.nvme.completion_queue_head(*sq_cq_id, head);
+                }
+            }
+        }
         self.nvme.set_vector_masked(self.vector, false);
     }
 }
 
 pub struct NvmeFuture {
-    state: State,
-    // TODO: future memory models may not like this
-    comp: NvmeComp,
+    pub(crate) state: State,
+    pub(crate) comp: Option<NvmeComp>,
 }
-enum State {
+pub(crate) enum State {
     Submitting { sq_id: SqId, cmd: NvmeCmd },
     Completing { cq_id: CqId, cmd_id: CmdId },
 }
@@ -161,33 +179,31 @@ impl Future for NvmeFuture {
         let this = unsafe { self.get_unchecked_mut() };
 
         let executor = LocalExecutor::current();
-        let mut executor = executor.borrow_mut();
-        let executor = &mut *executor;
 
         let idx = cx.waker().as_raw().data() as FutIdx;
         assert_eq!(cx.waker().as_raw().vtable() as *const _, &THIS_VTABLE, "incompatible executor for NvmeFuture");
 
         match this.state {
             State::Submitting { sq_id, mut cmd } => {
-                let awaiting = &mut executor.awaiting_submission;
+                let mut awaiting = executor.awaiting_submission.borrow_mut();
 
-                if let Some((cq_id, cmd_id)) = executor.nvme.try_submit_raw(sq_id, |cmd_id| {
+                if let Some((cq_id, cmd_id)) = executor.nvme.try_submit_raw(&mut executor.nvme.cur_thread_ctxt().lock(), sq_id, |cmd_id| {
                     cmd.cid = cmd_id;
                     cmd
                 }, || {
                     awaiting.entry(sq_id).or_default().push_back(idx);
                 }) {
-                    executor.awaiting_completion.entry(cq_id).or_default().insert(cmd_id, (idx, (&mut this.comp).into()));
+                    executor.awaiting_completion.borrow_mut().entry(cq_id).or_default().insert(cmd_id, (idx, (&mut this.comp).into()));
                     this.state = State::Completing { cq_id, cmd_id };
                 }
                 task::Poll::Pending
             }
-            State::Completing { cq_id, cmd_id } => match executor.ready_comp.remove(&idx) {
+            State::Completing { cq_id, cmd_id } => match this.comp.take() {
                 Some(comp) => task::Poll::Ready(comp),
 
                 // Shouldn't technically occur
                 None => {
-                    executor.awaiting_completion.entry(cq_id).or_default().insert(cmd_id, (idx, (&mut this.comp).into()));
+                    executor.awaiting_completion.borrow_mut().entry(cq_id).or_default().insert(cmd_id, (idx, (&mut this.comp).into()));
                     task::Poll::Pending
                 }
             }
@@ -198,7 +214,7 @@ impl Future for NvmeFuture {
 unsafe fn vt_clone(idx: *const ()) -> task::RawWaker { task::RawWaker::new(idx, &THIS_VTABLE) }
 unsafe fn vt_drop(_idx: *const ()) {}
 unsafe fn vt_wake(idx: *const ()) {
-    THE_EXECUTOR.with(|exec| exec.borrow().as_ref().unwrap().borrow_mut().ready_futures.push_back(idx as FutIdx));
+    THE_EXECUTOR.with(|exec| exec.borrow().as_ref().unwrap().ready_futures.borrow_mut().push_back(idx as FutIdx));
 }
 
 static THIS_VTABLE: task::RawWakerVTable = task::RawWakerVTable::new(vt_clone, vt_wake, vt_wake, vt_drop);

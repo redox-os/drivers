@@ -1,14 +1,14 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::convert::TryFrom;
 use std::fs::File;
-use std::ptr;
-use std::sync::atomic::{AtomicU16, AtomicU64, AtomicUsize, Ordering};
-use std::thread;
+use std::iter;
+use std::sync::atomic::AtomicU16;
+use std::sync::Arc;
 
 use parking_lot::{Mutex, RwLock};
-use smallvec::{smallvec, SmallVec};
+use smallvec::SmallVec;
 
-use syscall::error::{Error, Result, EINVAL, EIO};
+use syscall::error::{Error, Result, EIO};
 use syscall::io::{Io, Mmio};
 
 use common::dma::Dma;
@@ -18,7 +18,7 @@ pub mod executor;
 pub mod identify;
 pub mod queues;
 
-use self::executor::NvmeFuture;
+use self::executor::{LocalExecutor, NvmeFuture};
 pub use self::queues::{NvmeCmd, NvmeCmdQueue, NvmeComp, NvmeCompQueue};
 
 use pcid_interface::msi::{MsiCapability, MsixCapability, MsixTableEntry};
@@ -169,27 +169,32 @@ pub type CmdId = u16;
 pub type AtomicCqId = AtomicU16;
 pub type AtomicSqId = AtomicU16;
 pub type AtomicCmdId = AtomicU16;
+pub type Iv = u16;
 
 pub struct Nvme {
     interrupt_method: Mutex<InterruptMethod>,
     pcid_interface: Mutex<PcidServerHandle>,
     regs: RwLock<&'static mut NvmeRegs>,
 
-    pub(crate) submission_queues: RwLock<BTreeMap<SqId, (Mutex<NvmeCmdQueue>, CqId)>>,
-    pub(crate) completion_queues:
-        RwLock<BTreeMap<CqId, Mutex<(NvmeCompQueue, SmallVec<[SqId; 16]>)>>>,
+    sq_ivs: RwLock<HashMap<SqId, Iv>>,
+    cq_ivs: RwLock<HashMap<CqId, Iv>>,
 
     // maps interrupt vectors with the completion queues they have
-    cqs_for_ivs: RwLock<BTreeMap<u16, SmallVec<[CqId; 4]>>>,
-
-    buffer: Mutex<Dma<[u8; 512 * 4096]>>, // 2MB of buffer
-    buffer_prp: Mutex<Dma<[u64; 512]>>,   // 4KB of PRP for the buffer
+    thread_ctxts: RwLock<HashMap<Iv, Arc<Mutex<ThreadCtxt>>>>,
 
     next_sqid: AtomicSqId,
     next_cqid: AtomicCqId,
-
-    next_avail_submission_epoch: AtomicU64,
 }
+
+struct ThreadCtxt {
+    buffer: Dma<[u8; 512 * 4096]>, // 2MB of buffer
+    buffer_prp: Dma<[u64; 512]>,   // 4KB of PRP for the buffer
+
+    // Yes, technically NVME allows multiple submission queues to be mapped to the same completion
+    // queue, but we don't use that feature.
+    queues: HashMap<u16, (NvmeCmdQueue, NvmeCompQueue)>,
+}
+
 unsafe impl Send for Nvme {}
 unsafe impl Sync for Nvme {}
 
@@ -211,23 +216,21 @@ impl Nvme {
     ) -> Result<Self> {
         Ok(Nvme {
             regs: RwLock::new(unsafe { &mut *(address as *mut NvmeRegs) }),
-            submission_queues: RwLock::new(
-                std::iter::once((0u16, (Mutex::new(NvmeCmdQueue::new()?), 0u16))).collect(),
-            ),
-            completion_queues: RwLock::new(
-                std::iter::once((0u16, Mutex::new((NvmeCompQueue::new()?, smallvec!(0))))).collect(),
-            ),
-            // map the zero interrupt vector (which according to the spec shall always point to the
-            // admin completion queue) to CQID 0 (admin completion queue)
-            cqs_for_ivs: RwLock::new(std::iter::once((0, smallvec!(0))).collect()),
-            buffer: Mutex::new(unsafe { Dma::zeroed()?.assume_init() }),
-            buffer_prp: Mutex::new(unsafe { Dma::zeroed()?.assume_init() }),
+            thread_ctxts: RwLock::new(iter::once((0_u16, Arc::new(Mutex::new(ThreadCtxt {
+                buffer: unsafe { Dma::zeroed()?.assume_init() },
+                buffer_prp: unsafe { Dma::zeroed()?.assume_init() },
+
+                queues: iter::once((0, (NvmeCmdQueue::new()?, NvmeCompQueue::new()?))).collect(),
+            })))).collect()),
+
+            cq_ivs: RwLock::new(iter::once((0, 0)).collect()),
+            sq_ivs: RwLock::new(iter::once((0, 0)).collect()),
+
             interrupt_method: Mutex::new(interrupt_method),
             pcid_interface: Mutex::new(pcid_interface),
 
             next_sqid: AtomicSqId::new(0),
             next_cqid: AtomicCqId::new(0),
-            next_avail_submission_epoch: AtomicU64::new(0),
         })
     }
     /// Write to a doorbell register.
@@ -238,11 +241,15 @@ impl Nvme {
         use std::ops::DerefMut;
 
         let mut regs_guard = self.regs.write();
-        let mut regs: &mut NvmeRegs = regs_guard.deref_mut();
+        let regs: &mut NvmeRegs = regs_guard.deref_mut();
 
         let dstrd = (regs.cap_high.read() & 0b1111) as usize;
         let addr = (regs as *mut NvmeRegs as usize) + 0x1000 + index * (4 << dstrd);
         (&mut *(addr as *mut Mmio<u32>)).write(value);
+    }
+    fn cur_thread_ctxt(&self) -> Arc<Mutex<ThreadCtxt>> {
+        // TODO: multi-threading
+        Arc::clone(self.thread_ctxts.read().get(&0).unwrap())
     }
 
     pub unsafe fn submission_queue_tail(&self, qid: u16, tail: u16) {
@@ -254,11 +261,11 @@ impl Nvme {
     }
 
     pub unsafe fn init(&mut self) {
-        let mut buffer = self.buffer.get_mut();
-        let mut buffer_prp = self.buffer_prp.get_mut();
+        let mut main_ctxt = self.thread_ctxts.get_mut().get_mut(&0).unwrap().lock();
+        let main_ctxt = &mut *main_ctxt;
 
-        for i in 0..buffer_prp.len() {
-            buffer_prp[i] = (buffer.physical() + i * 4096) as u64;
+        for (i, prp) in main_ctxt.buffer_prp.iter_mut().enumerate() {
+            *prp = (main_ctxt.buffer.physical() + i * 4096) as u64;
         }
 
         {
@@ -294,24 +301,21 @@ impl Nvme {
             }
         }
 
-        for (qid, queue) in self.completion_queues.get_mut().iter_mut() {
-            let &(ref cq, ref sq_ids) = &*queue.get_mut();
+        for (qid, iv) in self.cq_ivs.get_mut().iter_mut() {
+            /*let &(ref cq, ref sq_ids) = &*queue.get_mut();
             let data = &cq.data;
-            log::debug!("completion queue {}: {:X}, {}, (submission queue ids: {:?}", qid, data.physical(), data.len(), sq_ids);
+            log::debug!("completion queue {}: {:X}, {}, (submission queue ids: {:?}", qid, data.physical(), data.len(), sq_ids);*/
         }
 
-        for (qid, (queue, cq_id)) in self.submission_queues.get_mut().iter_mut() {
+        /*for (qid, (queue, cq_id)) in self.submission_queues.get_mut().iter_mut() {
             let data = &queue.get_mut().data;
             log::debug!("submission queue {}: {:X}, {}, attached to CQID: {}", qid, data.physical(), data.len(), cq_id);
-        }
+        }*/
 
         {
             let regs = self.regs.get_mut();
-            let submission_queues = self.submission_queues.get_mut();
-            let completion_queues = self.completion_queues.get_mut();
 
-            let asq = submission_queues.get_mut(&0).unwrap().0.get_mut();
-            let (acq, _) = completion_queues.get_mut(&0).unwrap().get_mut();
+            let (asq, acq) = main_ctxt.queues.get_mut(&0).unwrap();
             regs.aqa
                 .write(((acq.data.len() as u32 - 1) << 16) | (asq.data.len() as u32 - 1));
             regs.asq_low.write(asq.data.physical() as u32);
@@ -417,16 +421,20 @@ impl Nvme {
     }
 
     pub fn submit_and_complete_command(&self, sq_id: SqId, cmd_init: impl FnOnce(CmdId) -> NvmeCmd) -> NvmeComp {
-        todo!()
+        LocalExecutor::current().block_on(async move {
+            NvmeFuture {
+                state: executor::State::Submitting { sq_id, cmd: cmd_init(0) /* TODO */ },
+                comp: None,
+            }.await
+        })
     }
 
     pub fn submit_and_complete_admin_command(&self, cmd_init: impl FnOnce(CmdId) -> NvmeCmd) -> NvmeComp {
         self.submit_and_complete_command(0, cmd_init)
     }
-    pub fn try_submit_raw(&self, sq_id: SqId, cmd_init: impl FnOnce(CmdId) -> NvmeCmd, fail: impl FnOnce()) -> Option<(CqId, CmdId)> {
-        match self.submission_queues.read().get(&sq_id).unwrap() {
-            &(ref sq, cq_id) => {
-                let mut sq = sq.lock();
+    pub fn try_submit_raw(&self, ctxt: &mut ThreadCtxt, sq_id: SqId, cmd_init: impl FnOnce(CmdId) -> NvmeCmd, fail: impl FnOnce()) -> Option<(CqId, CmdId)> {
+        match ctxt.queues.get_mut(&sq_id).unwrap() {
+            (sq, _cq) => {
                 if sq.is_full() {
                     fail();
                     return None;
@@ -438,75 +446,54 @@ impl Nvme {
                 unsafe {
                     self.submission_queue_tail(sq_id, tail);
                 }
-                Some((cq_id, cmd_id))
+                Some((sq_id, cmd_id))
             }
         }
     }
 
-    pub fn create_io_completion_queue(&self, io_cq_id: CqId, vector: Option<u16>) {
-        let (ptr, len) = {
-            let mut completion_queues_guard = self.completion_queues.write();
-
-            let queue_guard = completion_queues_guard
-                .entry(io_cq_id)
-                .or_insert_with(|| {
-                    let queue = NvmeCompQueue::new()
-                        .expect("nvmed: failed to allocate I/O completion queue");
-                    let sqs = SmallVec::new();
-                    Mutex::new((queue, sqs))
-                })
-                .get_mut();
-
-            let &(ref queue, _) = &*queue_guard;
-            (queue.data.physical(), queue.data.len())
-        };
+    pub fn create_io_completion_queue(&self, io_cq_id: CqId, vector: Option<Iv>) {
+        let queue = NvmeCompQueue::new()
+            .expect("nvmed: failed to allocate I/O completion queue");
 
         let len =
-            u16::try_from(len).expect("nvmed: internal error: I/O CQ longer than 2^16 entries");
+            u16::try_from(queue.data.len()).expect("nvmed: internal error: I/O CQ longer than 2^16 entries");
         let raw_len = len
             .checked_sub(1)
             .expect("nvmed: internal error: CQID 0 for I/O CQ");
 
         let comp = self
             .submit_and_complete_admin_command(|cid| {
-                NvmeCmd::create_io_completion_queue(cid, io_cq_id, ptr, raw_len, vector)
+                NvmeCmd::create_io_completion_queue(cid, io_cq_id, queue.data.physical(), raw_len, vector)
             });
 
-        if let Some(vector) = vector {
-            self.cqs_for_ivs
-                .write()
-                .entry(vector)
-                .or_insert_with(SmallVec::new)
-                .push(io_cq_id);
-        }
+        /*match comp.status.specific {
+            1 => panic!("invalid queue identifier"),
+            2 => panic!("invalid queue size"),
+            8 => panic!("invalid interrupt vector"),
+            _ => (),
+        }*/
     }
-    pub fn create_io_submission_queue(&self, io_sq_id: SqId, io_cq_id: CqId) {
-        let (ptr, len) = {
-            let mut submission_queues_guard = self.submission_queues.write();
-
-            let (queue_lock, _) = submission_queues_guard
-                .entry(io_sq_id)
-                .or_insert_with(|| {
-                    (Mutex::new(
-                        NvmeCmdQueue::new()
-                            .expect("nvmed: failed to allocate I/O completion queue"),
-                    ), io_cq_id)
-                });
-            let queue = queue_lock.get_mut();
-
-            (queue.data.physical(), queue.data.len())
-        };
+    pub fn create_io_submission_queue(&self, io_sq_id: SqId, io_cq_id: CqId) -> NvmeCmdQueue {
+        let q = NvmeCmdQueue::new().expect("failed to create submission queue");
 
         let len =
-            u16::try_from(len).expect("nvmed: internal error: I/O SQ longer than 2^16 entries");
+            u16::try_from(q.data.len()).expect("nvmed: internal error: I/O SQ longer than 2^16 entries");
         let raw_len = len
             .checked_sub(1)
             .expect("nvmed: internal error: SQID 0 for I/O SQ");
 
         let comp = self
             .submit_and_complete_admin_command(|cid| {
-                NvmeCmd::create_io_submission_queue(cid, io_sq_id, ptr, raw_len, io_cq_id)
+                NvmeCmd::create_io_submission_queue(cid, io_sq_id, q.data.physical(), raw_len, io_cq_id)
             });
+        /*match comp.status.specific {
+            0 => panic!("completion queue invalid"),
+            1 => panic!("invalid queue identifier"),
+            2 => panic!("invalid queue size"),
+            _ => (),
+        }*/
+
+        q
     }
 
     pub fn init_with_queues(&self) -> BTreeMap<u32, NvmeNamespace> {
@@ -532,6 +519,7 @@ impl Nvme {
 
     fn namespace_rw(
         &self,
+        ctxt: &mut ThreadCtxt,
         namespace: &NvmeNamespace,
         nsid: u32,
         lba: u64,
@@ -540,15 +528,13 @@ impl Nvme {
     ) -> Result<()> {
         let block_size = namespace.block_size;
 
-        let buffer_prp_guard = self.buffer_prp.lock();
-
         let bytes = ((blocks_1 as u64) + 1) * block_size;
         let (ptr0, ptr1) = if bytes <= 4096 {
-            (buffer_prp_guard[0], 0)
+            (ctxt.buffer_prp[0], 0)
         } else if bytes <= 8192 {
-            (buffer_prp_guard[0], buffer_prp_guard[1])
+            (ctxt.buffer_prp[0], ctxt.buffer_prp[1])
         } else {
-            (buffer_prp_guard[0], (buffer_prp_guard.physical() + 8) as u64)
+            (ctxt.buffer_prp[0], (ctxt.buffer_prp.physical() + 8) as u64)
         };
 
         let mut cmd = NvmeCmd::default();
@@ -576,19 +562,20 @@ impl Nvme {
         mut lba: u64,
         buf: &mut [u8],
     ) -> Result<Option<usize>> {
+        let ctxt = self.cur_thread_ctxt();
+        let mut ctxt = ctxt.lock();
+
         let block_size = namespace.block_size as usize;
 
-        let buffer_guard = self.buffer.lock();
-
-        for chunk in buf.chunks_mut(/*TODO: buffer_guard.len()*/ 8192) {
+        for chunk in buf.chunks_mut(/* TODO: buf len */ 8192) {
             let blocks = (chunk.len() + block_size - 1) / block_size;
 
             assert!(blocks > 0);
             assert!(blocks <= 0x1_0000);
 
-            self.namespace_rw(namespace, nsid, lba, (blocks - 1) as u16, false)?;
+            self.namespace_rw(&mut *ctxt, namespace, nsid, lba, (blocks - 1) as u16, false)?;
 
-            chunk.copy_from_slice(&buffer_guard[..chunk.len()]);
+            chunk.copy_from_slice(&ctxt.buffer[..chunk.len()]);
 
             lba += blocks as u64;
         }
@@ -603,19 +590,20 @@ impl Nvme {
         mut lba: u64,
         buf: &[u8],
     ) -> Result<Option<usize>> {
+        let ctxt = self.cur_thread_ctxt();
+        let mut ctxt = ctxt.lock();
+
         let block_size = namespace.block_size as usize;
 
-        let mut buffer_guard = self.buffer.lock();
-
-        for chunk in buf.chunks(/*TODO: buffer_guard.len()*/ 8192) {
+        for chunk in buf.chunks(/* TODO: buf len */ 8192) {
             let blocks = (chunk.len() + block_size - 1) / block_size;
 
             assert!(blocks > 0);
             assert!(blocks <= 0x1_0000);
 
-            buffer_guard[..chunk.len()].copy_from_slice(chunk);
+            ctxt.buffer[..chunk.len()].copy_from_slice(chunk);
 
-            self.namespace_rw(namespace, nsid, lba, (blocks - 1) as u16, true)?;
+            self.namespace_rw(&mut *ctxt, namespace, nsid, lba, (blocks - 1) as u16, true)?;
 
             lba += blocks as u64;
         }
