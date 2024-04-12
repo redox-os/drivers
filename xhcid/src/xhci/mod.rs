@@ -513,12 +513,24 @@ impl Xhci {
 
                 debug!("Slot type: {}", slot_ty);
                 debug!("Enabling slot.");
-                let slot = self.enable_port_slot(slot_ty).await?;
+                let slot = match self.enable_port_slot(slot_ty).await {
+                    Ok(ok) => ok,
+                    Err(err) => {
+                        error!("Failed to enable slot for port {}: {}", i, err);
+                        continue;
+                    }
+                };
 
                 info!("Enabled port {}, which the xHC mapped to {}", i, slot);
 
                 let mut input = unsafe { self.alloc_dma_zeroed::<InputContext>()? };
-                let mut ring = self.address_device(&mut input, i, slot_ty, slot, speed).await?;
+                let mut ring = match self.address_device(&mut input, i, slot_ty, slot, speed).await {
+                    Ok(ok) => ok,
+                    Err(err) => {
+                        error!("Failed to address device for port {}: {}", i, err);
+                        continue;
+                    }
+                };
                 debug!("Addressed device");
 
                 // TODO: Should the descriptors be cached in PortState, or refetched?
@@ -688,7 +700,7 @@ impl Xhci {
         }).await;
 
         if event_trb.completion_code() != TrbCompletionCode::Success as u8 {
-            error!("Failed to address device at slot {} (port {})", slot, i);
+            error!("Failed to address device at slot {} (port {}), completion code 0x{:X}", slot, i, event_trb.completion_code());
             self.event_handler_finished();
             return Err(Error::new(EIO));
         }
@@ -751,13 +763,22 @@ impl Xhci {
 
         let ifdesc = &ps
             .dev_desc
-            .as_ref().ok_or(Error::new(EBADF))?
+            .as_ref().ok_or_else(|| {
+                log::warn!("Missing device descriptor");
+                Error::new(EBADF)
+            })?
             .config_descs
             .first()
-            .ok_or(Error::new(EBADF))?
+            .ok_or_else(|| {
+                log::warn!("Missing config descriptor");
+                Error::new(EBADF)
+            })?
             .interface_descs
             .first()
-            .ok_or(Error::new(EBADF))?;
+            .ok_or_else(|| {
+                log::warn!("Missing interface descriptor");
+                Error::new(EBADF)
+            })?;
 
         let drivers_usercfg: &DriversConfig = &DRIVERS_CONFIG;
 
