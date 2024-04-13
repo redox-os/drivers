@@ -40,6 +40,7 @@ pub struct LocalExecutor {
 
     ready_futures: RefCell<VecDeque<FutIdx>>,
     futures: RefCell<Slab<Pin<Box<dyn Future<Output = ()> + 'static>>>>,
+    is_polling: Cell<bool>,
 }
 
 thread_local! {
@@ -74,6 +75,7 @@ impl LocalExecutor {
             next_user_data: Cell::new(1),
             ready_futures: RefCell::new(VecDeque::new()),
             futures: RefCell::new(Slab::with_capacity(16)),
+            is_polling: Cell::new(false),
         });
         THE_EXECUTOR.with(|cell| *cell.borrow_mut() = Some(Rc::clone(&this)));
         this
@@ -91,6 +93,8 @@ impl LocalExecutor {
         THE_EXECUTOR.with(|e| Rc::clone(e.borrow().as_ref().unwrap()))
     }
     pub fn poll(&self) -> usize {
+        assert!(!self.is_polling.replace(true));
+
         let mut finished = 0;
 
         for future_idx in self.ready_futures.borrow_mut().drain(..) {
@@ -114,6 +118,7 @@ impl LocalExecutor {
                 finished += 1;
             }
         }
+        self.is_polling.set(false);
 
         finished
     }

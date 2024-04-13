@@ -12,6 +12,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::{slice, usize};
 
+use libredox::errno::{EAGAIN, EINTR, EWOULDBLOCK};
 use libredox::flag;
 use pcid_interface::{PciFeature, PciFeatureInfo, PciFunction, PcidServerHandle};
 use redox_scheme::{RequestKind, SignalBehavior, Socket};
@@ -301,21 +302,31 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     libredox::call::setrens(0, 0).expect("nvmed: failed to enter null namespace");
 
     let scheme = Rc::new(RefCell::new(DiskScheme::new(scheme_name, nvme, namespaces)));
+    log::debug!("About to block_on");
 
     executor.block_on(async {
-        loop {
-            let Some(message) = socket.next_request(SignalBehavior::Interrupt).expect("nvmed: failed to get next scheme call") else {
-                continue;
-            };
-            let RequestKind::Call(call) = message.kind() else {
-                continue;
-            };
+        'outer: loop {
+            log::trace!("new event iteration");
+            loop {
+                let message = match socket.next_request(SignalBehavior::Interrupt) {
+                    Ok(None) => break 'outer,
+                    Ok(Some(msg)) => msg,
+                    Err(error) if error.errno == EINTR => continue,
+                    Err(error) if error.errno == EWOULDBLOCK || error.errno == EAGAIN => break,
+                    Err(other) => panic!("nvmed: failed to get next request: {}", other),
+                };
+                log::trace!("message {message:?}");
+                let RequestKind::Call(call) = message.kind() else {
+                    continue;
+                };
 
-            let scheme = Rc::clone(&scheme);
-            executor.spawn(async move {
-                // TODO: Not actually async
-                call.handle_scheme_mut(&mut *scheme.borrow_mut());
-            });
+                let scheme = Rc::clone(&scheme);
+                executor.spawn(async move {
+                    log::trace!("spawned!");
+                    // TODO: Not actually async
+                    call.handle_scheme_mut(&mut *scheme.borrow_mut());
+                });
+            }
 
             let _ = scheme_events.as_mut().next().await;
         }
