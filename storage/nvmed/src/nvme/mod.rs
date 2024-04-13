@@ -230,8 +230,9 @@ impl Nvme {
             interrupt_method: Mutex::new(interrupt_method),
             pcid_interface: Mutex::new(pcid_interface),
 
-            next_sqid: AtomicSqId::new(0),
-            next_cqid: AtomicCqId::new(0),
+            // TODO
+            next_sqid: AtomicSqId::new(2),
+            next_cqid: AtomicCqId::new(2),
         })
     }
     /// Write to a doorbell register.
@@ -451,7 +452,7 @@ impl Nvme {
         }
     }
 
-    pub fn create_io_completion_queue(&self, io_cq_id: CqId, vector: Option<Iv>) {
+    pub fn create_io_completion_queue(&self, io_cq_id: CqId, vector: Option<Iv>) -> NvmeCompQueue {
         let queue = NvmeCompQueue::new()
             .expect("nvmed: failed to allocate I/O completion queue");
 
@@ -472,6 +473,8 @@ impl Nvme {
             8 => panic!("invalid interrupt vector"),
             _ => (),
         }*/
+
+        queue
     }
     pub fn create_io_submission_queue(&self, io_sq_id: SqId, io_cq_id: CqId) -> NvmeCmdQueue {
         let q = NvmeCmdQueue::new().expect("failed to create submission queue");
@@ -512,10 +515,13 @@ impl Nvme {
         }
 
         // TODO: Multiple queues
-        self.create_io_completion_queue(1, Some(0));
+        let cq = self.create_io_completion_queue(1, Some(0));
         log::trace!("created compq");
-        self.create_io_submission_queue(1, 1);
+        let sq = self.create_io_submission_queue(1, 1);
         log::trace!("created subq");
+        self.thread_ctxts.read().get(&0).unwrap().lock().queues.borrow_mut().insert(1, (sq, cq));
+        self.sq_ivs.write().insert(1, 0);
+        self.cq_ivs.write().insert(1, 0);
 
         namespaces
     }
