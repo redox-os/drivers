@@ -3,6 +3,7 @@ use std::collections::{HashMap, VecDeque};
 use std::fs::File;
 use std::future::{Future, IntoFuture};
 use std::io::{Read, Write};
+use std::marker::PhantomData;
 use std::os::fd::AsRawFd;
 use std::panic::UnwindSafe;
 use std::pin::Pin;
@@ -11,8 +12,10 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::task;
 
-use event::{EventFlags, EventQueue, RawEventQueue};
+use event::{EventFlags, RawEventQueue};
 use slab::Slab;
+
+type EventUserData = usize;
 
 use super::{CmdId, CqId, InterruptSources, Nvme, NvmeCmd, NvmeComp, SqId};
 
@@ -31,6 +34,10 @@ pub struct LocalExecutor {
     // TODO: One IV and SQ/CQ per core (where the admin queue can be managed by the main thread).
     awaiting_submission: RefCell<HashMap<SqId, VecDeque<FutIdx>>>,
     awaiting_completion: RefCell<HashMap<CqId, HashMap<CmdId, (FutIdx, NonNull<Option<NvmeComp>>)>>>,
+
+    external_event: RefCell<HashMap<EventUserData, (FutIdx, NonNull<EventFlags>)>>,
+    next_user_data: Cell<usize>,
+
     ready_futures: RefCell<VecDeque<FutIdx>>,
     futures: RefCell<Slab<Pin<Box<dyn Future<Output = ()> + 'static>>>>,
 }
@@ -63,16 +70,29 @@ impl LocalExecutor {
 
             awaiting_submission: RefCell::new(HashMap::new()),
             awaiting_completion: RefCell::new(HashMap::new()),
+            external_event: RefCell::new(HashMap::new()),
+            next_user_data: Cell::new(1),
             ready_futures: RefCell::new(VecDeque::new()),
             futures: RefCell::new(Slab::with_capacity(16)),
         });
         THE_EXECUTOR.with(|cell| *cell.borrow_mut() = Some(Rc::clone(&this)));
         this
     }
+    pub fn register_external_event(&self, fd: usize, flags: event::EventFlags) -> ExternalEventSource {
+        let user_data = self.next_user_data.get();
+        self.next_user_data.set(user_data.checked_add(1).unwrap());
+
+        self.queue.subscribe(fd, user_data, flags)
+            .expect("failed to subscribe to event");
+
+        ExternalEventSource { flags: event::EventFlags::empty(), user_data, _not_send_or_unpin: PhantomData }
+    }
     pub fn current() -> Rc<LocalExecutor> {
         THE_EXECUTOR.with(|e| Rc::clone(e.borrow().as_ref().unwrap()))
     }
-    pub fn poll(&self) {
+    pub fn poll(&self) -> usize {
+        let mut finished = 0;
+
         for future_idx in self.ready_futures.borrow_mut().drain(..) {
             let waker = waker(future_idx);
 
@@ -91,10 +111,13 @@ impl LocalExecutor {
             };
             if res.is_ready() {
                 drop(futures.remove(future_idx));
+                finished += 1;
             }
         }
+
+        finished
     }
-    pub fn spawn(&mut self, fut: impl IntoFuture<Output = ()> + 'static) {
+    pub fn spawn(&self, fut: impl IntoFuture<Output = ()> + 'static) {
         let idx = self.futures.borrow_mut().insert(Box::pin(fut.into_future()));
         self.ready_futures.borrow_mut().push_back(idx);
     }
@@ -117,18 +140,32 @@ impl LocalExecutor {
         self.ready_futures.borrow_mut().push_front(idx);
 
         loop {
-            self.poll();
+            let finished = self.poll();
             if retval.borrow().is_some() {
                 break;
             }
-            self.react();
+            if finished == 0 {
+                self.react();
+            }
         }
 
         let o = retval.borrow_mut().take().unwrap();
         o
     }
     fn react(&self) {
-        let _ = self.queue.next_event().expect("failed to get next event");
+        let event = self.queue.next_event().expect("failed to get next event");
+
+        if event.user_data != 0 {
+            let Some((fut_idx, flags_ptr)) = self.external_event.borrow_mut().remove(&event.user_data) else {
+                // Spurious event
+                return;
+            };
+            unsafe {
+                flags_ptr.as_ptr().write(event::EventFlags::from_bits_retain(event.flags));
+            }
+            self.ready_futures.borrow_mut().push_back(fut_idx);
+            return;
+        }
 
         if self.intx {
             let mut buf = [0_u8; core::mem::size_of::<usize>()];
@@ -172,21 +209,29 @@ impl LocalExecutor {
 pub struct NvmeFuture {
     pub(crate) state: State,
     pub(crate) comp: Option<NvmeComp>,
+    pub(crate) _not_send: PhantomData<*const ()>,
 }
 pub(crate) enum State {
     Submitting { sq_id: SqId, cmd: NvmeCmd },
     Completing { cq_id: CqId, cmd_id: CmdId },
 }
+
+fn current_executor_and_idx(cx: &mut task::Context<'_>) -> (Rc<LocalExecutor>, FutIdx) {
+    let executor = LocalExecutor::current();
+
+    let idx = cx.waker().as_raw().data() as FutIdx;
+    assert_eq!(cx.waker().as_raw().vtable() as *const _, &THIS_VTABLE, "incompatible executor for NvmeFuture");
+
+    (executor, idx)
+}
+
 impl Future for NvmeFuture {
     type Output = NvmeComp;
 
     fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> task::Poll<Self::Output> {
         let this = unsafe { self.get_unchecked_mut() };
 
-        let executor = LocalExecutor::current();
-
-        let idx = cx.waker().as_raw().data() as FutIdx;
-        assert_eq!(cx.waker().as_raw().vtable() as *const _, &THIS_VTABLE, "incompatible executor for NvmeFuture");
+        let (executor, idx) = current_executor_and_idx(cx);
 
         match this.state {
             State::Submitting { sq_id, mut cmd } => {
@@ -230,4 +275,34 @@ unsafe fn vt_wake(idx: *const ()) {
 static THIS_VTABLE: task::RawWakerVTable = task::RawWakerVTable::new(vt_clone, vt_wake, vt_wake, vt_drop);
 fn waker(idx: FutIdx) -> task::Waker {
     unsafe { task::Waker::from_raw(task::RawWaker::new(idx as *const (), &THIS_VTABLE)) }
+}
+
+pub struct ExternalEventSource {
+    flags: event::EventFlags,
+    user_data: EventUserData,
+    _not_send_or_unpin: PhantomData<*const ()>,
+}
+pub struct Event {
+    flags: event::EventFlags,
+    _not_send: PhantomData<*const ()>,
+}
+impl ExternalEventSource {
+    fn poll_next(self: Pin<&mut Self>, cx: &mut task::Context) -> task::Poll<Option<Event>> {
+        let this = unsafe { self.get_unchecked_mut() };
+
+        let flags = std::mem::take(&mut this.flags);
+
+        if flags.is_empty() {
+            let (executor, idx) = current_executor_and_idx(cx);
+            executor.external_event.borrow_mut().insert(this.user_data, (idx, (&mut this.flags).into()));
+            return task::Poll::Pending;
+        }
+        task::Poll::Ready(Some(Event {
+            flags,
+            _not_send: PhantomData,
+        }))
+    }
+    pub async fn next(mut self: Pin<&mut Self>) -> Option<Event> {
+        core::future::poll_fn(|cx| self.as_mut().poll_next(cx)).await
+    }
 }

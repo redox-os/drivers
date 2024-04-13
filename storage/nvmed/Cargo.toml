@@ -20,6 +20,7 @@ libredox = "0.1.3"
 slab = "0.4.9"
 parking_lot = "0.12.1"
 redox_event = "0.4.1"
+redox-scheme = "0.2.0"
 
 [features]
 default = ["async"]

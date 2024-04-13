@@ -2,16 +2,19 @@
 #![feature(int_roundings)]
 #![feature(waker_getters)]
 
+use std::cell::RefCell;
 use std::convert::TryInto;
 use std::fs::File;
 use std::io::{ErrorKind, Read, Write};
 use std::os::unix::io::{FromRawFd, RawFd};
 use std::ptr::NonNull;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::{slice, usize};
 
 use libredox::flag;
 use pcid_interface::{PciFeature, PciFeatureInfo, PciFunction, PcidServerHandle};
+use redox_scheme::{RequestKind, SignalBehavior, Socket};
 use syscall::{
     Event, Mmio, Packet, Result, SchemeBlockMut,
     PAGE_SIZE,
@@ -277,13 +280,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         ptr: NonNull::new(address as *mut u8).expect("Physmapping BAR gave nullptr"),
     });
 
-    let socket_fd = libredox::call::open(
-        &format!(":{}", scheme_name),
-        flag::O_RDWR | flag::O_CREAT | flag::O_CLOEXEC,
-        0,
-    )
-    .expect("nvmed: failed to create disk scheme");
-    let mut socket_file = unsafe { File::from_raw_fd(socket_fd as RawFd) };
+    let socket = Socket::nonblock(&scheme_name).expect("failed to create nvme scheme");
 
     daemon.ready().expect("nvmed: failed to signal readiness");
 
@@ -297,40 +294,32 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let nvme = Arc::new(nvme);
 
     let executor = nvme::executor::LocalExecutor::init(Arc::clone(&nvme), interrupt_sources);
+    let mut scheme_events = Box::pin(executor.register_external_event(socket.inner().raw(), event::EventFlags::READ));
     let namespaces = nvme.init_with_queues();
+    log::debug!("Initialized!");
 
     libredox::call::setrens(0, 0).expect("nvmed: failed to enter null namespace");
 
-    let mut scheme = DiskScheme::new(scheme_name, nvme, namespaces);
-    let mut todo = Vec::new();
-    loop {
-        let mut packet = Packet::default();
-        match socket_file.read(&mut packet) {
-            Ok(0) => {
-                break;
-            },
-            Ok(_) => {
-                todo.push(packet);
-            },
-            Err(err) => match err.kind() {
-                ErrorKind::WouldBlock => break,
-                _ => Err(err).expect("nvmed: failed to read disk scheme"),
-            },
-        }
+    let scheme = Rc::new(RefCell::new(DiskScheme::new(scheme_name, nvme, namespaces)));
 
-        let mut i = 0;
-        while i < todo.len() {
-            if let Some(a) = scheme.handle(&todo[i]) {
-                let mut packet = todo.remove(i);
-                packet.a = a;
-                socket_file
-                    .write(&packet)
-                    .expect("nvmed: failed to write disk scheme");
-            } else {
-                i += 1;
-            }
+    executor.block_on(async {
+        loop {
+            let Some(message) = socket.next_request(SignalBehavior::Interrupt).expect("nvmed: failed to get next scheme call") else {
+                continue;
+            };
+            let RequestKind::Call(call) = message.kind() else {
+                continue;
+            };
+
+            let scheme = Rc::clone(&scheme);
+            executor.spawn(async move {
+                // TODO: Not actually async
+                call.handle_scheme_mut(&mut *scheme.borrow_mut());
+            });
+
+            let _ = scheme_events.as_mut().next().await;
         }
-    }
+    });
 
     //TODO: destroy NVMe stuff
 

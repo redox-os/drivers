@@ -422,6 +422,7 @@ impl Nvme {
             NvmeFuture {
                 state: executor::State::Submitting { sq_id, cmd: cmd_init(0) /* TODO */ },
                 comp: None,
+                _not_send: std::marker::PhantomData,
             }.await
         })
     }
@@ -561,7 +562,7 @@ impl Nvme {
         nsid: u32,
         mut lba: u64,
         buf: &mut [u8],
-    ) -> Result<Option<usize>> {
+    ) -> Result<usize> {
         let ctxt = self.cur_thread_ctxt();
         let mut ctxt = ctxt.lock();
 
@@ -580,7 +581,7 @@ impl Nvme {
             lba += blocks as u64;
         }
 
-        Ok(Some(buf.len()))
+        Ok(buf.len())
     }
 
     pub fn namespace_write(
@@ -589,7 +590,7 @@ impl Nvme {
         nsid: u32,
         mut lba: u64,
         buf: &[u8],
-    ) -> Result<Option<usize>> {
+    ) -> Result<usize> {
         let ctxt = self.cur_thread_ctxt();
         let mut ctxt = ctxt.lock();
 
@@ -608,6 +609,6 @@ impl Nvme {
             lba += blocks as u64;
         }
 
-        Ok(Some(buf.len()))
+        Ok(buf.len())
     }
 }
