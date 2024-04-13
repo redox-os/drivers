@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::convert::TryFrom;
 use std::fs::File;
@@ -5,7 +6,7 @@ use std::iter;
 use std::sync::atomic::AtomicU16;
 use std::sync::Arc;
 
-use parking_lot::{Mutex, RwLock};
+use parking_lot::{Mutex, ReentrantMutex, RwLock};
 use smallvec::SmallVec;
 
 use syscall::error::{Error, Result, EIO};
@@ -180,19 +181,19 @@ pub struct Nvme {
     cq_ivs: RwLock<HashMap<CqId, Iv>>,
 
     // maps interrupt vectors with the completion queues they have
-    thread_ctxts: RwLock<HashMap<Iv, Arc<Mutex<ThreadCtxt>>>>,
+    thread_ctxts: RwLock<HashMap<Iv, Arc<ReentrantMutex<ThreadCtxt>>>>,
 
     next_sqid: AtomicSqId,
     next_cqid: AtomicCqId,
 }
 
 pub struct ThreadCtxt {
-    buffer: Dma<[u8; 512 * 4096]>, // 2MB of buffer
-    buffer_prp: Dma<[u64; 512]>,   // 4KB of PRP for the buffer
+    buffer: RefCell<Dma<[u8; 512 * 4096]>>, // 2MB of buffer
+    buffer_prp: RefCell<Dma<[u64; 512]>>,   // 4KB of PRP for the buffer
 
     // Yes, technically NVME allows multiple submission queues to be mapped to the same completion
     // queue, but we don't use that feature.
-    queues: HashMap<u16, (NvmeCmdQueue, NvmeCompQueue)>,
+    queues: RefCell<HashMap<u16, (NvmeCmdQueue, NvmeCompQueue)>>,
 }
 
 unsafe impl Send for Nvme {}
@@ -216,11 +217,11 @@ impl Nvme {
     ) -> Result<Self> {
         Ok(Nvme {
             regs: RwLock::new(unsafe { &mut *(address as *mut NvmeRegs) }),
-            thread_ctxts: RwLock::new(iter::once((0_u16, Arc::new(Mutex::new(ThreadCtxt {
-                buffer: unsafe { Dma::zeroed()?.assume_init() },
-                buffer_prp: unsafe { Dma::zeroed()?.assume_init() },
+            thread_ctxts: RwLock::new(iter::once((0_u16, Arc::new(ReentrantMutex::new(ThreadCtxt {
+                buffer: RefCell::new(unsafe { Dma::zeroed()?.assume_init() }),
+                buffer_prp: RefCell::new(unsafe { Dma::zeroed()?.assume_init() }),
 
-                queues: iter::once((0, (NvmeCmdQueue::new()?, NvmeCompQueue::new()?))).collect(),
+                queues: RefCell::new(iter::once((0, (NvmeCmdQueue::new()?, NvmeCompQueue::new()?))).collect()),
             })))).collect()),
 
             cq_ivs: RwLock::new(iter::once((0, 0)).collect()),
@@ -247,7 +248,7 @@ impl Nvme {
         let addr = (regs as *mut NvmeRegs as usize) + 0x1000 + index * (4 << dstrd);
         (&mut *(addr as *mut Mmio<u32>)).write(value);
     }
-    fn cur_thread_ctxt(&self) -> Arc<Mutex<ThreadCtxt>> {
+    fn cur_thread_ctxt(&self) -> Arc<ReentrantMutex<ThreadCtxt>> {
         // TODO: multi-threading
         Arc::clone(self.thread_ctxts.read().get(&0).unwrap())
     }
@@ -297,22 +298,23 @@ impl Nvme {
 
         for (qid, iv) in self.cq_ivs.get_mut().iter_mut() {
             let ctxt = thread_ctxts.get(&0).unwrap().lock();
+            let queues = ctxt.queues.borrow();
 
-            let &(ref cq, ref sq) = ctxt.queues.get(qid).unwrap();
+            let &(ref cq, ref sq) = queues.get(qid).unwrap();
             log::debug!("iv {iv} [cq {qid}: {:X}, {}] [sq {qid}: {:X}, {}]", cq.data.physical(), cq.data.len(), sq.data.physical(), sq.data.len());
         }
 
         {
-            let mut main_ctxt = thread_ctxts.get(&0).unwrap().lock();
-            let main_ctxt = &mut *main_ctxt;
+            let main_ctxt = thread_ctxts.get(&0).unwrap().lock();
 
-            for (i, prp) in main_ctxt.buffer_prp.iter_mut().enumerate() {
-                *prp = (main_ctxt.buffer.physical() + i * 4096) as u64;
+            for (i, prp) in main_ctxt.buffer_prp.borrow_mut().iter_mut().enumerate() {
+                *prp = (main_ctxt.buffer.borrow_mut().physical() + i * 4096) as u64;
             }
 
             let regs = self.regs.get_mut();
 
-            let (asq, acq) = main_ctxt.queues.get_mut(&0).unwrap();
+            let mut queues = main_ctxt.queues.borrow_mut();
+            let (asq, acq) = queues.get_mut(&0).unwrap();
             regs.aqa
                 .write(((acq.data.len() as u32 - 1) << 16) | (asq.data.len() as u32 - 1));
             regs.asq_low.write(asq.data.physical() as u32);
@@ -430,8 +432,8 @@ impl Nvme {
     pub fn submit_and_complete_admin_command(&self, cmd_init: impl FnOnce(CmdId) -> NvmeCmd) -> NvmeComp {
         self.submit_and_complete_command(0, cmd_init)
     }
-    pub fn try_submit_raw(&self, ctxt: &mut ThreadCtxt, sq_id: SqId, cmd_init: impl FnOnce(CmdId) -> NvmeCmd, fail: impl FnOnce()) -> Option<(CqId, CmdId)> {
-        match ctxt.queues.get_mut(&sq_id).unwrap() {
+    pub fn try_submit_raw(&self, ctxt: &ThreadCtxt, sq_id: SqId, cmd_init: impl FnOnce(CmdId) -> NvmeCmd, fail: impl FnOnce()) -> Option<(CqId, CmdId)> {
+        match ctxt.queues.borrow_mut().get_mut(&sq_id).unwrap() {
             (sq, _cq) => {
                 if sq.is_full() {
                     fail();
@@ -520,7 +522,7 @@ impl Nvme {
 
     fn namespace_rw(
         &self,
-        ctxt: &mut ThreadCtxt,
+        ctxt: &ThreadCtxt,
         namespace: &NvmeNamespace,
         nsid: u32,
         lba: u64,
@@ -529,13 +531,14 @@ impl Nvme {
     ) -> Result<()> {
         let block_size = namespace.block_size;
 
+        let prp = ctxt.buffer_prp.borrow_mut();
         let bytes = ((blocks_1 as u64) + 1) * block_size;
         let (ptr0, ptr1) = if bytes <= 4096 {
-            (ctxt.buffer_prp[0], 0)
+            (prp[0], 0)
         } else if bytes <= 8192 {
-            (ctxt.buffer_prp[0], ctxt.buffer_prp[1])
+            (prp[0], prp[1])
         } else {
-            (ctxt.buffer_prp[0], (ctxt.buffer_prp.physical() + 8) as u64)
+            (prp[0], (prp.physical() + 8) as u64)
         };
 
         let mut cmd = NvmeCmd::default();
@@ -564,7 +567,7 @@ impl Nvme {
         buf: &mut [u8],
     ) -> Result<usize> {
         let ctxt = self.cur_thread_ctxt();
-        let mut ctxt = ctxt.lock();
+        let ctxt = ctxt.lock();
 
         let block_size = namespace.block_size as usize;
 
@@ -574,9 +577,9 @@ impl Nvme {
             assert!(blocks > 0);
             assert!(blocks <= 0x1_0000);
 
-            self.namespace_rw(&mut *ctxt, namespace, nsid, lba, (blocks - 1) as u16, false)?;
+            self.namespace_rw(&*ctxt, namespace, nsid, lba, (blocks - 1) as u16, false)?;
 
-            chunk.copy_from_slice(&ctxt.buffer[..chunk.len()]);
+            chunk.copy_from_slice(&ctxt.buffer.borrow()[..chunk.len()]);
 
             lba += blocks as u64;
         }
@@ -592,7 +595,7 @@ impl Nvme {
         buf: &[u8],
     ) -> Result<usize> {
         let ctxt = self.cur_thread_ctxt();
-        let mut ctxt = ctxt.lock();
+        let ctxt = ctxt.lock();
 
         let block_size = namespace.block_size as usize;
 
@@ -602,9 +605,9 @@ impl Nvme {
             assert!(blocks > 0);
             assert!(blocks <= 0x1_0000);
 
-            ctxt.buffer[..chunk.len()].copy_from_slice(chunk);
+            ctxt.buffer.borrow_mut()[..chunk.len()].copy_from_slice(chunk);
 
-            self.namespace_rw(&mut *ctxt, namespace, nsid, lba, (blocks - 1) as u16, true)?;
+            self.namespace_rw(&*ctxt, namespace, nsid, lba, (blocks - 1) as u16, true)?;
 
             lba += blocks as u64;
         }

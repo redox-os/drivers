@@ -180,13 +180,12 @@ impl LocalExecutor {
         }
 
         let ctxt = self.nvme.cur_thread_ctxt();
-        let mut ctxt = ctxt.lock();
-        let ctxt = &mut *ctxt;
+        let ctxt = ctxt.lock();
 
         // TODO: The kernel should probably do the masking, which should happen before EOI
         // messages to the interrupt controller.
         self.nvme.set_vector_masked(self.vector, true);
-        for (sq_cq_id, (sq, cq)) in ctxt.queues.iter_mut() {
+        for (sq_cq_id, (sq, cq)) in ctxt.queues.borrow_mut().iter_mut() {
             let mut head = None;
 
             while let Some((new_head, cqe)) = cq.complete() {
@@ -242,7 +241,7 @@ impl Future for NvmeFuture {
             State::Submitting { sq_id, mut cmd } => {
                 let mut awaiting = executor.awaiting_submission.borrow_mut();
 
-                if let Some((cq_id, cmd_id)) = executor.nvme.try_submit_raw(&mut executor.nvme.cur_thread_ctxt().lock(), sq_id, |cmd_id| {
+                if let Some((cq_id, cmd_id)) = executor.nvme.try_submit_raw(&*executor.nvme.cur_thread_ctxt().lock(), sq_id, |cmd_id| {
                     cmd.cid = cmd_id;
                     log::trace!("About to submit {cmd:?}");
                     cmd
