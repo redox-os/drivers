@@ -1,5 +1,6 @@
 #![cfg_attr(target_arch = "aarch64", feature(stdsimd))] // Required for yield instruction
 #![feature(int_roundings)]
+#![feature(async_fn_in_trait)]
 #![feature(waker_getters)]
 
 use std::cell::RefCell;
@@ -321,11 +322,10 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
                 };
 
                 let scheme = Rc::clone(&scheme);
-                executor.spawn(async move {
-                    log::trace!("spawned!");
-                    // TODO: Not actually async
-                    call.handle_scheme_mut(&mut *scheme.borrow_mut());
-                });
+                //executor.spawn(async move {
+                    //log::trace!("spawned!");
+                    unsafe { call.handle(&mut *scheme.borrow_mut()).await; }
+                //});
             }
 
             let _ = scheme_events.as_mut().next().await;
