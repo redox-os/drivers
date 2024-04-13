@@ -7,7 +7,6 @@ use std::sync::atomic::AtomicU16;
 use std::sync::Arc;
 
 use parking_lot::{Mutex, ReentrantMutex, RwLock};
-use smallvec::SmallVec;
 
 use syscall::error::{Error, Result, EIO};
 use syscall::io::{Io, Mmio};
@@ -19,7 +18,7 @@ pub mod executor;
 pub mod identify;
 pub mod queues;
 
-use self::executor::{LocalExecutor, NvmeFuture};
+use self::executor::NvmeExecutor;
 pub use self::queues::{NvmeCmd, NvmeCmdQueue, NvmeComp, NvmeCompQueue};
 
 use pcid_interface::msi::{MsiCapability, MsixCapability, MsixTableEntry};
@@ -421,11 +420,7 @@ impl Nvme {
     }
 
     pub async fn submit_and_complete_command(&self, sq_id: SqId, cmd_init: impl FnOnce(CmdId) -> NvmeCmd) -> NvmeComp {
-        NvmeFuture {
-            state: executor::State::Submitting { sq_id, cmd: cmd_init(0) /* TODO */ },
-            comp: None,
-            _not_send: std::marker::PhantomData,
-        }.await
+        NvmeExecutor::current().submit(sq_id, cmd_init(0)).await
     }
 
     pub async fn submit_and_complete_admin_command(&self, cmd_init: impl FnOnce(CmdId) -> NvmeCmd) -> NvmeComp {

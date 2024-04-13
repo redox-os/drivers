@@ -295,7 +295,14 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     log::debug!("Finished base initialization");
     let nvme = Arc::new(nvme);
 
-    let executor = nvme::executor::LocalExecutor::init(Arc::clone(&nvme), interrupt_sources);
+    let executor = {
+        let (intx, (iv, irq_handle)) = match interrupt_sources {
+            InterruptSources::Msi(mut vectors) => (false, vectors.pop_first().map(|(a, b)| (u16::from(a), b)).unwrap()),
+            InterruptSources::MsiX(mut vectors) => (false, vectors.pop_first().unwrap()),
+            InterruptSources::Intx(file) => (true, (0, file)),
+        };
+        nvme::executor::init(Arc::clone(&nvme), iv, intx, irq_handle)
+    };
     let mut scheme_events = Box::pin(executor.register_external_event(socket.inner().raw(), event::EventFlags::READ));
     let namespaces = executor.block_on(nvme.init_with_queues());
     log::debug!("Initialized!");

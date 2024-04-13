@@ -13,7 +13,7 @@ use syscall::{
     EOVERFLOW, MODE_DIR, MODE_FILE, O_DIRECTORY, O_STAT, SEEK_CUR, SEEK_END, SEEK_SET,
 };
 
-use crate::nvme::executor::LocalExecutor;
+use crate::nvme::executor::NvmeExecutor;
 use crate::nvme::{Nvme, NvmeNamespace};
 
 use partitionlib::{LogicalBlockSize, PartitionTable};
@@ -46,7 +46,7 @@ impl DiskWrapper {
         struct Device<'a, 'b> {
             disk: &'a mut NvmeNamespace,
             nvme: &'a Nvme,
-            executor: &'a LocalExecutor,
+            executor: &'a NvmeExecutor,
             offset: u64,
             block_bytes: &'b mut [u8],
         }
@@ -116,7 +116,7 @@ impl DiskWrapper {
                 nvme,
                 offset: 0,
                 block_bytes: &mut block_bytes[..bs.into()],
-                executor: &LocalExecutor::current(),
+                executor: &NvmeExecutor::current(),
             },
             bs,
         )
