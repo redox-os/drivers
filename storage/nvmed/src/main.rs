@@ -214,7 +214,7 @@ fn setup_logging(name: &str) -> Option<&'static RedoxLogger> {
     let mut logger = RedoxLogger::new()
         .with_output(
             OutputBuilder::stderr()
-                .with_filter(log::LevelFilter::Trace) // limit global output to important info
+                .with_filter(log::LevelFilter::Info) // limit global output to important info
                 .with_ansi_escape_codes()
                 .flush_on_newline(true)
                 .build()
@@ -297,7 +297,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     let executor = nvme::executor::LocalExecutor::init(Arc::clone(&nvme), interrupt_sources);
     let mut scheme_events = Box::pin(executor.register_external_event(socket.inner().raw(), event::EventFlags::READ));
-    let namespaces = nvme.init_with_queues();
+    let namespaces = executor.block_on(nvme.init_with_queues());
     log::debug!("Initialized!");
 
     libredox::call::setrens(0, 0).expect("nvmed: failed to enter null namespace");
@@ -321,11 +321,12 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
                     continue;
                 };
 
-                let scheme = Rc::clone(&scheme);
-                //executor.spawn(async move {
-                    //log::trace!("spawned!");
-                    unsafe { call.handle(&mut *scheme.borrow_mut()).await; }
-                //});
+                // TODO: Spawn a separate task for each scheme call. This would however require the
+                // use of a smarter buffer pool (or direct IO, or a buffer per fd) in order to do
+                // parallel IO. It might also require async-aware locks so that a close() is
+                // correctly ordered wrt IO on the same fd.
+                let response = unsafe { call.handle(&mut *scheme.borrow_mut()).await };
+                socket.write_response(response, SignalBehavior::Restart).unwrap();
             }
 
             let _ = scheme_events.as_mut().next().await;

@@ -420,18 +420,16 @@ impl Nvme {
         self.set_vectors_masked(std::iter::once((vector, masked)))
     }
 
-    pub fn submit_and_complete_command(&self, sq_id: SqId, cmd_init: impl FnOnce(CmdId) -> NvmeCmd) -> NvmeComp {
-        LocalExecutor::current().block_on(async move {
-            NvmeFuture {
-                state: executor::State::Submitting { sq_id, cmd: cmd_init(0) /* TODO */ },
-                comp: None,
-                _not_send: std::marker::PhantomData,
-            }.await
-        })
+    pub async fn submit_and_complete_command(&self, sq_id: SqId, cmd_init: impl FnOnce(CmdId) -> NvmeCmd) -> NvmeComp {
+        NvmeFuture {
+            state: executor::State::Submitting { sq_id, cmd: cmd_init(0) /* TODO */ },
+            comp: None,
+            _not_send: std::marker::PhantomData,
+        }.await
     }
 
-    pub fn submit_and_complete_admin_command(&self, cmd_init: impl FnOnce(CmdId) -> NvmeCmd) -> NvmeComp {
-        self.submit_and_complete_command(0, cmd_init)
+    pub async fn submit_and_complete_admin_command(&self, cmd_init: impl FnOnce(CmdId) -> NvmeCmd) -> NvmeComp {
+        self.submit_and_complete_command(0, cmd_init).await
     }
     pub fn try_submit_raw(&self, ctxt: &ThreadCtxt, sq_id: SqId, cmd_init: impl FnOnce(CmdId) -> NvmeCmd, fail: impl FnOnce()) -> Option<(CqId, CmdId)> {
         match ctxt.queues.borrow_mut().get_mut(&sq_id).unwrap() {
@@ -452,7 +450,7 @@ impl Nvme {
         }
     }
 
-    pub fn create_io_completion_queue(&self, io_cq_id: CqId, vector: Option<Iv>) -> NvmeCompQueue {
+    pub async fn create_io_completion_queue(&self, io_cq_id: CqId, vector: Option<Iv>) -> NvmeCompQueue {
         let queue = NvmeCompQueue::new()
             .expect("nvmed: failed to allocate I/O completion queue");
 
@@ -465,7 +463,7 @@ impl Nvme {
         let comp = self
             .submit_and_complete_admin_command(|cid| {
                 NvmeCmd::create_io_completion_queue(cid, io_cq_id, queue.data.physical(), raw_len, vector)
-            });
+            }).await;
 
         /*match comp.status.specific {
             1 => panic!("invalid queue identifier"),
@@ -476,7 +474,7 @@ impl Nvme {
 
         queue
     }
-    pub fn create_io_submission_queue(&self, io_sq_id: SqId, io_cq_id: CqId) -> NvmeCmdQueue {
+    pub async fn create_io_submission_queue(&self, io_sq_id: SqId, io_cq_id: CqId) -> NvmeCmdQueue {
         let q = NvmeCmdQueue::new().expect("failed to create submission queue");
 
         let len =
@@ -488,7 +486,7 @@ impl Nvme {
         let comp = self
             .submit_and_complete_admin_command(|cid| {
                 NvmeCmd::create_io_submission_queue(cid, io_sq_id, q.data.physical(), raw_len, io_cq_id)
-            });
+            }).await;
         /*match comp.status.specific {
             0 => panic!("completion queue invalid"),
             1 => panic!("invalid queue identifier"),
@@ -499,25 +497,25 @@ impl Nvme {
         q
     }
 
-    pub fn init_with_queues(&self) -> BTreeMap<u32, NvmeNamespace> {
+    pub async fn init_with_queues(&self) -> BTreeMap<u32, NvmeNamespace> {
         log::trace!("preinit");
 
-        self.identify_controller();
+        self.identify_controller().await;
 
-        let nsids = self.identify_namespace_list(0);
+        let nsids = self.identify_namespace_list(0).await;
 
         log::debug!("first commands");
 
         let mut namespaces = BTreeMap::new();
 
         for nsid in nsids.iter().copied() {
-            namespaces.insert(nsid, self.identify_namespace(nsid));
+            namespaces.insert(nsid, self.identify_namespace(nsid).await);
         }
 
         // TODO: Multiple queues
-        let cq = self.create_io_completion_queue(1, Some(0));
+        let cq = self.create_io_completion_queue(1, Some(0)).await;
         log::trace!("created compq");
-        let sq = self.create_io_submission_queue(1, 1);
+        let sq = self.create_io_submission_queue(1, 1).await;
         log::trace!("created subq");
         self.thread_ctxts.read().get(&0).unwrap().lock().queues.borrow_mut().insert(1, (sq, cq));
         self.sq_ivs.write().insert(1, 0);
@@ -526,7 +524,7 @@ impl Nvme {
         namespaces
     }
 
-    fn namespace_rw(
+    async fn namespace_rw(
         &self,
         ctxt: &ThreadCtxt,
         namespace: &NvmeNamespace,
@@ -555,7 +553,7 @@ impl Nvme {
                 NvmeCmd::io_read(cid, nsid, lba, blocks_1, ptr0, ptr1)
             };
             cmd.clone()
-        });
+        }).await;
         let status = comp.status >> 1;
         if status == 0 {
             Ok(())
@@ -565,7 +563,7 @@ impl Nvme {
         }
     }
 
-    pub fn namespace_read(
+    pub async fn namespace_read(
         &self,
         namespace: &NvmeNamespace,
         nsid: u32,
@@ -583,7 +581,7 @@ impl Nvme {
             assert!(blocks > 0);
             assert!(blocks <= 0x1_0000);
 
-            self.namespace_rw(&*ctxt, namespace, nsid, lba, (blocks - 1) as u16, false)?;
+            self.namespace_rw(&*ctxt, namespace, nsid, lba, (blocks - 1) as u16, false).await?;
 
             chunk.copy_from_slice(&ctxt.buffer.borrow()[..chunk.len()]);
 
@@ -593,7 +591,7 @@ impl Nvme {
         Ok(buf.len())
     }
 
-    pub fn namespace_write(
+    pub async fn namespace_write(
         &self,
         namespace: &NvmeNamespace,
         nsid: u32,
@@ -613,7 +611,7 @@ impl Nvme {
 
             ctxt.buffer.borrow_mut()[..chunk.len()].copy_from_slice(chunk);
 
-            self.namespace_rw(&*ctxt, namespace, nsid, lba, (blocks - 1) as u16, true)?;
+            self.namespace_rw(&*ctxt, namespace, nsid, lba, (blocks - 1) as u16, true).await?;
 
             lba += blocks as u64;
         }

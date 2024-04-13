@@ -13,6 +13,7 @@ use syscall::{
     EOVERFLOW, MODE_DIR, MODE_FILE, O_DIRECTORY, O_STAT, SEEK_CUR, SEEK_END, SEEK_SET,
 };
 
+use crate::nvme::executor::LocalExecutor;
 use crate::nvme::{Nvme, NvmeNamespace};
 
 use partitionlib::{LogicalBlockSize, PartitionTable};
@@ -45,6 +46,7 @@ impl DiskWrapper {
         struct Device<'a, 'b> {
             disk: &'a mut NvmeNamespace,
             nvme: &'a Nvme,
+            executor: &'a LocalExecutor,
             offset: u64,
             block_bytes: &'b mut [u8],
         }
@@ -78,13 +80,14 @@ impl DiskWrapper {
 
                 let disk = &mut self.disk;
                 let nvme = &mut self.nvme;
+                let executor = &self.executor;
 
                 let read_block = |block: u64, block_bytes: &mut [u8]| {
                     if block >= size_in_blocks {
                         return Err(io::Error::from_raw_os_error(syscall::EOVERFLOW));
                     }
                     loop {
-                        let bytes = nvme.namespace_read(disk, disk.id, block, block_bytes)
+                        let bytes = executor.block_on(nvme.namespace_read(disk, disk.id, block, block_bytes))
                             .map_err(|err| io::Error::from_raw_os_error(err.errno))?;
                         assert_eq!(bytes, block_bytes.len());
                         assert_eq!(bytes, blksize as usize);
@@ -113,6 +116,7 @@ impl DiskWrapper {
                 nvme,
                 offset: 0,
                 block_bytes: &mut block_bytes[..bs.into()],
+                executor: &LocalExecutor::current(),
             },
             bs,
         )
@@ -367,7 +371,7 @@ impl Scheme for DiskScheme {
             Handle::Disk(number, ref mut size) => {
                 let disk = self.disks.get_mut(&number).ok_or(Error::new(EBADF))?;
                 let block_size = disk.as_ref().block_size;
-                let count = self.nvme.namespace_read(disk.as_ref(), disk.as_ref().id, (*size as u64) / block_size, buf)?;
+                let count = self.nvme.namespace_read(disk.as_ref(), disk.as_ref().id, (*size as u64) / block_size, buf).await?;
                 *size += count;
                 Ok(count)
             }
@@ -389,7 +393,7 @@ impl Scheme for DiskScheme {
 
                 let abs_block = part.start_lba + rel_block;
 
-                let count = self.nvme.namespace_read(disk.as_ref(), disk.as_ref().id, abs_block, buf)?;
+                let count = self.nvme.namespace_read(disk.as_ref(), disk.as_ref().id, abs_block, buf).await?;
                 *offset += count;
                 Ok(count)
             }
@@ -402,7 +406,7 @@ impl Scheme for DiskScheme {
             Handle::Disk(number, ref mut size) => {
                 let disk = self.disks.get_mut(&number).ok_or(Error::new(EBADF))?;
                 let block_size = disk.as_ref().block_size;
-                let count = self.nvme.namespace_write(disk.as_ref(), disk.as_ref().id, (*size as u64) / block_size, buf)?;
+                let count = self.nvme.namespace_write(disk.as_ref(), disk.as_ref().id, (*size as u64) / block_size, buf).await?;
                 *size += count;
                 Ok(count)
             }
@@ -424,7 +428,7 @@ impl Scheme for DiskScheme {
 
                 let abs_block = part.start_lba + rel_block;
 
-                let count = self.nvme.namespace_write(disk.as_ref(), disk.as_ref().id, abs_block, buf)?;
+                let count = self.nvme.namespace_write(disk.as_ref(), disk.as_ref().id, abs_block, buf).await?;
                 *offset += count;
                 Ok(count)
             }
