@@ -313,7 +313,8 @@ impl Xhci {
                 .ring()
                 .ok_or(Error::new(EIO))?;
 
-            let (cmd, cycle) = ring.next();
+            let first_index = ring.next_index();
+            let (cmd, cycle) = (&mut ring.trbs[first_index], ring.cycle);
             cmd.setup(setup, tk, cycle);
 
             if tk != TransferKind::NoData {
@@ -340,6 +341,7 @@ impl Xhci {
             self.next_transfer_event_trb(
                 RingId::default_control_pipe(port_num as u8),
                 ring,
+                &ring.trbs[first_index],
                 &ring.trbs[last_index],
                 EventDoorbell::new(self, usize::from(slot), Self::def_control_endp_doorbell())
             )
@@ -430,6 +432,8 @@ impl Xhci {
                     break self.next_transfer_event_trb(
                         super::irq_reactor::RingId { port: port_num as u8, endpoint_num: endp_num, stream_id },
                         ring,
+                        //TODO: find first TRB
+                        &ring.trbs[last_index],
                         &ring.trbs[last_index],
                         EventDoorbell::new(self, usize::from(slot), if has_streams {
                             doorbell_data_stream
@@ -2128,7 +2132,7 @@ pub fn handle_transfer_event_trb(name: &str, event_trb: &Trb, transfer_trb: &Trb
     if event_trb.completion_code() == TrbCompletionCode::Success as u8 || event_trb.completion_code() == TrbCompletionCode::ShortPacket as u8 {
         Ok(())
     } else {
-        error!("{} transfer (TRB {:?}) failed with event trb {:?}", name, transfer_trb, event_trb);
+        error!("{} transfer {:?} failed with event {:?}", name, transfer_trb, event_trb);
         Err(Error::new(EIO))
     }
 }

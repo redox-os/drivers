@@ -85,12 +85,14 @@ impl Xhci {
     /// Gets descriptors, before the port state is initiated.
     async fn get_desc_raw<T>(&self, port: usize, slot: u8, kind: usb::DescriptorKind, index: u8, desc: &mut Dma<T>) -> Result<()> {
         let len = mem::size_of::<T>();
+        log::debug!("get_desc_raw port {} slot {} kind {:?} index {} len {}", port, slot, kind, index, len);
 
         let future = {
             let mut port_state = self.port_states.get_mut(&port).ok_or(Error::new(ENOENT))?;
             let ring = port_state.endpoint_states.get_mut(&0).ok_or(Error::new(EIO))?.ring().expect("no ring for the default control pipe");
 
-            let (cmd, cycle) = ring.next();
+            let first_index = ring.next_index();
+            let (cmd, cycle) = (&mut ring.trbs[first_index], ring.cycle);
             cmd.setup(
                 usb::Setup::get_descriptor(kind, index, 0, len as u16),
                 TransferKind::In,
@@ -114,6 +116,7 @@ impl Xhci {
             self.next_transfer_event_trb(
                 RingId::default_control_pipe(port as u8),
                 &ring,
+                &ring.trbs[first_index],
                 &ring.trbs[last_index],
                 EventDoorbell::new(self, usize::from(slot), Self::def_control_endp_doorbell())
             )
