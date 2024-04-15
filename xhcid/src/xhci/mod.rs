@@ -129,6 +129,12 @@ impl Xhci {
         Ok(())
     }
 
+    async fn fetch_dev_desc_8_byte(&self, port: usize, slot: u8) -> Result<usb::DeviceDescriptor8Byte> {
+        let mut desc = unsafe { self.alloc_dma_zeroed::<usb::DeviceDescriptor8Byte>()? };
+        self.get_desc_raw(port, slot, usb::DescriptorKind::Device, 0, &mut desc).await?;
+        Ok(*desc)
+    }
+
     async fn fetch_dev_desc(&self, port: usize, slot: u8) -> Result<usb::DeviceDescriptor> {
         let mut desc = unsafe { self.alloc_dma_zeroed::<usb::DeviceDescriptor>()? };
         self.get_desc_raw(port, slot, usb::DescriptorKind::Device, 0, &mut desc).await?;
@@ -552,6 +558,16 @@ impl Xhci {
                 };
                 self.port_states.insert(i, port_state);
 
+                // Ensure correct packet size is used
+                let dev_desc_8_byte = self.fetch_dev_desc_8_byte(i, slot).await?;
+                {
+                    let mut port_state = self.port_states.get_mut(&i).unwrap();
+
+                    let mut input = port_state.input_context.lock().unwrap();
+
+                    self.update_max_packet_size(&mut *input, slot, dev_desc_8_byte).await?;
+                }
+
                 let dev_desc = self.get_desc(i, slot).await?;
                 self.port_states.get_mut(&i).unwrap().dev_desc = Some(dev_desc);
 
@@ -570,6 +586,33 @@ impl Xhci {
                 }
             }
         }
+
+        Ok(())
+    }
+
+    pub async fn update_max_packet_size(
+        &self,
+        input_context: &mut Dma<InputContext>,
+        slot_id: u8,
+        dev_desc: usb::DeviceDescriptor8Byte
+    ) -> Result<()> {
+        let new_max_packet_size = if dev_desc.major_usb_vers() == 2 {
+            u32::from(dev_desc.packet_size)
+        } else {
+            1u32 << dev_desc.packet_size
+        };
+        let endp_ctx = &mut input_context.device.endpoints[0];
+        let mut b = endp_ctx.b.read();
+        b &= 0x0000_FFFF;
+        b |= (new_max_packet_size) << 16;
+        endp_ctx.b.write(b);
+
+        let (event_trb, command_trb) = self.execute_command(|trb, cycle| {
+            trb.evaluate_context(slot_id, input_context.physical(), false, cycle)
+        }).await;
+
+        self::scheme::handle_event_trb("EVALUATE_CONTEXT", &event_trb, &command_trb)?;
+        self.event_handler_finished();
 
         Ok(())
     }
@@ -594,14 +637,12 @@ impl Xhci {
         b |= (new_max_packet_size) << 16;
         endp_ctx.b.write(b);
 
-        /*TODO: this causes issues on real hardware, maybe it should only be used on USB 2?
         let (event_trb, command_trb) = self.execute_command(|trb, cycle| {
             trb.evaluate_context(slot_id, input_context.physical(), false, cycle)
         }).await;
 
         self::scheme::handle_event_trb("EVALUATE_CONTEXT", &event_trb, &command_trb)?;
         self.event_handler_finished();
-        */
 
         Ok(())
     }

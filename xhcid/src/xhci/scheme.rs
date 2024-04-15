@@ -1036,7 +1036,7 @@ impl Xhci {
         }
 
         let raw_dd = self.fetch_dev_desc(port_id, slot).await?;
-        log::debug!("port {}, slot {}, desc {:?}", port_id, slot, raw_dd);
+        log::debug!("port {} slot {} desc {:X?}", port_id, slot, raw_dd);
 
         let (manufacturer_str, product_str, serial_str) = (
             if raw_dd.manufacturer_str > 0 {
@@ -1055,6 +1055,7 @@ impl Xhci {
                 None
             },
         );
+        log::debug!("manufacturer {:?} product {:?} serial {:?}", manufacturer_str, product_str, serial_str);
 
         //TODO let (bos_desc, bos_data) = self.fetch_bos_desc(port_id, slot).await?;
 
@@ -1067,7 +1068,7 @@ impl Xhci {
 
         for index in 0..raw_dd.configurations {
             let (desc, data) = self.fetch_config_desc(port_id, slot, index).await?;
-            log::debug!("port {}, slot {}, config {}, desc {:?}", port_id, slot, index, desc);
+            log::debug!("port {} slot {} config {} desc {:X?}", port_id, slot, index, desc);
 
             let extra_length = desc.total_length as usize - mem::size_of_val(&desc);
             let data = &data[..extra_length];

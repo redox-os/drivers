@@ -20,10 +20,33 @@ pub struct DeviceDescriptor {
 unsafe impl plain::Plain for DeviceDescriptor {}
 
 impl DeviceDescriptor {
-    fn minor_usb_vers(&self) -> u8 {
+    pub fn minor_usb_vers(&self) -> u8 {
         (self.usb & 0xFF) as u8
     }
-    fn major_usb_vers(&self) -> u8 {
+    pub fn major_usb_vers(&self) -> u8 {
+        ((self.usb >> 8) & 0xFF) as u8
+    }
+}
+
+#[repr(packed)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DeviceDescriptor8Byte {
+    pub length: u8,
+    pub kind: u8,
+    pub usb: u16,
+    pub class: u8,
+    pub sub_class: u8,
+    pub protocol: u8,
+    pub packet_size: u8,
+}
+
+unsafe impl plain::Plain for DeviceDescriptor8Byte {}
+
+impl DeviceDescriptor8Byte {
+    pub fn minor_usb_vers(&self) -> u8 {
+        (self.usb & 0xFF) as u8
+    }
+    pub fn major_usb_vers(&self) -> u8 {
         ((self.usb >> 8) & 0xFF) as u8
     }
 }
