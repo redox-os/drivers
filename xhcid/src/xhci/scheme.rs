@@ -1093,14 +1093,18 @@ impl Xhci {
                     let mut endpoints = SmallVec::<[EndpDesc; 4]>::new();
                     let mut hid_descs = SmallVec::<[HidDesc; 1]>::new();
 
-                    for _ in 0..idesc.endpoints {
+                    while endpoints.len() < idesc.endpoints as usize {
                         let next = match iter.next() {
                             Some(AnyDescriptor::Endpoint(n)) => n,
                             Some(AnyDescriptor::Hid(h)) if idesc.class == 3 => {
                                 hid_descs.push(h.into());
-                                break;
+                                continue;
                             }
-                            _ => break,
+                            Some(unexpected) => {
+                                log::warn!("expected endpoint, got {:X?}", unexpected);
+                                break;
+                            },
+                            None => break,
                         };
                         let mut endp = EndpDesc::from(next);
 
@@ -1124,6 +1128,7 @@ impl Xhci {
 
                     interface_descs.push(self.new_if_desc(port_id, slot, idesc, endpoints, hid_descs).await?);
                 } else {
+                    log::warn!("expected interface, got {:?}", item);
                     // TODO
                     break;
                 }
