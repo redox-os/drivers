@@ -10,7 +10,7 @@ use rehid::{
     report_handler::ReportHandler,
     usage_tables::{GenericDesktopUsage, UsagePage},
 };
-use xhcid_interface::{ConfigureEndpointsReq, DevDesc, PortReqRecipient, XhciClientHandle};
+use xhcid_interface::{ConfigureEndpointsReq, DevDesc, EndpDirection, PortReqRecipient, XhciClientHandle};
 
 mod keymap;
 mod reqs;
@@ -243,17 +243,24 @@ fn main() {
 
     // TODO: Perhaps the drivers should just be given the config, interface, and alternate setting
     // from xhcid.
-    let (conf_desc, configuration_value, (if_desc, interface_num, alternate_setting, hid_desc)) = desc
+    let (conf_desc, configuration_value, (if_desc, interface_num, alternate_setting, endpoint_num, hid_desc)) = desc
         .config_descs
         .iter()
         .find_map(|conf_desc| {
             let if_desc = conf_desc.interface_descs.iter().find_map(|if_desc| {
                 if if_desc.class == 3 {
+                    let endpoint_num = if_desc.endpoints.iter().enumerate().find_map(|(endpoint_i, endpoint)| {
+                        if endpoint.direction() == EndpDirection::In {
+                            Some(endpoint_i + 1)
+                        } else {
+                            None
+                        }
+                    })?;
                     let hid_desc = if_desc.hid_descs.iter().find_map(|hid_desc| {
                         //TODO: should we do any filtering?
                         Some(hid_desc)
                     })?;
-                    Some((if_desc.clone(), if_desc.number, if_desc.alternate_setting, hid_desc))
+                    Some((if_desc.clone(), if_desc.number, if_desc.alternate_setting, endpoint_num, hid_desc))
                 } else {
                     None
                 }
@@ -299,12 +306,10 @@ fn main() {
         let mut report_buffer = vec![0u8; handler.total_byte_length];
         let report_ty = ReportTy::Input;
         let report_id = 0;
-        //TODO: make this dynamic?
-        let mut interrupt_endpoint = 0x81;
 
         let mut display =
             File::open("input:producer").expect("Failed to open orbital input socket");
-        //TODO: let mut interrupt_data = handle.open_endpoint_data(interrupt_endpoint).expect("failed to open interrupt endpoint");
+        //TODO: let mut endpoint = handle.open_endpoint(endpoint_num as u8).expect("failed to open interrupt endpoint");
         let mut left_shift = false;
         let mut right_shift = false;
         let mut last_mouse_pos = (0, 0);
@@ -313,9 +318,8 @@ fn main() {
             //TODO: get frequency from device
             std::thread::sleep(std::time::Duration::from_millis(10));
 
-            /*TODO
-            // interrupt transfer
-            interrupt_data.read(&mut report_buffer).expect("failed to get report");
+            /*TODO: interrupt transfer
+            endpoint.transfer_read(&mut report_buffer).expect("failed to get report");
             */
 
             // control transfer
