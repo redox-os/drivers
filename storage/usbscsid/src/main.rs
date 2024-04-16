@@ -77,6 +77,7 @@ fn daemon(daemon: redox_daemon::Daemon, scheme: String, port: usize, protocol: u
             config_desc: configuration_value,
             interface_desc: Some(interface_num),
             alternate_setting: Some(alternate_setting),
+            ..Default::default()
         })
         .expect("Failed to configure endpoints");
 

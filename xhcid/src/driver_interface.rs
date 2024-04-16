@@ -14,12 +14,17 @@ use thiserror::Error;
 
 pub use crate::usb::{EndpointTy, ENDP_ATTR_TY_MASK};
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub const PROTOCOL_BOOT: u8 = 0;
+pub const PROTOCOL_REPORT: u8 = 1;
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ConfigureEndpointsReq {
     /// Index into the configuration descriptors of the device descriptor.
     pub config_desc: u8,
     pub interface_desc: Option<u8>,
     pub alternate_setting: Option<u8>,
+    pub protocol: Option<u8>,
+    pub report_idles: Vec<(u8, u8)>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -10,7 +10,7 @@ use rehid::{
     report_handler::ReportHandler,
     usage_tables::{GenericDesktopUsage, UsagePage},
 };
-use xhcid_interface::{ConfigureEndpointsReq, DevDesc, EndpDirection, PortReqRecipient, XhciClientHandle};
+use xhcid_interface::{ConfigureEndpointsReq, DevDesc, EndpDirection, EndpointTy, PortReqRecipient, XhciClientHandle, PROTOCOL_REPORT};
 
 mod keymap;
 mod reqs;
@@ -243,24 +243,24 @@ fn main() {
 
     // TODO: Perhaps the drivers should just be given the config, interface, and alternate setting
     // from xhcid.
-    let (conf_desc, configuration_value, (if_desc, interface_num, alternate_setting, endpoint_num, hid_desc)) = desc
+    let (conf_desc, configuration_value, (if_desc, interface_num, alternate_setting, endpoint_num_opt, hid_desc)) = desc
         .config_descs
         .iter()
         .find_map(|conf_desc| {
             let if_desc = conf_desc.interface_descs.iter().find_map(|if_desc| {
                 if if_desc.class == 3 {
-                    let endpoint_num = if_desc.endpoints.iter().enumerate().find_map(|(endpoint_i, endpoint)| {
-                        if endpoint.direction() == EndpDirection::In {
+                    let endpoint_num_opt = if_desc.endpoints.iter().enumerate().find_map(|(endpoint_i, endpoint)| {
+                        if endpoint.ty() == EndpointTy::Interrupt && endpoint.direction() == EndpDirection::In {
                             Some(endpoint_i + 1)
                         } else {
                             None
                         }
-                    })?;
+                    });
                     let hid_desc = if_desc.hid_descs.iter().find_map(|hid_desc| {
                         //TODO: should we do any filtering?
                         Some(hid_desc)
                     })?;
-                    Some((if_desc.clone(), if_desc.number, if_desc.alternate_setting, endpoint_num, hid_desc))
+                    Some((if_desc.clone(), if_desc.number, if_desc.alternate_setting, endpoint_num_opt, hid_desc))
                 } else {
                     None
                 }
@@ -280,6 +280,10 @@ fn main() {
             config_desc: configuration_value,
             interface_desc: Some(interface_num),
             alternate_setting: Some(alternate_setting),
+            protocol: Some(PROTOCOL_REPORT),
+            //TODO: dynamically create good values, fix xhcid so it does not block on each request
+            // This sets all reports to a duration of 4ms
+            report_idles: vec![(0, 1)]
         })
         .expect("Failed to configure endpoints");
 
@@ -301,27 +305,34 @@ fn main() {
     let mut handler =
         ReportHandler::new(&report_desc_bytes).expect("failed to parse report descriptor");
 
-    // Get all main items, and their global item options.
-    {
-        let mut report_buffer = vec![0u8; handler.total_byte_length];
-        let report_ty = ReportTy::Input;
-        let report_id = 0;
+    let mut report_buffer = vec![0u8; handler.total_byte_length];
+    let report_ty = ReportTy::Input;
+    let report_id = 0;
 
-        let mut display =
-            File::open("input:producer").expect("Failed to open orbital input socket");
-        //TODO: let mut endpoint = handle.open_endpoint(endpoint_num as u8).expect("failed to open interrupt endpoint");
-        let mut left_shift = false;
-        let mut right_shift = false;
-        let mut last_mouse_pos = (0, 0);
-        let mut last_buttons = [false, false, false];
-        loop {
-            //TODO: get frequency from device
-            std::thread::sleep(std::time::Duration::from_millis(10));
+    let mut display =
+        File::open("input:producer").expect("Failed to open orbital input socket");
+    let mut endpoint_opt = match endpoint_num_opt {
+        Some(endpoint_num) => match handle.open_endpoint(endpoint_num as u8) {
+            Ok(ok) => Some(ok),
+            Err(err) => {
+                log::warn!("failed to open endpoint {endpoint_num}: {err}");
+                None
+            }
+        },
+        None => None,
+    };
+    let mut left_shift = false;
+    let mut right_shift = false;
+    let mut last_mouse_pos = (0, 0);
+    let mut last_buttons = [false, false, false];
+    loop {
+        //TODO: get frequency from device
+        std::thread::sleep(std::time::Duration::from_millis(10));
 
-            /*TODO: interrupt transfer
+        if let Some(endpoint) = &mut endpoint_opt {
+            // interrupt transfer
             endpoint.transfer_read(&mut report_buffer).expect("failed to get report");
-            */
-
+        } else {
             // control transfer
             reqs::get_report(
                 &handle,
@@ -332,123 +343,123 @@ fn main() {
                 &mut report_buffer,
             )
             .expect("failed to get report");
+        }
 
-            let mut mouse_pos = last_mouse_pos;
-            let mut mouse_dx = 0i32;
-            let mut mouse_dy = 0i32;
-            let mut buttons = last_buttons;
-            for event in handler
-                .handle(&report_buffer)
-                .expect("failed to parse report")
-            {
-                log::debug!("{:X?}", event);
-                if event.usage_page == UsagePage::GenericDesktop as u32 {
-                    if event.usage == GenericDesktopUsage::X as u32 {
-                        if event.relative {
-                            mouse_dx += event.value;
-                        } else {
-                            mouse_pos.0 = event.value;
-                        }
-                    } else if event.usage == GenericDesktopUsage::Y as u32 {
-                        if event.relative {
-                            mouse_dy += event.value;
-                        } else {
-                            mouse_pos.1 = event.value;
-                        }
+        let mut mouse_pos = last_mouse_pos;
+        let mut mouse_dx = 0i32;
+        let mut mouse_dy = 0i32;
+        let mut buttons = last_buttons;
+        for event in handler
+            .handle(&report_buffer)
+            .expect("failed to parse report")
+        {
+            log::debug!("{:X?}", event);
+            if event.usage_page == UsagePage::GenericDesktop as u32 {
+                if event.usage == GenericDesktopUsage::X as u32 {
+                    if event.relative {
+                        mouse_dx += event.value;
                     } else {
-                        log::info!(
-                            "unsupported generic desktop usage 0x{:X}:0x{:X} value {}",
-                            event.usage_page,
-                            event.usage,
-                            event.value
-                        );
+                        mouse_pos.0 = event.value;
                     }
-                } else if event.usage_page == UsagePage::KeyboardOrKeypad as u32 {
-                    let (pressed, shift_opt) = if event.value != 0 {
-                        (true, Some(left_shift | right_shift))
+                } else if event.usage == GenericDesktopUsage::Y as u32 {
+                    if event.relative {
+                        mouse_dy += event.value;
                     } else {
-                        (false, None)
-                    };
-                    if event.usage == 0xE1 {
-                        left_shift = pressed;
-                    } else if event.usage == 0xE5 {
-                        right_shift = pressed;
-                    }
-                    send_key_event(
-                        &mut display,
-                        event.usage_page,
-                        event.usage,
-                        pressed,
-                        shift_opt,
-                    );
-                } else if event.usage_page == UsagePage::Button as u32 {
-                    if event.usage > 0 && event.usage as usize <= buttons.len() {
-                        buttons[event.usage as usize - 1] = event.value != 0;
-                    } else {
-                        log::info!(
-                            "unsupported buttons usage 0x{:X}:0x{:X} value {}",
-                            event.usage_page,
-                            event.usage,
-                            event.value
-                        );
+                        mouse_pos.1 = event.value;
                     }
                 } else {
                     log::info!(
-                        "unsupported usage 0x{:X}:0x{:X} value {}",
+                        "unsupported generic desktop usage 0x{:X}:0x{:X} value {}",
                         event.usage_page,
                         event.usage,
                         event.value
                     );
                 }
-            }
-
-            if mouse_pos != last_mouse_pos {
-                last_mouse_pos = mouse_pos;
-
-                // ps2d uses 0..=65535 as range, while usb uses 0..=32767. orbital
-                // expects the former range, so multiply by two here to translate
-                // the usb coordinates to what orbital expects.
-                let mouse_event = orbclient::event::MouseEvent {
-                    x: mouse_pos.0 * 2,
-                    y: mouse_pos.1 * 2,
+            } else if event.usage_page == UsagePage::KeyboardOrKeypad as u32 {
+                let (pressed, shift_opt) = if event.value != 0 {
+                    (true, Some(left_shift | right_shift))
+                } else {
+                    (false, None)
                 };
+                if event.usage == 0xE1 {
+                    left_shift = pressed;
+                } else if event.usage == 0xE5 {
+                    right_shift = pressed;
+                }
+                send_key_event(
+                    &mut display,
+                    event.usage_page,
+                    event.usage,
+                    pressed,
+                    shift_opt,
+                );
+            } else if event.usage_page == UsagePage::Button as u32 {
+                if event.usage > 0 && event.usage as usize <= buttons.len() {
+                    buttons[event.usage as usize - 1] = event.value != 0;
+                } else {
+                    log::info!(
+                        "unsupported buttons usage 0x{:X}:0x{:X} value {}",
+                        event.usage_page,
+                        event.usage,
+                        event.value
+                    );
+                }
+            } else {
+                log::info!(
+                    "unsupported usage 0x{:X}:0x{:X} value {}",
+                    event.usage_page,
+                    event.usage,
+                    event.value
+                );
+            }
+        }
 
-                match display.write(&mouse_event.to_event()) {
-                    Ok(_) => (),
-                    Err(err) => {
-                        log::warn!("failed to send mouse event to orbital: {}", err);
-                    }
+        if mouse_pos != last_mouse_pos {
+            last_mouse_pos = mouse_pos;
+
+            // ps2d uses 0..=65535 as range, while usb uses 0..=32767. orbital
+            // expects the former range, so multiply by two here to translate
+            // the usb coordinates to what orbital expects.
+            let mouse_event = orbclient::event::MouseEvent {
+                x: mouse_pos.0 * 2,
+                y: mouse_pos.1 * 2,
+            };
+
+            match display.write(&mouse_event.to_event()) {
+                Ok(_) => (),
+                Err(err) => {
+                    log::warn!("failed to send mouse event to orbital: {}", err);
                 }
             }
+        }
 
-            if mouse_dx != 0 || mouse_dy != 0 {
-                let mouse_event = orbclient::event::MouseRelativeEvent {
-                    dx: mouse_dx,
-                    dy: mouse_dy,
-                };
+        if mouse_dx != 0 || mouse_dy != 0 {
+            let mouse_event = orbclient::event::MouseRelativeEvent {
+                dx: mouse_dx,
+                dy: mouse_dy,
+            };
 
-                match display.write(&mouse_event.to_event()) {
-                    Ok(_) => (),
-                    Err(err) => {
-                        log::warn!("failed to send mouse event to orbital: {}", err);
-                    }
+            match display.write(&mouse_event.to_event()) {
+                Ok(_) => (),
+                Err(err) => {
+                    log::warn!("failed to send mouse event to orbital: {}", err);
                 }
             }
+        }
 
-            if buttons != last_buttons {
-                last_buttons = buttons;
+        if buttons != last_buttons {
+            last_buttons = buttons;
 
-                let button_event = orbclient::event::ButtonEvent {
-                    left: buttons[0],
-                    right: buttons[1],
-                    middle: buttons[2],
-                };
+            let button_event = orbclient::event::ButtonEvent {
+                left: buttons[0],
+                right: buttons[1],
+                middle: buttons[2],
+            };
 
-                match display.write(&button_event.to_event()) {
-                    Ok(_) => (),
-                    Err(err) => {
-                        log::warn!("failed to send button event to orbital: {}", err);
-                    }
+            match display.write(&button_event.to_event()) {
+                Ok(_) => (),
+                Err(err) => {
+                    log::warn!("failed to send button event to orbital: {}", err);
                 }
             }
         }

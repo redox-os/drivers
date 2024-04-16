@@ -481,10 +481,12 @@ impl Xhci {
         ).await?;
         Ok(())
     }
+
     async fn set_configuration(&self, port: usize, config: u8) -> Result<()> {
         debug!("Setting configuration value {} to port {}", config, port);
         self.device_req_no_data(port, usb::Setup::set_configuration(config)).await
     }
+
     async fn set_interface(
         &self,
         port: usize,
@@ -495,6 +497,33 @@ impl Xhci {
         self.device_req_no_data(
             port,
             usb::Setup::set_interface(interface_num, alternate_setting),
+        ).await
+    }
+
+    async fn set_protocol(
+        &self,
+        port: usize,
+        interface_num: u8,
+        protocol: u8,
+    ) -> Result<()> {
+        debug!("Setting idle value {} (protocol {}) to port {}", interface_num, protocol, port);
+        self.device_req_no_data(
+            port,
+            usb::Setup::set_protocol(interface_num, protocol),
+        ).await
+    }
+
+    async fn set_idle(
+        &self,
+        port: usize,
+        interface_num: u8,
+        report_id: u8,
+        duration: u8,
+    ) -> Result<()> {
+        debug!("Setting idle value {} (report_id {}, duration {}) to port {}", interface_num, report_id, duration, port);
+        self.device_req_no_data(
+            port,
+            usb::Setup::set_idle(interface_num, report_id, duration),
         ).await
     }
 
@@ -838,10 +867,18 @@ impl Xhci {
         // Tell the device about this configuration.
         self.set_configuration(port, configuration_value).await?;
 
-        if let (Some(interface_num), Some(alternate_setting)) =
-            (req.interface_desc, req.alternate_setting)
-        {
-            self.set_interface(port, interface_num, alternate_setting).await?;
+        if let Some(interface_num) = req.interface_desc {
+            if let Some(alternate_setting) = req.alternate_setting {
+                self.set_interface(port, interface_num, alternate_setting).await?;
+            }
+
+            if let Some(protocol) = req.protocol {
+                self.set_protocol(port, interface_num, protocol).await?;
+            }
+
+            for (report_id, duration) in req.report_idles {
+                self.set_idle(port, interface_num, report_id, duration).await?;
+            }
         }
 
         Ok(())
