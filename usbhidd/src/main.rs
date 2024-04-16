@@ -406,6 +406,8 @@ fn main() {
                         event.value
                     );
                 }
+            } else if event.usage_page >= 0xFF00 {
+                // Ignore vendor defined event
             } else {
                 log::info!(
                     "unsupported usage 0x{:X}:0x{:X} value {}",
