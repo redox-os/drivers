@@ -218,7 +218,7 @@ fn main() {
 
     let mut args = env::args().skip(1);
 
-    const USAGE: &'static str = "usbhidd <scheme> <port> <protocol>";
+    const USAGE: &'static str = "usbhidd <scheme> <port> <interface>";
 
     let scheme = args.next().expect(USAGE);
     let port = args
@@ -226,13 +226,17 @@ fn main() {
         .expect(USAGE)
         .parse::<usize>()
         .expect("Expected integer as input of port");
-    let protocol = args.next().expect(USAGE);
+    let interface_num = args
+        .next()
+        .expect(USAGE)
+        .parse::<u8>()
+        .expect("Expected integer as input of interface");
 
     log::info!(
-        "USB HID driver spawned with scheme `{}`, port {}, protocol {}",
+        "USB HID driver spawned with scheme `{}`, port {}, interface {}",
         scheme,
         port,
-        protocol
+        interface_num
     );
 
     let handle = XhciClientHandle::new(scheme, port);
@@ -241,15 +245,13 @@ fn main() {
         .expect("Failed to get standard descriptors");
     log::info!("{:X?}", desc);
 
-    // TODO: Perhaps the drivers should just be given the config, interface, and alternate setting
-    // from xhcid.
-    let (conf_desc, conf_num, (if_desc, interface_num, alternate_setting, endpoint_num_opt, hid_desc)) = desc
+    let (conf_desc, conf_num, (if_desc, endpoint_num_opt, hid_desc)) = desc
         .config_descs
         .iter()
         .enumerate()
         .find_map(|(conf_num, conf_desc)| {
             let if_desc = conf_desc.interface_descs.iter().find_map(|if_desc| {
-                if if_desc.class == 3 {
+                if if_desc.number == interface_num {
                     let endpoint_num_opt = if_desc.endpoints.iter().enumerate().find_map(|(endpoint_i, endpoint)| {
                         if endpoint.ty() == EndpointTy::Interrupt && endpoint.direction() == EndpDirection::In {
                             Some(endpoint_i + 1)
@@ -261,7 +263,7 @@ fn main() {
                         //TODO: should we do any filtering?
                         Some(hid_desc)
                     })?;
-                    Some((if_desc.clone(), if_desc.number, if_desc.alternate_setting, endpoint_num_opt, hid_desc))
+                    Some((if_desc.clone(), endpoint_num_opt, hid_desc))
                 } else {
                     None
                 }
@@ -274,13 +276,11 @@ fn main() {
         })
         .expect("Failed to find suitable configuration");
 
-    log::info!("using config {conf_num}, interface {interface_num}, alternate setting {alternate_setting}");
-
     handle
         .configure_endpoints(&ConfigureEndpointsReq {
             config_desc: conf_num as u8,
             interface_desc: Some(interface_num),
-            alternate_setting: Some(alternate_setting),
+            alternate_setting: Some(if_desc.alternate_setting),
             //TODO: do we need to set this? It fails for mice. protocol: Some(PROTOCOL_REPORT),
             //TODO: dynamically create good values, fix xhcid so it does not block on each request
             // This sets all reports to a duration of 4ms

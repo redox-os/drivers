@@ -8,4 +8,4 @@ command = ["/bin/usbscsid", "$SCHEME", "$PORT", "$IF_PROTO"]
 name = "USB HID"
 class = 3 # HID class
 subclass = -1
-command = ["/bin/usbhidd", "$SCHEME", "$PORT", "$IF_PROTO"]
+command = ["/bin/usbhidd", "$SCHEME", "$PORT", "$IF_NUM"]

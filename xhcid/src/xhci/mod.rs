@@ -802,7 +802,8 @@ impl Xhci {
 
         let ps = self.port_states.get(&port).unwrap();
 
-        let ifdesc = &ps
+        //TODO: support choosing config?
+        let config_desc = &ps
             .dev_desc
             .as_ref().ok_or_else(|| {
                 log::warn!("Missing device descriptor");
@@ -813,45 +814,41 @@ impl Xhci {
             .ok_or_else(|| {
                 log::warn!("Missing config descriptor");
                 Error::new(EBADF)
-            })?
-            .interface_descs
-            .first()
-            .ok_or_else(|| {
-                log::warn!("Missing interface descriptor");
-                Error::new(EBADF)
             })?;
 
         let drivers_usercfg: &DriversConfig = &DRIVERS_CONFIG;
 
-        if let Some(driver) = drivers_usercfg.drivers.iter().find(|driver| {
-            driver.class == ifdesc.class
-                && driver
-                    .subclass()
-                    .map(|subclass| subclass == ifdesc.sub_class)
-                    .unwrap_or(true)
-        }) {
-            info!("Loading subdriver \"{}\"", driver.name);
-            let (command, args) = driver.command.split_first().ok_or(Error::new(EBADMSG))?;
+        //TODO: allow spawning on all interfaces (will require fixing port state)
+        for ifdesc in config_desc.interface_descs.iter().take(1) {
+            if let Some(driver) = drivers_usercfg.drivers.iter().find(|driver| {
+                driver.class == ifdesc.class
+                    && driver
+                        .subclass()
+                        .map(|subclass| subclass == ifdesc.sub_class)
+                        .unwrap_or(true)
+            }) {
+                info!("Loading subdriver \"{}\"", driver.name);
+                let (command, args) = driver.command.split_first().ok_or(Error::new(EBADMSG))?;
 
-            let if_proto = ifdesc.protocol;
-
-            let process = process::Command::new(command)
-                .args(
-                    args.into_iter()
-                        .map(|arg| {
-                            arg.replace("$SCHEME", &self.scheme_name)
-                                .replace("$PORT", &format!("{}", port))
-                                .replace("$IF_PROTO", &format!("{}", if_proto))
-                        })
-                        .collect::<Vec<_>>(),
-                )
-                .stdin(process::Stdio::null())
-                .spawn()
-                .or(Err(Error::new(ENOENT)))?;
-            self.drivers.insert(port, process);
-        } else {
-            warn!("No driver for USB class {}.{}", ifdesc.class, ifdesc.sub_class);
-            return Err(Error::new(ENOENT));
+                let process = process::Command::new(command)
+                    .args(
+                        args.into_iter()
+                            .map(|arg| {
+                                arg.replace("$SCHEME", &self.scheme_name)
+                                    .replace("$PORT", &format!("{}", port))
+                                    .replace("$IF_NUM", &format!("{}", ifdesc.number))
+                                    .replace("$IF_PROTO", &format!("{}", ifdesc.protocol))
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                    .stdin(process::Stdio::null())
+                    .spawn()
+                    .or(Err(Error::new(ENOENT)))?;
+                self.drivers.insert(port, process);
+            } else {
+                warn!("No driver for USB class {}.{}", ifdesc.class, ifdesc.sub_class);
+                return Err(Error::new(ENOENT));
+            }
         }
 
         Ok(())
