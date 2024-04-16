@@ -112,9 +112,9 @@ impl EndpDesc {
     pub fn ty(self) -> EndpointTy {
         match self.attributes & ENDP_ATTR_TY_MASK {
             0 => EndpointTy::Ctrl,
-            1 => EndpointTy::Interrupt,
+            1 => EndpointTy::Isoch,
             2 => EndpointTy::Bulk,
-            3 => EndpointTy::Isoch,
+            3 => EndpointTy::Interrupt,
             _ => unreachable!(),
         }
     }

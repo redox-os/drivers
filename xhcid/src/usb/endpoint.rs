@@ -17,18 +17,18 @@ pub const ENDP_ATTR_TY_MASK: u8 = 0x3;
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum EndpointTy {
     Ctrl = 0,
-    Interrupt = 1,
+    Isoch = 1,
     Bulk = 2,
-    Isoch = 3,
+    Interrupt = 3,
 }
 
 impl EndpointDescriptor {
     fn ty(self) -> EndpointTy {
         match self.attributes & ENDP_ATTR_TY_MASK {
             0 => EndpointTy::Ctrl,
-            1 => EndpointTy::Interrupt,
+            1 => EndpointTy::Isoch,
             2 => EndpointTy::Bulk,
-            3 => EndpointTy::Isoch,
+            3 => EndpointTy::Interrupt,
             _ => unreachable!(),
         }
     }
