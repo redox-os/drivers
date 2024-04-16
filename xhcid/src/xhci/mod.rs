@@ -415,10 +415,7 @@ impl Xhci {
 
         info!("XHCI initialized.");
 
-        if self.cap.cic() {
-            self.op.get_mut().unwrap().set_cie(true);
-        }
-
+        self.op.get_mut().unwrap().set_cie(self.cap.cic());
 
         // Reset ports
         {
