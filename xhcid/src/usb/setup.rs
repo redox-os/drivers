@@ -185,7 +185,7 @@ impl Setup {
     pub const fn set_interface(interface: u8, alternate_setting: u8) -> Self {
         Self {
             kind: 0b0000_0001,
-            request: 0x09,
+            request: 0x0B,
             value: alternate_setting as u16,
             index: interface as u16,
             length: 0,
