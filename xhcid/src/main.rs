@@ -204,7 +204,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     let address = unsafe { bar.physmap_mem("xhcid") } as usize;
 
-    let (irq_file, interrupt_method) = get_int_method(&mut pcid_handle, address);
+    let (irq_file, interrupt_method) = (None, InterruptMethod::Polling); //TODO: get_int_method(&mut pcid_handle, address);
 
     println!(" + XHCI {}", pci_config.func.display());
 
