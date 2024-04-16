@@ -636,22 +636,15 @@ impl Xhci {
         let mut req: ConfigureEndpointsReq =
             serde_json::from_slice(json_buf).or(Err(Error::new(EBADMSG)))?;
 
-        debug!("Running configure endpoints command, at port {}, request: {:?}", port, req);
+        info!("Running configure endpoints command, at port {}, request: {:?}", port, req);
 
-        if (!self.cap.cic() || !self.op.lock().unwrap().cie())
-            && (req.config_desc != 0 || req.interface_desc != None || req.alternate_setting != None)
-        {
-            //return Err(Error::new(EOPNOTSUPP));
-            req.config_desc = 0;
-            req.alternate_setting = None;
-            req.interface_desc = None;
-        }
         if req.interface_desc.is_some() != req.alternate_setting.is_some() {
             return Err(Error::new(EBADMSG));
         }
 
         let (endp_desc_count, new_context_entries, configuration_value) = {
             let mut port_state = self.port_states.get_mut(&port).ok_or(Error::new(EBADFD))?;
+
             port_state.cfg_idx = Some(req.config_desc);
             port_state.if_idx = Some(req.interface_desc.unwrap_or(0));
 
@@ -702,11 +695,14 @@ impl Xhci {
                     | ((u32::from(new_context_entries) << CONTEXT_ENTRIES_SHIFT)
                         & CONTEXT_ENTRIES_MASK),
             );
-            input_context.control.write(
+            let control = if self.op.lock().unwrap().cie() {
                 (u32::from(req.alternate_setting.unwrap_or(0)) << 16)
                     | (u32::from(req.interface_desc.unwrap_or(0)) << 8)
-                    | u32::from(req.config_desc),
-            );
+                    | u32::from(configuration_value)
+            } else {
+                0
+            };
+            input_context.control.write(control);
         }
 
         for endp_idx in 0..endp_desc_count as u8 {
