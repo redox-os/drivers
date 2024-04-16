@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::env;
 use std::fs::File;
-use std::io::Write;
+use std::io::{Read, Write};
 
 use orbclient::KeyEvent as OrbKeyEvent;
 use redox_log::{OutputBuilder, RedoxLogger};
@@ -236,14 +236,46 @@ fn main() {
     );
 
     let handle = XhciClientHandle::new(scheme, port);
-    let dev_desc: DevDesc = handle
+    let desc: DevDesc = handle
         .get_standard_descs()
         .expect("Failed to get standard descriptors");
-    let hid_desc = dev_desc.config_descs[0].interface_descs[0].hid_descs[0];
+    log::info!("{:X?}", desc);
 
-    // TODO: Currently it's assumed that config 0 and interface 0 are used.
+    // TODO: Perhaps the drivers should just be given the config, interface, and alternate setting
+    // from xhcid.
+    let (conf_desc, configuration_value, (if_desc, interface_num, alternate_setting, hid_desc)) = desc
+        .config_descs
+        .iter()
+        .find_map(|conf_desc| {
+            let if_desc = conf_desc.interface_descs.iter().find_map(|if_desc| {
+                if if_desc.class == 3 {
+                    let hid_desc = if_desc.hid_descs.iter().find_map(|hid_desc| {
+                        //TODO: should we do any filtering?
+                        Some(hid_desc)
+                    })?;
+                    Some((if_desc.clone(), if_desc.number, if_desc.alternate_setting, hid_desc))
+                } else {
+                    None
+                }
+            })?;
+            Some((
+                conf_desc.clone(),
+                conf_desc.configuration_value,
+                if_desc,
+            ))
+        })
+        .expect("Failed to find suitable configuration");
 
-    let interface_num = 0;
+    log::info!("using config {configuration_value}, interface {interface_num}, alternate setting {alternate_setting}");
+
+    handle
+        .configure_endpoints(&ConfigureEndpointsReq {
+            config_desc: configuration_value,
+            interface_desc: Some(interface_num),
+            alternate_setting: Some(alternate_setting),
+        })
+        .expect("Failed to configure endpoints");
+
     let report_desc_len = hid_desc.desc_len;
     assert_eq!(hid_desc.desc_ty, REPORT_DESC_TY);
 
@@ -253,7 +285,8 @@ fn main() {
             PortReqRecipient::Interface,
             REPORT_DESC_TY,
             0,
-            interface_num,
+            //TODO: should this be an index into interface_descs?
+            interface_num as u16,
             &mut report_desc_bytes,
         )
         .expect("Failed to retrieve report descriptor");
@@ -261,22 +294,17 @@ fn main() {
     let mut handler =
         ReportHandler::new(&report_desc_bytes).expect("failed to parse report descriptor");
 
-    handle
-        .configure_endpoints(&ConfigureEndpointsReq {
-            config_desc: 0,
-            interface_desc: None,
-            alternate_setting: None,
-        })
-        .expect("Failed to configure endpoints");
-
     // Get all main items, and their global item options.
     {
         let mut report_buffer = vec![0u8; handler.total_byte_length];
         let report_ty = ReportTy::Input;
         let report_id = 0;
+        //TODO: make this dynamic?
+        let mut interrupt_endpoint = 0x81;
 
         let mut display =
             File::open("input:producer").expect("Failed to open orbital input socket");
+        //TODO: let mut interrupt_data = handle.open_endpoint_data(interrupt_endpoint).expect("failed to open interrupt endpoint");
         let mut left_shift = false;
         let mut right_shift = false;
         let mut last_mouse_pos = (0, 0);
@@ -285,14 +313,21 @@ fn main() {
             //TODO: get frequency from device
             std::thread::sleep(std::time::Duration::from_millis(10));
 
+            /*TODO
+            // interrupt transfer
+            interrupt_data.read(&mut report_buffer).expect("failed to get report");
+            */
+
+            // control transfer
             reqs::get_report(
                 &handle,
                 report_ty,
                 report_id,
-                interface_num,
+                //TODO: should this be an index into interface_descs?
+                interface_num as u16,
                 &mut report_buffer,
             )
-            .expect("Failed to get report");
+            .expect("failed to get report");
 
             let mut mouse_pos = last_mouse_pos;
             let mut mouse_dx = 0i32;
