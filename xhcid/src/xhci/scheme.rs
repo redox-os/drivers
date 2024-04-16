@@ -999,18 +999,22 @@ impl Xhci {
                 let ioc = bytes_left <= max_transfer_size as usize;
                 let chain = !ioc;
 
+                let interrupter = 0;
+                let ent = false;
+                let isp = true;
+                let bei = false;
                 trb.normal(
                     buffer,
                     len,
                     cycle,
                     estimated_td_size,
-                    0,
-                    false,
-                    true,
+                    interrupter,
+                    ent,
+                    isp,
                     chain,
                     ioc,
                     idt,
-                    false,
+                    bei,
                 );
 
                 bytes_left -= len as usize;
