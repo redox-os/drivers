@@ -243,10 +243,11 @@ fn main() {
 
     // TODO: Perhaps the drivers should just be given the config, interface, and alternate setting
     // from xhcid.
-    let (conf_desc, configuration_value, (if_desc, interface_num, alternate_setting, endpoint_num_opt, hid_desc)) = desc
+    let (conf_desc, conf_num, (if_desc, interface_num, alternate_setting, endpoint_num_opt, hid_desc)) = desc
         .config_descs
         .iter()
-        .find_map(|conf_desc| {
+        .enumerate()
+        .find_map(|(conf_num, conf_desc)| {
             let if_desc = conf_desc.interface_descs.iter().find_map(|if_desc| {
                 if if_desc.class == 3 {
                     let endpoint_num_opt = if_desc.endpoints.iter().enumerate().find_map(|(endpoint_i, endpoint)| {
@@ -267,23 +268,24 @@ fn main() {
             })?;
             Some((
                 conf_desc.clone(),
-                conf_desc.configuration_value,
+                conf_num,
                 if_desc,
             ))
         })
         .expect("Failed to find suitable configuration");
 
-    log::info!("using config {configuration_value}, interface {interface_num}, alternate setting {alternate_setting}");
+    log::info!("using config {conf_num}, interface {interface_num}, alternate setting {alternate_setting}");
 
     handle
         .configure_endpoints(&ConfigureEndpointsReq {
-            config_desc: configuration_value,
+            config_desc: conf_num as u8,
             interface_desc: Some(interface_num),
             alternate_setting: Some(alternate_setting),
-            protocol: Some(PROTOCOL_REPORT),
+            //TODO: do we need to set this? It fails for mice. protocol: Some(PROTOCOL_REPORT),
             //TODO: dynamically create good values, fix xhcid so it does not block on each request
             // This sets all reports to a duration of 4ms
-            report_idles: vec![(0, 1)]
+            report_idles: vec![(0, 1)],
+            ..Default::default()
         })
         .expect("Failed to configure endpoints");
 
