@@ -10,7 +10,7 @@ use rehid::{
     report_handler::ReportHandler,
     usage_tables::{GenericDesktopUsage, UsagePage},
 };
-use xhcid_interface::{ConfigureEndpointsReq, DevDesc, EndpDirection, EndpointTy, PortReqRecipient, XhciClientHandle, PROTOCOL_REPORT};
+use xhcid_interface::{ConfigureEndpointsReq, DevDesc, EndpDirection, EndpointTy, PortReqRecipient, XhciClientHandle};
 
 mod keymap;
 mod reqs;
@@ -281,13 +281,14 @@ fn main() {
             config_desc: conf_num as u8,
             interface_desc: Some(interface_num),
             alternate_setting: Some(if_desc.alternate_setting),
-            //TODO: do we need to set this? It fails for mice. protocol: Some(PROTOCOL_REPORT),
-            //TODO: dynamically create good values, fix xhcid so it does not block on each request
-            // This sets all reports to a duration of 4ms
-            report_idles: vec![(0, 1)],
-            ..Default::default()
         })
         .expect("Failed to configure endpoints");
+
+    //TODO: do we need to set protocol to report? It fails for mice.
+
+    //TODO: dynamically create good values, fix xhcid so it does not block on each request
+    // This sets all reports to a duration of 4ms
+    reqs::set_idle(&handle, 1, 0, interface_num as u16).expect("Failed to set idle");
 
     let report_desc_len = hid_desc.desc_len;
     assert_eq!(hid_desc.desc_ty, REPORT_DESC_TY);

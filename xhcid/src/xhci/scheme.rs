@@ -465,7 +465,7 @@ impl Xhci {
         }
 
         // TODO: Handle event data
-        debug!("EVENT DATA: {:?}", event_trb.event_data());
+        trace!("EVENT DATA: {:?}", event_trb.event_data());
 
         Ok(event_trb)
     }
@@ -497,33 +497,6 @@ impl Xhci {
         self.device_req_no_data(
             port,
             usb::Setup::set_interface(interface_num, alternate_setting),
-        ).await
-    }
-
-    async fn set_protocol(
-        &self,
-        port: usize,
-        interface_num: u8,
-        protocol: u8,
-    ) -> Result<()> {
-        debug!("Setting idle value {} (protocol {}) to port {}", interface_num, protocol, port);
-        self.device_req_no_data(
-            port,
-            usb::Setup::set_protocol(interface_num, protocol),
-        ).await
-    }
-
-    async fn set_idle(
-        &self,
-        port: usize,
-        interface_num: u8,
-        report_id: u8,
-        duration: u8,
-    ) -> Result<()> {
-        debug!("Setting idle value {} (report_id {}, duration {}) to port {}", interface_num, report_id, duration, port);
-        self.device_req_no_data(
-            port,
-            usb::Setup::set_idle(interface_num, report_id, duration),
         ).await
     }
 
@@ -866,14 +839,6 @@ impl Xhci {
         if let Some(interface_num) = req.interface_desc {
             if let Some(alternate_setting) = req.alternate_setting {
                 self.set_interface(port, interface_num, alternate_setting).await?;
-            }
-
-            if let Some(protocol) = req.protocol {
-                self.set_protocol(port, interface_num, protocol).await?;
-            }
-
-            for (report_id, duration) in req.report_idles {
-                self.set_idle(port, interface_num, report_id, duration).await?;
             }
         }
 
@@ -1267,12 +1232,17 @@ impl Xhci {
         // TODO: Reuse buffers, or something.
         // TODO: Validate the size.
         // TODO: Sizes above 65536, *perhaps*.
-        let data_buffer = unsafe { self.alloc_dma_zeroed_unsized(req.length as usize)? };
-        assert_eq!(data_buffer.len(), req.length as usize);
+        let data_buffer_opt = if req.transfers_data {
+            let data_buffer = unsafe { self.alloc_dma_zeroed_unsized(req.length as usize)? };
+            assert_eq!(data_buffer.len(), req.length as usize);
+            Some(data_buffer)
+        } else {
+            None
+        };
 
         Ok(match transfer_kind {
-            TransferKind::In => PortReqState::WaitingForDeviceBytes(data_buffer, setup),
-            TransferKind::Out => PortReqState::WaitingForHostBytes(data_buffer, setup),
+            TransferKind::In => PortReqState::WaitingForDeviceBytes(data_buffer_opt.ok_or(Error::new(EINVAL))?, setup),
+            TransferKind::Out => PortReqState::WaitingForHostBytes(data_buffer_opt.ok_or(Error::new(EINVAL))?, setup),
             TransferKind::NoData => PortReqState::TmpSetup(setup),
             _ => unreachable!(),
         })
