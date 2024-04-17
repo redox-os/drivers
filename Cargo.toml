@@ -7,6 +7,7 @@ members = [
     "vboxd",
     "xhcid",
     "usbctl",
+    "usbhubd",
     "usbhidd",
     "inputd",
     "virtio-core",

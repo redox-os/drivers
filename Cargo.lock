@@ -1535,6 +1535,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "usbhubd"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "redox-log",
+ "redox_syscall 0.5.1",
+ "xhcid",
+]
+
+[[package]]
 name = "usbscsid"
 version = "0.1.0"
 dependencies = [
