@@ -120,13 +120,60 @@ fn main() {
         .device_request(
             PortReqTy::Class,
             PortReqRecipient::Device,
-            0x6,
+            usb::SetupReq::GetDescriptor as u8,
             0,
             //TODO: should this be an index into interface_descs?
             interface_num as u16,
             DeviceReqData::In(unsafe { plain::as_mut_bytes(&mut hub_desc) }),
         )
         .expect("Failed to retrieve hub descriptor");
-
     log::info!("{:X?}", hub_desc);
+
+    for port in 1..=hub_desc.ports {
+        log::info!("power on port {port}");
+        handle
+            .device_request(
+                PortReqTy::Class,
+                PortReqRecipient::Other,
+                usb::SetupReq::SetFeature as u8,
+                usb::HubFeature::PortPower as u16,
+                port as u16,
+                DeviceReqData::NoData,
+            )
+            .expect("Failed to set port power");
+    }
+
+    for port in 1..=hub_desc.ports {
+        let mut port_sts = usb::HubPortStatus::default();
+        handle
+            .device_request(
+                PortReqTy::Class,
+                PortReqRecipient::Other,
+                usb::SetupReq::GetStatus as u8,
+                0,
+                port as u16,
+                DeviceReqData::In(unsafe { plain::as_mut_bytes(&mut port_sts) }),
+            )
+            .expect("Failed to retrieve port status");
+        log::info!("port {} status {:X?}", port, port_sts);
+
+        if port_sts.contains(usb::HubPortStatus::CONNECTION) {
+            /*TODO
+            log::info!("reset port {port}");
+            handle
+                .device_request(
+                    PortReqTy::Class,
+                    PortReqRecipient::Other,
+                    usb::SetupReq::SetFeature as u8,
+                    usb::HubFeature::PortReset as u16,
+                    port as u16,
+                    DeviceReqData::NoData,
+                )
+                .expect("Failed to set port enable");
+            */
+            //TODO: address device
+        }
+    }
+
+    //TODO: read interrupt port for changes
 }

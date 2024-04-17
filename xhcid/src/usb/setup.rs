@@ -71,6 +71,21 @@ impl From<PortReqRecipient> for ReqRecipient {
     }
 }
 
+#[repr(u8)]
+pub enum SetupReq {
+    GetStatus = 0x00,
+    ClearFeature = 0x01,
+    SetFeature = 0x03,
+    SetAddress = 0x05,
+    GetDescriptor = 0x06,
+    SetDescriptor = 0x07,
+    GetConfiguration = 0x08,
+    SetConfiguration = 0x09,
+    GetInterface = 0x0A,
+    SetInterface = 0x0B,
+    SynchFrame = 0x0C,
+}
+
 pub const USB_SETUP_DIR_BIT: u8 = 1 << 7;
 pub const USB_SETUP_DIR_SHIFT: u8 = 7;
 pub const USB_SETUP_REQ_TY_MASK: u8 = 0x60;

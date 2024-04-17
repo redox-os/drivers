@@ -5,9 +5,9 @@ pub use self::endpoint::{
     EndpointDescriptor, EndpointTy, HidDescriptor, SuperSpeedCompanionDescriptor,
     SuperSpeedPlusIsochCmpDescriptor, ENDP_ATTR_TY_MASK,
 };
-pub use self::hub::HubDescriptor;
+pub use self::hub::*;
 pub use self::interface::InterfaceDescriptor;
-pub use self::setup::Setup;
+pub use self::setup::{Setup, SetupReq};
 
 #[derive(Clone, Copy, Debug)]
 #[repr(u8)]
