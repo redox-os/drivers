@@ -375,19 +375,10 @@ impl Xhci {
         let endp_idx = endp_num.checked_sub(1).ok_or(Error::new(EIO))?;
         let mut port_state = self.port_state_mut(port_num)?;
 
-        let (cfg_idx, if_idx) = match (port_state.cfg_idx, port_state.if_idx) {
-            (Some(c), Some(i)) => (c, i),
-            _ => return Err(Error::new(EIO)),
-        };
-
         let slot = port_state.slot;
 
         let (doorbell_data_stream, doorbell_data_no_stream) = {
-            let endp_desc = port_state
-                .dev_desc.as_ref().unwrap()
-                .config_descs.get(usize::from(cfg_idx)).ok_or(Error::new(EIO))?
-                .interface_descs.get(usize::from(if_idx)).ok_or(Error::new(EIO))?
-                .endpoints.get(usize::from(endp_idx)).ok_or(Error::new(EBADFD))?;
+            let endp_desc = port_state.get_endp_desc(endp_idx).ok_or(Error::new(EBADFD))?;
 
             //TODO: clean this up
             (
@@ -501,14 +492,10 @@ impl Xhci {
     }
 
     async fn reset_endpoint(&self, port_num: usize, endp_num: u8, tsp: bool) -> Result<()> {
+        let endp_idx = endp_num.checked_sub(1).ok_or(Error::new(EIO))?;
         let port_state = self.port_states.get(&port_num).ok_or(Error::new(EBADFD))?;
 
-        let (cfg_idx, if_idx) = match (port_state.cfg_idx, port_state.if_idx) {
-            (Some(c), Some(i)) => (c, i),
-            _ => return Err(Error::new(EIO)),
-        };
-
-        let endp_desc = port_state.dev_desc.as_ref().unwrap().config_descs[usize::from(cfg_idx)].interface_descs[usize::from(if_idx)].endpoints.get(usize::from(endp_num)).ok_or(Error::new(EBADFD))?;
+        let endp_desc = port_state.get_endp_desc(endp_idx).ok_or(Error::new(EBADFD))?;
         let endp_num_xhc = Self::endp_num_to_dci(endp_num, endp_desc);
 
         let slot = self
@@ -619,23 +606,31 @@ impl Xhci {
             let mut port_state = self.port_states.get_mut(&port).ok_or(Error::new(EBADFD))?;
 
             port_state.cfg_idx = Some(req.config_desc);
-            port_state.if_idx = Some(req.interface_desc.unwrap_or(0));
 
             let config_desc = port_state.dev_desc.as_ref().unwrap().config_descs.get(usize::from(req.config_desc)).ok_or(Error::new(EBADFD))?;
 
-            let endpoints = &config_desc.interface_descs.get(usize::from(req.interface_desc.unwrap_or(0))).ok_or(Error::new(EBADFD))?.endpoints;
+            //TODO: USE ENDPOINTS FROM ALL INTERFACES
+            let mut endp_desc_count = 0;
+            let mut new_context_entries = 1;
+            for if_desc in config_desc.interface_descs.iter() {
+                for endpoint in if_desc.endpoints.iter() {
+                    endp_desc_count += 1;
+                    let entry = Self::endp_num_to_dci(endp_desc_count, endpoint);
+                    if entry > new_context_entries {
+                        new_context_entries = entry;
+                    }
+                }
+            }
+            new_context_entries += 1;
 
-            if endpoints.len() >= 31 {
-                warn!("endpoints length {} >= 31", endpoints.len());
+            if endp_desc_count >= 31 {
+                warn!("endpoints length {} >= 31", endp_desc_count);
                 return Err(Error::new(EIO));
             }
 
             (
-                endpoints.len(),
-                (match endpoints.last() {
-                    Some(l) => Self::endp_num_to_dci(endpoints.len() as u8, l),
-                    None => 1,
-                }) + 1,
+                endp_desc_count,
+                new_context_entries,
                 config_desc.configuration_value,
             )
         };
@@ -683,8 +678,7 @@ impl Xhci {
 
             let mut port_state = self.port_states.get_mut(&port).ok_or(Error::new(EBADFD))?;
             let dev_desc = port_state.dev_desc.as_ref().unwrap();
-            let endpoints = &dev_desc.config_descs.get(usize::from(req.config_desc)).ok_or(Error::new(EBADFD))?.interface_descs.get(usize::from(req.interface_desc.unwrap_or(0))).ok_or(Error::new(EBADFD))?.endpoints;
-            let endp_desc = endpoints.get(endp_idx as usize).ok_or_else(|| {
+            let endp_desc = port_state.get_endp_desc(endp_idx).ok_or_else(|| {
                 warn!("failed to find endpoint {}", endp_idx);
                 Error::new(EIO)
             })?;
@@ -922,23 +916,7 @@ impl Xhci {
             .get_mut(&port_num)
             .ok_or(Error::new(EBADFD))?;
 
-        let (cfg_idx, if_idx) = match (port_state.cfg_idx, port_state.if_idx) {
-            (Some(c), Some(i)) => (c, i),
-            _ => return Err(Error::new(EIO)),
-        };
-
-        let endp_desc: &EndpDesc = port_state
-            .dev_desc
-            .as_ref().unwrap()
-            .config_descs
-            .get(usize::from(cfg_idx))
-            .ok_or(Error::new(EIO))?
-            .interface_descs
-            .get(usize::from(if_idx))
-            .ok_or(Error::new(EIO))?
-            .endpoints
-            .get(endp_idx as usize)
-            .ok_or(Error::new(EBADFD))?;
+        let endp_desc: &EndpDesc = port_state.get_endp_desc(endp_idx).ok_or(Error::new(EBADFD))?;
 
         let direction = endp_desc.direction();
 
@@ -1856,15 +1834,11 @@ impl Xhci {
         endp_num: u8,
         deque_ptr_and_cycle: u64,
     ) -> Result<()> {
+        let endp_idx = endp_num.checked_sub(1).ok_or(Error::new(EIO))?;
         let port_state = self.port_states.get(&port_num).ok_or(Error::new(EBADFD))?;
         let slot = port_state.slot;
 
-        let (cfg_idx, if_idx) = match (port_state.cfg_idx, port_state.if_idx) {
-            (Some(c), Some(i)) => (c, i),
-            _ => return Err(Error::new(EIO)),
-        };
-
-        let endp_desc = port_state.dev_desc.as_ref().unwrap().config_descs[usize::from(cfg_idx)].interface_descs[usize::from(if_idx)].endpoints.get(usize::from(endp_num)).ok_or(Error::new(EBADFD))?;
+        let endp_desc = port_state.get_endp_desc(endp_idx).ok_or(Error::new(EBADFD))?;
         let endp_num_xhc = Self::endp_num_to_dci(endp_num, endp_desc);
 
         let (event_trb, command_trb) = self.execute_command(|trb, cycle| {

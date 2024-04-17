@@ -215,10 +215,28 @@ unsafe impl Sync for Xhci {}
 struct PortState {
     slot: u8,
     cfg_idx: Option<u8>,
-    if_idx: Option<u8>,
     input_context: Mutex<Dma<InputContext>>,
     dev_desc: Option<DevDesc>,
     endpoint_states: BTreeMap<u8, EndpointState>,
+}
+
+impl PortState {
+    //TODO: fetch using endpoint number instead
+    fn get_endp_desc(&self, endp_idx: u8) -> Option<&EndpDesc> {
+        let cfg_idx = self.cfg_idx?;
+        let config_desc = self.dev_desc.as_ref()?
+            .config_descs.get(cfg_idx as usize)?;
+        let mut endp_count = 0;
+        for if_desc in config_desc.interface_descs.iter() {
+            for endp_desc in if_desc.endpoints.iter() {
+                if endp_idx == endp_count {
+                    return Some(endp_desc);
+                }
+                endp_count += 1;
+            }
+        }
+        None
+    }
 }
 
 pub(crate) enum RingOrStreams {
@@ -546,7 +564,6 @@ impl Xhci {
                     input_context: Mutex::new(input),
                     dev_desc: None,
                     cfg_idx: None,
-                    if_idx: None,
                     endpoint_states: std::iter::once((
                         0,
                         EndpointState {
