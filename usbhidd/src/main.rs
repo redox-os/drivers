@@ -351,6 +351,7 @@ fn main() {
         let mut mouse_pos = last_mouse_pos;
         let mut mouse_dx = 0i32;
         let mut mouse_dy = 0i32;
+        let mut scroll_y = 0i32;
         let mut buttons = last_buttons;
         for event in handler
             .handle(&report_buffer)
@@ -369,6 +370,13 @@ fn main() {
                         mouse_dy += event.value;
                     } else {
                         mouse_pos.1 = event.value;
+                    }
+                } else if event.usage == GenericDesktopUsage::Wheel as u32 {
+                    //TODO: what is X scroll?
+                    if event.relative {
+                        scroll_y += event.value;
+                    } else {
+                        log::warn!("absolute mouse wheel not supported");
                     }
                 } else {
                     log::info!(
@@ -448,6 +456,20 @@ fn main() {
                 Ok(_) => (),
                 Err(err) => {
                     log::warn!("failed to send mouse event to orbital: {}", err);
+                }
+            }
+        }
+
+        if scroll_y != 0 {
+            let scroll_event = orbclient::event::ScrollEvent {
+                x: 0,
+                y: scroll_y,
+            };
+
+            match display.write(&scroll_event.to_event()) {
+                Ok(_) => (),
+                Err(err) => {
+                    log::warn!("failed to send scroll event to orbital: {}", err);
                 }
             }
         }
