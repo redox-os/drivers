@@ -264,10 +264,10 @@ impl PcidServerHandle {
             pcid_from_client: unsafe { File::from_raw_fd(pcid_from_client_fd) },
         })
     }
-    pub(crate) fn send(&mut self, req: &PcidClientRequest) -> Result<()> {
+    fn send(&mut self, req: &PcidClientRequest) -> Result<()> {
         send(&mut self.pcid_from_client, req)
     }
-    pub(crate) fn recv(&mut self) -> Result<PcidClientResponse> {
+    fn recv(&mut self) -> Result<PcidClientResponse> {
         recv(&mut self.pcid_to_client)
     }
     pub fn fetch_config(&mut self) -> Result<SubdriverArguments> {
