@@ -5,8 +5,7 @@ use std::process::Command;
 use std::thread;
 use std::sync::{Arc, Mutex};
 
-use pci_types::device_type::DeviceType;
-use pci_types::{CommandRegister, ConfigRegionAccess, PciAddress};
+use pci_types::{CommandRegister, PciAddress};
 use structopt::StructOpt;
 use log::{debug, error, info, warn, trace};
 use redox_log::{OutputBuilder, RedoxLogger};
@@ -16,7 +15,6 @@ use crate::config::Config;
 use crate::driver_interface::LegacyInterruptLine;
 use crate::pci::PciFunc;
 use crate::pci::cap::Capability as PciCapability;
-use crate::pci::func::{ConfigReader, ConfigWriter};
 use crate::pci_header::{PciEndpointHeader, PciHeader, PciHeaderError};
 
 mod cfg_access;
@@ -43,17 +41,16 @@ pub struct DriverHandler {
 
     state: Arc<State>,
 }
-fn with_pci_func_raw<T, F: FnOnce(&PciFunc) -> T>(pci: &dyn ConfigRegionAccess, addr: PciAddress, function: F) -> T {
-    let func = PciFunc {
-        pci,
-        addr,
-    };
-    function(&func)
-}
+
 impl DriverHandler {
     fn respond(&mut self, request: driver_interface::PcidClientRequest, args: &driver_interface::SubdriverArguments) -> driver_interface::PcidClientResponse {
         use driver_interface::*;
         use crate::pci::cap::{MsiCapability, MsixCapability};
+
+        let func = PciFunc {
+            pci: &self.state.pcie,
+            addr: self.addr,
+        };
 
         match request {
             PcidClientRequest::RequestCapabilities => {
@@ -76,10 +73,8 @@ impl DriverHandler {
                         None => return PcidClientResponse::Error(PcidServerResponseError::NonexistentFeature(feature)),
                     };
                     unsafe {
-                        with_pci_func_raw(&self.state.pcie, self.addr, |func| {
-                            capability.set_enabled(true);
-                            capability.write_message_control(func, offset);
-                        });
+                        capability.set_enabled(true);
+                        capability.write_message_control(&func, offset);
                     }
                     PcidClientResponse::FeatureEnabled(feature)
                 }
@@ -89,10 +84,8 @@ impl DriverHandler {
                         None => return PcidClientResponse::Error(PcidServerResponseError::NonexistentFeature(feature)),
                     };
                     unsafe {
-                        with_pci_func_raw(&self.state.pcie, self.addr, |func| {
-                            capability.set_msix_enabled(true);
-                            capability.write_a(func, offset);
-                        });
+                        capability.set_msix_enabled(true);
+                        capability.write_a(&func, offset);
                     }
                     PcidClientResponse::FeatureEnabled(feature)
                 }
@@ -151,9 +144,7 @@ impl DriverHandler {
                         info.set_mask_bits(mask_bits);
                     }
                     unsafe {
-                        with_pci_func_raw(&self.state.pcie, self.addr, |func| {
-                            info.write_all(func, offset);
-                        });
+                        info.write_all(&func, offset);
                     }
                     PcidClientResponse::SetFeatureInfo(PciFeature::Msi)
                 } else {
@@ -163,9 +154,7 @@ impl DriverHandler {
                     if let Some(mask) = function_mask {
                         info.set_function_mask(mask);
                         unsafe {
-                            with_pci_func_raw(&self.state.pcie, self.addr, |func| {
-                                info.write_a(func, offset);
-                            });
+                            info.write_a(&func, offset);
                         }
                     }
                     PcidClientResponse::SetFeatureInfo(PciFeature::MsiX)
@@ -174,18 +163,12 @@ impl DriverHandler {
                 }
             }
             PcidClientRequest::ReadConfig(offset) => {
-                let value = unsafe {
-                    with_pci_func_raw(&self.state.pcie, self.addr, |func| {
-                        func.read_u32(offset)
-                    })
-                };
+                let value = unsafe { func.read_u32(offset) };
                 return PcidClientResponse::ReadConfig(value);
             },
             PcidClientRequest::WriteConfig(offset, value) => {
                 unsafe {
-                    with_pci_func_raw(&self.state.pcie, self.addr, |func| {
-                        func.write_u32(offset, value);
-                    });
+                    func.write_u32(offset, value);
                 }
                 return PcidClientResponse::WriteConfig;
             }
@@ -207,31 +190,6 @@ impl DriverHandler {
 pub struct State {
     threads: Mutex<Vec<thread::JoinHandle<()>>>,
     pcie: Pcie,
-}
-
-fn print_pci_function(header: &PciHeader) {
-    let mut string = format!("PCI {} {:>04X}:{:>04X} {:>02X}.{:>02X}.{:>02X}.{:>02X} {:?}",
-                             header.address(), header.vendor_id(), header.device_id(), header.class(),
-                             header.subclass(), header.interface(), header.revision(), header.class());
-    let device_type = DeviceType::from((header.class(), header.subclass()));
-    match device_type {
-        DeviceType::LegacyVgaCompatible => string.push_str("  VGA CTL"),
-        DeviceType::IdeController => string.push_str(" IDE"),
-        DeviceType::SataController => match header.interface() {
-            0 => string.push_str(" SATA VND"),
-            1 => string.push_str(" SATA AHCI"),
-            _ => (),
-        },
-        DeviceType::UsbController => match header.interface() {
-            0x00 => string.push_str(" UHCI"),
-            0x10 => string.push_str(" OHCI"),
-            0x20 => string.push_str(" EHCI"),
-            0x30 => string.push_str(" XHCI"),
-            _ => (),
-        },
-        _ => (),
-    }
-    info!("{}", string);
 }
 
 fn handle_parsed_header(state: Arc<State>, config: &Config, header: PciEndpointHeader) {
@@ -293,7 +251,7 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, header: PciEndpointH
                 pci: &state.pcie,
                 addr: header.address(),
             };
-            crate::pci::cap::CapabilitiesIter { inner: crate::pci::cap::CapabilityOffsetsIter::new(header.cap_pointer(), &func) }.collect::<Vec<_>>()
+            crate::pci::cap::CapabilitiesIter::new(header.cap_pointer(), &func).collect::<Vec<_>>()
         } else {
             Vec::new()
         };
@@ -470,7 +428,7 @@ fn main(args: Args) {
                 let func_addr = PciAddress::new(0, bus_num, dev_num, func_num);
                 match PciHeader::from_reader(&state.pcie, func_addr) {
                     Ok(header) => {
-                        print_pci_function(&header);
+                        info!("{}", header.display());
                         match header {
                             PciHeader::General(endpoint_header) => {
                                 handle_parsed_header(Arc::clone(&state), &config, endpoint_header);

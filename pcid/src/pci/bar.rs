@@ -2,6 +2,8 @@ use std::convert::TryInto;
 
 use serde::{Deserialize, Serialize};
 
+// This type is used instead of [pci_types::Bar] in the driver interface as the
+// latter can't be serialized and is missing the convenience functions of [PciBar].
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum PciBar {
     None,

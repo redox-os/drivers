@@ -1,5 +1,4 @@
-use std::convert::TryInto;
-
+use pci_types::device_type::DeviceType;
 use pci_types::{
     Bar as TyBar, ConfigRegionAccess, EndpointHeader, HeaderType, PciAddress,
     PciHeader as TyPciHeader, PciPciBridgeHeader,
@@ -33,7 +32,6 @@ pub enum PciHeader {
     PciToPci {
         shared: SharedPciHeader,
         secondary_bus_num: u8,
-        cap_pointer: u8,
     },
 }
 
@@ -44,12 +42,13 @@ impl PciHeader {
         access: &impl ConfigRegionAccess,
         addr: PciAddress,
     ) -> Result<PciHeader, PciHeaderError> {
-        if unsafe { access.read(addr, 0) } == 0xffffffff {
+        let header = TyPciHeader::new(addr);
+        let (vendor_id, device_id) = header.id(access);
+
+        if vendor_id == 0xffff && device_id == 0xffff {
             return Err(PciHeaderError::NoDevice);
         }
 
-        let header = TyPciHeader::new(addr);
-        let (vendor_id, device_id) = header.id(access);
         let (revision, class, subclass, interface) = header.revision_and_class(access);
         let header_type = header.header_type(access);
         let shared = SharedPciHeader {
@@ -68,7 +67,10 @@ impl PciHeader {
             HeaderType::Endpoint => {
                 let endpoint_header = EndpointHeader::from_header(header, access).unwrap();
                 let (subsystem_id, subsystem_vendor_id) = endpoint_header.subsystem(access);
-                let cap_pointer = (unsafe { access.read(addr, 0x34) } & 0xff) as u8;
+                let cap_pointer = endpoint_header
+                    .capability_pointer(access)
+                    .try_into()
+                    .unwrap();
                 Ok(PciHeader::General(PciEndpointHeader {
                     shared,
                     subsystem_vendor_id,
@@ -79,11 +81,9 @@ impl PciHeader {
             HeaderType::PciPciBridge => {
                 let bridge_header = PciPciBridgeHeader::from_header(header, access).unwrap();
                 let secondary_bus_num = bridge_header.secondary_bus_number(access);
-                let cap_pointer = (unsafe { access.read(addr, 0x34) } & 0xff) as u8;
                 Ok(PciHeader::PciToPci {
                     shared,
                     secondary_bus_num,
-                    cap_pointer,
                 })
             }
             ty => Err(PciHeaderError::UnknownHeaderType(ty)),
@@ -149,6 +149,40 @@ impl PciHeader {
     pub fn class(&self) -> u8 {
         self.full_device_id().class
     }
+
+    /// Format a human readable string indicating the address and type of PCI device.
+    pub fn display(&self) -> String {
+        let mut string = format!(
+            "PCI {} {:>04X}:{:>04X} {:>02X}.{:>02X}.{:>02X}.{:>02X} {:?}",
+            self.address(),
+            self.vendor_id(),
+            self.device_id(),
+            self.class(),
+            self.subclass(),
+            self.interface(),
+            self.revision(),
+            self.class()
+        );
+        let device_type = DeviceType::from((self.class(), self.subclass()));
+        match device_type {
+            DeviceType::LegacyVgaCompatible => string.push_str("  VGA CTL"),
+            DeviceType::IdeController => string.push_str(" IDE"),
+            DeviceType::SataController => match self.interface() {
+                0 => string.push_str(" SATA VND"),
+                1 => string.push_str(" SATA AHCI"),
+                _ => (),
+            },
+            DeviceType::UsbController => match self.interface() {
+                0x00 => string.push_str(" UHCI"),
+                0x10 => string.push_str(" OHCI"),
+                0x20 => string.push_str(" EHCI"),
+                0x30 => string.push_str(" XHCI"),
+                _ => (),
+            },
+            _ => (),
+        }
+        string
+    }
 }
 
 impl PciEndpointHeader {
@@ -165,7 +199,6 @@ impl PciEndpointHeader {
     }
 
     /// Return the Headers BARs.
-    // FIXME use pci_types::Bar instead
     pub fn bars(&self, access: &impl ConfigRegionAccess) -> [PciBar; 6] {
         let endpoint_header = self.endpoint_header(access);
 
