@@ -42,12 +42,13 @@ impl PciHeader {
         access: &impl ConfigRegionAccess,
         addr: PciAddress,
     ) -> Result<PciHeader, PciHeaderError> {
-        if unsafe { access.read(addr, 0) } == 0xffffffff {
+        let header = TyPciHeader::new(addr);
+        let (vendor_id, device_id) = header.id(access);
+
+        if vendor_id == 0xffff && device_id == 0xffff {
             return Err(PciHeaderError::NoDevice);
         }
 
-        let header = TyPciHeader::new(addr);
-        let (vendor_id, device_id) = header.id(access);
         let (revision, class, subclass, interface) = header.revision_and_class(access);
         let header_type = header.header_type(access);
         let shared = SharedPciHeader {
