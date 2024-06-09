@@ -1,12 +1,12 @@
-use std::fs::{File, metadata, read_dir};
+use std::fs::{metadata, read_dir, File};
 use std::io::prelude::*;
-use std::thread;
 use std::sync::{Arc, Mutex};
+use std::thread;
 
+use log::{debug, info, trace, warn};
 use pci_types::{CommandRegister, PciAddress};
-use structopt::StructOpt;
-use log::{debug, info, warn, trace};
 use redox_log::{OutputBuilder, RedoxLogger};
+use structopt::StructOpt;
 
 use crate::cfg_access::Pcie;
 use crate::config::Config;
@@ -24,12 +24,17 @@ mod pci_header;
 #[derive(StructOpt)]
 #[structopt(about)]
 struct Args {
-    #[structopt(short, long,
-        help="Increase logging level once for each arg.", parse(from_occurrences))]
+    #[structopt(
+        short,
+        long,
+        help = "Increase logging level once for each arg.",
+        parse(from_occurrences)
+    )]
     verbose: u8,
 
     #[structopt(
-        help="A path to a pcid config file or a directory that contains pcid config files.")]
+        help = "A path to a pcid config file or a directory that contains pcid config files."
+    )]
     config_path: Option<String>,
 }
 
@@ -101,7 +106,14 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, header: PciEndpointH
         } else {
             Vec::new()
         };
-        debug!("PCI DEVICE CAPABILITIES for {}: {:?}", args.iter().map(|string| string.as_ref()).nth(0).unwrap_or("[unknown]"), capabilities);
+        debug!(
+            "PCI DEVICE CAPABILITIES for {}: {:?}",
+            args.iter()
+                .map(|string| string.as_ref())
+                .nth(0)
+                .unwrap_or("[unknown]"),
+            capabilities
+        );
 
         let func = driver_interface::PciFunction {
             bars,
@@ -124,31 +136,35 @@ fn setup_logging(verbosity: u8) -> Option<&'static RedoxLogger> {
         1 => log::LevelFilter::Debug,
         _ => log::LevelFilter::Trace,
     };
-    let mut logger = RedoxLogger::new()
-        .with_output(
-            OutputBuilder::stderr()
-                .with_ansi_escape_codes()
-                .with_filter(log_level)
-                .flush_on_newline(true)
-                .build()
-         );
+    let mut logger = RedoxLogger::new().with_output(
+        OutputBuilder::stderr()
+            .with_ansi_escape_codes()
+            .with_filter(log_level)
+            .flush_on_newline(true)
+            .build(),
+    );
 
-    #[cfg(target_os = "redox")] {
+    #[cfg(target_os = "redox")]
+    {
         match OutputBuilder::in_redox_logging_scheme("bus", "pci", "pcid.log") {
-            Ok(b) => logger = logger.with_output(
-                b.with_filter(log::LevelFilter::Trace)
-                    .flush_on_newline(true)
-                    .build()
-            ),
+            Ok(b) => {
+                logger = logger.with_output(
+                    b.with_filter(log::LevelFilter::Trace)
+                        .flush_on_newline(true)
+                        .build(),
+                )
+            }
             Err(error) => eprintln!("pcid: failed to open pcid.log"),
         }
         match OutputBuilder::in_redox_logging_scheme("bus", "pci", "pcid.ansi.log") {
-            Ok(b) => logger = logger.with_output(
-                b.with_filter(log::LevelFilter::Trace)
-                    .with_ansi_escape_codes()
-                    .flush_on_newline(true)
-                    .build()
-            ),
+            Ok(b) => {
+                logger = logger.with_output(
+                    b.with_filter(log::LevelFilter::Trace)
+                        .with_ansi_escape_codes()
+                        .flush_on_newline(true)
+                        .build(),
+                )
+            }
             Err(error) => eprintln!("pcid: failed to open pcid.ansi.log"),
         }
     }
@@ -231,10 +247,10 @@ fn main(args: Args) {
                     }
                     Err(PciHeaderError::NoDevice) => {
                         if func_addr.function() == 0 {
-                                trace!("PCI {:>02X}:{:>02X}: no dev", bus_num, dev_num);
-                                continue 'dev;
+                            trace!("PCI {:>02X}:{:>02X}: no dev", bus_num, dev_num);
+                            continue 'dev;
                         }
-                    },
+                    }
                     Err(PciHeaderError::UnknownHeaderType(id)) => {
                         warn!("pcid: unknown header type: {id:?}");
                     }
