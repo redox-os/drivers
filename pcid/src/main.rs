@@ -5,7 +5,6 @@ use std::process::Command;
 use std::thread;
 use std::sync::{Arc, Mutex};
 
-use pci_types::device_type::DeviceType;
 use pci_types::{CommandRegister, ConfigRegionAccess, PciAddress};
 use structopt::StructOpt;
 use log::{debug, error, info, warn, trace};
@@ -207,31 +206,6 @@ impl DriverHandler {
 pub struct State {
     threads: Mutex<Vec<thread::JoinHandle<()>>>,
     pcie: Pcie,
-}
-
-fn print_pci_function(header: &PciHeader) {
-    let mut string = format!("PCI {} {:>04X}:{:>04X} {:>02X}.{:>02X}.{:>02X}.{:>02X} {:?}",
-                             header.address(), header.vendor_id(), header.device_id(), header.class(),
-                             header.subclass(), header.interface(), header.revision(), header.class());
-    let device_type = DeviceType::from((header.class(), header.subclass()));
-    match device_type {
-        DeviceType::LegacyVgaCompatible => string.push_str("  VGA CTL"),
-        DeviceType::IdeController => string.push_str(" IDE"),
-        DeviceType::SataController => match header.interface() {
-            0 => string.push_str(" SATA VND"),
-            1 => string.push_str(" SATA AHCI"),
-            _ => (),
-        },
-        DeviceType::UsbController => match header.interface() {
-            0x00 => string.push_str(" UHCI"),
-            0x10 => string.push_str(" OHCI"),
-            0x20 => string.push_str(" EHCI"),
-            0x30 => string.push_str(" XHCI"),
-            _ => (),
-        },
-        _ => (),
-    }
-    info!("{}", string);
 }
 
 fn handle_parsed_header(state: Arc<State>, config: &Config, header: PciEndpointHeader) {
@@ -470,7 +444,7 @@ fn main(args: Args) {
                 let func_addr = PciAddress::new(0, bus_num, dev_num, func_num);
                 match PciHeader::from_reader(&state.pcie, func_addr) {
                     Ok(header) => {
-                        print_pci_function(&header);
+                        info!("{}", header.display());
                         match header {
                             PciHeader::General(endpoint_header) => {
                                 handle_parsed_header(Arc::clone(&state), &config, endpoint_header);

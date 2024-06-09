@@ -1,5 +1,6 @@
 use std::convert::TryInto;
 
+use pci_types::device_type::DeviceType;
 use pci_types::{
     Bar as TyBar, ConfigRegionAccess, EndpointHeader, HeaderType, PciAddress,
     PciHeader as TyPciHeader, PciPciBridgeHeader,
@@ -148,6 +149,40 @@ impl PciHeader {
     /// Return the Class field.
     pub fn class(&self) -> u8 {
         self.full_device_id().class
+    }
+
+    /// Format a human readable string indicating the address and type of PCI device.
+    pub fn display(&self) -> String {
+        let mut string = format!(
+            "PCI {} {:>04X}:{:>04X} {:>02X}.{:>02X}.{:>02X}.{:>02X} {:?}",
+            self.address(),
+            self.vendor_id(),
+            self.device_id(),
+            self.class(),
+            self.subclass(),
+            self.interface(),
+            self.revision(),
+            self.class()
+        );
+        let device_type = DeviceType::from((self.class(), self.subclass()));
+        match device_type {
+            DeviceType::LegacyVgaCompatible => string.push_str("  VGA CTL"),
+            DeviceType::IdeController => string.push_str(" IDE"),
+            DeviceType::SataController => match self.interface() {
+                0 => string.push_str(" SATA VND"),
+                1 => string.push_str(" SATA AHCI"),
+                _ => (),
+            },
+            DeviceType::UsbController => match self.interface() {
+                0x00 => string.push_str(" UHCI"),
+                0x10 => string.push_str(" OHCI"),
+                0x20 => string.push_str(" EHCI"),
+                0x30 => string.push_str(" XHCI"),
+                _ => (),
+            },
+            _ => (),
+        }
+        string
     }
 }
 
