@@ -269,6 +269,7 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, header: PciEndpointH
         let mut irq;
         let interrupt_pin;
 
+        // FIXME use pci_types' update_interrupt once it is released to crates.io
         unsafe {
             let mut data = state.pcie.read(header.address(), 0x3C);
             irq = (data & 0xFF) as u8;
