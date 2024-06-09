@@ -255,17 +255,14 @@ pub(crate) fn recv<R: Read, T: DeserializeOwned>(r: &mut R) -> Result<T> {
 }
 
 impl PcidServerHandle {
-    pub fn connect(pcid_to_client: RawFd, pcid_from_client: RawFd) -> Result<Self> {
-        Ok(Self {
-            pcid_to_client: unsafe { File::from_raw_fd(pcid_to_client) },
-            pcid_from_client: unsafe { File::from_raw_fd(pcid_from_client) },
-        })
-    }
     pub fn connect_default() -> Result<Self> {
         let pcid_to_client_fd = env::var("PCID_TO_CLIENT_FD")?.parse::<RawFd>().map_err(PcidClientHandleError::EnvValidityError)?;
         let pcid_from_client_fd = env::var("PCID_FROM_CLIENT_FD")?.parse::<RawFd>().map_err(PcidClientHandleError::EnvValidityError)?;
 
-        Self::connect(pcid_to_client_fd, pcid_from_client_fd)
+        Ok(Self {
+            pcid_to_client: unsafe { File::from_raw_fd(pcid_to_client_fd) },
+            pcid_from_client: unsafe { File::from_raw_fd(pcid_from_client_fd) },
+        })
     }
     pub(crate) fn send(&mut self, req: &PcidClientRequest) -> Result<()> {
         send(&mut self.pcid_from_client, req)
