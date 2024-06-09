@@ -14,7 +14,7 @@ use crate::State;
 
 pub struct DriverHandler {
     addr: PciAddress,
-    capabilities: Vec<(u8, PciCapability)>,
+    capabilities: Vec<PciCapability>,
 
     state: Arc<State>,
 }
@@ -23,7 +23,7 @@ impl DriverHandler {
     pub fn spawn(
         state: Arc<State>,
         func: driver_interface::PciFunction,
-        capabilities: Vec<(u8, PciCapability)>,
+        capabilities: Vec<PciCapability>,
         args: &[String],
     ) {
         let subdriver_args = driver_interface::SubdriverArguments { func };
@@ -110,14 +110,14 @@ impl DriverHandler {
             PcidClientRequest::RequestCapabilities => PcidClientResponse::Capabilities(
                 self.capabilities
                     .iter()
-                    .map(|(_, capability)| capability.clone())
+                    .map(|capability| capability.clone())
                     .collect::<Vec<_>>(),
             ),
             PcidClientRequest::RequestConfig => PcidClientResponse::Config(args.clone()),
             PcidClientRequest::RequestFeatures => PcidClientResponse::AllFeatures(
                 self.capabilities
                     .iter()
-                    .filter_map(|(_, capability)| match capability {
+                    .filter_map(|capability| match capability {
                         PciCapability::Msi(msi) => {
                             Some((PciFeature::Msi, FeatureStatus::enabled(msi.enabled())))
                         }
@@ -131,13 +131,12 @@ impl DriverHandler {
             ),
             PcidClientRequest::EnableFeature(feature) => match feature {
                 PciFeature::Msi => {
-                    let (offset, capability): (u8, &mut MsiCapability) = match self
+                    let capability: &mut MsiCapability = match self
                         .capabilities
                         .iter_mut()
-                        .find_map(|&mut (offset, ref mut capability)| {
-                            capability.as_msi_mut().map(|cap| (offset, cap))
-                        }) {
-                        Some(tuple) => tuple,
+                        .find_map(|capability| capability.as_msi_mut())
+                    {
+                        Some(capability) => capability,
                         None => {
                             return PcidClientResponse::Error(
                                 PcidServerResponseError::NonexistentFeature(feature),
@@ -146,18 +145,17 @@ impl DriverHandler {
                     };
                     unsafe {
                         capability.set_enabled(true);
-                        capability.write_message_control(&func, offset);
+                        capability.write_message_control(&func);
                     }
                     PcidClientResponse::FeatureEnabled(feature)
                 }
                 PciFeature::MsiX => {
-                    let (offset, capability): (u8, &mut MsixCapability) = match self
+                    let capability: &mut MsixCapability = match self
                         .capabilities
                         .iter_mut()
-                        .find_map(|&mut (offset, ref mut capability)| {
-                            capability.as_msix_mut().map(|cap| (offset, cap))
-                        }) {
-                        Some(tuple) => tuple,
+                        .find_map(|capability| capability.as_msix_mut())
+                    {
+                        Some(capability) => capability,
                         None => {
                             return PcidClientResponse::Error(
                                 PcidServerResponseError::NonexistentFeature(feature),
@@ -166,7 +164,7 @@ impl DriverHandler {
                     };
                     unsafe {
                         capability.set_msix_enabled(true);
-                        capability.write_a(&func, offset);
+                        capability.write_a(&func);
                     }
                     PcidClientResponse::FeatureEnabled(feature)
                 }
@@ -177,7 +175,7 @@ impl DriverHandler {
                     PciFeature::Msi => self
                         .capabilities
                         .iter()
-                        .find_map(|(_, capability)| {
+                        .find_map(|capability| {
                             if let PciCapability::Msi(msi) = capability {
                                 Some(FeatureStatus::enabled(msi.enabled()))
                             } else {
@@ -188,7 +186,7 @@ impl DriverHandler {
                     PciFeature::MsiX => self
                         .capabilities
                         .iter()
-                        .find_map(|(_, capability)| {
+                        .find_map(|capability| {
                             if let PciCapability::MsiX(msix) = capability {
                                 Some(FeatureStatus::enabled(msix.msix_enabled()))
                             } else {
@@ -205,7 +203,7 @@ impl DriverHandler {
                         if let Some(info) = self
                             .capabilities
                             .iter()
-                            .find_map(|(_, capability)| capability.as_msi())
+                            .find_map(|capability| capability.as_msi())
                         {
                             PciFeatureInfo::Msi(*info)
                         } else {
@@ -218,7 +216,7 @@ impl DriverHandler {
                         if let Some(info) = self
                             .capabilities
                             .iter()
-                            .find_map(|(_, capability)| capability.as_msix())
+                            .find_map(|capability| capability.as_msix())
                         {
                             PciFeatureInfo::MsiX(*info)
                         } else {
@@ -231,10 +229,10 @@ impl DriverHandler {
             ),
             PcidClientRequest::SetFeatureInfo(info_to_set) => match info_to_set {
                 SetFeatureInfo::Msi(info_to_set) => {
-                    if let Some((offset, info)) = self
+                    if let Some(info) = self
                         .capabilities
                         .iter_mut()
-                        .find_map(|(offset, capability)| Some((*offset, capability.as_msi_mut()?)))
+                        .find_map(|capability| capability.as_msi_mut())
                     {
                         if let Some(mme) = info_to_set.multi_message_enable {
                             if info.multi_message_capable() < mme || mme > 0b101 {
@@ -271,7 +269,7 @@ impl DriverHandler {
                             info.set_mask_bits(mask_bits);
                         }
                         unsafe {
-                            info.write_all(&func, offset);
+                            info.write_all(&func);
                         }
                         PcidClientResponse::SetFeatureInfo(PciFeature::Msi)
                     } else {
@@ -281,15 +279,15 @@ impl DriverHandler {
                     }
                 }
                 SetFeatureInfo::MsiX { function_mask } => {
-                    if let Some((offset, info)) = self
+                    if let Some(info) = self
                         .capabilities
                         .iter_mut()
-                        .find_map(|(offset, capability)| Some((*offset, capability.as_msix_mut()?)))
+                        .find_map(|capability| capability.as_msix_mut())
                     {
                         if let Some(mask) = function_mask {
                             info.set_function_mask(mask);
                             unsafe {
-                                info.write_a(&func, offset);
+                                info.write_a(&func);
                             }
                         }
                         PcidClientResponse::SetFeatureInfo(PciFeature::MsiX)
