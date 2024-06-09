@@ -1,16 +1,22 @@
 #![cfg_attr(target_arch = "aarch64", feature(stdarch_arm_hints))] // Required for yield instruction
 #![feature(int_roundings)]
+#![feature(async_fn_in_trait)]
+#![feature(waker_getters)]
 
+use std::cell::RefCell;
 use std::convert::TryInto;
 use std::fs::File;
 use std::io::{ErrorKind, Read, Write};
 use std::os::unix::io::{FromRawFd, RawFd};
 use std::ptr::NonNull;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::{slice, usize};
 
+use libredox::errno::{EAGAIN, EINTR, EWOULDBLOCK};
 use libredox::flag;
 use pcid_interface::{PciFeature, PciFeatureInfo, PciFunction, PcidServerHandle};
+use redox_scheme::{RequestKind, SignalBehavior, Socket};
 use syscall::{
     Event, Mmio, Packet, Result, SchemeBlockMut,
     PAGE_SIZE,
@@ -276,65 +282,65 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         ptr: NonNull::new(address as *mut u8).expect("Physmapping BAR gave nullptr"),
     });
 
-    let socket_fd = libredox::call::open(
-        &format!(":{}", scheme_name),
-        flag::O_RDWR | flag::O_CREAT | flag::O_CLOEXEC,
-        0,
-    )
-    .expect("nvmed: failed to create disk scheme");
-    let mut socket_file = unsafe { File::from_raw_fd(socket_fd as RawFd) };
+    let socket = Socket::nonblock(&scheme_name).expect("failed to create nvme scheme");
 
     daemon.ready().expect("nvmed: failed to signal readiness");
 
-    let (reactor_sender, reactor_receiver) = crossbeam_channel::unbounded();
     let (interrupt_method, interrupt_sources) =
         get_int_method(&mut pcid_handle, &pci_config.func, &allocated_bars)
             .expect("nvmed: failed to find a suitable interrupt method");
-    let mut nvme = Nvme::new(address, interrupt_method, pcid_handle, reactor_sender)
+    let mut nvme = Nvme::new(address, interrupt_method, pcid_handle)
         .expect("nvmed: failed to allocate driver data");
     unsafe { nvme.init() }
     log::debug!("Finished base initialization");
     let nvme = Arc::new(nvme);
-    #[cfg(feature = "async")]
-    let reactor_thread = nvme::cq_reactor::start_cq_reactor_thread(Arc::clone(&nvme), interrupt_sources, reactor_receiver);
-    let namespaces = nvme.init_with_queues();
+
+    let executor = {
+        let (intx, (iv, irq_handle)) = match interrupt_sources {
+            InterruptSources::Msi(mut vectors) => (false, vectors.pop_first().map(|(a, b)| (u16::from(a), b)).unwrap()),
+            InterruptSources::MsiX(mut vectors) => (false, vectors.pop_first().unwrap()),
+            InterruptSources::Intx(file) => (true, (0, file)),
+        };
+        nvme::executor::init(Arc::clone(&nvme), iv, intx, irq_handle)
+    };
+    let mut scheme_events = Box::pin(executor.register_external_event(socket.inner().raw(), event::EventFlags::READ));
+    let namespaces = executor.block_on(nvme.init_with_queues());
+    log::debug!("Initialized!");
 
     libredox::call::setrens(0, 0).expect("nvmed: failed to enter null namespace");
 
-    let mut scheme = DiskScheme::new(scheme_name, nvme, namespaces);
-    let mut todo = Vec::new();
-    loop {
-        let mut packet = Packet::default();
-        match socket_file.read(&mut packet) {
-            Ok(0) => {
-                break;
-            },
-            Ok(_) => {
-                todo.push(packet);
-            },
-            Err(err) => match err.kind() {
-                ErrorKind::WouldBlock => break,
-                _ => Err(err).expect("nvmed: failed to read disk scheme"),
-            },
-        }
+    let scheme = Rc::new(RefCell::new(DiskScheme::new(scheme_name, nvme, namespaces)));
+    log::debug!("About to block_on");
 
-        let mut i = 0;
-        while i < todo.len() {
-            if let Some(a) = scheme.handle(&todo[i]) {
-                let mut packet = todo.remove(i);
-                packet.a = a;
-                socket_file
-                    .write(&packet)
-                    .expect("nvmed: failed to write disk scheme");
-            } else {
-                i += 1;
+    executor.block_on(async {
+        'outer: loop {
+            log::trace!("new event iteration");
+            loop {
+                let message = match socket.next_request(SignalBehavior::Interrupt) {
+                    Ok(None) => break 'outer,
+                    Ok(Some(msg)) => msg,
+                    Err(error) if error.errno == EINTR => continue,
+                    Err(error) if error.errno == EWOULDBLOCK || error.errno == EAGAIN => break,
+                    Err(other) => panic!("nvmed: failed to get next request: {}", other),
+                };
+                log::trace!("message {message:?}");
+                let RequestKind::Call(call) = message.kind() else {
+                    continue;
+                };
+
+                // TODO: Spawn a separate task for each scheme call. This would however require the
+                // use of a smarter buffer pool (or direct IO, or a buffer per fd) in order to do
+                // parallel IO. It might also require async-aware locks so that a close() is
+                // correctly ordered wrt IO on the same fd.
+                let response = unsafe { call.handle(&mut *scheme.borrow_mut()).await };
+                socket.write_response(response, SignalBehavior::Restart).unwrap();
             }
+
+            let _ = scheme_events.as_mut().next().await;
         }
-    }
+    });
 
     //TODO: destroy NVMe stuff
-    #[cfg(feature = "async")]
-    reactor_thread.join().expect("nvmed: failed to join reactor thread");
 
     std::process::exit(0);
 }
