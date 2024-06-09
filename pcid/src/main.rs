@@ -15,7 +15,6 @@ use crate::config::Config;
 use crate::driver_interface::LegacyInterruptLine;
 use crate::pci::PciFunc;
 use crate::pci::cap::Capability as PciCapability;
-use crate::pci::func::{ConfigReader, ConfigWriter};
 use crate::pci_header::{PciEndpointHeader, PciHeader, PciHeaderError};
 
 mod cfg_access;
