@@ -199,7 +199,6 @@ impl PciEndpointHeader {
     }
 
     /// Return the Headers BARs.
-    // FIXME use pci_types::Bar instead
     pub fn bars(&self, access: &impl ConfigRegionAccess) -> [PciBar; 6] {
         let endpoint_header = self.endpoint_header(access);
 
