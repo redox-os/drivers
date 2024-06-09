@@ -1,5 +1,3 @@
-use std::convert::TryInto;
-
 use pci_types::device_type::DeviceType;
 use pci_types::{
     Bar as TyBar, ConfigRegionAccess, EndpointHeader, HeaderType, PciAddress,
@@ -68,7 +66,10 @@ impl PciHeader {
             HeaderType::Endpoint => {
                 let endpoint_header = EndpointHeader::from_header(header, access).unwrap();
                 let (subsystem_id, subsystem_vendor_id) = endpoint_header.subsystem(access);
-                let cap_pointer = (unsafe { access.read(addr, 0x34) } & 0xff) as u8;
+                let cap_pointer = endpoint_header
+                    .capability_pointer(access)
+                    .try_into()
+                    .unwrap();
                 Ok(PciHeader::General(PciEndpointHeader {
                     shared,
                     subsystem_vendor_id,
