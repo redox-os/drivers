@@ -267,7 +267,7 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, header: PciEndpointH
                 pci: &state.pcie,
                 addr: header.address(),
             };
-            crate::pci::cap::CapabilitiesIter { inner: crate::pci::cap::CapabilityOffsetsIter::new(header.cap_pointer(), &func) }.collect::<Vec<_>>()
+            crate::pci::cap::CapabilitiesIter::new(header.cap_pointer(), &func).collect::<Vec<_>>()
         } else {
             Vec::new()
         };

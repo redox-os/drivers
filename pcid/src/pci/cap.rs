@@ -1,11 +1,11 @@
 use super::func::ConfigReader;
 use serde::{Serialize, Deserialize};
 
-pub struct CapabilityOffsetsIter<'a, R> {
+pub struct CapabilitiesIter<'a, R> {
     offset: u8,
     reader: &'a R,
 }
-impl<'a, R> CapabilityOffsetsIter<'a, R> {
+impl<'a, R> CapabilitiesIter<'a, R> {
     pub fn new(offset: u8, reader: &'a R) -> Self {
         Self {
             offset,
@@ -13,14 +13,14 @@ impl<'a, R> CapabilityOffsetsIter<'a, R> {
         }
     }
 }
-impl<'a, R> Iterator for CapabilityOffsetsIter<'a, R>
+impl<'a, R> Iterator for CapabilitiesIter<'a, R>
 where
     R: ConfigReader
 {
-    type Item = u8;
+    type Item = (u8, Capability);
 
     fn next(&mut self) -> Option<Self::Item> {
-        unsafe {
+        let offset = unsafe {
             // mask RsvdP bits
             self.offset = self.offset & 0xFC;
 
@@ -32,8 +32,14 @@ where
             let offset = self.offset;
             self.offset = next;
 
-            Some(offset)
-        }
+            offset
+        };
+
+        let cap = unsafe {
+            Capability::parse(self.reader, offset)
+        };
+
+        Some((offset, cap))
     }
 }
 
@@ -227,21 +233,5 @@ impl Capability {
             log::warn!("unimplemented or malformed capability id: {}", capability_id);
             Self::Other(capability_id)
         }
-    }
-}
-
-pub struct CapabilitiesIter<'a, R> {
-    pub inner: CapabilityOffsetsIter<'a, R>,
-}
-
-impl<'a, R> Iterator for CapabilitiesIter<'a, R>
-where
-    R: ConfigReader
-{
-    type Item = (u8, Capability);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let offset = self.inner.next()?;
-        Some((offset, unsafe { Capability::parse(self.inner.reader, offset) }))
     }
 }
