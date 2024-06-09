@@ -209,9 +209,9 @@ pub struct State {
     pcie: Pcie,
 }
 
-fn print_pci_function(addr: PciAddress, header: &PciHeader) {
+fn print_pci_function(header: &PciHeader) {
     let mut string = format!("PCI {} {:>04X}:{:>04X} {:>02X}.{:>02X}.{:>02X}.{:>02X} {:?}",
-                             addr, header.vendor_id(), header.device_id(), header.class(),
+                             header.address(), header.vendor_id(), header.device_id(), header.class(),
                              header.subclass(), header.interface(), header.revision(), header.class());
     let device_type = DeviceType::from((header.class(), header.subclass()));
     match device_type {
@@ -234,7 +234,7 @@ fn print_pci_function(addr: PciAddress, header: &PciHeader) {
     info!("{}", string);
 }
 
-fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, header: PciEndpointHeader) {
+fn handle_parsed_header(state: Arc<State>, config: &Config, header: PciEndpointHeader) {
     for driver in config.drivers.iter() {
         if !driver.match_function(header.full_device_id()) {
             continue;
@@ -270,14 +270,14 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, he
         let interrupt_pin;
 
         unsafe {
-            let mut data = state.pcie.read(addr, 0x3C);
+            let mut data = state.pcie.read(header.address(), 0x3C);
             irq = (data & 0xFF) as u8;
             interrupt_pin = ((data & 0x0000_FF00) >> 8) as u8;
             if irq == 0xFF {
                 irq = 9;
             }
             data = (data & 0xFFFFFF00) | irq as u32;
-            state.pcie.write(addr, 0x3C, data);
+            state.pcie.write(header.address(), 0x3C, data);
         };
 
         let legacy_interrupt_enabled = match interrupt_pin {
@@ -293,7 +293,7 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, he
         let capabilities = if endpoint_header.status(&state.pcie).has_capability_list() {
             let func = PciFunc {
                 pci: &state.pcie,
-                addr
+                addr: header.address(),
             };
             crate::pci::cap::CapabilitiesIter { inner: crate::pci::cap::CapabilityOffsetsIter::new(header.cap_pointer(), &func) }.collect::<Vec<_>>()
         } else {
@@ -303,7 +303,7 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, he
 
         let func = driver_interface::PciFunction {
             bars,
-            addr,
+            addr: header.address(),
             legacy_interrupt_line: if legacy_interrupt_enabled {
                 Some(LegacyInterruptLine(irq))
             } else {
@@ -353,7 +353,7 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, addr: PciAddress, he
             match command.envs(envs).spawn() {
                 Ok(mut child) => {
                     let driver_handler = DriverHandler {
-                        addr,
+                        addr: header.address(),
                         state: Arc::clone(&state),
                         capabilities,
                     };
@@ -472,15 +472,10 @@ fn main(args: Args) {
                 let func_addr = PciAddress::new(0, bus_num, dev_num, func_num);
                 match PciHeader::from_reader(&state.pcie, func_addr) {
                     Ok(header) => {
-                        print_pci_function(func_addr, &header);
+                        print_pci_function(&header);
                         match header {
                             PciHeader::General(endpoint_header) => {
-                                handle_parsed_header(
-                                    Arc::clone(&state),
-                                    &config,
-                                    func_addr,
-                                    endpoint_header,
-                                );
+                                handle_parsed_header(Arc::clone(&state), &config, endpoint_header);
                             }
                             PciHeader::PciToPci {
                                 secondary_bus_num, ..
