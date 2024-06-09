@@ -1,5 +1,5 @@
 #![deny(trivial_numeric_casts, unused_allocation)]
-#![feature(int_roundings, async_fn_in_trait)]
+#![feature(int_roundings)]
 
 // TODO(andypython): driver panic with an empty disk.
 

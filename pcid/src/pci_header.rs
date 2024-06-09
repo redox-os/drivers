@@ -112,6 +112,14 @@ impl PciHeader {
         }
     }
 
+    /// Return the PCI address.
+    pub fn address(&self) -> PciAddress {
+        match self {
+            PciHeader::General(header) => header.address(),
+            PciHeader::PciToPci { shared, .. } => shared.addr,
+        }
+    }
+
     /// Return the Vendor ID field.
     pub fn vendor_id(&self) -> u16 {
         self.full_device_id().vendor_id
@@ -144,6 +152,10 @@ impl PciHeader {
 }
 
 impl PciEndpointHeader {
+    pub fn address(&self) -> PciAddress {
+        self.shared.addr
+    }
+
     pub fn endpoint_header(&self, access: &impl ConfigRegionAccess) -> EndpointHeader {
         EndpointHeader::from_header(TyPciHeader::new(self.shared.addr), access).unwrap()
     }
