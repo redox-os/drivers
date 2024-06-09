@@ -5,7 +5,7 @@ use std::process::Command;
 use std::thread;
 use std::sync::{Arc, Mutex};
 
-use pci_types::{CommandRegister, ConfigRegionAccess, PciAddress};
+use pci_types::{CommandRegister, PciAddress};
 use structopt::StructOpt;
 use log::{debug, error, info, warn, trace};
 use redox_log::{OutputBuilder, RedoxLogger};
@@ -42,17 +42,16 @@ pub struct DriverHandler {
 
     state: Arc<State>,
 }
-fn with_pci_func_raw<T, F: FnOnce(&PciFunc) -> T>(pci: &dyn ConfigRegionAccess, addr: PciAddress, function: F) -> T {
-    let func = PciFunc {
-        pci,
-        addr,
-    };
-    function(&func)
-}
+
 impl DriverHandler {
     fn respond(&mut self, request: driver_interface::PcidClientRequest, args: &driver_interface::SubdriverArguments) -> driver_interface::PcidClientResponse {
         use driver_interface::*;
         use crate::pci::cap::{MsiCapability, MsixCapability};
+
+        let func = PciFunc {
+            pci: &self.state.pcie,
+            addr: self.addr,
+        };
 
         match request {
             PcidClientRequest::RequestCapabilities => {
@@ -75,10 +74,8 @@ impl DriverHandler {
                         None => return PcidClientResponse::Error(PcidServerResponseError::NonexistentFeature(feature)),
                     };
                     unsafe {
-                        with_pci_func_raw(&self.state.pcie, self.addr, |func| {
-                            capability.set_enabled(true);
-                            capability.write_message_control(func, offset);
-                        });
+                        capability.set_enabled(true);
+                        capability.write_message_control(&func, offset);
                     }
                     PcidClientResponse::FeatureEnabled(feature)
                 }
@@ -88,10 +85,8 @@ impl DriverHandler {
                         None => return PcidClientResponse::Error(PcidServerResponseError::NonexistentFeature(feature)),
                     };
                     unsafe {
-                        with_pci_func_raw(&self.state.pcie, self.addr, |func| {
-                            capability.set_msix_enabled(true);
-                            capability.write_a(func, offset);
-                        });
+                        capability.set_msix_enabled(true);
+                        capability.write_a(&func, offset);
                     }
                     PcidClientResponse::FeatureEnabled(feature)
                 }
@@ -150,9 +145,7 @@ impl DriverHandler {
                         info.set_mask_bits(mask_bits);
                     }
                     unsafe {
-                        with_pci_func_raw(&self.state.pcie, self.addr, |func| {
-                            info.write_all(func, offset);
-                        });
+                        info.write_all(&func, offset);
                     }
                     PcidClientResponse::SetFeatureInfo(PciFeature::Msi)
                 } else {
@@ -162,9 +155,7 @@ impl DriverHandler {
                     if let Some(mask) = function_mask {
                         info.set_function_mask(mask);
                         unsafe {
-                            with_pci_func_raw(&self.state.pcie, self.addr, |func| {
-                                info.write_a(func, offset);
-                            });
+                            info.write_a(&func, offset);
                         }
                     }
                     PcidClientResponse::SetFeatureInfo(PciFeature::MsiX)
@@ -173,18 +164,12 @@ impl DriverHandler {
                 }
             }
             PcidClientRequest::ReadConfig(offset) => {
-                let value = unsafe {
-                    with_pci_func_raw(&self.state.pcie, self.addr, |func| {
-                        func.read_u32(offset)
-                    })
-                };
+                let value = unsafe { func.read_u32(offset) };
                 return PcidClientResponse::ReadConfig(value);
             },
             PcidClientRequest::WriteConfig(offset, value) => {
                 unsafe {
-                    with_pci_func_raw(&self.state.pcie, self.addr, |func| {
-                        func.write_u32(offset, value);
-                    });
+                    func.write_u32(offset, value);
                 }
                 return PcidClientResponse::WriteConfig;
             }
