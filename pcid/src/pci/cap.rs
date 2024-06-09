@@ -83,32 +83,6 @@ pub enum MsiCapability {
     },
 }
 
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
-pub struct PcieCapability {
-    pub pcie_caps: u32,
-    pub dev_caps: u32,
-    pub dev_sts_ctl: u32,
-    pub link_caps: u32,
-    pub link_sts_ctl: u32,
-    pub slot_caps: u32,
-    pub slot_sts_ctl: u32,
-    pub root_cap_ctl: u32,
-    pub root_sts: u32,
-    pub dev_caps2: u32,
-    pub dev_sts_ctl2: u32,
-    pub link_caps2: u32,
-    pub link_sts_ctl2: u32,
-    pub slot_caps2: u32,
-    pub slot_sts_ctl2: u32,
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
-pub struct PwrMgmtCapability {
-    pub a: u32,
-    pub b: u32,
-}
-
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct MsixCapability {
     pub a: u32,
@@ -125,10 +99,7 @@ pub struct VendorSpecificCapability {
 pub enum Capability {
     Msi(MsiCapability),
     MsiX(MsixCapability),
-    Pcie(PcieCapability),
-    PwrMgmt(PwrMgmtCapability),
     Vendor(VendorSpecificCapability),
-    FunctionSpecific(u8, Vec<u8>), // TODO: Arrayvec
     Other(u8),
 }
 
@@ -167,12 +138,6 @@ impl Capability {
             c: func.read_u32(u16::from(offset + 8)),
         })
     }
-    unsafe fn parse_pwr(func: &PciFunc, offset: u8) -> Self {
-        Self::PwrMgmt(PwrMgmtCapability {
-            a: func.read_u32(u16::from(offset)),
-            b: func.read_u32(u16::from(offset + 4)),
-        })
-    }
     unsafe fn parse_vendor(func: &PciFunc, offset: u8) -> Self {
         let next = func.read_u8(u16::from(offset+1));
         let length = func.read_u8(u16::from(offset+2));
@@ -188,27 +153,6 @@ impl Capability {
             data
         })
     }
-    unsafe fn parse_pcie(func: &PciFunc, offset: u8) -> Self {
-        let offset = u16::from(offset);
-
-        Self::Pcie(PcieCapability {
-            pcie_caps:      func.read_u32(offset),
-            dev_caps:       func.read_u32(offset + 0x04),
-            dev_sts_ctl:    func.read_u32(offset + 0x08),
-            link_caps:      func.read_u32(offset + 0x0C),
-            link_sts_ctl:   func.read_u32(offset + 0x10),
-            slot_caps:      func.read_u32(offset + 0x14),
-            slot_sts_ctl:   func.read_u32(offset + 0x18),
-            root_cap_ctl:   func.read_u32(offset + 0x1C),
-            root_sts:       func.read_u32(offset + 0x20),
-            dev_caps2:      func.read_u32(offset + 0x24),
-            dev_sts_ctl2:   func.read_u32(offset + 0x28),
-            link_caps2:     func.read_u32(offset + 0x2C),
-            link_sts_ctl2:  func.read_u32(offset + 0x30),
-            slot_caps2:     func.read_u32(offset + 0x34),
-            slot_sts_ctl2:  func.read_u32(offset + 0x38),
-        })
-    }
     unsafe fn parse(func: &PciFunc, offset: u8) -> Self {
         assert_eq!(offset & 0xFC, offset, "capability must be dword aligned");
 
@@ -219,16 +163,18 @@ impl Capability {
             Self::parse_msi(func, offset)
         } else if capability_id == CapabilityId::MsiX as u8 {
             Self::parse_msix(func, offset)
-        } else if capability_id == CapabilityId::Pcie as u8 {
-            Self::parse_pcie(func, offset)
-        } else if capability_id == CapabilityId::PwrMgmt as u8{
-            Self::parse_pwr(func, offset)
         } else if capability_id == CapabilityId::Vendor as u8 {
             Self::parse_vendor(func, offset)
-        } else if capability_id == CapabilityId::Sata as u8 {
-            Self::FunctionSpecific(capability_id, func.read_range(offset.into(), 8))
         } else {
-            log::warn!("unimplemented or malformed capability id: {}", capability_id);
+            if capability_id != CapabilityId::Pcie as u8
+                && capability_id != CapabilityId::PwrMgmt as u8
+                && capability_id != CapabilityId::Sata as u8
+            {
+                log::warn!(
+                    "unimplemented or malformed capability id: {}",
+                    capability_id
+                );
+            }
             Self::Other(capability_id)
         }
     }
