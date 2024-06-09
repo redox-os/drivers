@@ -256,7 +256,7 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, header: PciEndpointH
             info!("    BAR{}", string);
         }
 
-        let endpoint_header = header.endpoint_header(&state.pcie);
+        let mut endpoint_header = header.endpoint_header(&state.pcie);
 
         // Enable bus mastering, memory space, and I/O space
         endpoint_header.update_command(&state.pcie, |cmd| {
@@ -266,20 +266,17 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, header: PciEndpointH
         });
 
         // Set IRQ line to 9 if not set
-        let mut irq;
-        let interrupt_pin;
+        let mut irq = 0xFF;
+        let mut interrupt_pin = 0xFF;
 
-        // FIXME use pci_types' update_interrupt once it is released to crates.io
-        unsafe {
-            let mut data = state.pcie.read(header.address(), 0x3C);
-            irq = (data & 0xFF) as u8;
-            interrupt_pin = ((data & 0x0000_FF00) >> 8) as u8;
-            if irq == 0xFF {
-                irq = 9;
+        endpoint_header.update_interrupt(&state.pcie, |(pin, mut line)| {
+            if line == 0xFF {
+                line = 9;
             }
-            data = (data & 0xFFFFFF00) | irq as u32;
-            state.pcie.write(header.address(), 0x3C, data);
-        };
+            irq = line;
+            interrupt_pin = pin;
+            (pin, line)
+        });
 
         let legacy_interrupt_enabled = match interrupt_pin {
             0 => false,
