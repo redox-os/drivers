@@ -169,33 +169,6 @@ impl DriverHandler {
                     PcidClientResponse::FeatureEnabled(feature)
                 }
             },
-            PcidClientRequest::FeatureStatus(feature) => PcidClientResponse::FeatureStatus(
-                feature,
-                match feature {
-                    PciFeature::Msi => self
-                        .capabilities
-                        .iter()
-                        .find_map(|capability| {
-                            if let PciCapability::Msi(msi) = capability {
-                                Some(FeatureStatus::enabled(msi.enabled()))
-                            } else {
-                                None
-                            }
-                        })
-                        .unwrap_or(FeatureStatus::Disabled),
-                    PciFeature::MsiX => self
-                        .capabilities
-                        .iter()
-                        .find_map(|capability| {
-                            if let PciCapability::MsiX(msix) = capability {
-                                Some(FeatureStatus::enabled(msix.msix_enabled()))
-                            } else {
-                                None
-                            }
-                        })
-                        .unwrap_or(FeatureStatus::Disabled),
-                },
-            ),
             PcidClientRequest::FeatureInfo(feature) => PcidClientResponse::FeatureInfo(
                 feature,
                 match feature {

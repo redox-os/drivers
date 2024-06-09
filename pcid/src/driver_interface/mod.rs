@@ -194,7 +194,6 @@ pub enum PcidClientRequest {
     RequestFeatures,
     RequestCapabilities,
     EnableFeature(PciFeature),
-    FeatureStatus(PciFeature),
     FeatureInfo(PciFeature),
     SetFeatureInfo(SetFeatureInfo),
     ReadConfig(u16),
@@ -292,13 +291,6 @@ impl PcidServerHandle {
         self.send(&PcidClientRequest::RequestFeatures)?;
         match self.recv()? {
             PcidClientResponse::AllFeatures(a) => Ok(a),
-            other => Err(PcidClientHandleError::InvalidResponse(other)),
-        }
-    }
-    pub fn feature_status(&mut self, feature: PciFeature) -> Result<FeatureStatus> {
-        self.send(&PcidClientRequest::FeatureStatus(feature))?;
-        match self.recv()? {
-            PcidClientResponse::FeatureStatus(feat, status) if feat == feature => Ok(status),
             other => Err(PcidClientHandleError::InvalidResponse(other)),
         }
     }
