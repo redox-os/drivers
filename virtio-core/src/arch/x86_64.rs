@@ -61,9 +61,7 @@ pub fn probe_legacy_port_transport(
 
     // Setup interrupts.
     let all_pci_features = pcid_handle.fetch_all_features()?;
-    let has_msix = all_pci_features
-        .iter()
-        .any(|(feature, _)| feature.is_msix());
+    let has_msix = all_pci_features.iter().any(|feature| feature.is_msix());
 
     // According to the virtio specification, the device REQUIRED to support MSI-X.
     assert!(has_msix, "virtio: device does not support MSI-X");

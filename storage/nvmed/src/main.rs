@@ -76,8 +76,8 @@ fn get_int_method(
 
     let features = pcid_handle.fetch_all_features().unwrap();
 
-    let has_msi = features.iter().any(|(feature, _)| feature.is_msi());
-    let has_msix = features.iter().any(|(feature, _)| feature.is_msix());
+    let has_msi = features.iter().any(|feature| feature.is_msi());
+    let has_msix = features.iter().any(|feature| feature.is_msix());
 
     // TODO: Allocate more than one vector when possible and useful.
     if has_msix {

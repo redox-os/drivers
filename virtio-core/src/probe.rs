@@ -123,7 +123,8 @@ pub fn probe_device(pcid_handle: &mut PcidServerHandle) -> Result<Device, Error>
                 // SAFETY: The capability type is `Notify`, so its safe to access
                 //         the `notify_multiplier` field.
                 let multiplier = unsafe {
-                    (&*(raw_capability.data.as_ptr() as *const PciCapability as *const PciCapabilityNotify))
+                    (&*(raw_capability.data.as_ptr() as *const PciCapability
+                        as *const PciCapabilityNotify))
                         .notify_off_multiplier()
                 };
                 notify_addr = Some((address, multiplier));
@@ -161,9 +162,7 @@ pub fn probe_device(pcid_handle: &mut PcidServerHandle) -> Result<Device, Error>
 
         // Setup interrupts.
         let all_pci_features = pcid_handle.fetch_all_features()?;
-        let has_msix = all_pci_features
-            .iter()
-            .any(|(feature, _)| feature.is_msix());
+        let has_msix = all_pci_features.iter().any(|feature| feature.is_msix());
 
         // According to the virtio specification, the device REQUIRED to support MSI-X.
         assert!(has_msix, "virtio: device does not support MSI-X");

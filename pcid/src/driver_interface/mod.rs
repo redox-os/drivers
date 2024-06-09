@@ -212,7 +212,7 @@ pub enum PcidServerResponseError {
 pub enum PcidClientResponse {
     Capabilities(Vec<Capability>),
     Config(SubdriverArguments),
-    AllFeatures(Vec<(PciFeature, FeatureStatus)>),
+    AllFeatures(Vec<PciFeature>),
     FeatureEnabled(PciFeature),
     FeatureStatus(PciFeature, FeatureStatus),
     Error(PcidServerResponseError),
@@ -287,7 +287,7 @@ impl PcidServerHandle {
     }
 
     // FIXME turn into struct with bool fields
-    pub fn fetch_all_features(&mut self) -> Result<Vec<(PciFeature, FeatureStatus)>> {
+    pub fn fetch_all_features(&mut self) -> Result<Vec<PciFeature>> {
         self.send(&PcidClientRequest::RequestFeatures)?;
         match self.recv()? {
             PcidClientResponse::AllFeatures(a) => Ok(a),

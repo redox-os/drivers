@@ -91,17 +91,10 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle, bar0_address: usize) -> (O
     let all_pci_features = pcid_handle.fetch_all_features().expect("xhcid: failed to fetch pci features");
     log::debug!("XHCI PCI FEATURES: {:?}", all_pci_features);
 
-    let (has_msi, mut msi_enabled) = all_pci_features.iter().map(|(feature, status)| (feature.is_msi(), status.is_enabled())).find(|&(f, _)| f).unwrap_or((false, false));
-    let (has_msix, mut msix_enabled) = all_pci_features.iter().map(|(feature, status)| (feature.is_msix(), status.is_enabled())).find(|&(f, _)| f).unwrap_or((false, false));
+    let has_msi = all_pci_features.iter().any(|feature| feature.is_msi());
+    let has_msix = all_pci_features.iter().any(|feature| feature.is_msix());
 
-    if has_msi && !msi_enabled && !has_msix {
-        msi_enabled = true;
-    }
-    if has_msix && !msix_enabled {
-        msix_enabled = true;
-    }
-
-    if msi_enabled && !msix_enabled {
+    if has_msi && !has_msix {
         let mut capability = match pcid_handle.feature_info(PciFeature::Msi).expect("xhcid: failed to retrieve the MSI capability structure from pcid") {
             PciFeatureInfo::Msi(s) => s,
             PciFeatureInfo::MsiX(_) => panic!(),
@@ -125,7 +118,7 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle, bar0_address: usize) -> (O
         log::debug!("Enabled MSI");
 
         (Some(interrupt_handle), InterruptMethod::Msi)
-    } else if msix_enabled {
+    } else if has_msix {
         let capability = match pcid_handle.feature_info(PciFeature::MsiX).expect("xhcid: failed to retrieve the MSI-X capability structure from pcid") {
             PciFeatureInfo::Msi(_) => panic!(),
             PciFeatureInfo::MsiX(s) => s,

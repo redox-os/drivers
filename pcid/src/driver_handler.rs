@@ -118,13 +118,8 @@ impl DriverHandler {
                 self.capabilities
                     .iter()
                     .filter_map(|capability| match capability {
-                        PciCapability::Msi(msi) => {
-                            Some((PciFeature::Msi, FeatureStatus::enabled(msi.enabled())))
-                        }
-                        PciCapability::MsiX(msix) => Some((
-                            PciFeature::MsiX,
-                            FeatureStatus::enabled(msix.msix_enabled()),
-                        )),
+                        PciCapability::Msi(_) => Some(PciFeature::Msi),
+                        PciCapability::MsiX(_) => Some(PciFeature::MsiX),
                         _ => None,
                     })
                     .collect(),
