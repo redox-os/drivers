@@ -34,7 +34,6 @@ pub enum PciHeader {
     PciToPci {
         shared: SharedPciHeader,
         secondary_bus_num: u8,
-        cap_pointer: u8,
     },
 }
 
@@ -80,11 +79,9 @@ impl PciHeader {
             HeaderType::PciPciBridge => {
                 let bridge_header = PciPciBridgeHeader::from_header(header, access).unwrap();
                 let secondary_bus_num = bridge_header.secondary_bus_number(access);
-                let cap_pointer = (unsafe { access.read(addr, 0x34) } & 0xff) as u8;
                 Ok(PciHeader::PciToPci {
                     shared,
                     secondary_bus_num,
-                    cap_pointer,
                 })
             }
             ty => Err(PciHeaderError::UnknownHeaderType(ty)),
