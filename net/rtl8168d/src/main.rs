@@ -12,7 +12,7 @@ use pcid_interface::{MsiSetFeatureInfo, PcidServerHandle, PciFeature, PciFeature
 #[cfg(target_arch = "x86_64")]
 use pcid_interface::irq_helpers::allocate_single_interrupt_vector_for_msi;
 use pcid_interface::irq_helpers::read_bsp_apic_id;
-use pcid_interface::msi::{MsixCapability, MsixTableEntry};
+use pcid_interface::msi::{MsixInfo, MsixTableEntry};
 use redox_log::{RedoxLogger, OutputBuilder};
 use syscall::EventFlags;
 
@@ -74,17 +74,17 @@ where
     }
 }
 
-pub struct MsixInfo {
+pub struct MappedMsixRegs {
     pub virt_table_base: NonNull<MsixTableEntry>,
-    pub capability: MsixCapability,
+    pub info: MsixInfo,
 }
 
-impl MsixInfo {
+impl MappedMsixRegs {
     pub unsafe fn table_entry_pointer_unchecked(&mut self, k: usize) -> &mut MsixTableEntry {
         &mut *self.virt_table_base.as_ptr().offset(k as isize)
     }
     pub fn table_entry_pointer(&mut self, k: usize) -> &mut MsixTableEntry {
-        assert!(k < self.capability.table_size() as usize);
+        assert!(k < self.info.table_size as usize);
         unsafe { self.table_entry_pointer_unchecked(k) }
     }
 }
@@ -96,17 +96,10 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle) -> File {
     let all_pci_features = pcid_handle.fetch_all_features().expect("rtl8168d: failed to fetch pci features");
     log::info!("PCI FEATURES: {:?}", all_pci_features);
 
-    let (has_msi, mut msi_enabled) = all_pci_features.iter().map(|(feature, status)| (feature.is_msi(), status.is_enabled())).find(|&(f, _)| f).unwrap_or((false, false));
-    let (has_msix, mut msix_enabled) = all_pci_features.iter().map(|(feature, status)| (feature.is_msix(), status.is_enabled())).find(|&(f, _)| f).unwrap_or((false, false));
+    let has_msi = all_pci_features.iter().any(|feature| feature.is_msi());
+    let has_msix = all_pci_features.iter().any(|feature| feature.is_msix());
 
-    if has_msi && !msi_enabled && !has_msix {
-        msi_enabled = true;
-    }
-    if has_msix && !msix_enabled {
-        msix_enabled = true;
-    }
-
-    if msi_enabled && !msix_enabled {
+    if has_msi && !has_msix {
         let capability = match pcid_handle.feature_info(PciFeature::Msi).expect("rtl8168d: failed to retrieve the MSI capability structure from pcid") {
             PciFeatureInfo::Msi(s) => s,
             PciFeatureInfo::MsiX(_) => panic!(),
@@ -130,21 +123,21 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle) -> File {
         log::info!("Enabled MSI");
 
         interrupt_handle
-    } else if msix_enabled {
-        let capability = match pcid_handle.feature_info(PciFeature::MsiX).expect("rtl8168d: failed to retrieve the MSI-X capability structure from pcid") {
+    } else if has_msix {
+        let msix_info = match pcid_handle.feature_info(PciFeature::MsiX).expect("rtl8168d: failed to retrieve the MSI-X capability structure from pcid") {
             PciFeatureInfo::Msi(_) => panic!(),
             PciFeatureInfo::MsiX(s) => s,
         };
-        capability.validate(pci_config.func.bars);
+        msix_info.validate(pci_config.func.bars);
 
-        let bar = &pci_config.func.bars[capability.table_bir() as usize];
+        let bar = &pci_config.func.bars[msix_info.table_bar as usize];
         let bar_address = unsafe { bar.physmap_mem("rtl8168d") } as usize;
 
-        let virt_table_base = (bar_address + capability.table_offset() as usize) as *mut MsixTableEntry;
+        let virt_table_base = (bar_address + msix_info.table_offset as usize) as *mut MsixTableEntry;
 
-        let mut info = MsixInfo {
+        let mut info = MappedMsixRegs {
             virt_table_base: NonNull::new(virt_table_base).unwrap(),
-            capability,
+            info: msix_info,
         };
 
         // Allocate one msi vector.

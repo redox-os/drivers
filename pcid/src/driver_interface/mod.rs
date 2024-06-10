@@ -133,7 +133,7 @@ impl PciFeature {
 #[derive(Debug, Serialize, Deserialize)]
 pub enum PciFeatureInfo {
     Msi(msi::MsiCapability),
-    MsiX(msi::MsixCapability),
+    MsiX(msi::MsixInfo),
 }
 
 #[derive(Debug, Error)]
@@ -194,7 +194,6 @@ pub enum PcidClientRequest {
     RequestFeatures,
     RequestCapabilities,
     EnableFeature(PciFeature),
-    FeatureStatus(PciFeature),
     FeatureInfo(PciFeature),
     SetFeatureInfo(SetFeatureInfo),
     ReadConfig(u16),
@@ -213,7 +212,7 @@ pub enum PcidServerResponseError {
 pub enum PcidClientResponse {
     Capabilities(Vec<Capability>),
     Config(SubdriverArguments),
-    AllFeatures(Vec<(PciFeature, FeatureStatus)>),
+    AllFeatures(Vec<PciFeature>),
     FeatureEnabled(PciFeature),
     FeatureStatus(PciFeature, FeatureStatus),
     Error(PcidServerResponseError),
@@ -288,17 +287,10 @@ impl PcidServerHandle {
     }
 
     // FIXME turn into struct with bool fields
-    pub fn fetch_all_features(&mut self) -> Result<Vec<(PciFeature, FeatureStatus)>> {
+    pub fn fetch_all_features(&mut self) -> Result<Vec<PciFeature>> {
         self.send(&PcidClientRequest::RequestFeatures)?;
         match self.recv()? {
             PcidClientResponse::AllFeatures(a) => Ok(a),
-            other => Err(PcidClientHandleError::InvalidResponse(other)),
-        }
-    }
-    pub fn feature_status(&mut self, feature: PciFeature) -> Result<FeatureStatus> {
-        self.send(&PcidClientRequest::FeatureStatus(feature))?;
-        match self.recv()? {
-            PcidClientResponse::FeatureStatus(feat, status) if feat == feature => Ok(status),
             other => Err(PcidClientHandleError::InvalidResponse(other)),
         }
     }

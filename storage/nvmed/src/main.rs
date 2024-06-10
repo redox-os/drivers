@@ -76,20 +76,20 @@ fn get_int_method(
 
     let features = pcid_handle.fetch_all_features().unwrap();
 
-    let has_msi = features.iter().any(|(feature, _)| feature.is_msi());
-    let has_msix = features.iter().any(|(feature, _)| feature.is_msix());
+    let has_msi = features.iter().any(|feature| feature.is_msi());
+    let has_msix = features.iter().any(|feature| feature.is_msix());
 
     // TODO: Allocate more than one vector when possible and useful.
     if has_msix {
         // Extended message signaled interrupts.
-        use self::nvme::MsixCfg;
+        use self::nvme::MappedMsixRegs;
         use pcid_interface::msi::MsixTableEntry;
 
-        let mut capability_struct = match pcid_handle.feature_info(PciFeature::MsiX).unwrap() {
+        let msix_info = match pcid_handle.feature_info(PciFeature::MsiX).unwrap() {
             PciFeatureInfo::MsiX(msix) => msix,
             _ => unreachable!(),
         };
-        capability_struct.validate(function.bars);
+        msix_info.validate(function.bars);
         fn bar_base(
             allocated_bars: &AllocatedBars,
             function: &PciFunction,
@@ -109,11 +109,11 @@ fn get_int_method(
             }
         }
         let table_bar_base: *mut u8 =
-            bar_base(allocated_bars, function, capability_struct.table_bir())?.as_ptr();
+            bar_base(allocated_bars, function, msix_info.table_bar)?.as_ptr();
         let table_base =
-            unsafe { table_bar_base.offset(capability_struct.table_offset() as isize) };
+            unsafe { table_bar_base.offset(msix_info.table_offset as isize) };
 
-        let vector_count = capability_struct.table_size();
+        let vector_count = msix_info.table_size;
         let table_entries: &'static mut [MsixTableEntry] = unsafe {
             slice::from_raw_parts_mut(table_base as *mut MsixTableEntry, vector_count as usize)
         };
@@ -125,7 +125,6 @@ fn get_int_method(
         }
 
         pcid_handle.enable_feature(PciFeature::MsiX).unwrap();
-        capability_struct.set_msix_enabled(true); // only affects our local mirror of the cap
 
         let (msix_vector_number, irq_handle) = {
             let entry: &mut MsixTableEntry = &mut table_entries[0];
@@ -140,8 +139,8 @@ fn get_int_method(
             (0, irq_handle)
         };
 
-        let interrupt_method = InterruptMethod::MsiX(MsixCfg {
-            cap: capability_struct,
+        let interrupt_method = InterruptMethod::MsiX(MappedMsixRegs {
+            info: msix_info,
             table: table_entries,
         });
         let interrupt_sources =

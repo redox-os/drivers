@@ -2,7 +2,7 @@ use std::fs::File;
 use std::ptr::NonNull;
 use std::sync::Arc;
 
-use pcid_interface::msi::{MsixCapability, MsixTableEntry};
+use pcid_interface::msi::{MsixInfo, MsixTableEntry};
 use pcid_interface::*;
 
 use crate::spec::*;
@@ -20,18 +20,18 @@ pub struct Device {
 unsafe impl Send for Device {}
 unsafe impl Sync for Device {}
 
-pub struct MsixInfo {
+pub struct MappedMsixRegs {
     pub virt_table_base: NonNull<MsixTableEntry>,
-    pub capability: MsixCapability,
+    pub info: MsixInfo,
 }
 
-impl MsixInfo {
+impl MappedMsixRegs {
     pub unsafe fn table_entry_pointer_unchecked(&mut self, k: usize) -> &mut MsixTableEntry {
         &mut *self.virt_table_base.as_ptr().add(k)
     }
 
     pub fn table_entry_pointer(&mut self, k: usize) -> &mut MsixTableEntry {
-        assert!(k < self.capability.table_size() as usize);
+        assert!(k < self.info.table_size as usize);
         unsafe { self.table_entry_pointer_unchecked(k) }
     }
 }
@@ -123,7 +123,8 @@ pub fn probe_device(pcid_handle: &mut PcidServerHandle) -> Result<Device, Error>
                 // SAFETY: The capability type is `Notify`, so its safe to access
                 //         the `notify_multiplier` field.
                 let multiplier = unsafe {
-                    (&*(raw_capability.data.as_ptr() as *const PciCapability as *const PciCapabilityNotify))
+                    (&*(raw_capability.data.as_ptr() as *const PciCapability
+                        as *const PciCapabilityNotify))
                         .notify_off_multiplier()
                 };
                 notify_addr = Some((address, multiplier));
@@ -161,9 +162,7 @@ pub fn probe_device(pcid_handle: &mut PcidServerHandle) -> Result<Device, Error>
 
         // Setup interrupts.
         let all_pci_features = pcid_handle.fetch_all_features()?;
-        let has_msix = all_pci_features
-            .iter()
-            .any(|(feature, _)| feature.is_msix());
+        let has_msix = all_pci_features.iter().any(|feature| feature.is_msix());
 
         // According to the virtio specification, the device REQUIRED to support MSI-X.
         assert!(has_msix, "virtio: device does not support MSI-X");

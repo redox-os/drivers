@@ -15,7 +15,7 @@ impl<'a> CapabilitiesIter<'a> {
     }
 }
 impl<'a> Iterator for CapabilitiesIter<'a> {
-    type Item = (u8, Capability);
+    type Item = Capability;
 
     fn next(&mut self) -> Option<Self::Item> {
         let offset = unsafe {
@@ -37,7 +37,7 @@ impl<'a> Iterator for CapabilitiesIter<'a> {
             Capability::parse(self.func, offset)
         };
 
-        Some((offset, cap))
+        Some(cap)
     }
 }
 
@@ -56,17 +56,20 @@ pub enum CapabilityId {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub enum MsiCapability {
     _32BitAddress {
+        cap_offset: u8,
         message_control: u32,
         message_address: u32,
         message_data: u16,
     },
     _64BitAddress {
+        cap_offset: u8,
         message_control: u32,
         message_address_lo: u32,
         message_address_hi: u32,
         message_data: u16,
     },
     _32BitAddressWithPvm {
+        cap_offset: u8,
         message_control: u32,
         message_address: u32,
         message_data: u32,
@@ -74,6 +77,7 @@ pub enum MsiCapability {
         pending_bits: u32,
     },
     _64BitAddressWithPvm {
+        cap_offset: u8,
         message_control: u32,
         message_address_lo: u32,
         message_address_hi: u32,
@@ -85,6 +89,7 @@ pub enum MsiCapability {
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct MsixCapability {
+    pub cap_offset: u8,
     pub a: u32,
     pub b: u32,
     pub c: u32,
@@ -133,6 +138,7 @@ impl Capability {
     }
     unsafe fn parse_msix(func: &PciFunc, offset: u8) -> Self {
         Self::MsiX(MsixCapability {
+            cap_offset: offset,
             a: func.read_u32(u16::from(offset)),
             b: func.read_u32(u16::from(offset + 4)),
             c: func.read_u32(u16::from(offset + 8)),

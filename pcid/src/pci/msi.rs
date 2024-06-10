@@ -43,6 +43,7 @@ impl MsiCapability {
         if message_control & Self::MC_PVT_CAPABLE_BIT != 0 {
             if message_control & Self::MC_64_BIT_ADDR_BIT != 0 {
                 Self::_64BitAddressWithPvm {
+                    cap_offset: offset,
                     message_control: dword,
                     message_address_lo: func.read_u32(u16::from(offset + 4)),
                     message_address_hi: func.read_u32(u16::from(offset + 8)),
@@ -52,6 +53,7 @@ impl MsiCapability {
                 }
             } else {
                 Self::_32BitAddressWithPvm {
+                    cap_offset: offset,
                     message_control: dword,
                     message_address: func.read_u32(u16::from(offset + 4)),
                     message_data: func.read_u32(u16::from(offset + 8)),
@@ -62,6 +64,7 @@ impl MsiCapability {
         } else {
             if message_control & Self::MC_64_BIT_ADDR_BIT != 0 {
                 Self::_64BitAddress {
+                    cap_offset: offset,
                     message_control: dword,
                     message_address_lo: func.read_u32(u16::from(offset + 4)),
                     message_address_hi: func.read_u32(u16::from(offset + 8)),
@@ -69,11 +72,20 @@ impl MsiCapability {
                 }
             } else {
                 Self::_32BitAddress {
+                    cap_offset: offset,
                     message_control: dword,
                     message_address: func.read_u32(u16::from(offset + 4)),
                     message_data: func.read_u32(u16::from(offset + 8)) as u16,
                 }
             }
+        }
+    }
+    fn cap_offset(&self) -> u16 {
+        match *self {
+            MsiCapability::_32BitAddress { cap_offset, .. }
+            | MsiCapability::_64BitAddress { cap_offset, .. }
+            | MsiCapability::_32BitAddressWithPvm { cap_offset, .. }
+            | MsiCapability::_64BitAddressWithPvm { cap_offset, .. } => u16::from(cap_offset),
         }
     }
 
@@ -97,8 +109,8 @@ impl MsiCapability {
                 | Self::_64BitAddressWithPvm { ref mut message_control, .. } => *message_control = new_message_control,
         }
     }
-    pub unsafe fn write_message_control(&self, func: &PciFunc, offset: u8) {
-        func.write_u32(u16::from(offset), self.message_control_raw());
+    pub unsafe fn write_message_control(&self, func: &PciFunc) {
+        func.write_u32(self.cap_offset(), self.message_control_raw());
     }
     pub fn is_pvt_capable(&self) -> bool {
         self.message_control() & Self::MC_PVT_CAPABLE_BIT != 0
@@ -186,57 +198,66 @@ impl MsiCapability {
         }
         Some(())
     }
-    pub unsafe fn write_message_address(&self, func: &PciFunc, offset: u8) {
-        func.write_u32(u16::from(offset) + 4, self.message_address())
+    pub unsafe fn write_message_address(&self, func: &PciFunc) {
+        func.write_u32(self.cap_offset() + 4, self.message_address())
     }
-    pub unsafe fn write_message_upper_address(&self, func: &PciFunc, offset: u8) -> Option<()> {
+    pub unsafe fn write_message_upper_address(&self, func: &PciFunc) -> Option<()> {
         let value = self.message_upper_address()?;
-        func.write_u32(u16::from(offset + 8), value);
+        func.write_u32(self.cap_offset() + 8, value);
         Some(())
     }
-    pub unsafe fn write_message_data(&self, func: &PciFunc, offset: u8) {
+    pub unsafe fn write_message_data(&self, func: &PciFunc) {
         match self {
-            &Self::_32BitAddress { message_data, .. } => func.write_u32(u16::from(offset + 8), message_data.into()),
-            &Self::_32BitAddressWithPvm { message_data, .. } => func.write_u32(u16::from(offset + 8), message_data),
-            &Self::_64BitAddress { message_data, .. } => func.write_u32(u16::from(offset + 12), message_data.into()),
-            &Self::_64BitAddressWithPvm { message_data, .. } => func.write_u32(u16::from(offset + 12), message_data),
+            &Self::_32BitAddress { cap_offset, message_data, .. } => func.write_u32(u16::from(cap_offset + 8), message_data.into()),
+            &Self::_32BitAddressWithPvm { cap_offset, message_data, .. } => func.write_u32(u16::from(cap_offset + 8), message_data),
+            &Self::_64BitAddress { cap_offset, message_data, .. } => func.write_u32(u16::from(cap_offset + 12), message_data.into()),
+            &Self::_64BitAddressWithPvm { cap_offset, message_data, .. } => func.write_u32(u16::from(cap_offset + 12), message_data),
         }
     }
-    pub unsafe fn write_mask_bits(&self, func: &PciFunc, offset: u8) -> Option<()> {
+    pub unsafe fn write_mask_bits(&self, func: &PciFunc) -> Option<()> {
         match self {
-            &Self::_32BitAddressWithPvm { mask_bits, .. } => func.write_u32(u16::from(offset + 12), mask_bits),
-            &Self::_64BitAddressWithPvm { mask_bits, .. } => func.write_u32(u16::from(offset + 16), mask_bits),
+            &Self::_32BitAddressWithPvm { cap_offset, mask_bits, .. } => func.write_u32(u16::from(cap_offset + 12), mask_bits),
+            &Self::_64BitAddressWithPvm { cap_offset, mask_bits, .. } => func.write_u32(u16::from(cap_offset + 16), mask_bits),
             &Self::_32BitAddress { .. } | &Self::_64BitAddress { .. } => return None,
         }
         Some(())
     }
-    pub unsafe fn write_all(&self, func: &PciFunc, offset: u8) {
-        self.write_message_control(func, offset);
-        self.write_message_address(func, offset);
-        self.write_message_upper_address(func, offset);
-        self.write_message_data(func, offset);
-        self.write_mask_bits(func, offset);
+    pub unsafe fn write_all(&self, func: &PciFunc) {
+        self.write_message_control(func);
+        self.write_message_address(func);
+        self.write_message_upper_address(func);
+        self.write_message_data(func);
+        self.write_mask_bits(func);
     }
 }
 
-impl MsixCapability {
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MsixInfo {
+    pub table_bar: u8,
+    pub table_offset: u32,
+    pub table_size: u16,
+    pub pba_bar: u8,
+    pub pba_offset: u32,
+}
+
+impl MsixInfo {
     pub fn validate(&self, bars: [PciBar; 6]) {
-        if self.table_bir() > 5 {
-            panic!("MSI-X Table BIR contained a reserved enum value: {}", self.table_bir());
+        if self.table_bar > 5 {
+            panic!("MSI-X Table BIR contained a reserved enum value: {}", self.table_bar);
         }
-        if self.pba_bir() > 5 {
-            panic!("MSI-X PBA BIR contained a reserved enum value: {}", self.pba_bir());
+        if self.pba_bar > 5 {
+            panic!("MSI-X PBA BIR contained a reserved enum value: {}", self.pba_bar);
         }
 
-        let table_size = self.table_size();
-        let table_offset = self.table_offset() as usize;
+        let table_size = self.table_size;
+        let table_offset = self.table_offset as usize;
         let table_min_length = table_size * 16;
 
-        let pba_offset = self.pba_offset() as usize;
+        let pba_offset = self.pba_offset as usize;
         let pba_min_length = table_size.div_ceil(8);
 
-        let (_, table_bar_size) = bars[self.table_bir() as usize].expect_mem();
-        let (_, pba_bar_size) = bars[self.pba_bir() as usize].expect_mem();
+        let (_, table_bar_size) = bars[self.table_bar as usize].expect_mem();
+        let (_, pba_bar_size) = bars[self.pba_bar as usize].expect_mem();
 
         // Ensure that the table and PBA are within the BAR.
 
@@ -258,7 +279,9 @@ impl MsixCapability {
             );
         }
     }
+}
 
+impl MsixCapability {
     const MC_MSIX_ENABLED_BIT: u16 = 1 << 15;
     const MC_MSIX_ENABLED_SHIFT: u8 = 15;
     const MC_FUNCTION_MASK_BIT: u16 = 1 << 14;
@@ -267,11 +290,11 @@ impl MsixCapability {
 
     /// The Message Control field, containing the enabled and function mask bits, as well as the
     /// table size.
-    pub const fn message_control(&self) -> u16 {
+    const fn message_control(&self) -> u16 {
         (self.a >> 16) as u16
     }
 
-    pub fn set_message_control(&mut self, message_control: u16) {
+    pub(crate) fn set_message_control(&mut self, message_control: u16) {
         self.a &= 0x0000_FFFF;
         self.a |= u32::from(message_control) << 16;
     }
@@ -279,24 +302,14 @@ impl MsixCapability {
     pub const fn table_size(&self) -> u16 {
         (self.message_control() & Self::MC_TABLE_SIZE_MASK) + 1
     }
-    /// Returns the MSI-X enabled bit, which enables MSI-X if the MSI enable bit is also set in the
-    /// MSI capability structure.
-    pub const fn msix_enabled(&self) -> bool {
-        self.message_control() & Self::MC_MSIX_ENABLED_BIT != 0
-    }
-    /// The MSI-X function mask, which overrides each of the vectors' mask bit, when set.
-    pub const fn function_mask(&self) -> bool {
-        self.message_control() & Self::MC_FUNCTION_MASK_BIT != 0
-    }
-
-    pub fn set_msix_enabled(&mut self, enabled: bool) {
+    pub(crate) fn set_msix_enabled(&mut self, enabled: bool) {
         let mut new_message_control = self.message_control();
         new_message_control &= !(Self::MC_MSIX_ENABLED_BIT);
         new_message_control |= u16::from(enabled) << Self::MC_MSIX_ENABLED_SHIFT;
         self.set_message_control(new_message_control);
     }
 
-    pub fn set_function_mask(&mut self, function_mask: bool) {
+    pub(crate) fn set_function_mask(&mut self, function_mask: bool) {
         let mut new_message_control = self.message_control();
         new_message_control &= !(Self::MC_FUNCTION_MASK_BIT);
         new_message_control |= u16::from(function_mask) << Self::MC_FUNCTION_MASK_SHIFT;
@@ -329,8 +342,8 @@ impl MsixCapability {
 
     /// Write the first DWORD into configuration space (containing the partially modifiable Message
     /// Control field).
-    pub unsafe fn write_a(&self, func: &PciFunc, offset: u8) {
-        func.write_u32(u16::from(offset), self.a)
+    pub unsafe fn write_a(&self, func: &PciFunc) {
+        func.write_u32(u16::from(self.cap_offset), self.a)
     }
 }
 

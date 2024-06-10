@@ -4,7 +4,7 @@ use pcid_interface::irq_helpers::{allocate_single_interrupt_vector_for_msi, read
 use pcid_interface::msi::MsixTableEntry;
 use std::{fs::File, ptr::NonNull};
 
-use crate::{probe::MsixInfo, MSIX_PRIMARY_VECTOR};
+use crate::{probe::MappedMsixRegs, MSIX_PRIMARY_VECTOR};
 
 use pcid_interface::*;
 
@@ -12,19 +12,19 @@ pub fn enable_msix(pcid_handle: &mut PcidServerHandle) -> Result<File, Error> {
     let pci_config = pcid_handle.fetch_config()?;
 
     // Extended message signaled interrupts.
-    let capability = match pcid_handle.feature_info(PciFeature::MsiX)? {
+    let msix_info = match pcid_handle.feature_info(PciFeature::MsiX)? {
         PciFeatureInfo::MsiX(capability) => capability,
         _ => unreachable!(),
     };
-    capability.validate(pci_config.func.bars);
+    msix_info.validate(pci_config.func.bars);
 
-    let bar = &pci_config.func.bars[capability.table_bir() as usize];
+    let bar = &pci_config.func.bars[msix_info.table_bar as usize];
     let bar_address = unsafe { bar.physmap_mem("virtio-core") } as usize;
-    let virt_table_base = (bar_address + capability.table_offset() as usize) as *mut MsixTableEntry;
+    let virt_table_base = (bar_address + msix_info.table_offset as usize) as *mut MsixTableEntry;
 
-    let mut info = MsixInfo {
+    let mut info = MappedMsixRegs {
         virt_table_base: NonNull::new(virt_table_base).unwrap(),
-        capability,
+        info: msix_info,
     };
 
     // Allocate the primary MSI vector.
@@ -61,9 +61,7 @@ pub fn probe_legacy_port_transport(
 
     // Setup interrupts.
     let all_pci_features = pcid_handle.fetch_all_features()?;
-    let has_msix = all_pci_features
-        .iter()
-        .any(|(feature, _)| feature.is_msix());
+    let has_msix = all_pci_features.iter().any(|feature| feature.is_msix());
 
     // According to the virtio specification, the device REQUIRED to support MSI-X.
     assert!(has_msix, "virtio: device does not support MSI-X");
