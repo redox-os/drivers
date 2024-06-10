@@ -23,7 +23,6 @@ pub struct PciEndpointHeader {
     shared: SharedPciHeader,
     subsystem_vendor_id: u16,
     subsystem_id: u16,
-    cap_pointer: u16,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -67,15 +66,10 @@ impl PciHeader {
             HeaderType::Endpoint => {
                 let endpoint_header = EndpointHeader::from_header(header, access).unwrap();
                 let (subsystem_id, subsystem_vendor_id) = endpoint_header.subsystem(access);
-                let cap_pointer = endpoint_header
-                    .capability_pointer(access)
-                    .try_into()
-                    .unwrap();
                 Ok(PciHeader::General(PciEndpointHeader {
                     shared,
                     subsystem_vendor_id,
                     subsystem_id,
-                    cap_pointer,
                 }))
             }
             HeaderType::PciPciBridge => {
@@ -238,10 +232,6 @@ impl PciEndpointHeader {
             }
         }
         bars
-    }
-
-    pub fn cap_pointer(&self) -> u16 {
-        self.cap_pointer
     }
 }
 

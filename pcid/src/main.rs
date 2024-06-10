@@ -4,7 +4,6 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use log::{debug, info, trace, warn};
-use pci_types::capability::PciCapabilityAddress;
 use pci_types::{CommandRegister, PciAddress};
 use redox_log::{OutputBuilder, RedoxLogger};
 use structopt::StructOpt;
@@ -98,14 +97,9 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, header: PciEndpointH
         };
 
         let capabilities = if endpoint_header.status(&state.pcie).has_capability_list() {
-            crate::pci::cap::CapabilitiesIter::new(
-                PciCapabilityAddress {
-                    address: header.address(),
-                    offset: header.cap_pointer(),
-                },
-                &state.pcie,
-            )
-            .collect::<Vec<_>>()
+            endpoint_header
+                .capabilities(&state.pcie)
+                .collect::<Vec<_>>()
         } else {
             Vec::new()
         };

@@ -5,10 +5,10 @@ use std::sync::Arc;
 use std::thread;
 
 use log::{error, info};
+use pci_types::capability::{MultipleMessageSupport, PciCapability};
 use pci_types::{ConfigRegionAccess, PciAddress};
 
 use crate::driver_interface;
-use crate::pci::cap::Capability as PciCapability;
 use crate::State;
 
 pub struct DriverHandler {
@@ -97,7 +97,6 @@ impl DriverHandler {
         request: driver_interface::PcidClientRequest,
         args: &driver_interface::SubdriverArguments,
     ) -> driver_interface::PcidClientResponse {
-        use crate::pci::cap::{MsiCapability, MsixCapability};
         use driver_interface::*;
 
         match request {
@@ -105,7 +104,9 @@ impl DriverHandler {
                 self.capabilities
                     .iter()
                     .filter_map(|capability| match capability {
-                        PciCapability::Vendor(capability) => Some(capability.clone()),
+                        PciCapability::Vendor(addr) => unsafe {
+                            Some(VendorSpecificCapability::parse(*addr, &self.state.pcie))
+                        },
                         _ => None,
                     })
                     .collect::<Vec<_>>(),
@@ -121,85 +122,87 @@ impl DriverHandler {
                     })
                     .collect(),
             ),
-            PcidClientRequest::EnableFeature(feature) => match feature {
-                PciFeature::Msi => {
-                    if let Some(msix_capability) = self
-                        .capabilities
-                        .iter_mut()
-                        .find_map(|capability| capability.as_msix_mut())
-                    {
-                        // If MSI-X is supported disable it before enabling MSI as they can't be
-                        // active at the same time.
-                        unsafe {
-                            msix_capability.set_msix_enabled(false);
-                            msix_capability.write_a(self.addr, &self.state.pcie);
+            PcidClientRequest::EnableFeature(feature) => {
+                match feature {
+                    PciFeature::Msi => {
+                        if let Some(msix_capability) =
+                            self.capabilities
+                                .iter_mut()
+                                .find_map(|capability| match capability {
+                                    PciCapability::MsiX(cap) => Some(cap),
+                                    _ => None,
+                                })
+                        {
+                            // If MSI-X is supported disable it before enabling MSI as they can't be
+                            // active at the same time.
+                            msix_capability.set_enabled(false, &self.state.pcie);
                         }
-                    }
 
-                    let capability: &mut MsiCapability = match self
-                        .capabilities
-                        .iter_mut()
-                        .find_map(|capability| capability.as_msi_mut())
-                    {
-                        Some(capability) => capability,
-                        None => {
-                            return PcidClientResponse::Error(
-                                PcidServerResponseError::NonexistentFeature(feature),
-                            )
-                        }
-                    };
-                    unsafe {
-                        capability.set_enabled(true);
-                        capability.write_message_control(self.addr, &self.state.pcie);
+                        let capability = match self.capabilities.iter_mut().find_map(|capability| {
+                            match capability {
+                                PciCapability::Msi(cap) => Some(cap),
+                                _ => None,
+                            }
+                        }) {
+                            Some(capability) => capability,
+                            None => {
+                                return PcidClientResponse::Error(
+                                    PcidServerResponseError::NonexistentFeature(feature),
+                                )
+                            }
+                        };
+                        capability.set_enabled(true, &self.state.pcie);
+                        PcidClientResponse::FeatureEnabled(feature)
                     }
-                    PcidClientResponse::FeatureEnabled(feature)
-                }
-                PciFeature::MsiX => {
-                    if let Some(msi_capability) = self
-                        .capabilities
-                        .iter_mut()
-                        .find_map(|capability| capability.as_msi_mut())
-                    {
-                        // If MSI is supported disable it before enabling MSI-X as they can't be
-                        // active at the same time.
-                        unsafe {
-                            msi_capability.set_enabled(false);
-                            msi_capability.write_message_control(self.addr, &self.state.pcie);
+                    PciFeature::MsiX => {
+                        if let Some(msi_capability) =
+                            self.capabilities
+                                .iter_mut()
+                                .find_map(|capability| match capability {
+                                    PciCapability::Msi(cap) => Some(cap),
+                                    _ => None,
+                                })
+                        {
+                            // If MSI is supported disable it before enabling MSI-X as they can't be
+                            // active at the same time.
+                            msi_capability.set_enabled(false, &self.state.pcie);
                         }
-                    }
 
-                    let capability: &mut MsixCapability = match self
-                        .capabilities
-                        .iter_mut()
-                        .find_map(|capability| capability.as_msix_mut())
-                    {
-                        Some(capability) => capability,
-                        None => {
-                            return PcidClientResponse::Error(
-                                PcidServerResponseError::NonexistentFeature(feature),
-                            )
-                        }
-                    };
-                    unsafe {
-                        capability.set_msix_enabled(true);
-                        capability.write_a(self.addr, &self.state.pcie);
+                        let capability = match self.capabilities.iter_mut().find_map(|capability| {
+                            match capability {
+                                PciCapability::MsiX(cap) => Some(cap),
+                                _ => None,
+                            }
+                        }) {
+                            Some(capability) => capability,
+                            None => {
+                                return PcidClientResponse::Error(
+                                    PcidServerResponseError::NonexistentFeature(feature),
+                                )
+                            }
+                        };
+                        capability.set_enabled(true, &self.state.pcie);
+                        PcidClientResponse::FeatureEnabled(feature)
                     }
-                    PcidClientResponse::FeatureEnabled(feature)
                 }
-            },
+            }
             PcidClientRequest::FeatureInfo(feature) => PcidClientResponse::FeatureInfo(
                 feature,
                 match feature {
                     PciFeature::Msi => {
-                        if let Some(info) = self
-                            .capabilities
-                            .iter()
-                            .find_map(|capability| capability.as_msi())
+                        if let Some(info) =
+                            self.capabilities
+                                .iter()
+                                .find_map(|capability| match capability {
+                                    PciCapability::Msi(cap) => Some(cap),
+                                    _ => None,
+                                })
                         {
                             PciFeatureInfo::Msi(msi::MsiInfo {
-                                log2_multiple_message_capable: info.multi_message_capable(),
-                                is_64bit: info.has_64_bit_addr(),
-                                has_per_vector_masking: info.is_pvt_capable(),
+                                log2_multiple_message_capable: info.multiple_message_capable()
+                                    as u8,
+                                is_64bit: info.is_64bit(),
+                                has_per_vector_masking: info.has_per_vector_masking(),
                             })
                         } else {
                             return PcidClientResponse::Error(
@@ -208,16 +211,19 @@ impl DriverHandler {
                         }
                     }
                     PciFeature::MsiX => {
-                        if let Some(info) = self
-                            .capabilities
-                            .iter()
-                            .find_map(|capability| capability.as_msix())
+                        if let Some(info) =
+                            self.capabilities
+                                .iter()
+                                .find_map(|capability| match capability {
+                                    PciCapability::MsiX(cap) => Some(cap),
+                                    _ => None,
+                                })
                         {
                             PciFeatureInfo::MsiX(msi::MsixInfo {
-                                table_bar: info.table_bir(),
+                                table_bar: info.table_bar(),
                                 table_offset: info.table_offset(),
                                 table_size: info.table_size(),
-                                pba_bar: info.pba_bir(),
+                                pba_bar: info.pba_bar(),
                                 pba_offset: info.pba_offset(),
                             })
                         } else {
@@ -230,18 +236,36 @@ impl DriverHandler {
             ),
             PcidClientRequest::SetFeatureInfo(info_to_set) => match info_to_set {
                 SetFeatureInfo::Msi(info_to_set) => {
-                    if let Some(info) = self
-                        .capabilities
-                        .iter_mut()
-                        .find_map(|capability| capability.as_msi_mut())
+                    if let Some(info) =
+                        self.capabilities
+                            .iter_mut()
+                            .find_map(|capability| match capability {
+                                PciCapability::Msi(cap) => Some(cap),
+                                _ => None,
+                            })
                     {
                         if let Some(mme) = info_to_set.multi_message_enable {
-                            if info.multi_message_capable() < mme || mme > 0b101 {
+                            if (info.multiple_message_capable() as u8) < mme {
                                 return PcidClientResponse::Error(
                                     PcidServerResponseError::InvalidBitPattern,
                                 );
                             }
-                            info.set_multi_message_enable(mme);
+                            info.set_multiple_message_enable(
+                                match mme {
+                                    0 => MultipleMessageSupport::Int1,
+                                    1 => MultipleMessageSupport::Int2,
+                                    2 => MultipleMessageSupport::Int4,
+                                    3 => MultipleMessageSupport::Int8,
+                                    4 => MultipleMessageSupport::Int16,
+                                    5 => MultipleMessageSupport::Int32,
+                                    _ => {
+                                        return PcidClientResponse::Error(
+                                            PcidServerResponseError::InvalidBitPattern,
+                                        )
+                                    }
+                                },
+                                &self.state.pcie,
+                            );
                         }
                         if let Some(message_addr_and_data) = info_to_set.message_address_and_data {
                             let message_addr = message_addr_and_data.addr;
@@ -250,27 +274,25 @@ impl DriverHandler {
                                     PcidServerResponseError::InvalidBitPattern,
                                 );
                             }
-                            info.set_message_address(message_addr as u32);
-                            info.set_message_upper_address((message_addr >> 32) as u32);
-                            if message_addr_and_data.data & ((1 << info.multi_message_enable()) - 1)
+                            if message_addr_and_data.data
+                                & ((1 << info.multiple_message_enable(&self.state.pcie) as u8) - 1)
                                 != 0
                             {
                                 return PcidClientResponse::Error(
                                     PcidServerResponseError::InvalidBitPattern,
                                 );
                             }
-                            info.set_message_data(
+                            info.set_message_info(
+                                message_addr,
                                 message_addr_and_data
                                     .data
                                     .try_into()
                                     .expect("pcid: MSI message data too big"),
+                                &self.state.pcie,
                             );
                         }
                         if let Some(mask_bits) = info_to_set.mask_bits {
-                            info.set_mask_bits(mask_bits);
-                        }
-                        unsafe {
-                            info.write_all(self.addr, &self.state.pcie);
+                            info.set_message_mask(mask_bits, &self.state.pcie);
                         }
                         PcidClientResponse::SetFeatureInfo(PciFeature::Msi)
                     } else {
@@ -280,16 +302,16 @@ impl DriverHandler {
                     }
                 }
                 SetFeatureInfo::MsiX { function_mask } => {
-                    if let Some(info) = self
-                        .capabilities
-                        .iter_mut()
-                        .find_map(|capability| capability.as_msix_mut())
+                    if let Some(info) =
+                        self.capabilities
+                            .iter_mut()
+                            .find_map(|capability| match capability {
+                                PciCapability::MsiX(cap) => Some(cap),
+                                _ => None,
+                            })
                     {
                         if let Some(mask) = function_mask {
-                            info.set_function_mask(mask);
-                            unsafe {
-                                info.write_a(self.addr, &self.state.pcie);
-                            }
+                            info.set_function_mask(mask, &self.state.pcie);
                         }
                         PcidClientResponse::SetFeatureInfo(PciFeature::MsiX)
                     } else {
