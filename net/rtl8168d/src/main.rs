@@ -12,7 +12,7 @@ use pcid_interface::{MsiSetFeatureInfo, PcidServerHandle, PciFeature, PciFeature
 #[cfg(target_arch = "x86_64")]
 use pcid_interface::irq_helpers::allocate_single_interrupt_vector_for_msi;
 use pcid_interface::irq_helpers::read_bsp_apic_id;
-use pcid_interface::msi::{MsixCapability, MsixTableEntry};
+use pcid_interface::msi::{MsixInfo, MsixTableEntry};
 use redox_log::{RedoxLogger, OutputBuilder};
 use syscall::EventFlags;
 
@@ -74,17 +74,17 @@ where
     }
 }
 
-pub struct MsixInfo {
+pub struct MappedMsixRegs {
     pub virt_table_base: NonNull<MsixTableEntry>,
-    pub capability: MsixCapability,
+    pub info: MsixInfo,
 }
 
-impl MsixInfo {
+impl MappedMsixRegs {
     pub unsafe fn table_entry_pointer_unchecked(&mut self, k: usize) -> &mut MsixTableEntry {
         &mut *self.virt_table_base.as_ptr().offset(k as isize)
     }
     pub fn table_entry_pointer(&mut self, k: usize) -> &mut MsixTableEntry {
-        assert!(k < self.capability.table_size() as usize);
+        assert!(k < self.info.table_size as usize);
         unsafe { self.table_entry_pointer_unchecked(k) }
     }
 }
@@ -124,20 +124,20 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle) -> File {
 
         interrupt_handle
     } else if has_msix {
-        let capability = match pcid_handle.feature_info(PciFeature::MsiX).expect("rtl8168d: failed to retrieve the MSI-X capability structure from pcid") {
+        let msix_info = match pcid_handle.feature_info(PciFeature::MsiX).expect("rtl8168d: failed to retrieve the MSI-X capability structure from pcid") {
             PciFeatureInfo::Msi(_) => panic!(),
             PciFeatureInfo::MsiX(s) => s,
         };
-        capability.validate(pci_config.func.bars);
+        msix_info.validate(pci_config.func.bars);
 
-        let bar = &pci_config.func.bars[capability.table_bir() as usize];
+        let bar = &pci_config.func.bars[msix_info.table_bar as usize];
         let bar_address = unsafe { bar.physmap_mem("rtl8168d") } as usize;
 
-        let virt_table_base = (bar_address + capability.table_offset() as usize) as *mut MsixTableEntry;
+        let virt_table_base = (bar_address + msix_info.table_offset as usize) as *mut MsixTableEntry;
 
-        let mut info = MsixInfo {
+        let mut info = MappedMsixRegs {
             virt_table_base: NonNull::new(virt_table_base).unwrap(),
-            capability,
+            info: msix_info,
         };
 
         // Allocate one msi vector.

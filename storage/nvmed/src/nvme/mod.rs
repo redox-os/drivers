@@ -22,7 +22,7 @@ pub mod queues;
 use self::cq_reactor::NotifReq;
 pub use self::queues::{NvmeCmd, NvmeCmdQueue, NvmeComp, NvmeCompQueue};
 
-use pcid_interface::msi::{MsiCapability, MsixCapability, MsixTableEntry};
+use pcid_interface::msi::{MsiCapability, MsixInfo, MsixTableEntry};
 use pcid_interface::PcidServerHandle;
 
 #[cfg(target_arch = "aarch64")]
@@ -93,7 +93,7 @@ pub enum InterruptMethod {
     /// Message signaled interrupts
     Msi(MsiCapability),
     /// Extended message signaled interrupts
-    MsiX(MsixCfg),
+    MsiX(MappedMsixRegs),
 }
 impl InterruptMethod {
     fn is_intx(&self) -> bool {
@@ -119,8 +119,8 @@ impl InterruptMethod {
     }
 }
 
-pub struct MsixCfg {
-    pub cap: MsixCapability,
+pub struct MappedMsixRegs {
+    pub info: MsixInfo,
     pub table: &'static mut [MsixTableEntry],
 }
 

@@ -231,24 +231,33 @@ impl MsiCapability {
     }
 }
 
-impl MsixCapability {
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MsixInfo {
+    pub table_bar: u8,
+    pub table_offset: u32,
+    pub table_size: u16,
+    pub pba_bar: u8,
+    pub pba_offset: u32,
+}
+
+impl MsixInfo {
     pub fn validate(&self, bars: [PciBar; 6]) {
-        if self.table_bir() > 5 {
-            panic!("MSI-X Table BIR contained a reserved enum value: {}", self.table_bir());
+        if self.table_bar > 5 {
+            panic!("MSI-X Table BIR contained a reserved enum value: {}", self.table_bar);
         }
-        if self.pba_bir() > 5 {
-            panic!("MSI-X PBA BIR contained a reserved enum value: {}", self.pba_bir());
+        if self.pba_bar > 5 {
+            panic!("MSI-X PBA BIR contained a reserved enum value: {}", self.pba_bar);
         }
 
-        let table_size = self.table_size();
-        let table_offset = self.table_offset() as usize;
+        let table_size = self.table_size;
+        let table_offset = self.table_offset as usize;
         let table_min_length = table_size * 16;
 
-        let pba_offset = self.pba_offset() as usize;
+        let pba_offset = self.pba_offset as usize;
         let pba_min_length = table_size.div_ceil(8);
 
-        let (_, table_bar_size) = bars[self.table_bir() as usize].expect_mem();
-        let (_, pba_bar_size) = bars[self.pba_bir() as usize].expect_mem();
+        let (_, table_bar_size) = bars[self.table_bar as usize].expect_mem();
+        let (_, pba_bar_size) = bars[self.pba_bar as usize].expect_mem();
 
         // Ensure that the table and PBA are within the BAR.
 
@@ -270,7 +279,9 @@ impl MsixCapability {
             );
         }
     }
+}
 
+impl MsixCapability {
     const MC_MSIX_ENABLED_BIT: u16 = 1 << 15;
     const MC_MSIX_ENABLED_SHIFT: u8 = 15;
     const MC_FUNCTION_MASK_BIT: u16 = 1 << 14;

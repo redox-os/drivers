@@ -21,7 +21,7 @@ use serde::Deserialize;
 
 use crate::usb;
 
-use pcid_interface::msi::{MsixTableEntry, MsixCapability};
+use pcid_interface::msi::{MsixInfo, MsixTableEntry};
 use pcid_interface::{PcidServerHandle, PciFeature};
 
 mod capability;
@@ -64,19 +64,19 @@ pub enum InterruptMethod {
     Msi,
 
     /// Extended message signaled interrupts.
-    MsiX(Mutex<MsixInfo>),
+    MsiX(Mutex<MappedMsixRegs>),
 }
 
-pub struct MsixInfo {
+pub struct MappedMsixRegs {
     pub virt_table_base: NonNull<MsixTableEntry>,
-    pub capability: MsixCapability,
+    pub info: MsixInfo,
 }
-impl MsixInfo {
+impl MappedMsixRegs {
     pub unsafe fn table_entry_pointer_unchecked(&mut self, k: usize) -> &mut MsixTableEntry {
         &mut *self.virt_table_base.as_ptr().offset(k as isize)
     }
     pub fn table_entry_pointer(&mut self, k: usize) -> &mut MsixTableEntry {
-        assert!(k < self.capability.table_size() as usize);
+        assert!(k < self.info.table_size as usize);
         unsafe { self.table_entry_pointer_unchecked(k) }
     }
 }
@@ -774,13 +774,13 @@ impl Xhci {
         if let InterruptMethod::MsiX(_) = self.interrupt_method { true } else { false }
     }
     // TODO: Perhaps use an rwlock?
-    pub fn msix_info(&self) -> Option<MutexGuard<'_, MsixInfo>> {
+    pub fn msix_info(&self) -> Option<MutexGuard<'_, MappedMsixRegs>> {
         match self.interrupt_method {
             InterruptMethod::MsiX(ref info) => Some(info.lock().unwrap()),
             _ => None,
         }
     }
-    pub fn msix_info_mut(&self) -> Option<MutexGuard<'_, MsixInfo>> {
+    pub fn msix_info_mut(&self) -> Option<MutexGuard<'_, MappedMsixRegs>> {
         match self.interrupt_method {
             InterruptMethod::MsiX(ref info) => Some(info.lock().unwrap()),
             _ => None,

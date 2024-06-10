@@ -119,18 +119,18 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle, bar0_address: usize) -> (O
 
         (Some(interrupt_handle), InterruptMethod::Msi)
     } else if has_msix {
-        let capability = match pcid_handle.feature_info(PciFeature::MsiX).expect("xhcid: failed to retrieve the MSI-X capability structure from pcid") {
+        let msix_info = match pcid_handle.feature_info(PciFeature::MsiX).expect("xhcid: failed to retrieve the MSI-X capability structure from pcid") {
             PciFeatureInfo::Msi(_) => panic!(),
             PciFeatureInfo::MsiX(s) => s,
         };
-        capability.validate(pci_config.func.bars);
+        msix_info.validate(pci_config.func.bars);
 
-        assert_eq!(capability.table_bir(), 0);
-        let virt_table_base = (bar0_address + capability.table_offset() as usize) as *mut MsixTableEntry;
+        assert_eq!(msix_info.table_bar, 0);
+        let virt_table_base = (bar0_address + msix_info.table_offset as usize) as *mut MsixTableEntry;
 
-        let mut info = xhci::MsixInfo {
+        let mut info = xhci::MappedMsixRegs {
             virt_table_base: NonNull::new(virt_table_base).unwrap(),
-            capability,
+            info: msix_info,
         };
 
         // Allocate one msi vector.

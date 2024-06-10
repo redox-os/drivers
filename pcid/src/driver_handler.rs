@@ -212,7 +212,13 @@ impl DriverHandler {
                             .iter()
                             .find_map(|capability| capability.as_msix())
                         {
-                            PciFeatureInfo::MsiX(*info)
+                            PciFeatureInfo::MsiX(msi::MsixInfo {
+                                table_bar: info.table_bir(),
+                                table_offset: info.table_offset(),
+                                table_size: info.table_size(),
+                                pba_bar: info.pba_bir(),
+                                pba_offset: info.pba_offset(),
+                            })
                         } else {
                             return PcidClientResponse::Error(
                                 PcidServerResponseError::NonexistentFeature(feature),
