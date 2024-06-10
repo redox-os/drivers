@@ -279,11 +279,11 @@ impl MsixCapability {
 
     /// The Message Control field, containing the enabled and function mask bits, as well as the
     /// table size.
-    pub const fn message_control(&self) -> u16 {
+    const fn message_control(&self) -> u16 {
         (self.a >> 16) as u16
     }
 
-    pub fn set_message_control(&mut self, message_control: u16) {
+    pub(crate) fn set_message_control(&mut self, message_control: u16) {
         self.a &= 0x0000_FFFF;
         self.a |= u32::from(message_control) << 16;
     }
@@ -291,24 +291,14 @@ impl MsixCapability {
     pub const fn table_size(&self) -> u16 {
         (self.message_control() & Self::MC_TABLE_SIZE_MASK) + 1
     }
-    /// Returns the MSI-X enabled bit, which enables MSI-X if the MSI enable bit is also set in the
-    /// MSI capability structure.
-    pub const fn msix_enabled(&self) -> bool {
-        self.message_control() & Self::MC_MSIX_ENABLED_BIT != 0
-    }
-    /// The MSI-X function mask, which overrides each of the vectors' mask bit, when set.
-    pub const fn function_mask(&self) -> bool {
-        self.message_control() & Self::MC_FUNCTION_MASK_BIT != 0
-    }
-
-    pub fn set_msix_enabled(&mut self, enabled: bool) {
+    pub(crate) fn set_msix_enabled(&mut self, enabled: bool) {
         let mut new_message_control = self.message_control();
         new_message_control &= !(Self::MC_MSIX_ENABLED_BIT);
         new_message_control |= u16::from(enabled) << Self::MC_MSIX_ENABLED_SHIFT;
         self.set_message_control(new_message_control);
     }
 
-    pub fn set_function_mask(&mut self, function_mask: bool) {
+    pub(crate) fn set_function_mask(&mut self, function_mask: bool) {
         let mut new_message_control = self.message_control();
         new_message_control &= !(Self::MC_FUNCTION_MASK_BIT);
         new_message_control |= u16::from(function_mask) << Self::MC_FUNCTION_MASK_SHIFT;

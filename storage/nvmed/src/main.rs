@@ -125,7 +125,6 @@ fn get_int_method(
         }
 
         pcid_handle.enable_feature(PciFeature::MsiX).unwrap();
-        capability_struct.set_msix_enabled(true); // only affects our local mirror of the cap
 
         let (msix_vector_number, irq_handle) = {
             let entry: &mut MsixTableEntry = &mut table_entries[0];
