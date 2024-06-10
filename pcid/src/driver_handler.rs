@@ -126,6 +126,19 @@ impl DriverHandler {
             ),
             PcidClientRequest::EnableFeature(feature) => match feature {
                 PciFeature::Msi => {
+                    if let Some(msix_capability) = self
+                        .capabilities
+                        .iter_mut()
+                        .find_map(|capability| capability.as_msix_mut())
+                    {
+                        // If MSI-X is supported disable it before enabling MSI as they can't be
+                        // active at the same time.
+                        unsafe {
+                            msix_capability.set_msix_enabled(false);
+                            msix_capability.write_a(&func);
+                        }
+                    }
+
                     let capability: &mut MsiCapability = match self
                         .capabilities
                         .iter_mut()
@@ -145,6 +158,19 @@ impl DriverHandler {
                     PcidClientResponse::FeatureEnabled(feature)
                 }
                 PciFeature::MsiX => {
+                    if let Some(msi_capability) = self
+                        .capabilities
+                        .iter_mut()
+                        .find_map(|capability| capability.as_msi_mut())
+                    {
+                        // If MSI is supported disable it before enabling MSI-X as they can't be
+                        // active at the same time.
+                        unsafe {
+                            msi_capability.set_enabled(false);
+                            msi_capability.write_message_control(&func);
+                        }
+                    }
+
                     let capability: &mut MsixCapability = match self
                         .capabilities
                         .iter_mut()
