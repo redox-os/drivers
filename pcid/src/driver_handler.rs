@@ -101,10 +101,13 @@ impl DriverHandler {
         use driver_interface::*;
 
         match request {
-            PcidClientRequest::RequestCapabilities => PcidClientResponse::Capabilities(
+            PcidClientRequest::RequestVendorCapabilities => PcidClientResponse::VendorCapabilities(
                 self.capabilities
                     .iter()
-                    .map(|capability| capability.clone())
+                    .filter_map(|capability| match capability {
+                        PciCapability::Vendor(capability) => Some(capability.clone()),
+                        _ => None,
+                    })
                     .collect::<Vec<_>>(),
             ),
             PcidClientRequest::RequestConfig => PcidClientResponse::Config(args.clone()),

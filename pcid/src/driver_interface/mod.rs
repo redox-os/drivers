@@ -8,7 +8,7 @@ use std::os::unix::io::{FromRawFd, RawFd};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use thiserror::Error;
 
-pub use crate::pci::cap::Capability;
+pub use crate::pci::cap::VendorSpecificCapability;
 pub use crate::pci::msi;
 pub use crate::pci::{FullDeviceId, PciAddress, PciBar};
 
@@ -192,7 +192,7 @@ pub enum SetFeatureInfo {
 pub enum PcidClientRequest {
     RequestConfig,
     RequestFeatures,
-    RequestCapabilities,
+    RequestVendorCapabilities,
     EnableFeature(PciFeature),
     FeatureInfo(PciFeature),
     SetFeatureInfo(SetFeatureInfo),
@@ -210,9 +210,9 @@ pub enum PcidServerResponseError {
 #[derive(Debug, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum PcidClientResponse {
-    Capabilities(Vec<Capability>),
     Config(SubdriverArguments),
     AllFeatures(Vec<PciFeature>),
+    VendorCapabilities(Vec<VendorSpecificCapability>),
     FeatureEnabled(PciFeature),
     FeatureStatus(PciFeature, FeatureStatus),
     Error(PcidServerResponseError),
@@ -247,7 +247,7 @@ pub(crate) fn recv<R: Read, T: DeserializeOwned>(r: &mut R) -> Result<T> {
     if length > 0x100_000 {
         panic!("pcid_interface: buffer too large");
     }
-    let mut data = vec! [0u8; length as usize];
+    let mut data = vec![0u8; length as usize];
     r.read_exact(&mut data)?;
 
     Ok(bincode::deserialize_from(&data[..])?)
@@ -277,11 +277,11 @@ impl PcidServerHandle {
         }
     }
 
-    pub fn get_capabilities(&mut self) -> Result<Vec<Capability>> {
-        self.send(&PcidClientRequest::RequestCapabilities)?;
+    pub fn get_vendor_capabilities(&mut self) -> Result<Vec<VendorSpecificCapability>> {
+        self.send(&PcidClientRequest::RequestVendorCapabilities)?;
 
         match self.recv()? {
-            PcidClientResponse::Capabilities(a) => Ok(a),
+            PcidClientResponse::VendorCapabilities(a) => Ok(a),
             other => Err(PcidClientHandleError::InvalidResponse(other)),
         }
     }
