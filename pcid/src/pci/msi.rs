@@ -23,19 +23,26 @@ impl MsiAddrAndData {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MsiInfo {
+    pub log2_multiple_message_capable: u8,
+    pub is_64bit: bool,
+    pub has_per_vector_masking: bool,
+}
+
 impl MsiCapability {
-    pub const MC_PVT_CAPABLE_BIT: u16 = 1 << 8;
-    pub const MC_64_BIT_ADDR_BIT: u16 = 1 << 7;
+    const MC_PVT_CAPABLE_BIT: u16 = 1 << 8;
+    const MC_64_BIT_ADDR_BIT: u16 = 1 << 7;
 
-    pub const MC_MULTI_MESSAGE_MASK: u16 = 0x000E;
-    pub const MC_MULTI_MESSAGE_SHIFT: u8 = 1;
+    const MC_MULTI_MESSAGE_MASK: u16 = 0x000E;
+    const MC_MULTI_MESSAGE_SHIFT: u8 = 1;
 
-    pub const MC_MULTI_MESSAGE_ENABLE_MASK: u16 = 0x0070;
-    pub const MC_MULTI_MESSAGE_ENABLE_SHIFT: u8 = 4;
+    const MC_MULTI_MESSAGE_ENABLE_MASK: u16 = 0x0070;
+    const MC_MULTI_MESSAGE_ENABLE_SHIFT: u8 = 4;
 
-    pub const MC_MSI_ENABLED_BIT: u16 = 1;
+    const MC_MSI_ENABLED_BIT: u16 = 1;
 
-    pub unsafe fn parse(func: &PciFunc, offset: u8) -> Self {
+    pub(crate) unsafe fn parse(func: &PciFunc, offset: u8) -> Self {
         let dword = func.read_u32(u16::from(offset));
 
         let message_control = (dword >> 16) as u16;
@@ -94,10 +101,10 @@ impl MsiCapability {
             Self::_32BitAddress { message_control, .. } | Self::_64BitAddress { message_control, .. } | Self::_32BitAddressWithPvm { message_control, .. } | Self::_64BitAddressWithPvm { message_control, .. } => *message_control,
         }
     }
-    pub fn message_control(&self) -> u16 {
+    fn message_control(&self) -> u16 {
         (self.message_control_raw() >> 16) as u16
     }
-    pub fn set_message_control(&mut self, value: u16) {
+    pub(crate) fn set_message_control(&mut self, value: u16) {
         let mut new_message_control = self.message_control_raw();
         new_message_control &= 0x0000_FFFF;
         new_message_control |= u32::from(value) << 16;
@@ -109,80 +116,59 @@ impl MsiCapability {
                 | Self::_64BitAddressWithPvm { ref mut message_control, .. } => *message_control = new_message_control,
         }
     }
-    pub unsafe fn write_message_control(&self, func: &PciFunc) {
+    pub(crate) unsafe fn write_message_control(&self, func: &PciFunc) {
         func.write_u32(self.cap_offset(), self.message_control_raw());
     }
-    pub fn is_pvt_capable(&self) -> bool {
+    pub(crate) fn is_pvt_capable(&self) -> bool {
         self.message_control() & Self::MC_PVT_CAPABLE_BIT != 0
     }
-    pub fn has_64_bit_addr(&self) -> bool {
+    pub(crate) fn has_64_bit_addr(&self) -> bool {
         self.message_control() & Self::MC_64_BIT_ADDR_BIT != 0
     }
-    pub fn enabled(&self) -> bool {
-        self.message_control() & Self::MC_MSI_ENABLED_BIT != 0
-    }
-    pub fn set_enabled(&mut self, enabled: bool) {
+    pub(crate) fn set_enabled(&mut self, enabled: bool) {
         let mut new_message_control = self.message_control() & (!Self::MC_MSI_ENABLED_BIT);
         new_message_control |= u16::from(enabled);
         self.set_message_control(new_message_control);
     }
-    pub fn multi_message_capable(&self) -> u8 {
+    pub(crate) fn multi_message_capable(&self) -> u8 {
         ((self.message_control() & Self::MC_MULTI_MESSAGE_MASK) >> Self::MC_MULTI_MESSAGE_SHIFT) as u8
     }
-    pub fn multi_message_enable(&self) -> u8 {
+    pub(crate) fn multi_message_enable(&self) -> u8 {
         ((self.message_control() & Self::MC_MULTI_MESSAGE_ENABLE_MASK) >> Self::MC_MULTI_MESSAGE_ENABLE_SHIFT) as u8
     }
-    pub fn set_multi_message_enable(&mut self, log_mme: u8) {
+    pub(crate) fn set_multi_message_enable(&mut self, log_mme: u8) {
         let mut new_message_control = self.message_control() & (!Self::MC_MULTI_MESSAGE_ENABLE_MASK);
         new_message_control |= u16::from(log_mme) << Self::MC_MULTI_MESSAGE_ENABLE_SHIFT;
         self.set_message_control(new_message_control);
     }
 
-    pub fn message_address(&self) -> u32 {
+    fn message_address(&self) -> u32 {
         match self {
             &Self::_32BitAddress { message_address, .. } | &Self::_32BitAddressWithPvm { message_address, .. } => message_address,
             &Self::_64BitAddress { message_address_lo, .. } | &Self::_64BitAddressWithPvm { message_address_lo, .. } => message_address_lo,
         }
     }
-    pub fn message_upper_address(&self) -> Option<u32> {
+    fn message_upper_address(&self) -> Option<u32> {
         match self {
             &Self::_64BitAddress { message_address_hi, .. } | &Self::_64BitAddressWithPvm { message_address_hi, .. } => Some(message_address_hi),
             &Self::_32BitAddress { .. } | &Self::_32BitAddressWithPvm { .. } => None,
         }
     }
-    pub fn message_data(&self) -> u16 {
-        match self {
-            &Self::_32BitAddress { message_data, .. } | &Self::_64BitAddress { message_data, .. } => message_data,
-            &Self::_32BitAddressWithPvm { message_data, .. } | &Self::_64BitAddressWithPvm { message_data, .. } => message_data as u16,
-        }
-    }
-    pub fn mask_bits(&self) -> Option<u32> {
-        match self {
-            &Self::_32BitAddressWithPvm { mask_bits, .. } | &Self::_64BitAddressWithPvm { mask_bits, .. } => Some(mask_bits),
-            &Self::_32BitAddress { .. } | &Self::_64BitAddress { .. } => None,
-        }
-    }
-    pub fn pending_bits(&self) -> Option<u32> {
-        match self {
-            &Self::_32BitAddressWithPvm { pending_bits, .. } | &Self::_64BitAddressWithPvm { pending_bits, .. } => Some(pending_bits),
-            &Self::_32BitAddress { .. } | &Self::_64BitAddress { .. } => None,
-        }
-    }
-    pub fn set_message_address(&mut self, message_address: u32) {
+    pub(crate) fn set_message_address(&mut self, message_address: u32) {
         assert_eq!(message_address & 0xFFFF_FFFC, message_address, "unaligned message address (this should already be validated)");
         match self {
             &mut Self::_32BitAddress { message_address: ref mut addr, .. } | &mut Self::_32BitAddressWithPvm { message_address: ref mut addr, .. } => *addr = message_address,
             &mut Self::_64BitAddress { message_address_lo: ref mut addr, .. } | &mut Self::_64BitAddressWithPvm { message_address_lo: ref mut addr, .. } => *addr = message_address,
         }
     }
-    pub fn set_message_upper_address(&mut self, message_upper_address: u32) -> Option<()> {
+    pub(crate) fn set_message_upper_address(&mut self, message_upper_address: u32) -> Option<()> {
         match self {
             &mut Self::_64BitAddress { ref mut message_address_hi, .. } | &mut Self::_64BitAddressWithPvm { ref mut message_address_hi, .. } => *message_address_hi = message_upper_address,
             &mut Self::_32BitAddress { .. } | &mut Self::_32BitAddressWithPvm { .. } => return None,
         }
         Some(())
     }
-    pub fn set_message_data(&mut self, value: u16) {
+    pub(crate) fn set_message_data(&mut self, value: u16) {
         match self {
             &mut Self::_32BitAddress { ref mut message_data, .. } | &mut Self::_64BitAddress { ref mut message_data, .. } => *message_data = value,
             &mut Self::_32BitAddressWithPvm { ref mut message_data, .. } | &mut Self::_64BitAddressWithPvm { ref mut message_data, .. } => {
@@ -191,22 +177,22 @@ impl MsiCapability {
             }
         }
     }
-    pub fn set_mask_bits(&mut self, mask_bits: u32) -> Option<()> {
+    pub(crate) fn set_mask_bits(&mut self, mask_bits: u32) -> Option<()> {
         match self {
             &mut Self::_32BitAddressWithPvm { mask_bits: ref mut bits, .. } | &mut Self::_64BitAddressWithPvm { mask_bits: ref mut bits, .. } => *bits = mask_bits,
             &mut Self::_32BitAddress { .. } | &mut Self::_64BitAddress { .. } => return None,
         }
         Some(())
     }
-    pub unsafe fn write_message_address(&self, func: &PciFunc) {
+    unsafe fn write_message_address(&self, func: &PciFunc) {
         func.write_u32(self.cap_offset() + 4, self.message_address())
     }
-    pub unsafe fn write_message_upper_address(&self, func: &PciFunc) -> Option<()> {
+    unsafe fn write_message_upper_address(&self, func: &PciFunc) -> Option<()> {
         let value = self.message_upper_address()?;
         func.write_u32(self.cap_offset() + 8, value);
         Some(())
     }
-    pub unsafe fn write_message_data(&self, func: &PciFunc) {
+    unsafe fn write_message_data(&self, func: &PciFunc) {
         match self {
             &Self::_32BitAddress { cap_offset, message_data, .. } => func.write_u32(u16::from(cap_offset + 8), message_data.into()),
             &Self::_32BitAddressWithPvm { cap_offset, message_data, .. } => func.write_u32(u16::from(cap_offset + 8), message_data),
@@ -214,7 +200,7 @@ impl MsiCapability {
             &Self::_64BitAddressWithPvm { cap_offset, message_data, .. } => func.write_u32(u16::from(cap_offset + 12), message_data),
         }
     }
-    pub unsafe fn write_mask_bits(&self, func: &PciFunc) -> Option<()> {
+    unsafe fn write_mask_bits(&self, func: &PciFunc) -> Option<()> {
         match self {
             &Self::_32BitAddressWithPvm { cap_offset, mask_bits, .. } => func.write_u32(u16::from(cap_offset + 12), mask_bits),
             &Self::_64BitAddressWithPvm { cap_offset, mask_bits, .. } => func.write_u32(u16::from(cap_offset + 16), mask_bits),
@@ -222,7 +208,7 @@ impl MsiCapability {
         }
         Some(())
     }
-    pub unsafe fn write_all(&self, func: &PciFunc) {
+    pub(crate) unsafe fn write_all(&self, func: &PciFunc) {
         self.write_message_control(func);
         self.write_message_address(func);
         self.write_message_upper_address(func);
@@ -299,7 +285,7 @@ impl MsixCapability {
         self.a |= u32::from(message_control) << 16;
     }
     /// Returns the MSI-X table size.
-    pub const fn table_size(&self) -> u16 {
+    pub(crate) const fn table_size(&self) -> u16 {
         (self.message_control() & Self::MC_TABLE_SIZE_MASK) + 1
     }
     pub(crate) fn set_msix_enabled(&mut self, enabled: bool) {
@@ -319,11 +305,11 @@ impl MsixCapability {
     const TABLE_BIR_MASK: u32 = 0x0000_0007;
 
     /// The table offset is guaranteed to be QWORD aligned (8 bytes).
-    pub const fn table_offset(&self) -> u32 {
+    pub(crate) const fn table_offset(&self) -> u32 {
         self.b & Self::TABLE_OFFSET_MASK
     }
     /// The table BIR, which is used to map the offset to a memory location.
-    pub const fn table_bir(&self) -> u8 {
+    pub(crate) const fn table_bir(&self) -> u8 {
         (self.b & Self::TABLE_BIR_MASK) as u8
     }
 
@@ -331,18 +317,18 @@ impl MsixCapability {
     const PBA_BIR_MASK: u32 = 0x0000_0007;
 
     /// The Pending Bit Array offset is guaranteed to be QWORD aligned (8 bytes).
-    pub const fn pba_offset(&self) -> u32 {
+    pub(crate) const fn pba_offset(&self) -> u32 {
         self.c & Self::PBA_OFFSET_MASK
     }
     /// The Pending Bit Array BIR, which is used to map the offset to a memory location.
-    pub const fn pba_bir(&self) -> u8 {
+    pub(crate) const fn pba_bir(&self) -> u8 {
         (self.c & Self::PBA_BIR_MASK) as u8
     }
 
 
     /// Write the first DWORD into configuration space (containing the partially modifiable Message
     /// Control field).
-    pub unsafe fn write_a(&self, func: &PciFunc) {
+    pub(crate) unsafe fn write_a(&self, func: &PciFunc) {
         func.write_u32(u16::from(self.cap_offset), self.a)
     }
 }

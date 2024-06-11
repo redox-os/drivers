@@ -132,7 +132,7 @@ impl PciFeature {
 }
 #[derive(Debug, Serialize, Deserialize)]
 pub enum PciFeatureInfo {
-    Msi(msi::MsiCapability),
+    Msi(msi::MsiInfo),
     MsiX(msi::MsixInfo),
 }
 

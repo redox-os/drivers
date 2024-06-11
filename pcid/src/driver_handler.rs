@@ -199,7 +199,11 @@ impl DriverHandler {
                             .iter()
                             .find_map(|capability| capability.as_msi())
                         {
-                            PciFeatureInfo::Msi(*info)
+                            PciFeatureInfo::Msi(msi::MsiInfo {
+                                log2_multiple_message_capable: info.multi_message_capable(),
+                                is_64bit: info.has_64_bit_addr(),
+                                has_per_vector_masking: info.is_pvt_capable(),
+                            })
                         } else {
                             return PcidClientResponse::Error(
                                 PcidServerResponseError::NonexistentFeature(feature),
