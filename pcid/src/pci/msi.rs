@@ -23,6 +23,13 @@ impl MsiAddrAndData {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MsiInfo {
+    pub log2_multiple_message_capable: u8,
+    pub is_64bit: bool,
+    pub has_per_vector_masking: bool,
+}
+
 impl MsiCapability {
     pub const MC_PVT_CAPABLE_BIT: u16 = 1 << 8;
     pub const MC_64_BIT_ADDR_BIT: u16 = 1 << 7;

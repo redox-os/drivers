@@ -22,7 +22,7 @@ pub mod queues;
 use self::cq_reactor::NotifReq;
 pub use self::queues::{NvmeCmd, NvmeCmdQueue, NvmeComp, NvmeCompQueue};
 
-use pcid_interface::msi::{MsiCapability, MsixInfo, MsixTableEntry};
+use pcid_interface::msi::{MsiInfo, MsixInfo, MsixTableEntry};
 use pcid_interface::PcidServerHandle;
 
 #[cfg(target_arch = "aarch64")]
@@ -91,7 +91,7 @@ pub enum InterruptMethod {
     /// Traditional level-triggered, INTx# interrupt pins.
     Intx,
     /// Message signaled interrupts
-    Msi(MsiCapability),
+    Msi { msi_info: MsiInfo, log2_multiple_message_enabled: u8 },
     /// Extended message signaled interrupts
     MsiX(MappedMsixRegs),
 }
@@ -104,7 +104,7 @@ impl InterruptMethod {
         }
     }
     fn is_msi(&self) -> bool {
-        if let Self::Msi(_) = self {
+        if let Self::Msi { .. } = self {
             true
         } else {
             false
@@ -289,7 +289,7 @@ impl Nvme {
         }
 
         match self.interrupt_method.get_mut().unwrap() {
-            &mut InterruptMethod::Intx | InterruptMethod::Msi(_) => {
+            &mut InterruptMethod::Intx | InterruptMethod::Msi { .. } => {
                 self.regs.get_mut().unwrap().intms.write(0xFFFF_FFFF);
                 self.regs.get_mut().unwrap().intmc.write(0x0000_0001);
             }
@@ -371,13 +371,13 @@ impl Nvme {
                     self.regs.write().unwrap().intmc.write(0x0000_0001);
                 }
             }
-            &mut InterruptMethod::Msi(ref mut cap) => {
+            &mut InterruptMethod::Msi { msi_info: _, log2_multiple_message_enabled: log2_enabled_messages } => {
                 let mut to_mask = 0x0000_0000;
                 let mut to_clear = 0x0000_0000;
 
                 for (vector, mask) in vectors {
                     assert!(
-                        vector < (1 << cap.multi_message_enable()),
+                        vector < (1 << log2_enabled_messages),
                         "nvmed: internal error: MSI vector out of range"
                     );
                     let vector = vector as u8;
