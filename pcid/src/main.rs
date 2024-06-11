@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use log::{debug, info, trace, warn};
+use pci_types::capability::PciCapabilityAddress;
 use pci_types::{CommandRegister, PciAddress};
 use redox_log::{OutputBuilder, RedoxLogger};
 use structopt::StructOpt;
@@ -11,7 +12,6 @@ use structopt::StructOpt;
 use crate::cfg_access::Pcie;
 use crate::config::Config;
 use crate::driver_interface::LegacyInterruptLine;
-use crate::pci::PciFunc;
 use crate::pci_header::{PciEndpointHeader, PciHeader, PciHeaderError};
 
 mod cfg_access;
@@ -98,11 +98,14 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, header: PciEndpointH
         };
 
         let capabilities = if endpoint_header.status(&state.pcie).has_capability_list() {
-            let func = PciFunc {
-                pci: &state.pcie,
-                addr: header.address(),
-            };
-            crate::pci::cap::CapabilitiesIter::new(header.cap_pointer(), &func).collect::<Vec<_>>()
+            crate::pci::cap::CapabilitiesIter::new(
+                PciCapabilityAddress {
+                    address: header.address(),
+                    offset: header.cap_pointer(),
+                },
+                &state.pcie,
+            )
+            .collect::<Vec<_>>()
         } else {
             Vec::new()
         };

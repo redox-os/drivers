@@ -23,7 +23,7 @@ pub struct PciEndpointHeader {
     shared: SharedPciHeader,
     subsystem_vendor_id: u16,
     subsystem_id: u16,
-    cap_pointer: u8,
+    cap_pointer: u16,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -240,7 +240,7 @@ impl PciEndpointHeader {
         bars
     }
 
-    pub fn cap_pointer(&self) -> u8 {
+    pub fn cap_pointer(&self) -> u16 {
         self.cap_pointer
     }
 }

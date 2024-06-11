@@ -2,8 +2,9 @@ use std::fmt;
 
 use super::bar::PciBar;
 pub use super::cap::{MsiCapability, MsixCapability};
-use super::func::PciFunc;
 
+use pci_types::capability::PciCapabilityAddress;
+use pci_types::{ConfigRegionAccess, PciAddress};
 use serde::{Deserialize, Serialize};
 use syscall::{Io, Mmio};
 
@@ -42,47 +43,47 @@ impl MsiCapability {
 
     const MC_MSI_ENABLED_BIT: u16 = 1;
 
-    pub(crate) unsafe fn parse(func: &PciFunc, offset: u8) -> Self {
-        let dword = func.pci.read(func.addr, u16::from(offset));
+    pub(crate) unsafe fn parse(addr: PciCapabilityAddress, access: &dyn ConfigRegionAccess) -> Self {
+        let dword = access.read(addr.address, addr.offset);
 
         let message_control = (dword >> 16) as u16;
 
         if message_control & Self::MC_PVT_CAPABLE_BIT != 0 {
             if message_control & Self::MC_64_BIT_ADDR_BIT != 0 {
                 Self::_64BitAddressWithPvm {
-                    cap_offset: offset,
+                    cap_offset: addr.offset,
                     message_control: dword,
-                    message_address_lo: func.pci.read(func.addr, u16::from(offset + 4)),
-                    message_address_hi: func.pci.read(func.addr, u16::from(offset + 8)),
-                    message_data: func.pci.read(func.addr, u16::from(offset + 12)),
-                    mask_bits: func.pci.read(func.addr, u16::from(offset + 16)),
-                    pending_bits: func.pci.read(func.addr, u16::from(offset + 20)),
+                    message_address_lo: access.read(addr.address, addr.offset + 4),
+                    message_address_hi: access.read(addr.address, addr.offset + 8),
+                    message_data: access.read(addr.address, addr.offset + 12),
+                    mask_bits: access.read(addr.address, addr.offset + 16),
+                    pending_bits: access.read(addr.address, addr.offset + 20),
                 }
             } else {
                 Self::_32BitAddressWithPvm {
-                    cap_offset: offset,
+                    cap_offset: addr.offset,
                     message_control: dword,
-                    message_address: func.pci.read(func.addr, u16::from(offset + 4)),
-                    message_data: func.pci.read(func.addr, u16::from(offset + 8)),
-                    mask_bits: func.pci.read(func.addr, u16::from(offset + 12)),
-                    pending_bits: func.pci.read(func.addr, u16::from(offset + 16)),
+                    message_address: access.read(addr.address, addr.offset + 4),
+                    message_data: access.read(addr.address, addr.offset + 8),
+                    mask_bits: access.read(addr.address, addr.offset + 12),
+                    pending_bits: access.read(addr.address, addr.offset + 16),
                 }
             }
         } else {
             if message_control & Self::MC_64_BIT_ADDR_BIT != 0 {
                 Self::_64BitAddress {
-                    cap_offset: offset,
+                    cap_offset: addr.offset,
                     message_control: dword,
-                    message_address_lo: func.pci.read(func.addr, u16::from(offset + 4)),
-                    message_address_hi: func.pci.read(func.addr, u16::from(offset + 8)),
-                    message_data: func.pci.read(func.addr, u16::from(offset + 12)) as u16,
+                    message_address_lo: access.read(addr.address, addr.offset + 4),
+                    message_address_hi: access.read(addr.address, addr.offset + 8),
+                    message_data: access.read(addr.address, addr.offset + 12) as u16,
                 }
             } else {
                 Self::_32BitAddress {
-                    cap_offset: offset,
+                    cap_offset: addr.offset,
                     message_control: dword,
-                    message_address: func.pci.read(func.addr, u16::from(offset + 4)),
-                    message_data: func.pci.read(func.addr, u16::from(offset + 8)) as u16,
+                    message_address: access.read(addr.address, addr.offset + 4),
+                    message_data: access.read(addr.address, addr.offset + 8) as u16,
                 }
             }
         }
@@ -116,8 +117,8 @@ impl MsiCapability {
                 | Self::_64BitAddressWithPvm { ref mut message_control, .. } => *message_control = new_message_control,
         }
     }
-    pub(crate) unsafe fn write_message_control(&self, func: &PciFunc) {
-        func.pci.write(func.addr, self.cap_offset(), self.message_control_raw());
+    pub(crate) unsafe fn write_message_control(&self, addr: PciAddress, access: &dyn ConfigRegionAccess) {
+        access.write(addr, self.cap_offset(), self.message_control_raw());
     }
     pub(crate) fn is_pvt_capable(&self) -> bool {
         self.message_control() & Self::MC_PVT_CAPABLE_BIT != 0
@@ -184,36 +185,36 @@ impl MsiCapability {
         }
         Some(())
     }
-    unsafe fn write_message_address(&self, func: &PciFunc) {
-        func.pci.write(func.addr, self.cap_offset() + 4, self.message_address())
+    unsafe fn write_message_address(&self, addr: PciAddress, access: &dyn ConfigRegionAccess) {
+        access.write(addr, self.cap_offset() + 4, self.message_address())
     }
-    unsafe fn write_message_upper_address(&self, func: &PciFunc) -> Option<()> {
+    unsafe fn write_message_upper_address(&self, addr: PciAddress, access: &dyn ConfigRegionAccess) -> Option<()> {
         let value = self.message_upper_address()?;
-        func.pci.write(func.addr, self.cap_offset() + 8, value);
+        access.write(addr, self.cap_offset() + 8, value);
         Some(())
     }
-    unsafe fn write_message_data(&self, func: &PciFunc) {
+    unsafe fn write_message_data(&self, addr: PciAddress, access: &dyn ConfigRegionAccess) {
         match self {
-            &Self::_32BitAddress { cap_offset, message_data, .. } => func.pci.write(func.addr, u16::from(cap_offset + 8), message_data.into()),
-            &Self::_32BitAddressWithPvm { cap_offset, message_data, .. } => func.pci.write(func.addr, u16::from(cap_offset + 8), message_data),
-            &Self::_64BitAddress { cap_offset, message_data, .. } => func.pci.write(func.addr, u16::from(cap_offset + 12), message_data.into()),
-            &Self::_64BitAddressWithPvm { cap_offset, message_data, .. } => func.pci.write(func.addr, u16::from(cap_offset + 12), message_data),
+            &Self::_32BitAddress { cap_offset, message_data, .. } => access.write(addr, u16::from(cap_offset + 8), message_data.into()),
+            &Self::_32BitAddressWithPvm { cap_offset, message_data, .. } => access.write(addr, u16::from(cap_offset + 8), message_data),
+            &Self::_64BitAddress { cap_offset, message_data, .. } => access.write(addr, u16::from(cap_offset + 12), message_data.into()),
+            &Self::_64BitAddressWithPvm { cap_offset, message_data, .. } => access.write(addr, u16::from(cap_offset + 12), message_data),
         }
     }
-    unsafe fn write_mask_bits(&self, func: &PciFunc) -> Option<()> {
+    unsafe fn write_mask_bits(&self, addr: PciAddress, access: &dyn ConfigRegionAccess) -> Option<()> {
         match self {
-            &Self::_32BitAddressWithPvm { cap_offset, mask_bits, .. } => func.pci.write(func.addr, u16::from(cap_offset + 12), mask_bits),
-            &Self::_64BitAddressWithPvm { cap_offset, mask_bits, .. } => func.pci.write(func.addr, u16::from(cap_offset + 16), mask_bits),
+            &Self::_32BitAddressWithPvm { cap_offset, mask_bits, .. } => access.write(addr, u16::from(cap_offset + 12), mask_bits),
+            &Self::_64BitAddressWithPvm { cap_offset, mask_bits, .. } => access.write(addr, u16::from(cap_offset + 16), mask_bits),
             &Self::_32BitAddress { .. } | &Self::_64BitAddress { .. } => return None,
         }
         Some(())
     }
-    pub(crate) unsafe fn write_all(&self, func: &PciFunc) {
-        self.write_message_control(func);
-        self.write_message_address(func);
-        self.write_message_upper_address(func);
-        self.write_message_data(func);
-        self.write_mask_bits(func);
+    pub(crate) unsafe fn write_all(&self, addr: PciAddress, access: &dyn ConfigRegionAccess) {
+        self.write_message_control(addr, access);
+        self.write_message_address(addr, access);
+        self.write_message_upper_address(addr, access);
+        self.write_message_data(addr, access);
+        self.write_mask_bits(addr, access);
     }
 }
 
@@ -328,8 +329,8 @@ impl MsixCapability {
 
     /// Write the first DWORD into configuration space (containing the partially modifiable Message
     /// Control field).
-    pub(crate) unsafe fn write_a(&self, func: &PciFunc) {
-        func.pci.write(func.addr, u16::from(self.cap_offset), self.a)
+    pub(crate) unsafe fn write_a(&self, addr: PciAddress, access: &dyn ConfigRegionAccess) {
+        access.write(addr, u16::from(self.cap_offset), self.a)
     }
 }
 

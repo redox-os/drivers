@@ -9,7 +9,6 @@ use pci_types::{ConfigRegionAccess, PciAddress};
 
 use crate::driver_interface;
 use crate::pci::cap::Capability as PciCapability;
-use crate::pci::PciFunc;
 use crate::State;
 
 pub struct DriverHandler {
@@ -101,11 +100,6 @@ impl DriverHandler {
         use crate::pci::cap::{MsiCapability, MsixCapability};
         use driver_interface::*;
 
-        let func = PciFunc {
-            pci: &self.state.pcie,
-            addr: self.addr,
-        };
-
         match request {
             PcidClientRequest::RequestCapabilities => PcidClientResponse::Capabilities(
                 self.capabilities
@@ -135,7 +129,7 @@ impl DriverHandler {
                         // active at the same time.
                         unsafe {
                             msix_capability.set_msix_enabled(false);
-                            msix_capability.write_a(&func);
+                            msix_capability.write_a(self.addr, &self.state.pcie);
                         }
                     }
 
@@ -153,7 +147,7 @@ impl DriverHandler {
                     };
                     unsafe {
                         capability.set_enabled(true);
-                        capability.write_message_control(&func);
+                        capability.write_message_control(self.addr, &self.state.pcie);
                     }
                     PcidClientResponse::FeatureEnabled(feature)
                 }
@@ -167,7 +161,7 @@ impl DriverHandler {
                         // active at the same time.
                         unsafe {
                             msi_capability.set_enabled(false);
-                            msi_capability.write_message_control(&func);
+                            msi_capability.write_message_control(self.addr, &self.state.pcie);
                         }
                     }
 
@@ -185,7 +179,7 @@ impl DriverHandler {
                     };
                     unsafe {
                         capability.set_msix_enabled(true);
-                        capability.write_a(&func);
+                        capability.write_a(self.addr, &self.state.pcie);
                     }
                     PcidClientResponse::FeatureEnabled(feature)
                 }
@@ -273,7 +267,7 @@ impl DriverHandler {
                             info.set_mask_bits(mask_bits);
                         }
                         unsafe {
-                            info.write_all(&func);
+                            info.write_all(self.addr, &self.state.pcie);
                         }
                         PcidClientResponse::SetFeatureInfo(PciFeature::Msi)
                     } else {
@@ -291,7 +285,7 @@ impl DriverHandler {
                         if let Some(mask) = function_mask {
                             info.set_function_mask(mask);
                             unsafe {
-                                info.write_a(&func);
+                                info.write_a(self.addr, &self.state.pcie);
                             }
                         }
                         PcidClientResponse::SetFeatureInfo(PciFeature::MsiX)
