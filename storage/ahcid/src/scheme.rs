@@ -1,14 +1,14 @@
 use std::collections::BTreeMap;
 use std::{cmp, str};
-use std::convert::{TryFrom};
 use std::fmt::Write;
 use std::io::prelude::*;
 
 use driver_block::{Disk, DiskWrapper};
 use syscall::{
-    Error, EACCES, EBADF, EINVAL, EISDIR, ENOENT, ENOLCK, EOVERFLOW, Result,
-    Io, SchemeBlockMut, Stat, MODE_DIR, MODE_FILE, O_DIRECTORY,
-    O_STAT, SEEK_CUR, SEEK_END, SEEK_SET};
+    Error, EACCES, EBADF, EINVAL, EISDIR, ENOENT, ENOLCK, EOVERFLOW, Result, Io, Stat, MODE_DIR,
+    MODE_FILE, O_DIRECTORY, O_STAT, SEEK_CUR, SEEK_END, SEEK_SET,
+};
+use redox_scheme::SchemeBlockMut;
 
 use crate::ahci::hba::HbaMem;
 
@@ -30,8 +30,8 @@ pub struct DiskScheme {
 impl DiskScheme {
     pub fn new(scheme_name: String, hba_mem: &'static mut HbaMem, disks: Vec<Box<dyn Disk>>) -> DiskScheme {
         DiskScheme {
-            scheme_name: scheme_name,
-            hba_mem: hba_mem,
+            scheme_name,
+            hba_mem,
             disks: disks.into_iter().map(DiskWrapper::new).collect::<Vec<_>>().into_boxed_slice(),
             handles: BTreeMap::new(),
             next_id: 0

@@ -4,21 +4,18 @@
 extern crate syscall;
 extern crate byteorder;
 
-use std::fs::File;
-use std::io::{ErrorKind, Read, Write};
+use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
-use std::os::unix::io::{FromRawFd, RawFd};
 use std::usize;
 
-use libredox::flag;
+use event::{EventFlags, RawEventQueue};
 use pcid_interface::PcidServerHandle;
+use redox_scheme::{RequestKind, Response, SignalBehavior, Socket, V2};
 use syscall::error::{Error, ENODEV};
-use syscall::data::{Event, Packet};
-use syscall::flag::EVENT_READ;
-use syscall::scheme::SchemeBlockMut;
 
 use log::{error, info};
 use redox_log::{OutputBuilder, RedoxLogger};
+use syscall::{EAGAIN, EWOULDBLOCK};
 
 use crate::scheme::DiskScheme;
 
@@ -94,31 +91,17 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let address = unsafe { bar.physmap_mem("ahcid") };
     {
         let scheme_name = format!("disk.{}", name);
-        let socket_fd = libredox::call::open(
-            &format!(":{}", scheme_name),
-            flag::O_RDWR | flag::O_CREAT | flag::O_NONBLOCK,
-            0,
-        ).expect("ahcid: failed to create disk scheme");
-        let mut socket = unsafe { File::from_raw_fd(socket_fd as RawFd) };
+        let socket = Socket::<V2>::nonblock(&scheme_name).expect("ahcid: failed to create disk scheme");
 
         let mut irq_file = irq.irq_handle("ahcid");
         let irq_fd = irq_file.as_raw_fd() as usize;
 
-        let mut event_file = File::open("event:").expect("ahcid: failed to open event file");
+        let mut event_queue = RawEventQueue::new().expect("ahcid: failed to create event queue");
 
         libredox::call::setrens(0, 0).expect("ahcid: failed to enter null namespace");
 
-        event_file.write(&Event {
-            id: socket_fd,
-            flags: EVENT_READ,
-            data: 0
-        }).expect("ahcid: failed to event disk scheme");
-
-        event_file.write(&Event {
-            id: irq_fd,
-            flags: EVENT_READ,
-            data: 0
-        }).expect("ahcid: failed to event irq scheme");
+        event_queue.subscribe(socket.inner().raw(), 1, EventFlags::READ).expect("ahcid: failed to event scheme socket");
+        event_queue.subscribe(irq_fd, 1, EventFlags::READ).expect("ahcid: failed to event irq scheme");
 
         daemon.ready().expect("ahcid: failed to notify parent");
 
@@ -128,34 +111,37 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         let mut mounted = true;
         let mut todo = Vec::new();
         while mounted {
-            let mut event = Event::default();
-            if event_file.read(&mut event).expect("ahcid: failed to read event file") == 0 {
+            let Some(event) = event_queue.next().transpose().expect("ahcid: failed to read event file") else {
                 break;
-            }
-            if event.id == socket_fd {
+            };
+            if event.fd == socket.inner().raw() {
                 loop {
-                    let mut packet = Packet::default();
-                    match socket.read(&mut packet) {
-                        Ok(0) => {
+                    let sqe = match socket.next_request(SignalBehavior::Interrupt) {
+                        Ok(None) => {
                             mounted = false;
                             break;
                         },
-                        Ok(_) => (),
-                        Err(err) => if err.kind() == ErrorKind::WouldBlock {
+                        Ok(Some(s)) => if let RequestKind::Call(call) = s.kind() {
+                            call
+                        } else {
+                            // TODO: Support e.g. cancellation
+                            continue;
+                        },
+                        Err(err) => if err.errno == EWOULDBLOCK || err.errno == EAGAIN {
                             break;
                         } else {
                             panic!("ahcid: failed to read disk scheme: {}", err);
                         }
-                    }
+                    };
 
-                    if let Some(a) = scheme.handle(&packet) {
-                        packet.a = a;
-                        socket.write(&mut packet).expect("ahcid: failed to write disk scheme");
+                    if let Some(response) = sqe.handle_scheme_block_mut(&mut scheme) {
+                        // TODO: handle full CQE?
+                        socket.write_response(response, SignalBehavior::Restart).expect("ahcid: failed to write disk scheme");
                     } else {
-                        todo.push(packet);
+                        todo.push(sqe);
                     }
                 }
-            } else if event.id == irq_fd {
+            } else if event.fd == irq_fd {
                 let mut irq = [0; 8];
                 if irq_file.read(&mut irq).expect("ahcid: failed to read irq file") >= irq.len() {
                     if scheme.irq() {
@@ -164,10 +150,9 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
                         // Handle todos in order to finish previous packets if possible
                         let mut i = 0;
                         while i < todo.len() {
-                            if let Some(a) = scheme.handle(&todo[i]) {
-                                let mut packet = todo.remove(i);
-                                packet.a = a;
-                                socket.write(&mut packet).expect("ahcid: failed to write disk scheme");
+                            if let Some(resp) = todo[i].handle_scheme_block_mut(&mut scheme) {
+                                let _sqe = todo.remove(i);
+                                socket.write_response(resp, SignalBehavior::Restart).expect("ahcid: failed to write disk scheme");
                             } else {
                                 i += 1;
                             }
@@ -175,25 +160,23 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
                     }
                 }
             } else {
-                error!("Unknown event {}", event.id);
+                error!("Unknown event {}", event.fd);
             }
 
             // Handle todos to start new packets if possible
             let mut i = 0;
             while i < todo.len() {
-                if let Some(a) = scheme.handle(&todo[i]) {
-                    let mut packet = todo.remove(i);
-                    packet.a = a;
-                    socket.write(&packet).expect("ahcid: failed to write disk scheme");
+                if let Some(response) = todo[i].handle_scheme_block_mut(&mut scheme) {
+                    let _sqe = todo.remove(i);
+                    socket.write_response(response, SignalBehavior::Restart).expect("ahcid: failed to write disk scheme");
                 } else {
                     i += 1;
                 }
             }
 
             if ! mounted {
-                for mut packet in todo.drain(..) {
-                    packet.a = Error::mux(Err(Error::new(ENODEV)));
-                    socket.write(&packet).expect("ahcid: failed to write disk scheme");
+                for sqe in todo.drain(..) {
+                    socket.write_response(Response::new(&sqe, Err(Error::new(ENODEV))), SignalBehavior::Restart).expect("ahcid: failed to write disk scheme");
                 }
             }
         }
