@@ -1,4 +1,3 @@
-use byteorder::{ByteOrder, LittleEndian};
 use pci_types::{ConfigRegionAccess, PciAddress};
 
 pub struct PciFunc<'pci> {
@@ -9,17 +8,10 @@ pub struct PciFunc<'pci> {
 impl<'pci> PciFunc<'pci> {
     pub unsafe fn read_range(&self, offset: u16, len: u16) -> Vec<u8> {
         assert!(len > 3 && len % 4 == 0, "invalid range length: {}", len);
-        let mut ret = Vec::with_capacity(len as usize);
-        let results = (offset..offset + len)
+        (offset..offset + len)
             .step_by(4)
-            .fold(Vec::new(), |mut acc, offset| {
-                let val = self.read_u32(offset);
-                acc.push(val);
-                acc
-            });
-        ret.set_len(len as usize);
-        LittleEndian::write_u32_into(&*results, &mut ret);
-        ret
+            .flat_map(|offset| self.read_u32(offset).to_le_bytes())
+            .collect::<Vec<u8>>()
     }
 
     pub unsafe fn read_u8(&self, offset: u16) -> u8 {
