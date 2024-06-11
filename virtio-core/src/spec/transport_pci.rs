@@ -33,7 +33,7 @@ pub struct PciCapability {
     pub cfg_type: CfgType,
     /// Where to find it.
     pub bar: u8,
-    /// Multiple capabilities of the same typel
+    /// Multiple capabilities of the same type.
     pub id: u8,
     /// Pad to a full dword.
     pub padding: [u8; 2],
