@@ -24,7 +24,7 @@ impl<'a> Iterator for CapabilitiesIter<'a> {
 
             if self.offset == 0 { return None };
 
-            let first_dword = self.func.read_u32(u16::from(self.offset));
+            let first_dword = self.func.pci.read(self.func.addr, u16::from(self.offset));
             let next = ((first_dword >> 8) & 0xFF) as u8;
 
             let offset = self.offset;
@@ -139,17 +139,29 @@ impl Capability {
     unsafe fn parse_msix(func: &PciFunc, offset: u8) -> Self {
         Self::MsiX(MsixCapability {
             cap_offset: offset,
-            a: func.read_u32(u16::from(offset)),
-            b: func.read_u32(u16::from(offset + 4)),
-            c: func.read_u32(u16::from(offset + 8)),
+            a: func.pci.read(func.addr, u16::from(offset)),
+            b: func.pci.read(func.addr, u16::from(offset + 4)),
+            c: func.pci.read(func.addr, u16::from(offset + 8)),
         })
     }
     unsafe fn parse_vendor(func: &PciFunc, offset: u8) -> Self {
-        let next = func.read_u8(u16::from(offset+1));
-        let length = func.read_u8(u16::from(offset+2));
+        let dword = func.pci.read(func.addr, u16::from(offset));
+        let next = (dword >> 8) & 0xFF;
+        let length = ((dword >> 16) & 0xFF) as u16;
         log::info!("Vendor specific offset: {offset:#02x} next: {next:#02x} cap len: {length:#02x}");
         let data = if length > 0 {
-            let mut raw_data = func.read_range(offset.into(), length.into());
+            assert!(
+                length > 3 && length % 4 == 0,
+                "invalid range length: {}",
+                length
+            );
+            let offset = u16::from(offset);
+            let mut raw_data = {
+                (offset..offset + length)
+                    .step_by(4)
+                    .flat_map(|offset| func.pci.read(func.addr, offset).to_le_bytes())
+                    .collect::<Vec<u8>>()
+            };
             raw_data.drain(3..).collect()
         } else {
             log::warn!("Vendor specific capability is invalid");
@@ -162,7 +174,7 @@ impl Capability {
     unsafe fn parse(func: &PciFunc, offset: u8) -> Self {
         assert_eq!(offset & 0xFC, offset, "capability must be dword aligned");
 
-        let dword = func.read_u32(u16::from(offset));
+        let dword = func.pci.read(func.addr, u16::from(offset));
         let capability_id = (dword & 0xFF) as u8;
 
         if capability_id == CapabilityId::Msi as u8 {

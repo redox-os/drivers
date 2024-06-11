@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::thread;
 
 use log::{error, info};
-use pci_types::PciAddress;
+use pci_types::{ConfigRegionAccess, PciAddress};
 
 use crate::driver_interface;
 use crate::pci::cap::Capability as PciCapability;
@@ -303,12 +303,12 @@ impl DriverHandler {
                 }
             },
             PcidClientRequest::ReadConfig(offset) => {
-                let value = unsafe { func.read_u32(offset) };
+                let value = unsafe { self.state.pcie.read(self.addr, offset) };
                 return PcidClientResponse::ReadConfig(value);
             }
             PcidClientRequest::WriteConfig(offset, value) => {
                 unsafe {
-                    func.write_u32(offset, value);
+                    self.state.pcie.write(self.addr, offset, value);
                 }
                 return PcidClientResponse::WriteConfig;
             }
