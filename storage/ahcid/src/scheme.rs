@@ -3,11 +3,12 @@ use std::str;
 use std::fmt::Write;
 
 use driver_block::{Disk, DiskWrapper};
+use syscall::schemev2::NewFdFlags;
 use syscall::{
     Error, EACCES, EBADF, EINVAL, EISDIR, ENOENT, ENOLCK, EOVERFLOW, Result, Io, Stat, MODE_DIR,
     MODE_FILE, O_DIRECTORY, O_STAT,
 };
-use redox_scheme::SchemeBlockMut;
+use redox_scheme::{CallerCtx, OpenResult, SchemeBlockMut};
 
 use crate::ahci::hba::HbaMem;
 
@@ -81,74 +82,64 @@ impl DiskScheme {
 }
 
 impl SchemeBlockMut for DiskScheme {
-    fn open(&mut self, path: &str, flags: usize, uid: u32, _gid: u32) -> Result<Option<usize>> {
-        if uid == 0 {
-            let path_str = path.trim_matches('/');
-            if path_str.is_empty() {
-                if flags & O_DIRECTORY == O_DIRECTORY || flags & O_STAT == O_STAT {
-                    let mut list = String::new();
+    fn xopen(&mut self, path: &str, flags: usize, ctx: &CallerCtx) -> Result<Option<OpenResult>> {
+        if ctx.uid != 0 {
+            return Err(Error::new(EACCES));
+        }
+        let path_str = path.trim_matches('/');
 
-                    for (disk_index, disk) in self.disks.iter().enumerate() {
-                        write!(list, "{}\n", disk_index).unwrap();
+        let handle = if path_str.is_empty() {
+            if flags & O_DIRECTORY != O_DIRECTORY && flags & O_STAT != O_STAT {
+                return Err(Error::new(EISDIR));
+            }
+            let mut list = String::new();
 
-                        if disk.pt.is_none() {
-                            continue
-                        }
-                        for part_index in 0..disk.pt.as_ref().unwrap().partitions.len() {
-                            write!(list, "{}p{}\n", disk_index, part_index).unwrap();
-                        }
-                    }
+            for (disk_index, disk) in self.disks.iter().enumerate() {
+                write!(list, "{}\n", disk_index).unwrap();
 
-                    let id = self.next_id;
-                    self.next_id += 1;
-                    self.handles.insert(id, Handle::List(list.into_bytes()));
-                    Ok(Some(id))
-                } else {
-                    Err(Error::new(EISDIR))
+                if disk.pt.is_none() {
+                    continue
                 }
-            } else if let Some(p_pos) = path_str.chars().position(|c| c == 'p') {
-                let disk_id_str = &path_str[..p_pos];
-                if p_pos + 1 >= path_str.len() {
-                    return Err(Error::new(ENOENT));
-                }
-                let part_id_str = &path_str[p_pos + 1..];
-                let i = disk_id_str.parse::<usize>().or(Err(Error::new(ENOENT)))?;
-                let p = part_id_str.parse::<u32>().or(Err(Error::new(ENOENT)))?;
-
-                if let Some(disk) = self.disks.get(i) {
-                    if disk.pt.is_none() || disk.pt.as_ref().unwrap().partitions.get(p as usize).is_none() {
-                        return Err(Error::new(ENOENT));
-                    }
-
-                    self.check_locks(i, Some(p))?;
-
-                    let id = self.next_id;
-                    self.next_id += 1;
-                    self.handles.insert(id, Handle::Partition(i, p));
-                    Ok(Some(id))
-                } else {
-                    Err(Error::new(ENOENT))
-                }
-            } else {
-                let i = path_str.parse::<usize>().or(Err(Error::new(ENOENT)))?;
-
-                if self.disks.get(i).is_some() {
-                    self.check_locks(i, None)?;
-
-                    let id = self.next_id;
-                    self.next_id += 1;
-                    self.handles.insert(id, Handle::Disk(i));
-                    Ok(Some(id))
-                } else {
-                    Err(Error::new(ENOENT))
+                for part_index in 0..disk.pt.as_ref().unwrap().partitions.len() {
+                    write!(list, "{}p{}\n", disk_index, part_index).unwrap();
                 }
             }
+
+            Handle::List(list.into_bytes())
+        } else if let Some(p_pos) = path_str.chars().position(|c| c == 'p') {
+            let disk_id_str = &path_str[..p_pos];
+            if p_pos + 1 >= path_str.len() {
+                return Err(Error::new(ENOENT));
+            }
+            let part_id_str = &path_str[p_pos + 1..];
+            let i = disk_id_str.parse::<usize>().or(Err(Error::new(ENOENT)))?;
+            let p = part_id_str.parse::<u32>().or(Err(Error::new(ENOENT)))?;
+
+            let disk = self.disks.get(i).ok_or(Error::new(ENOENT))?;
+            if disk.pt.is_none() || disk.pt.as_ref().unwrap().partitions.get(p as usize).is_none() {
+                return Err(Error::new(ENOENT));
+            }
+
+            self.check_locks(i, Some(p))?;
+
+            Handle::Partition(i, p)
         } else {
-            Err(Error::new(EACCES))
-        }
+            let i = path_str.parse::<usize>().or(Err(Error::new(ENOENT)))?;
+
+            if self.disks.get(i).is_none() {
+                return Err(Error::new(ENOENT));
+            }
+            self.check_locks(i, None)?;
+
+            Handle::Disk(i)
+        };
+        let id = self.next_id;
+        self.next_id += 1;
+        self.handles.insert(id, handle);
+        Ok(Some(OpenResult::ThisScheme { number: id, flags: NewFdFlags::POSITIONED }))
     }
 
-    fn dup(&mut self, id: usize, buf: &[u8]) -> Result<Option<usize>> {
+    fn xdup(&mut self, id: usize, buf: &[u8], _: &CallerCtx) -> Result<Option<OpenResult>> {
         if ! buf.is_empty() {
             return Err(Error::new(EINVAL));
         }
@@ -161,7 +152,7 @@ impl SchemeBlockMut for DiskScheme {
         let new_id = self.next_id;
         self.next_id += 1;
         self.handles.insert(new_id, new_handle);
-        Ok(Some(new_id))
+        Ok(Some(OpenResult::ThisScheme { number: new_id, flags: NewFdFlags::POSITIONED }))
     }
 
     fn fstat(&mut self, id: usize, stat: &mut Stat) -> Result<Option<usize>> {

@@ -11,9 +11,12 @@ use common::dma::Dma;
 use partitionlib::LogicalBlockSize;
 use partitionlib::PartitionTable;
 
+use redox_scheme::CallerCtx;
+use redox_scheme::OpenResult;
 use redox_scheme::SchemeBlockMut;
 use syscall::flag::*;
 use syscall::error::*;
+use syscall::schemev2::NewFdFlags;
 use virtio_core::spec::{Buffer, ChainBuilder, DescriptorFlags};
 use virtio_core::transport::Queue;
 
@@ -190,13 +193,12 @@ impl<'a> DiskScheme<'a> {
 }
 
 impl<'a> SchemeBlockMut for DiskScheme<'a> {
-    fn open(
+    fn xopen(
         &mut self,
         path: &str,
         flags: usize,
-        _uid: u32,
-        _gid: u32,
-    ) -> syscall::Result<Option<usize>> {
+        _ctx: &CallerCtx,
+    ) -> syscall::Result<Option<OpenResult>> {
         log::info!("virtiod: open: {}", path);
 
         let path_str = path.trim_matches('/');
@@ -222,7 +224,7 @@ impl<'a> SchemeBlockMut for DiskScheme<'a> {
                     },
                 );
 
-                Ok(Some(id))
+                Ok(Some(OpenResult::ThisScheme { number: id, flags: NewFdFlags::POSITIONED }))
             } else {
                 return Err(syscall::Error::new(EISDIR));
             }
@@ -247,7 +249,7 @@ impl<'a> SchemeBlockMut for DiskScheme<'a> {
                 },
             );
 
-            Ok(Some(id))
+            Ok(Some(OpenResult::ThisScheme { number: id, flags: NewFdFlags::POSITIONED }))
         } else {
             let nsid = path_str.parse::<u32>().unwrap();
             assert_eq!(nsid, 0);
@@ -255,7 +257,7 @@ impl<'a> SchemeBlockMut for DiskScheme<'a> {
             let id = self.next_id;
             self.next_id += 1;
             self.handles.insert(id, Handle::Disk);
-            Ok(Some(id))
+            Ok(Some(OpenResult::ThisScheme { number: id, flags: NewFdFlags::POSITIONED }))
         }
     }
 

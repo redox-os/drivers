@@ -4,12 +4,13 @@ use std::{cmp, str};
 use crate::protocol::Protocol;
 use crate::scsi::Scsi;
 
-use redox_scheme::SchemeMut;
+use redox_scheme::{CallerCtx, OpenResult, SchemeMut};
 use syscall::error::{Error, Result};
 use syscall::error::{EACCES, EBADF, EINVAL, EIO, ENOENT, ENOSYS};
 use syscall::flag::{MODE_CHR, MODE_DIR};
 use syscall::flag::{O_DIRECTORY, O_STAT};
 use syscall::flag::{SEEK_CUR, SEEK_END, SEEK_SET};
+use syscall::schemev2::NewFdFlags;
 
 // TODO: Only one disk, right?
 const LIST_CONTENTS: &'static [u8] = b"0\n";
@@ -39,8 +40,8 @@ impl<'a> ScsiScheme<'a> {
 }
 
 impl SchemeMut for ScsiScheme<'_> {
-    fn open(&mut self, path_str: &str, flags: usize, uid: u32, _gid: u32) -> Result<usize> {
-        if uid != 0 {
+    fn xopen(&mut self, path_str: &str, flags: usize, ctx: &CallerCtx) -> Result<OpenResult> {
+        if ctx.uid != 0 {
             return Err(Error::new(EACCES));
         }
         if flags & O_DIRECTORY != 0 && flags & O_STAT == 0 {
@@ -59,7 +60,7 @@ impl SchemeMut for ScsiScheme<'_> {
         };
         self.next_fd += 1;
         self.handles.insert(self.next_fd, handle);
-        Ok(self.next_fd)
+        Ok(OpenResult::ThisScheme { number: self.next_fd, flags: NewFdFlags::POSITIONED })
     }
     fn fstat(&mut self, fd: usize, stat: &mut syscall::Stat) -> Result<usize> {
         match self.handles.get(&fd).ok_or(Error::new(EBADF))? {
