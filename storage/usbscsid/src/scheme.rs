@@ -15,9 +15,9 @@ use syscall::flag::{SEEK_CUR, SEEK_END, SEEK_SET};
 const LIST_CONTENTS: &'static [u8] = b"0\n";
 
 enum Handle {
-    List(usize),
-    Disk(usize),
-    //Partition(usize, u32, usize),
+    List,
+    Disk,
+    //Partition(usize, u32),
 }
 
 pub struct ScsiScheme<'a> {
@@ -50,12 +50,12 @@ impl SchemeMut for ScsiScheme<'_> {
             .trim_start_matches('/');
         let handle = if path_str.is_empty() {
             // List
-            Handle::List(0)
+            Handle::List
         } else if let Some(_p_pos) = path_str.chars().position(|c| c == 'p') {
             // TODO: Partitions.
             return Err(Error::new(ENOSYS));
         } else {
-            Handle::Disk(0)
+            Handle::Disk
         };
         self.next_fd += 1;
         self.handles.insert(self.next_fd, handle);
@@ -63,13 +63,13 @@ impl SchemeMut for ScsiScheme<'_> {
     }
     fn fstat(&mut self, fd: usize, stat: &mut syscall::Stat) -> Result<usize> {
         match self.handles.get(&fd).ok_or(Error::new(EBADF))? {
-            Handle::Disk(_) => {
+            Handle::Disk => {
                 stat.st_mode = MODE_CHR;
                 stat.st_size = self.scsi.get_disk_size();
                 stat.st_blksize = self.scsi.block_size;
                 stat.st_blocks = self.scsi.block_count;
             }
-            Handle::List(_) => {
+            Handle::List => {
                 stat.st_mode = MODE_DIR;
                 stat.st_size = LIST_CONTENTS.len() as u64;
             }
@@ -78,84 +78,64 @@ impl SchemeMut for ScsiScheme<'_> {
     }
     fn fpath(&mut self, fd: usize, buf: &mut [u8]) -> Result<usize> {
         let path = match self.handles.get_mut(&fd).ok_or(Error::new(EBADF))? {
-            Handle::Disk(_) => "0",
-            Handle::List(_) => "",
+            Handle::Disk => "0",
+            Handle::List => "",
         }
         .as_bytes();
         let min = std::cmp::min(path.len(), buf.len());
         buf[..min].copy_from_slice(&path[..min]);
         Ok(min)
     }
-    fn seek(&mut self, fd: usize, pos: isize, whence: usize) -> Result<isize> {
-        match self.handles.get_mut(&fd).ok_or(Error::new(EBADF))? {
-            Handle::Disk(ref mut offset) => {
-                let len = self.scsi.get_disk_size() as isize;
-                *offset = match whence {
-                    SEEK_SET => cmp::max(0, cmp::min(pos, len)),
-                    SEEK_CUR => cmp::max(0, cmp::min(*offset as isize + pos, len)),
-                    SEEK_END => cmp::max(0, cmp::min(len + pos, len)),
-                    _ => return Err(Error::new(EINVAL)),
-                } as usize;
-                Ok(*offset as isize)
-            }
-            Handle::List(ref mut offset) => {
-                let len = LIST_CONTENTS.len() as isize;
-                *offset = match whence {
-                    SEEK_SET => cmp::max(0, cmp::min(pos, len)),
-                    SEEK_CUR => cmp::max(0, cmp::min(*offset as isize + pos, len)),
-                    SEEK_END => cmp::max(0, cmp::min(len + pos, len)),
-                    _ => return Err(Error::new(EINVAL)),
-                } as usize;
-                Ok(*offset as isize)
-            }
-        }
+    fn fsize(&mut self, fd: usize) -> Result<u64> {
+        Ok(match self.handles.get_mut(&fd).ok_or(Error::new(EBADF))? {
+            Handle::Disk => self.scsi.get_disk_size(),
+            Handle::List => LIST_CONTENTS.len() as u64,
+        })
     }
-    fn read(&mut self, fd: usize, buf: &mut [u8]) -> Result<usize> {
+    fn read(&mut self, fd: usize, buf: &mut [u8], offset: u64, _fcntl_flags: u32) -> Result<usize> {
         match self.handles.get_mut(&fd).ok_or(Error::new(EBADF))? {
-            Handle::Disk(ref mut offset) => {
-                if *offset as u64 % u64::from(self.scsi.block_size) != 0
+            Handle::Disk => {
+                if offset % u64::from(self.scsi.block_size) != 0
                     || buf.len() as u64 % u64::from(self.scsi.block_size) != 0
                 {
                     return Err(Error::new(EINVAL));
                 }
-                let lba = *offset as u64 / u64::from(self.scsi.block_size);
-                let bytes_read = self
-                    .scsi
-                    .read(self.protocol, lba, buf)
-                    .map_err(|err| dbg!(err))
-                    .or(Err(Error::new(EIO)))?;
-                *offset += bytes_read as usize;
-                Ok(bytes_read as usize)
+                let lba = offset / u64::from(self.scsi.block_size);
+                match self.scsi.read(self.protocol, lba, buf) {
+                    Ok(bytes_read) => Ok(bytes_read as usize),
+                    Err(err) => {
+                        eprintln!("usbscsid: READ IO ERROR: {err}");
+                        Err(Error::new(EIO))
+                    }
+                }
             }
-            Handle::List(ref mut offset) => {
-                let max_bytes_to_read = cmp::min(LIST_CONTENTS.len(), buf.len());
-                let bytes_to_read = cmp::max(max_bytes_to_read, *offset) - *offset;
+            Handle::List => {
+                let src = usize::try_from(offset).ok().and_then(|o| LIST_CONTENTS.get(o..)).unwrap_or(&[]);
+                let min = core::cmp::min(src.len(), buf.len());
+                buf[..min].copy_from_slice(&src[..min]);
 
-                buf[..bytes_to_read].copy_from_slice(&LIST_CONTENTS[..bytes_to_read]);
-                *offset += bytes_to_read;
-
-                Ok(bytes_to_read)
+                Ok(min)
             }
         }
     }
-    fn write(&mut self, fd: usize, buf: &[u8]) -> Result<usize> {
+    fn write(&mut self, fd: usize, buf: &[u8], offset: u64, _fcntl_flags: u32) -> Result<usize> {
         match self.handles.get_mut(&fd).ok_or(Error::new(EBADF))? {
-            Handle::Disk(ref mut offset) => {
-                if *offset as u64 % u64::from(self.scsi.block_size) != 0
+            Handle::Disk => {
+                if offset % u64::from(self.scsi.block_size) != 0
                     || buf.len() as u64 % u64::from(self.scsi.block_size) != 0
                 {
                     return Err(Error::new(EINVAL));
                 }
-                let lba = *offset as u64 / u64::from(self.scsi.block_size);
-                let bytes_written = self
-                    .scsi
-                    .write(self.protocol, lba, buf)
-                    .map_err(|err| dbg!(err))
-                    .or(Err(Error::new(EIO)))?;
-                *offset += bytes_written as usize;
-                Ok(bytes_written as usize)
+                let lba = offset / u64::from(self.scsi.block_size);
+                match self.scsi.write(self.protocol, lba, buf) {
+                    Ok(bytes_written) => Ok(bytes_written as usize),
+                    Err(err) => {
+                        eprintln!("usbscsid: WRITE IO ERROR: {err}");
+                        Err(Error::new(EIO))
+                    }
+                }
             }
-            Handle::List(_) => Err(Error::new(EBADF)),
+            Handle::List => Err(Error::new(EBADF)),
         }
     }
 }

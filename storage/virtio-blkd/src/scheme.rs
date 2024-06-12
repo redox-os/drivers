@@ -84,18 +84,13 @@ pub enum Handle {
     Partition {
         /// Partition Number
         number: u32,
-        /// Offset in bytes
-        offset: usize,
     },
 
     List {
         entries: Vec<u8>,
-        offset: usize,
     },
 
-    Disk {
-        offset: usize,
-    },
+    Disk,
 }
 
 pub struct DiskScheme<'a> {
@@ -224,7 +219,6 @@ impl<'a> SchemeBlockMut for DiskScheme<'a> {
                     id,
                     Handle::List {
                         entries: list.into_bytes(),
-                        offset: 0,
                     },
                 );
 
@@ -250,7 +244,6 @@ impl<'a> SchemeBlockMut for DiskScheme<'a> {
                 id,
                 Handle::Partition {
                     number: part_num,
-                    offset: 0,
                 },
             );
 
@@ -261,25 +254,24 @@ impl<'a> SchemeBlockMut for DiskScheme<'a> {
 
             let id = self.next_id;
             self.next_id += 1;
-            self.handles.insert(id, Handle::Disk { offset: 0 });
+            self.handles.insert(id, Handle::Disk);
             Ok(Some(id))
         }
     }
 
-    fn read(&mut self, id: usize, buf: &mut [u8]) -> syscall::Result<Option<usize>> {
-        match *self.handles.get_mut(&id).ok_or(Error::new(EBADF))? {
+    fn read(&mut self, id: usize, buf: &mut [u8], offset: u64, _fcntl_flags: u32) -> syscall::Result<Option<usize>> {
+        Ok(Some(match *self.handles.get_mut(&id).ok_or(Error::new(EBADF))? {
             Handle::List {
                 ref mut entries,
-                ref mut offset,
             } => {
-                let count = (&entries[*offset..]).read(buf).unwrap();
-                *offset += count;
-                Ok(Some(count))
+                let src = usize::try_from(offset).ok().and_then(|o| entries.get(o..)).unwrap_or(&[]);
+                let count = core::cmp::min(src.len(), buf.len());
+                buf[..count].copy_from_slice(&src[..count]);
+                count
             }
 
             Handle::Partition {
                 number,
-                ref mut offset,
             } => {
                 let part_table = self.part_table.as_ref().unwrap();
                 let part = part_table
@@ -288,68 +280,52 @@ impl<'a> SchemeBlockMut for DiskScheme<'a> {
                     .ok_or(Error::new(EBADF))?;
 
                 // Get the offset in sectors.
-                let rel_block = (*offset as u64) / BLK_SIZE;
+                let rel_block = offset / BLK_SIZE;
                 // if rel_block >= part.size {
                 //     return Err(Error::new(EOVERFLOW));
                 // }
 
                 let abs_block = part.start_lba + rel_block;
 
-                let count = futures::executor::block_on(self.queue.read(abs_block, buf));
-                *offset += count;
-                Ok(Some(count))
+                futures::executor::block_on(self.queue.read(abs_block, buf))
             }
 
-            Handle::Disk { ref mut offset } => {
+            Handle::Disk => {
                 let block_size = self.cfg.block_size();
 
-                let count = futures::executor::block_on(
-                    self.queue.read((*offset as u64) / block_size as u64, buf),
-                );
-                *offset += count;
-                Ok(Some(count))
+                futures::executor::block_on(
+                    self.queue.read(offset / u64::from(block_size), buf),
+                )
             }
-        }
+        }))
     }
 
-    fn write(&mut self, id: usize, buf: &[u8]) -> syscall::Result<Option<usize>> {
-        match *self.handles.get_mut(&id).ok_or(Error::new(EBADF))? {
-            Handle::Disk { ref mut offset } => {
+    fn write(&mut self, id: usize, buf: &[u8], offset: u64, _fcntl_flags: u32) -> syscall::Result<Option<usize>> {
+        Ok(Some(match *self.handles.get_mut(&id).ok_or(Error::new(EBADF))? {
+            Handle::Disk => {
                 let block_size = self.cfg.block_size();
-                let count = futures::executor::block_on(
-                    self.queue.write((*offset as u64) / block_size as u64, buf),
-                );
-
-                *offset += count;
-                Ok(Some(count))
+                futures::executor::block_on(
+                    self.queue.write(offset / u64::from(block_size), buf),
+                )
             }
 
-            _ => unimplemented!(),
-        }
+            _ => todo!(),
+        }))
     }
 
-    fn seek(&mut self, id: usize, pos: isize, whence: usize) -> syscall::Result<Option<isize>> {
-        match *self.handles.get_mut(&id).ok_or(Error::new(EBADF))? {
+    fn fsize(&mut self, id: usize) -> syscall::Result<Option<u64>> {
+        Ok(Some(match *self.handles.get_mut(&id).ok_or(Error::new(EBADF))? {
             Handle::List {
                 ref entries,
-                ref mut offset,
             } => {
-                let len = entries.len() as isize;
-                log::debug!("list: whence={whence:?} pos={pos:?} part_len={len:?}");
+                let len = entries.len() as u64;
+                log::debug!("list: part_len={len:?}");
 
-                *offset = match whence {
-                    SEEK_SET => cmp::min(len, pos),
-                    SEEK_CUR => cmp::max(0, cmp::min(len, *offset as isize + pos)),
-                    SEEK_END => cmp::max(0, cmp::min(len, len + pos)),
-                    _ => return Err(Error::new(EINVAL)),
-                } as usize;
-
-                Ok(Some(*offset as isize))
+                len
             }
 
             Handle::Partition {
                 number,
-                ref mut offset,
             } => {
                 let part_table = self.part_table.as_ref().unwrap();
                 let part = part_table
@@ -358,33 +334,15 @@ impl<'a> SchemeBlockMut for DiskScheme<'a> {
                     .ok_or(Error::new(EBADF))?;
 
                 // Partition size in bytes.
-                let len = (part.size * BLK_SIZE) as isize;
+                let len = part.size * BLK_SIZE;
 
-                log::debug!("part: whence={whence:?} pos={pos:?} part_len={len:?}");
+                log::debug!("part: part_len={len:?}");
 
-                *offset = match whence {
-                    SEEK_SET => cmp::min(len, pos),
-                    SEEK_CUR => cmp::max(0, cmp::min(len, *offset as isize + pos)),
-                    SEEK_END => cmp::max(0, cmp::min(len, len + pos)),
-                    _ => return Err(Error::new(EINVAL)),
-                } as usize;
-
-                Ok(Some(*offset as isize))
+                len
             }
 
-            Handle::Disk { ref mut offset } => {
-                let len = (self.cfg.capacity() * self.cfg.block_size() as u64) as isize;
-
-                *offset = match whence {
-                    SEEK_SET => cmp::min(len, pos),
-                    SEEK_CUR => cmp::max(0, cmp::min(len, *offset as isize + pos)),
-                    SEEK_END => cmp::max(0, cmp::min(len, len + pos)),
-                    _ => return Err(Error::new(EINVAL)),
-                } as usize;
-
-                Ok(Some(*offset as isize))
-            }
-        }
+            Handle::Disk => self.cfg.capacity() * u64::from(self.cfg.block_size()),
+        }))
     }
 
     fn fpath(&mut self, _id: usize, _buf: &mut [u8]) -> syscall::Result<Option<usize>> {
