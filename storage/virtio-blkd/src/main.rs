@@ -7,6 +7,7 @@ use std::os::fd::{FromRawFd, RawFd};
 use std::sync::{Arc, Weak};
 
 use libredox::flag;
+use redox_scheme::{RequestKind, SignalBehavior, Socket, V2};
 use static_assertions::const_assert_eq;
 
 use pcid_interface::*;
@@ -141,30 +142,24 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
 
     let scheme_name = format!("disk.{}", name);
 
-    let socket_fd = libredox::call::open(
-        &format!(":{}", scheme_name),
-        flag::O_RDWR | flag::O_CREAT | flag::O_CLOEXEC,
-        0,
-    )
-    .map_err(syscall::Error::from)
-    .map_err(Error::SyscallError)?;
+    let socket_fd = Socket::<V2>::create(&scheme_name).map_err(Error::SyscallError)?;
 
-    let mut socket_file = unsafe { File::from_raw_fd(socket_fd as RawFd) };
     let mut scheme = scheme::DiskScheme::new(queue, device_space);
 
     deamon.ready().expect("virtio-blkd: failed to deamonize");
 
     loop {
-        let mut packet = Packet::default();
-        socket_file
-            .read(&mut packet)
-            .expect("virtio-blkd: failed to read disk scheme");
-        let packey = scheme.handle(&mut packet);
-        packet.a = packey.unwrap();
-        socket_file
-            .write(&mut packet)
-            .expect("virtio-blkd: failed to read disk scheme");
+        let req = match socket_fd.next_request(SignalBehavior::Restart)
+            .expect("virtio-blkd: failed to read disk scheme") {
+                Some(r) => if let RequestKind::Call(c) = r.kind() { c } else { continue },
+                None => break,
+        };
+        let resp = req.handle_scheme_block_mut(&mut scheme).expect("TODO: block?");
+        socket_fd
+            .write_response(resp, SignalBehavior::Restart)
+            .expect("virtio-blkd: failed to write to disk scheme");
     }
+    Ok(())
 }
 
 fn daemon_runner(redox_daemon: redox_daemon::Daemon) -> ! {

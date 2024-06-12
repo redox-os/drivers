@@ -1,11 +1,7 @@
 use std::env;
-use std::fs::File;
-use std::io::prelude::*;
-use std::os::unix::io::{FromRawFd, RawFd};
 
-use libredox::flag;
-use syscall::{Packet, SchemeMut};
-use xhcid_interface::{ConfigureEndpointsReq, DeviceReqData, XhciClientHandle};
+use redox_scheme::{RequestKind, SignalBehavior, Socket, V2};
+use xhcid_interface::{ConfigureEndpointsReq, XhciClientHandle};
 
 pub mod protocol;
 pub mod scsi;
@@ -83,11 +79,10 @@ fn daemon(daemon: redox_daemon::Daemon, scheme: String, port: usize, protocol: u
     let mut protocol = protocol::setup(&handle, protocol, &desc, &conf_desc, &if_desc)
         .expect("Failed to setup protocol");
 
-    // TODO: Let all of the USB drivers syscall clone(2), and xhcid won't have to keep track of all
-    // the drivers.
-    let socket_fd = libredox::call::open(disk_scheme_name, flag::O_RDWR | flag::O_CREAT, 0)
+    // TODO: Let all of the USB drivers fork or be managed externally, and xhcid won't have to keep
+    // track of all the drivers.
+    let socket_fd = Socket::<V2>::create(&disk_scheme_name)
         .expect("usbscsid: failed to create disk scheme");
-    let mut socket_file = unsafe { File::from_raw_fd(socket_fd as RawFd) };
 
     //libredox::call::setrens(0, 0).expect("scsid: failed to enter null namespace");
     let mut scsi = Scsi::new(&mut *protocol).expect("usbscsid: failed to setup SCSI");
@@ -99,17 +94,19 @@ fn daemon(daemon: redox_daemon::Daemon, scheme: String, port: usize, protocol: u
     let mut scsi_scheme = ScsiScheme::new(&mut scsi, &mut *protocol);
 
     // TODO: Use nonblocking and put all pending calls in a todo VecDeque. Use an eventfd as well.
-    'scheme_loop: loop {
-        let mut packet = Packet::default();
-        match socket_file.read(&mut packet) {
-            Ok(0) => break 'scheme_loop,
-            Ok(_) => (),
-            Err(err) => panic!("scsid: failed to read disk scheme: {}", err),
-        }
-        scsi_scheme.handle(&mut packet);
-        socket_file
-            .write(&packet)
-            .expect("scsid: failed to write packet");
+    loop {
+        let req = match socket_fd.next_request(SignalBehavior::Restart).expect("scsid: failed to read disk scheme") {
+            Some(r) => if let RequestKind::Call(c) = r.kind() {
+                c
+            } else {
+                continue;
+            }
+            None => break,
+        };
+        let resp = req.handle_scheme_mut(&mut scsi_scheme);
+        socket_fd
+            .write_response(resp, SignalBehavior::Restart)
+            .expect("scsid: failed to write cqe");
     }
 
     std::process::exit(0);

@@ -10,8 +10,10 @@ use std::sync::Arc;
 use common::dma::Dma;
 use partitionlib::LogicalBlockSize;
 use partitionlib::PartitionTable;
-use syscall::*;
 
+use redox_scheme::SchemeBlockMut;
+use syscall::flag::*;
+use syscall::error::*;
 use virtio_core::spec::{Buffer, ChainBuilder, DescriptorFlags};
 use virtio_core::transport::Queue;
 

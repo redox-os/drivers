@@ -4,12 +4,12 @@ use std::{cmp, str};
 use crate::protocol::Protocol;
 use crate::scsi::Scsi;
 
+use redox_scheme::SchemeMut;
 use syscall::error::{Error, Result};
 use syscall::error::{EACCES, EBADF, EINVAL, EIO, ENOENT, ENOSYS};
 use syscall::flag::{MODE_CHR, MODE_DIR};
 use syscall::flag::{O_DIRECTORY, O_STAT};
 use syscall::flag::{SEEK_CUR, SEEK_END, SEEK_SET};
-use syscall::SchemeMut;
 
 // TODO: Only one disk, right?
 const LIST_CONTENTS: &'static [u8] = b"0\n";
@@ -38,7 +38,7 @@ impl<'a> ScsiScheme<'a> {
     }
 }
 
-impl<'a> SchemeMut for ScsiScheme<'a> {
+impl SchemeMut for ScsiScheme<'_> {
     fn open(&mut self, path_str: &str, flags: usize, uid: u32, _gid: u32) -> Result<usize> {
         if uid != 0 {
             return Err(Error::new(EACCES));
