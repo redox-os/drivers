@@ -88,6 +88,9 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     info!("IDE PCI CONFIG: {:?}", pci_config);
 
+    // Get controller DMA capable
+    let dma = pci_config.func.full_device_id.interface & 0x80 != 0;
+
     let busmaster_base = pci_config.func.bars[4].expect_port();
     let (primary, primary_irq) = if pci_config.func.full_device_id.interface & 1 != 0 {
         panic!("TODO: IDE primary channel is PCI native");
@@ -216,15 +219,16 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
                 println!("      Serial: {}", serial.trim());
                 println!("      Firmware: {}", firmware.trim());
                 println!("      Model: {}", model.trim());
-                println!("      {}-bit LBA", lba_bits);
                 println!("      Size: {} MB", sectors / 2048);
+                println!("      DMA: {}", dma);
+                println!("      {}-bit LBA", lba_bits);
 
                 disks.push(Box::new(AtaDisk {
                     chan: chan_lock.clone(),
                     chan_i,
                     dev,
                     size: sectors * 512,
-                    dma: true, //TODO: detect!
+                    dma,
                     lba_48: lba_bits == 48,
                 }));
             }
