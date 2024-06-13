@@ -1,8 +1,6 @@
 #![deny(trivial_numeric_casts, unused_allocation)]
 #![feature(int_roundings)]
 
-// TODO(andypython): driver panic with an empty disk.
-
 use std::fs::File;
 use std::io::{Read, Write};
 use std::os::fd::{FromRawFd, RawFd};
