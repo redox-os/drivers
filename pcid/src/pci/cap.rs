@@ -1,40 +1,39 @@
-use super::func::PciFunc;
-
+use pci_types::capability::PciCapabilityAddress;
+use pci_types::ConfigRegionAccess;
 use serde::{Serialize, Deserialize};
 
 pub struct CapabilitiesIter<'a> {
-    offset: u8,
-    func: &'a PciFunc<'a>,
+    addr: PciCapabilityAddress,
+    access: &'a dyn ConfigRegionAccess,
 }
 impl<'a> CapabilitiesIter<'a> {
-    pub fn new(offset: u8, func: &'a PciFunc) -> Self {
-        Self {
-            offset,
-            func,
-        }
+    pub fn new(addr: PciCapabilityAddress, access: &'a dyn ConfigRegionAccess) -> Self {
+        Self { addr, access }
     }
 }
 impl<'a> Iterator for CapabilitiesIter<'a> {
     type Item = Capability;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let offset = unsafe {
+        let addr = unsafe {
             // mask RsvdP bits
-            self.offset = self.offset & 0xFC;
+            self.addr.offset = self.addr.offset & 0xFC;
 
-            if self.offset == 0 { return None };
+            if self.addr.offset == 0 {
+                return None;
+            };
 
-            let first_dword = self.func.read_u32(u16::from(self.offset));
-            let next = ((first_dword >> 8) & 0xFF) as u8;
+            let first_dword = self.access.read(self.addr.address, self.addr.offset);
+            let next = ((first_dword >> 8) & 0xFF) as u16;
 
-            let offset = self.offset;
-            self.offset = next;
+            let addr = self.addr;
+            self.addr.offset = next;
 
-            offset
+            addr
         };
 
         let cap = unsafe {
-            Capability::parse(self.func, offset)
+            Capability::parse(addr, self.access)
         };
 
         Some(cap)
@@ -56,20 +55,20 @@ pub enum CapabilityId {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub enum MsiCapability {
     _32BitAddress {
-        cap_offset: u8,
+        cap_offset: u16,
         message_control: u32,
         message_address: u32,
         message_data: u16,
     },
     _64BitAddress {
-        cap_offset: u8,
+        cap_offset: u16,
         message_control: u32,
         message_address_lo: u32,
         message_address_hi: u32,
         message_data: u16,
     },
     _32BitAddressWithPvm {
-        cap_offset: u8,
+        cap_offset: u16,
         message_control: u32,
         message_address: u32,
         message_data: u32,
@@ -77,7 +76,7 @@ pub enum MsiCapability {
         pending_bits: u32,
     },
     _64BitAddressWithPvm {
-        cap_offset: u8,
+        cap_offset: u16,
         message_control: u32,
         message_address_lo: u32,
         message_address_hi: u32,
@@ -89,7 +88,7 @@ pub enum MsiCapability {
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct MsixCapability {
-    pub cap_offset: u8,
+    pub cap_offset: u16,
     pub a: u32,
     pub b: u32,
     pub c: u32,
@@ -133,23 +132,37 @@ impl Capability {
             _ => None,
         }
     }
-    unsafe fn parse_msi(func: &PciFunc, offset: u8) -> Self {
-        Self::Msi(MsiCapability::parse(func, offset))
+    unsafe fn parse_msi(addr: PciCapabilityAddress, access: &dyn ConfigRegionAccess) -> Self {
+        Self::Msi(MsiCapability::parse(addr, access))
     }
-    unsafe fn parse_msix(func: &PciFunc, offset: u8) -> Self {
+    unsafe fn parse_msix(addr: PciCapabilityAddress, access: &dyn ConfigRegionAccess) -> Self {
         Self::MsiX(MsixCapability {
-            cap_offset: offset,
-            a: func.read_u32(u16::from(offset)),
-            b: func.read_u32(u16::from(offset + 4)),
-            c: func.read_u32(u16::from(offset + 8)),
+            cap_offset: addr.offset,
+            a: access.read(addr.address, addr.offset),
+            b: access.read(addr.address, addr.offset + 4),
+            c: access.read(addr.address, addr.offset + 8),
         })
     }
-    unsafe fn parse_vendor(func: &PciFunc, offset: u8) -> Self {
-        let next = func.read_u8(u16::from(offset+1));
-        let length = func.read_u8(u16::from(offset+2));
-        log::info!("Vendor specific offset: {offset:#02x} next: {next:#02x} cap len: {length:#02x}");
+    unsafe fn parse_vendor(addr: PciCapabilityAddress, access: &dyn ConfigRegionAccess) -> Self {
+        let dword = access.read(addr.address, addr.offset);
+        let next = (dword >> 8) & 0xFF;
+        let length = ((dword >> 16) & 0xFF) as u16;
+        log::info!(
+            "Vendor specific offset: {:#02x} next: {next:#02x} cap len: {length:#02x}",
+            addr.offset
+        );
         let data = if length > 0 {
-            let mut raw_data = func.read_range(offset.into(), length.into());
+            assert!(
+                length > 3 && length % 4 == 0,
+                "invalid range length: {}",
+                length
+            );
+            let mut raw_data = {
+                (addr.offset..addr.offset + length)
+                    .step_by(4)
+                    .flat_map(|offset| access.read(addr.address, offset).to_le_bytes())
+                    .collect::<Vec<u8>>()
+            };
             raw_data.drain(3..).collect()
         } else {
             log::warn!("Vendor specific capability is invalid");
@@ -159,18 +172,22 @@ impl Capability {
             data
         })
     }
-    unsafe fn parse(func: &PciFunc, offset: u8) -> Self {
-        assert_eq!(offset & 0xFC, offset, "capability must be dword aligned");
+    unsafe fn parse(addr: PciCapabilityAddress, access: &dyn ConfigRegionAccess) -> Self {
+        assert_eq!(
+            addr.offset & 0xFC,
+            addr.offset,
+            "capability must be dword aligned"
+        );
 
-        let dword = func.read_u32(u16::from(offset));
+        let dword = access.read(addr.address, addr.offset);
         let capability_id = (dword & 0xFF) as u8;
 
         if capability_id == CapabilityId::Msi as u8 {
-            Self::parse_msi(func, offset)
+            Self::parse_msi(addr, access)
         } else if capability_id == CapabilityId::MsiX as u8 {
-            Self::parse_msix(func, offset)
+            Self::parse_msix(addr, access)
         } else if capability_id == CapabilityId::Vendor as u8 {
-            Self::parse_vendor(func, offset)
+            Self::parse_vendor(addr, access)
         } else {
             if capability_id != CapabilityId::Pcie as u8
                 && capability_id != CapabilityId::PwrMgmt as u8
