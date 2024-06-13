@@ -184,10 +184,10 @@ impl<'a> DiskScheme<'a> {
         };
 
         let part_table = partitionlib::get_partitions(&mut shim, LogicalBlockSize::Lb512)
-            .unwrap()
-            .expect("virtiod: no partitions found");
+            .ok()
+            .flatten();
 
-        this.part_table = Some(part_table);
+        this.part_table = part_table;
         this
     }
 }
