@@ -210,10 +210,10 @@ impl<'a> SchemeBlockMut for DiskScheme<'a> {
                 //            to the namespace id).
                 write!(list, "{}\n", 0).unwrap();
 
-                let part_table = self.part_table.as_ref().unwrap();
-
-                for part_num in 0..part_table.partitions.len() {
-                    write!(list, "{}p{}\n", 0, part_num).unwrap();
+                if let Some(part_table) = &self.part_table {
+                    for part_num in 0..part_table.partitions.len() {
+                        write!(list, "{}p{}\n", 0, part_num).unwrap();
+                    }
                 }
 
                 let id = self.next_id;
@@ -389,8 +389,11 @@ impl<'a> SchemeBlockMut for DiskScheme<'a> {
         todo!()
     }
 
-    fn fstat(&mut self, _id: usize, _stat: &mut syscall::Stat) -> syscall::Result<Option<usize>> {
-        todo!()
+    fn fstat(&mut self, id: usize, _stat: &mut syscall::Stat) -> syscall::Result<Option<usize>> {
+        match self.handles.get_mut(&id).ok_or(Error::new(EBADF))? {
+            Handle::List { .. } => Ok(Some(0)),
+            Handle::Disk { .. } | Handle::Partition { .. } => todo!(),
+        }
     }
 
     fn dup(&mut self, _old_id: usize, _buf: &[u8]) -> Result<Option<usize>> {
