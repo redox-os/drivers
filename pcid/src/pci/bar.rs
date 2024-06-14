@@ -53,9 +53,9 @@ impl PciBar {
         }
     }
 
-    pub unsafe fn physmap_mem(&self, driver: &str) -> *mut () {
+    pub unsafe fn physmap_mem(&self, driver: &str) -> (*mut (), usize) {
         let (bar, bar_size) = self.expect_mem();
-        unsafe {
+        let addr = unsafe {
             common::physmap(
                 bar,
                 bar_size,
@@ -64,6 +64,7 @@ impl PciBar {
                 common::MemoryType::Uncacheable,
             )
         }
-        .unwrap_or_else(|err| panic!("{driver}: failed to map BAR at {bar:016X}: {err}"))
+        .unwrap_or_else(|err| panic!("{driver}: failed to map BAR at {bar:016X}: {err}"));
+        (addr, bar_size)
     }
 }

@@ -131,7 +131,7 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle) -> File {
         msix_info.validate(pci_config.func.bars);
 
         let bar = &pci_config.func.bars[msix_info.table_bar as usize];
-        let bar_address = unsafe { bar.physmap_mem("rtl8168d") } as usize;
+        let bar_address = unsafe { bar.physmap_mem("rtl8168d") }.0 as usize;
 
         let virt_table_base = (bar_address + msix_info.table_offset as usize) as *mut MsixTableEntry;
 

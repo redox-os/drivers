@@ -217,7 +217,7 @@ fn main() {
         let mut irq_file = irq.irq_handle("vboxd");
 
         let mut port = Pio::<u32>::new(bar0 as u16);
-        let address = unsafe { bar1.physmap_mem("vboxd") };
+        let (address, _) = unsafe { bar1.physmap_mem("vboxd") };
         {
             let vmmdev = unsafe { &mut *(address as *mut VboxVmmDev) };
 

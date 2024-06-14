@@ -33,7 +33,7 @@ fn main() {
     redox_daemon::Daemon::new(move |daemon| {
         let mut irq_file = irq.irq_handle("e1000d");
 
-        let address = unsafe { bar.physmap_mem("e1000d") } as usize;
+        let address = unsafe { bar.physmap_mem("e1000d") }.0 as usize;
 
         let device =
             unsafe { device::Intel8254x::new(address).expect("e1000d: failed to allocate device") };

@@ -195,7 +195,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     log::debug!("XHCI PCI CONFIG: {:?}", pci_config);
     let bar = &pci_config.func.bars[0];
 
-    let address = unsafe { bar.physmap_mem("xhcid") } as usize;
+    let address = unsafe { bar.physmap_mem("xhcid") }.0 as usize;
 
     let (irq_file, interrupt_method) = (None, InterruptMethod::Polling); //TODO: get_int_method(&mut pcid_handle, address);
 

@@ -27,22 +27,12 @@ mod scheme;
 /// A wrapper for a BAR allocation.
 pub struct Bar {
     ptr: NonNull<u8>,
-    physical: usize,
     bar_size: usize,
 }
 impl Bar {
-    pub fn allocate(bar: usize, bar_size: usize) -> Result<Self> {
+    pub fn new(ptr: *mut (), bar_size: usize) -> Result<Self> {
         Ok(Self {
-            ptr: NonNull::new(
-                unsafe { common::physmap(
-                    bar,
-                    bar_size,
-                    common::Prot { read: true, write: true },
-                    common::MemoryType::Uncacheable,
-                )? as *mut u8 },
-            )
-            .expect("Mapping a BAR resulted in a nullptr"),
-            physical: bar,
+            ptr: NonNull::new(ptr.cast::<u8>()).expect("Mapping a BAR resulted in a nullptr"),
             bar_size,
         })
     }
@@ -101,9 +91,9 @@ fn get_int_method(
             match &mut *bar_guard {
                 &mut Some(ref bar) => Ok(bar.ptr),
                 bar_to_set @ &mut None => {
-                    let (bar, bar_size) = function.bars[bir].expect_mem();
+                    let (ptr, bar_size) = unsafe { function.bars[bir].physmap_mem("nvmed") };
 
-                    let bar = Bar::allocate(bar, bar_size)?;
+                    let bar = Bar::new(ptr, bar_size)?;
                     *bar_to_set = Some(bar);
                     Ok(bar_to_set.as_ref().unwrap().ptr)
                 }
@@ -265,18 +255,16 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     let _logger_ref = setup_logging(&scheme_name);
 
-    let bar = &pci_config.func.bars[0];
-    let (bar_ptr, bar_size) = bar.expect_mem();
-
     log::debug!("NVME PCI CONFIG: {:?}", pci_config);
 
     let allocated_bars = AllocatedBars::default();
 
-    let address = unsafe { bar.physmap_mem("nvmed") } as usize;
+    let bar = &pci_config.func.bars[0];
+    let (address, bar_size) = unsafe { bar.physmap_mem("nvmed") };
+
     *allocated_bars.0[0].lock().unwrap() = Some(Bar {
-        physical: bar_ptr,
         bar_size,
-        ptr: NonNull::new(address as *mut u8).expect("Physmapping BAR gave nullptr"),
+        ptr: NonNull::new(address.cast::<u8>()).expect("Physmapping BAR gave nullptr"),
     });
 
     let socket = Socket::<V2>::create(&scheme_name).expect("nvmed: failed to create disk scheme");
@@ -287,8 +275,13 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let (interrupt_method, interrupt_sources) =
         get_int_method(&mut pcid_handle, &pci_config.func, &allocated_bars)
             .expect("nvmed: failed to find a suitable interrupt method");
-    let mut nvme = Nvme::new(address, interrupt_method, pcid_handle, reactor_sender)
-        .expect("nvmed: failed to allocate driver data");
+    let mut nvme = Nvme::new(
+        address as usize,
+        interrupt_method,
+        pcid_handle,
+        reactor_sender,
+    )
+    .expect("nvmed: failed to allocate driver data");
     unsafe { nvme.init() }
     log::debug!("Finished base initialization");
     let nvme = Arc::new(nvme);

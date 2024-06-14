@@ -146,7 +146,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     log::info!(" + IHDA {}", pci_config.func.display());
 
-    let address = unsafe { bar.physmap_mem("ihdad") } as usize;
+    let address = unsafe { bar.physmap_mem("ihdad") }.0 as usize;
 
     //TODO: MSI-X
     let mut irq_file = get_int_method(&mut pcid_handle);

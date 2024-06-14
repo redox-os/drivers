@@ -88,7 +88,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     info!(" + AHCI {}", pci_config.func.display());
 
-    let address = unsafe { bar.physmap_mem("ahcid") };
+    let (address, _) = unsafe { bar.physmap_mem("ahcid") };
     {
         let scheme_name = format!("disk.{}", name);
         let socket = Socket::<V2>::nonblock(&scheme_name).expect("ahcid: failed to create disk scheme");
