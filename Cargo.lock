@@ -14,7 +14,7 @@ dependencies = [
  "redox-daemon",
  "redox-log",
  "redox_event",
- "redox_syscall 0.5.1",
+ "redox_syscall 0.5.2",
  "spin",
 ]
 
@@ -33,7 +33,7 @@ dependencies = [
  "plain",
  "redox-daemon",
  "redox-log",
- "redox_syscall 0.5.1",
+ "redox_syscall 0.5.2",
  "rustc-hash",
  "serde_json",
  "thiserror",
@@ -54,7 +54,7 @@ dependencies = [
  "redox-log",
  "redox-scheme",
  "redox_event",
- "redox_syscall 0.5.1",
+ "redox_syscall 0.5.2",
 ]
 
 [[package]]
@@ -66,7 +66,7 @@ dependencies = [
  "libredox 0.1.3",
  "redox-daemon",
  "redox_event",
- "redox_syscall 0.5.1",
+ "redox_syscall 0.5.2",
 ]
 
 [[package]]
@@ -159,7 +159,7 @@ dependencies = [
  "fdt 0.1.5",
  "libredox 0.1.3",
  "redox-daemon",
- "redox_syscall 0.5.1",
+ "redox_syscall 0.5.2",
 ]
 
 [[package]]
@@ -170,7 +170,7 @@ dependencies = [
  "orbclient",
  "pcid",
  "redox-daemon",
- "redox_syscall 0.5.1",
+ "redox_syscall 0.5.2",
 ]
 
 [[package]]
@@ -286,7 +286,7 @@ name = "common"
 version = "0.1.0"
 dependencies = [
  "libredox 0.1.3",
- "redox_syscall 0.5.1",
+ "redox_syscall 0.5.2",
 ]
 
 [[package]]
@@ -351,7 +351,7 @@ name = "driver-block"
 version = "0.1.0"
 dependencies = [
  "partitionlib",
- "redox_syscall 0.5.1",
+ "redox_syscall 0.5.2",
 ]
 
 [[package]]
@@ -359,7 +359,7 @@ name = "driver-network"
 version = "0.1.0"
 dependencies = [
  "libredox 0.1.3",
- "redox_syscall 0.5.1",
+ "redox_syscall 0.5.2",
 ]
 
 [[package]]
@@ -373,7 +373,7 @@ dependencies = [
  "pcid",
  "redox-daemon",
  "redox_event",
- "redox_syscall 0.5.1",
+ "redox_syscall 0.5.2",
 ]
 
 [[package]]
@@ -392,7 +392,7 @@ dependencies = [
  "ransid",
  "redox-daemon",
  "redox_event",
- "redox_syscall 0.5.1",
+ "redox_syscall 0.5.2",
 ]
 
 [[package]]
@@ -591,7 +591,7 @@ dependencies = [
  "pcid",
  "redox-daemon",
  "redox-log",
- "redox_syscall 0.5.1",
+ "redox_syscall 0.5.2",
 ]
 
 [[package]]
@@ -606,7 +606,7 @@ dependencies = [
  "redox-daemon",
  "redox-log",
  "redox_event",
- "redox_syscall 0.5.1",
+ "redox_syscall 0.5.2",
  "spin",
 ]
 
@@ -630,7 +630,7 @@ dependencies = [
  "orbclient",
  "redox-daemon",
  "redox-log",
- "redox_syscall 0.5.1",
+ "redox_syscall 0.5.2",
  "spin",
 ]
 
@@ -660,7 +660,7 @@ dependencies = [
  "pcid",
  "redox-daemon",
  "redox_event",
- "redox_syscall 0.5.1",
+ "redox_syscall 0.5.2",
 ]
 
 [[package]]
@@ -703,7 +703,7 @@ checksum = "c0ff37bd590ca25063e35af745c343cb7a0271906fb7b37e4813e8f79f00268d"
 dependencies = [
  "bitflags 2.5.0",
  "libc",
- "redox_syscall 0.5.1",
+ "redox_syscall 0.5.2",
 ]
 
 [[package]]
@@ -713,7 +713,7 @@ dependencies = [
  "anyhow",
  "libredox 0.1.3",
  "redox-daemon",
- "redox_syscall 0.5.1",
+ "redox_syscall 0.5.2",
  "slab",
 ]
 
@@ -741,9 +741,9 @@ checksum = "60302e4db3a61da70c0cb7991976248362f30319e88850c487b9b95bbf059e00"
 
 [[package]]
 name = "memchr"
-version = "2.7.2"
+version = "2.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c8640c5d730cb13ebd907d8d04b52f55ac9a2eec55b440c8892f40d56c76c1d"
+checksum = "78ca9ab1a0babb1e7d5695e3530886289c18cf2f87ec19a575a0abdce112e3a3"
 
 [[package]]
 name = "num-derive"
@@ -789,7 +789,7 @@ dependencies = [
  "redox-log",
  "redox-scheme",
  "redox_event",
- "redox_syscall 0.5.1",
+ "redox_syscall 0.5.2",
  "smallvec 1.13.2",
 ]
 
@@ -935,7 +935,7 @@ dependencies = [
  "pci_types",
  "plain",
  "redox-log",
- "redox_syscall 0.5.1",
+ "redox_syscall 0.5.2",
  "serde",
  "serde_json",
  "structopt",
@@ -949,7 +949,7 @@ version = "0.1.0"
 dependencies = [
  "libredox 0.1.3",
  "redox-daemon",
- "redox_syscall 0.5.1",
+ "redox_syscall 0.5.2",
 ]
 
 [[package]]
@@ -1011,7 +1011,7 @@ dependencies = [
  "libredox 0.1.3",
  "orbclient",
  "redox-daemon",
- "redox_syscall 0.5.1",
+ "redox_syscall 0.5.2",
 ]
 
 [[package]]
@@ -1100,10 +1100,10 @@ dependencies = [
 [[package]]
 name = "redox-scheme"
 version = "0.2.0"
-source = "git+https://gitlab.redox-os.org/4lDO2/redox-scheme.git?branch=schemev2plus#ca239589c873374a17715b637be1f9385345721c"
+source = "git+https://gitlab.redox-os.org/redox-os/redox-scheme.git#62aed6c712cca31bb18078adacd27b400f5ccf93"
 dependencies = [
  "libredox 0.1.3",
- "redox_syscall 0.5.1",
+ "redox_syscall 0.5.2",
 ]
 
 [[package]]
@@ -1136,8 +1136,9 @@ dependencies = [
 
 [[package]]
 name = "redox_syscall"
-version = "0.5.1"
-source = "git+https://gitlab.redox-os.org/4lDO2/syscall.git?branch=schemev2plus#b4f9a8952cec870ed7f457e3c15652d09aa0c9c7"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c82cf8cff14456045f55ec4241383baeff27af886adb72ffb2162f99911de0fd"
 dependencies = [
  "bitflags 2.5.0",
 ]
@@ -1171,7 +1172,7 @@ dependencies = [
  "redox-daemon",
  "redox-log",
  "redox_event",
- "redox_syscall 0.5.1",
+ "redox_syscall 0.5.2",
 ]
 
 [[package]]
@@ -1187,7 +1188,7 @@ dependencies = [
  "redox-daemon",
  "redox-log",
  "redox_event",
- "redox_syscall 0.5.1",
+ "redox_syscall 0.5.2",
 ]
 
 [[package]]
@@ -1213,7 +1214,7 @@ dependencies = [
  "redox-daemon",
  "redox-log",
  "redox_event",
- "redox_syscall 0.5.1",
+ "redox_syscall 0.5.2",
  "spin",
 ]
 
@@ -1540,7 +1541,7 @@ dependencies = [
  "log",
  "orbclient",
  "redox-log",
- "redox_syscall 0.5.1",
+ "redox_syscall 0.5.2",
  "rehid",
  "xhcid",
 ]
@@ -1551,7 +1552,7 @@ version = "0.1.0"
 dependencies = [
  "log",
  "redox-log",
- "redox_syscall 0.5.1",
+ "redox_syscall 0.5.2",
  "xhcid",
 ]
 
@@ -1564,7 +1565,7 @@ dependencies = [
  "plain",
  "redox-daemon",
  "redox-scheme",
- "redox_syscall 0.5.1",
+ "redox_syscall 0.5.2",
  "thiserror",
  "xhcid",
 ]
@@ -1600,7 +1601,7 @@ dependencies = [
  "pcid",
  "redox-daemon",
  "redox_event",
- "redox_syscall 0.5.1",
+ "redox_syscall 0.5.2",
 ]
 
 [[package]]
@@ -1631,7 +1632,7 @@ dependencies = [
  "orbclient",
  "ransid",
  "redox-daemon",
- "redox_syscall 0.5.1",
+ "redox_syscall 0.5.2",
 ]
 
 [[package]]
@@ -1649,7 +1650,7 @@ dependencies = [
  "redox-daemon",
  "redox-log",
  "redox-scheme",
- "redox_syscall 0.5.1",
+ "redox_syscall 0.5.2",
  "spin",
  "static_assertions",
  "thiserror",
@@ -1669,7 +1670,7 @@ dependencies = [
  "pcid",
  "redox-log",
  "redox_event",
- "redox_syscall 0.5.1",
+ "redox_syscall 0.5.2",
  "static_assertions",
  "thiserror",
 ]
@@ -1688,7 +1689,7 @@ dependencies = [
  "paste",
  "pcid",
  "redox-daemon",
- "redox_syscall 0.5.1",
+ "redox_syscall 0.5.2",
  "spin",
  "static_assertions",
  "virtio-core",
@@ -1705,7 +1706,7 @@ dependencies = [
  "log",
  "pcid",
  "redox-daemon",
- "redox_syscall 0.5.1",
+ "redox_syscall 0.5.2",
  "static_assertions",
  "virtio-core",
 ]
@@ -1909,7 +1910,7 @@ dependencies = [
  "redox-daemon",
  "redox-log",
  "redox_event",
- "redox_syscall 0.5.1",
+ "redox_syscall 0.5.2",
  "serde",
  "serde_json",
  "smallvec 1.13.2",
