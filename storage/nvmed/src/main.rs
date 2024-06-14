@@ -11,6 +11,7 @@ use std::{slice, usize};
 
 use libredox::flag;
 use pcid_interface::{PciFeature, PciFeatureInfo, PciFunction, PcidServerHandle};
+use redox_scheme::{CallRequest, RequestKind, SignalBehavior, Socket, V2};
 use syscall::{
     Event, Mmio, Packet, Result, SchemeBlockMut,
     PAGE_SIZE,
@@ -278,13 +279,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         ptr: NonNull::new(address as *mut u8).expect("Physmapping BAR gave nullptr"),
     });
 
-    let socket_fd = libredox::call::open(
-        &format!(":{}", scheme_name),
-        flag::O_RDWR | flag::O_CREAT | flag::O_CLOEXEC,
-        0,
-    )
-    .expect("nvmed: failed to create disk scheme");
-    let mut socket_file = unsafe { File::from_raw_fd(socket_fd as RawFd) };
+    let socket = Socket::<V2>::create(&scheme_name).expect("nvmed: failed to create disk scheme");
 
     daemon.ready().expect("nvmed: failed to signal readiness");
 
@@ -306,27 +301,24 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let mut scheme = DiskScheme::new(scheme_name, nvme, namespaces);
     let mut todo = Vec::new();
     loop {
-        let mut packet = Packet::default();
-        match socket_file.read(&mut packet) {
-            Ok(0) => {
+        // TODO: Use a proper event queue once interrupt support is back.
+        match socket.next_request(SignalBehavior::Restart).expect("nvmed: failed to read disk scheme") {
+            None => {
                 break;
             },
-            Ok(_) => {
-                todo.push(packet);
-            },
-            Err(err) => match err.kind() {
-                ErrorKind::WouldBlock => break,
-                _ => Err(err).expect("nvmed: failed to read disk scheme"),
-            },
+            Some(req) => if let RequestKind::Call(c) = req.kind() {
+                todo.push(c);
+            } else {
+                // TODO: cancellation
+                continue;
+            }
         }
 
         let mut i = 0;
         while i < todo.len() {
-            if let Some(a) = scheme.handle(&todo[i]) {
-                let mut packet = todo.remove(i);
-                packet.a = a;
-                socket_file
-                    .write(&packet)
+            if let Some(resp) = todo[i].handle_scheme_block_mut(&mut scheme) {
+                let _req = todo.remove(i);
+                socket.write_response(resp, SignalBehavior::Restart)
                     .expect("nvmed: failed to write disk scheme");
             } else {
                 i += 1;
