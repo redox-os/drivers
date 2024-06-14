@@ -1,0 +1,89 @@
+use std::num::NonZeroUsize;
+
+use libredox::call::MmapArgs;
+use libredox::errno::EINVAL;
+use libredox::error::{Error, Result};
+use libredox::flag::{MAP_PRIVATE, PROT_READ, PROT_WRITE};
+use syscall::{MAP_FIXED, PAGE_SIZE};
+
+use crate::dma::phys_contiguous_fd;
+
+#[derive(Debug)]
+pub struct Sgl {
+    virt: *mut u8,
+    unaligned_length: NonZeroUsize,
+    chunks: Vec<Chunk>,
+}
+#[derive(Debug)]
+pub struct Chunk {
+    pub offset: usize,
+    pub phys: usize,
+    pub virt: *mut u8,
+    pub length: usize,
+}
+
+impl Sgl {
+    pub fn new(unaligned_length: usize) -> Result<Self> {
+        let unaligned_length = NonZeroUsize::new(unaligned_length).ok_or(Error::new(EINVAL))?;
+
+        unsafe {
+            let virt = libredox::call::mmap(MmapArgs {
+                flags: MAP_PRIVATE,
+                prot: PROT_READ | PROT_WRITE,
+                length: unaligned_length.get(),
+
+                offset: 0,
+                fd: !0,
+                addr: core::ptr::null_mut(),
+            })?.cast::<u8>();
+
+            let mut this = Self {
+                virt,
+                unaligned_length,
+                chunks: Vec::new(),
+            };
+
+            let phys_contiguous_fd = phys_contiguous_fd()?;
+
+            // TODO: Both PAGE_SIZE and MAX_ALLOC_SIZE should be dynamic.
+            let aligned_length = unaligned_length.get().next_multiple_of(PAGE_SIZE);
+            const MAX_ALLOC_SIZE: usize = 1 << 22;
+
+            let mut offset = 0;
+            while offset < unaligned_length.get() {
+                let chunk_length = (aligned_length - offset).min(MAX_ALLOC_SIZE).next_power_of_two();
+                libredox::call::mmap(MmapArgs {
+                    addr: virt.add(offset).cast(),
+                    flags: MAP_PRIVATE | (MAP_FIXED.bits() as u32),
+                    prot: PROT_READ | PROT_WRITE,
+                    length: chunk_length,
+                    fd: phys_contiguous_fd.raw(),
+
+                    offset: 0,
+                })?;
+                let phys = syscall::virttophys(virt as usize + offset)?;
+                this.chunks.push(Chunk { offset, phys, length: (unaligned_length.get() - offset).min(chunk_length), virt: virt.add(offset) });
+                offset += chunk_length;
+            }
+
+            Ok(this)
+        }
+    }
+    pub fn chunks(&self) -> &[Chunk] {
+        &self.chunks
+    }
+    pub fn as_ptr(&self) -> *mut u8 {
+        self.virt
+    }
+    pub fn len(&self) -> usize {
+        self.unaligned_length.get()
+    }
+}
+
+impl Drop for Sgl {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = libredox::call::munmap(self.virt.cast(), self.unaligned_length.get());
+        }
+    }
+}
