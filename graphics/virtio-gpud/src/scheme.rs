@@ -1,12 +1,13 @@
+use std::cell::OnceCell;
 use std::collections::BTreeMap;
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use inputd::Damage;
-use common::dma::Dma;
+use common::{dma::Dma, sgl};
 
-use syscall::{Error as SysError, SchemeMut, EAGAIN, EINVAL, MapFlags, PAGE_SIZE, KSMSG_MMAP, KSMSG_MMAP_PREP, KSMSG_MSYNC, KSMSG_MUNMAP};
+use syscall::{Error as SysError, MapFlags, SchemeMut, EAGAIN, EINVAL, PAGE_SIZE};
 
 use virtio_core::spec::{Buffer, ChainBuilder, DescriptorFlags};
 use virtio_core::transport::{Error, Queue, Transport};
@@ -32,9 +33,7 @@ pub struct Display<'a> {
     cursor_queue: Arc<Queue<'a>>,
     transport: Arc<dyn Transport>,
 
-    // TODO(andypython): Remove the need for the spin crate after the `once_cell`
-    //                   API is stabilized.
-    mapped: spin::Once<usize>,
+    mapped: OnceCell<sgl::Sgl>,
 
     width: u32,
     height: u32,
@@ -56,7 +55,7 @@ impl<'a> Display<'a> {
             control_queue,
             cursor_queue,
 
-            mapped: spin::Once::new(),
+            mapped: OnceCell::new(),
 
             width: 1920,
             height: 1080,
@@ -111,46 +110,41 @@ impl<'a> Display<'a> {
         Ok(())
     }
 
-    async fn remap_screen(&self) -> Result<usize, Error> {
+    // TODO: Is this a no-op?
+    async fn remap_screen(&self) -> Result<*mut u8, Error> {
         let bpp = 32;
-        let fb_size = (self.width as usize * self.height as usize * bpp / 8)
-            .next_multiple_of(syscall::PAGE_SIZE);
 
-        let mapped = *self.mapped.get().unwrap();
-        let address = (unsafe { syscall::virttophys(mapped) }).map_err(libredox::error::Error::from)?;
+        let fb_size = self.width as usize * self.height as usize * bpp / 8;
 
-        self.map_screen_with(0, address, fb_size, mapped).await
+        let mapped = self.mapped.get().unwrap();
+        self.map_screen_with(0, fb_size, mapped.as_ptr(), mapped.chunks()).await
     }
 
-    async fn map_screen(&self, offset: usize) -> Result<usize, Error> {
+    async fn map_screen(&self, offset: usize) -> Result<*mut u8, Error> {
         if let Some(mapped) = self.mapped.get() {
-            return Ok(mapped + offset);
+            return Ok(mapped.as_ptr().wrapping_add(offset));
         }
 
         let bpp = 32;
-        let fb_size = (self.width as usize * self.height as usize * bpp / 8)
-            .next_multiple_of(syscall::PAGE_SIZE);
-        let mut mapped = unsafe { Dma::zeroed_slice(fb_size)?.assume_init() };
+        let fb_size = self.width as usize * self.height as usize * bpp / 8;
+        let mapped = sgl::Sgl::new(fb_size)?;
 
         unsafe {
-            core::ptr::write_bytes(mapped.as_mut_ptr() as *mut u8, 255, fb_size);
+            core::ptr::write_bytes(mapped.as_ptr() as *mut u8, 255, fb_size);
         }
+        let _ = self.mapped.set(mapped);
+        let mapped = self.mapped.get().unwrap();
 
-        let virt = mapped.as_mut_ptr() as usize;
-        let phys = mapped.physical();
-        core::mem::forget(mapped);
-        // TODO: Keep Dma
-
-        self.map_screen_with(offset, phys, fb_size, virt).await
+        self.map_screen_with(offset, fb_size, mapped.as_ptr(), mapped.chunks()).await
     }
 
     async fn map_screen_with(
         &self,
         offset: usize,
-        address: usize,
-        size: usize,
-        mapped: usize,
-    ) -> Result<usize, Error> {
+        _size: usize,
+        virt: *mut u8,
+        chunks: &[sgl::Chunk],
+    ) -> Result<*mut u8, Error> {
         // Create a host resource using `VIRTIO_GPU_CMD_RESOURCE_CREATE_2D`.
         let mut request = Dma::new(ResourceCreate2d::default())?;
 
@@ -163,20 +157,21 @@ impl<'a> Display<'a> {
 
         // Use the allocated framebuffer from tthe guest ram, and attach it as backing
         // storage to the resource just created, using `VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING`.
-        //
-        // TODO(andypython): Scatter lists are supported, so the framebuffer doesn’t need to be
-        // contignous in guest physical memory.
-        let entry = Dma::new(MemEntry {
-            address: address as u64,
-            length: size as u32,
-            padding: 0,
-        })?;
 
-        let attach_request = Dma::new(AttachBacking::new(self.resource_id, 1))?;
+        let mut mem_entries = unsafe { Dma::zeroed_slice(chunks.len())?.assume_init() };
+        for (entry, chunk) in mem_entries.iter_mut().zip(chunks.iter()) {
+            *entry = MemEntry {
+                address: chunk.phys as u64,
+                length: chunk.length.next_multiple_of(PAGE_SIZE) as u32,
+                padding: 0,
+            };
+        }
+
+        let attach_request = Dma::new(AttachBacking::new(self.resource_id, mem_entries.len() as u32))?;
         let header = Dma::new(ControlHeader::default())?;
         let command = ChainBuilder::new()
             .chain(Buffer::new(&attach_request))
-            .chain(Buffer::new(&entry))
+            .chain(Buffer::new_unsized(&mem_entries))
             .chain(Buffer::new(&header).flags(DescriptorFlags::WRITE_ONLY))
             .build();
 
@@ -192,9 +187,8 @@ impl<'a> Display<'a> {
         assert_eq!(header.ty.get(), CommandTy::RespOkNodata);
 
         self.flush(None).await?;
-        self.mapped.call_once(|| mapped);
 
-        Ok(mapped + offset)
+        Ok(virt.wrapping_add(offset))
     }
 
     /// If `damage` is `None`, the entire screen is flushed.
@@ -473,7 +467,7 @@ impl<'a> SchemeMut for Scheme<'a> {
         log::info!("KSMSG MMAP {} {:?} {} {}", id, flags, offset, size);
         match self.handles.get(&id).ok_or(SysError::new(EINVAL))? {
             Handle::Vt { display, .. } => {
-                Ok(futures::executor::block_on(display.map_screen(offset as usize)).unwrap())
+                Ok(futures::executor::block_on(display.map_screen(offset as usize)).unwrap() as usize)
             }
             _ => unreachable!(),
         }

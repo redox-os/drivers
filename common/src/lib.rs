@@ -6,6 +6,7 @@ use libredox::flag::{self, O_CLOEXEC, O_RDONLY, O_RDWR, O_WRONLY};
 use syscall::PAGE_SIZE;
 
 pub mod dma;
+pub mod sgl;
 
 #[derive(Clone, Copy, Debug)]
 pub enum MemoryType {

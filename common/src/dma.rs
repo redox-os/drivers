@@ -20,14 +20,18 @@ const DMA_MEMTY: MemoryType = {
     }
 };
 
+pub(crate) fn phys_contiguous_fd() -> Result<Fd> {
+    Fd::open(
+        &format!("memory:zeroed@{DMA_MEMTY}?phys_contiguous"),
+        flag::O_CLOEXEC,
+        0,
+    )
+}
+
 fn alloc_and_map(length: usize) -> Result<(usize, *mut ())> {
     assert_eq!(length % PAGE_SIZE, 0);
     unsafe {
-        let fd = Fd::open(
-            &format!("memory:zeroed@{DMA_MEMTY}?phys_contiguous"),
-            flag::O_CLOEXEC,
-            0,
-        )?;
+        let fd = phys_contiguous_fd()?;
         let virt = libredox::call::mmap(MmapArgs {
             fd: fd.raw(),
             offset: 0,  // ignored
