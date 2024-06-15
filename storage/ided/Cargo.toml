@@ -1,7 +1,7 @@
 [package]
 name = "ided"
 version = "0.1.0"
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 common = { path = "../../common" }
@@ -11,4 +11,6 @@ log = "0.4"
 pcid = { path = "../../pcid" }
 redox-daemon = "0.1"
 redox-log = "0.1"
-redox_syscall = "0.5"
+redox_syscall = { version = "0.5", features = ["std"] }
+redox-scheme = { git = "https://gitlab.redox-os.org/redox-os/redox-scheme.git" }
+redox_event = "0.4"
