@@ -184,7 +184,8 @@ fn main() {
 }
 
 fn daemon(daemon: redox_daemon::Daemon) -> ! {
-    let pcid_handle = PciFunctionHandle::connect_default().expect("xhcid: failed to setup channel to pcid");
+    let mut pcid_handle =
+        PciFunctionHandle::connect_default().expect("xhcid: failed to setup channel to pcid");
     let pci_config = pcid_handle.config();
 
     let mut name = pci_config.func.name();
@@ -193,9 +194,11 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let _logger_ref = setup_logging(&name);
 
     log::debug!("XHCI PCI CONFIG: {:?}", pci_config);
-    let bar = &pci_config.func.bars[0];
 
-    let address = unsafe { bar.physmap_mem("xhcid") }.0 as usize;
+    let address = unsafe { pcid_handle.map_bar(0) }
+        .expect("xhcid")
+        .ptr
+        .as_ptr() as usize;
 
     let (irq_file, interrupt_method) = (None, InterruptMethod::Polling); //TODO: get_int_method(&mut pcid_handle, address);
 

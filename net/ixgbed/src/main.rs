@@ -14,7 +14,7 @@ pub mod device;
 mod ixgbe;
 
 fn main() {
-    let pcid_handle =
+    let mut pcid_handle =
         PciFunctionHandle::connect_default().expect("ixgbed: failed to setup channel to pcid");
     let pci_config = pcid_handle.config();
 
@@ -31,9 +31,9 @@ fn main() {
     redox_daemon::Daemon::new(move |daemon| {
         let mut irq_file = irq.irq_handle("ixgbed");
 
-        let (address, size) = unsafe {
-            pci_config.func.bars[0].physmap_mem("ixgbed")
-        };
+        let mapped_bar = unsafe { pcid_handle.map_bar(0) }.expect("ixgbed");
+        let address = mapped_bar.ptr.as_ptr();
+        let size = mapped_bar.bar_size;
 
         let device = device::Intel8259x::new(address as usize, size)
             .expect("ixgbed: failed to allocate device");

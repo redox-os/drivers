@@ -1,6 +1,7 @@
 use std::fmt;
 use std::fs::File;
 use std::io::prelude::*;
+use std::ptr::NonNull;
 use std::{env, io};
 
 use std::os::unix::io::{FromRawFd, RawFd};
@@ -222,6 +223,11 @@ pub enum PcidClientResponse {
     WriteConfig,
 }
 
+pub struct MappedBar {
+    pub ptr: NonNull<u8>,
+    pub bar_size: usize,
+}
+
 // TODO: Ideally, pcid might have its own scheme, like lots of other Redox drivers, where this kind of IPC is done. Otherwise, instead of writing serde messages over
 // a channel, the communication could potentially be done via mmap, using a channel
 // very similar to crossbeam-channel or libstd's mpsc (except the cycle, enqueue and dequeue fields
@@ -231,6 +237,7 @@ pub struct PciFunctionHandle {
     pcid_to_client: File,
     pcid_from_client: File,
     config: SubdriverArguments,
+    mapped_bars: [Option<MappedBar>; 6],
 }
 
 pub(crate) fn send<W: Write, T: Serialize>(w: &mut W, message: &T) -> Result<()> {
@@ -272,6 +279,7 @@ impl PciFunctionHandle {
             pcid_to_client,
             pcid_from_client,
             config,
+            mapped_bars: [const { None }; 6],
         })
     }
     fn send(&mut self, req: &PcidClientRequest) -> Result<()> {
@@ -334,6 +342,29 @@ impl PciFunctionHandle {
         match self.recv()? {
             PcidClientResponse::WriteConfig => Ok(()),
             other => Err(PcidClientHandleError::InvalidResponse(other)),
+        }
+    }
+    pub unsafe fn map_bar(&mut self, bir: u8) -> Result<&MappedBar> {
+        let mapped_bar = &mut self.mapped_bars[bir as usize];
+        if let Some(mapped_bar) = mapped_bar {
+            Ok(mapped_bar)
+        } else {
+            let (bar, bar_size) = self.config.func.bars[bir as usize].expect_mem();
+            let ptr = unsafe {
+                common::physmap(
+                    bar,
+                    bar_size,
+                    common::Prot::RW,
+                    // FIXME once the kernel supports this use write-through for prefetchable BAR
+                    common::MemoryType::Uncacheable,
+                )
+            }
+            .map_err(|err| io::Error::other(format!("failed to map BAR at {bar:016X}: {err}")))?;
+
+            Ok(mapped_bar.insert(MappedBar {
+                ptr: NonNull::new(ptr.cast::<u8>()).expect("Mapping a BAR resulted in a nullptr"),
+                bar_size,
+            }))
         }
     }
 }

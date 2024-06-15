@@ -180,7 +180,7 @@ impl VboxGuestInfo {
 }
 
 fn main() {
-    let pcid_handle =
+    let mut pcid_handle =
         PciFunctionHandle::connect_default().expect("vboxd: failed to setup channel to pcid");
     let pci_config = pcid_handle.config();
 
@@ -188,8 +188,6 @@ fn main() {
     name.push_str("_vbox");
 
     let bar0 = pci_config.func.bars[0].expect_port();
-
-    let bar1 = &pci_config.func.bars[1];
 
     let irq = pci_config.func.legacy_interrupt_line.expect("vboxd: no legacy interrupts supported");
 
@@ -215,7 +213,7 @@ fn main() {
         let mut irq_file = irq.irq_handle("vboxd");
 
         let mut port = Pio::<u32>::new(bar0 as u16);
-        let (address, _) = unsafe { bar1.physmap_mem("vboxd") };
+        let address = unsafe { pcid_handle.map_bar(1) }.expect("vboxd").ptr.as_ptr();
         {
             let vmmdev = unsafe { &mut *(address as *mut VboxVmmDev) };
 
