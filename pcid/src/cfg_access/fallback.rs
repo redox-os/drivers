@@ -56,10 +56,6 @@ impl Pci {
 }
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 impl ConfigRegionAccess for Pci {
-    fn function_exists(&self, _address: PciAddress) -> bool {
-        todo!();
-    }
-
     unsafe fn read(&self, address: PciAddress, offset: u16) -> u32 {
         let _guard = self.lock.lock().unwrap();
 

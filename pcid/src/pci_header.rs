@@ -260,10 +260,6 @@ mod test {
     }
 
     impl ConfigRegionAccess for TestCfgAccess<'_> {
-        fn function_exists(&self, _address: PciAddress) -> bool {
-            unreachable!();
-        }
-
         unsafe fn read(&self, addr: PciAddress, offset: u16) -> u32 {
             assert_eq!(addr, self.addr);
             let offset = offset as usize;

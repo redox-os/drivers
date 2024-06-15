@@ -318,10 +318,6 @@ impl Pcie {
 }
 
 impl ConfigRegionAccess for Pcie {
-    fn function_exists(&self, _address: PciAddress) -> bool {
-        todo!();
-    }
-
     unsafe fn read(&self, address: PciAddress, offset: u16) -> u32 {
         let _guard = self.lock.lock().unwrap();
 
