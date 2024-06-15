@@ -8,8 +8,8 @@ use crate::{probe::MappedMsixRegs, MSIX_PRIMARY_VECTOR};
 
 use pcid_interface::*;
 
-pub fn enable_msix(pcid_handle: &mut PcidServerHandle) -> Result<File, Error> {
-    let pci_config = pcid_handle.fetch_config()?;
+pub fn enable_msix(pcid_handle: &mut PciFunctionHandle) -> Result<File, Error> {
+    let pci_config = pcid_handle.config();
 
     // Extended message signaled interrupts.
     let msix_info = match pcid_handle.feature_info(PciFeature::MsiX)? {
@@ -18,8 +18,9 @@ pub fn enable_msix(pcid_handle: &mut PcidServerHandle) -> Result<File, Error> {
     };
     msix_info.validate(pci_config.func.bars);
 
-    let bar = &pci_config.func.bars[msix_info.table_bar as usize];
-    let bar_address = unsafe { bar.physmap_mem("virtio-core") } as usize;
+    let bar_address = unsafe { pcid_handle.map_bar(msix_info.table_bar)? }
+        .ptr
+        .as_ptr() as usize;
     let virt_table_base = (bar_address + msix_info.table_offset as usize) as *mut MsixTableEntry;
 
     let mut info = MappedMsixRegs {
@@ -50,7 +51,7 @@ pub fn enable_msix(pcid_handle: &mut PcidServerHandle) -> Result<File, Error> {
 
 pub fn probe_legacy_port_transport(
     pci_config: &SubdriverArguments,
-    pcid_handle: &mut PcidServerHandle,
+    pcid_handle: &mut PciFunctionHandle,
 ) -> Result<Device, Error> {
     let port = pci_config.func.bars[0].expect_port();
 

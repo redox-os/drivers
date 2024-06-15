@@ -6,26 +6,20 @@ use std::rc::Rc;
 
 use driver_network::NetworkScheme;
 use event::{user_data, EventQueue};
-use pcid_interface::PcidServerHandle;
+use pcid_interface::PciFunctionHandle;
 use syscall::EventFlags;
 
 pub mod device;
 #[rustfmt::skip]
 mod ixgbe;
 
-const IXGBE_MMIO_SIZE: usize = 512 * 1024;
-
 fn main() {
     let mut pcid_handle =
-        PcidServerHandle::connect_default().expect("ixgbed: failed to setup channel to pcid");
-    let pci_config = pcid_handle
-        .fetch_config()
-        .expect("ixgbed: failed to fetch config");
+        PciFunctionHandle::connect_default().expect("ixgbed: failed to setup channel to pcid");
+    let pci_config = pcid_handle.config();
 
     let mut name = pci_config.func.name();
     name.push_str("_ixgbe");
-
-    let (bar, _) = pci_config.func.bars[0].expect_mem();
 
     let irq = pci_config
         .func
@@ -37,17 +31,11 @@ fn main() {
     redox_daemon::Daemon::new(move |daemon| {
         let mut irq_file = irq.irq_handle("ixgbed");
 
-        let address = unsafe {
-            common::physmap(
-                bar,
-                IXGBE_MMIO_SIZE,
-                common::Prot::RW,
-                common::MemoryType::Uncacheable,
-            )
-            .expect("ixgbed: failed to map address") as usize
-        };
+        let mapped_bar = unsafe { pcid_handle.map_bar(0) }.expect("ixgbed");
+        let address = mapped_bar.ptr.as_ptr();
+        let size = mapped_bar.bar_size;
 
-        let device = device::Intel8259x::new(address, IXGBE_MMIO_SIZE)
+        let device = device::Intel8259x::new(address as usize, size)
             .expect("ixgbed: failed to allocate device");
 
         let mut scheme = NetworkScheme::new(device, format!("network.{name}"));

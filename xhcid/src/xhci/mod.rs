@@ -22,7 +22,7 @@ use serde::Deserialize;
 use crate::usb;
 
 use pcid_interface::msi::{MsixInfo, MsixTableEntry};
-use pcid_interface::{PcidServerHandle, PciFeature};
+use pcid_interface::{PciFunctionHandle, PciFeature};
 
 mod capability;
 mod context;
@@ -198,7 +198,7 @@ pub struct Xhci {
     scheme_name: String,
 
     interrupt_method: InterruptMethod,
-    pcid_handle: Mutex<PcidServerHandle>,
+    pcid_handle: Mutex<PciFunctionHandle>,
 
     irq_reactor: Mutex<Option<thread::JoinHandle<()>>>,
 
@@ -258,7 +258,7 @@ impl EndpointState {
 }
 
 impl Xhci {
-    pub fn new(scheme_name: String, address: usize, interrupt_method: InterruptMethod, pcid_handle: PcidServerHandle) -> Result<Xhci> {
+    pub fn new(scheme_name: String, address: usize, interrupt_method: InterruptMethod, pcid_handle: PciFunctionHandle) -> Result<Xhci> {
         let cap = unsafe { &mut *(address as *mut CapabilityRegs) };
         debug!("CAP REGS BASE {:X}", address);
 

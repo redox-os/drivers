@@ -27,7 +27,7 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::sync::Arc;
 
-use pcid_interface::PcidServerHandle;
+use pcid_interface::PciFunctionHandle;
 
 use syscall::{Packet, SchemeMut};
 use virtio_core::transport::{self, Queue};
@@ -409,12 +409,12 @@ fn reinit(control_queue: Arc<Queue>, cursor_queue: Arc<Queue>) -> Result<(), tra
 }
 
 fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
-    let mut pcid_handle = PcidServerHandle::connect_default()?;
+    let mut pcid_handle = PciFunctionHandle::connect_default()?;
 
     // Double check that we have the right device.
     //
     // 0x1050 - virtio-gpu
-    let pci_config = pcid_handle.fetch_config()?;
+    let pci_config = pcid_handle.config();
 
     assert_eq!(pci_config.func.full_device_id.device_id, 0x1050);
     log::info!("virtio-gpu: initiating startup sequence :^)");

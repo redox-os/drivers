@@ -1,6 +1,7 @@
 use std::fmt;
 use std::fs::File;
 use std::io::prelude::*;
+use std::ptr::NonNull;
 use std::{env, io};
 
 use std::os::unix::io::{FromRawFd, RawFd};
@@ -222,14 +223,21 @@ pub enum PcidClientResponse {
     WriteConfig,
 }
 
+pub struct MappedBar {
+    pub ptr: NonNull<u8>,
+    pub bar_size: usize,
+}
+
 // TODO: Ideally, pcid might have its own scheme, like lots of other Redox drivers, where this kind of IPC is done. Otherwise, instead of writing serde messages over
 // a channel, the communication could potentially be done via mmap, using a channel
 // very similar to crossbeam-channel or libstd's mpsc (except the cycle, enqueue and dequeue fields
 // are stored in the same buffer as the actual data).
 /// A handle from a `pcid` client (e.g. `ahcid`) to `pcid`.
-pub struct PcidServerHandle {
+pub struct PciFunctionHandle {
     pcid_to_client: File,
     pcid_from_client: File,
+    config: SubdriverArguments,
+    mapped_bars: [Option<MappedBar>; 6],
 }
 
 pub(crate) fn send<W: Write, T: Serialize>(w: &mut W, message: &T) -> Result<()> {
@@ -253,14 +261,25 @@ pub(crate) fn recv<R: Read, T: DeserializeOwned>(r: &mut R) -> Result<T> {
     Ok(bincode::deserialize_from(&data[..])?)
 }
 
-impl PcidServerHandle {
+impl PciFunctionHandle {
     pub fn connect_default() -> Result<Self> {
         let pcid_to_client_fd = env::var("PCID_TO_CLIENT_FD")?.parse::<RawFd>().map_err(PcidClientHandleError::EnvValidityError)?;
         let pcid_from_client_fd = env::var("PCID_FROM_CLIENT_FD")?.parse::<RawFd>().map_err(PcidClientHandleError::EnvValidityError)?;
 
+        let mut pcid_to_client = unsafe { File::from_raw_fd(pcid_to_client_fd) };
+        let mut pcid_from_client = unsafe { File::from_raw_fd(pcid_from_client_fd) };
+
+        send(&mut pcid_from_client, &PcidClientRequest::RequestConfig)?;
+        let config = match recv(&mut pcid_to_client)? {
+            PcidClientResponse::Config(a) => a,
+            other => return Err(PcidClientHandleError::InvalidResponse(other)),
+        };
+
         Ok(Self {
-            pcid_to_client: unsafe { File::from_raw_fd(pcid_to_client_fd) },
-            pcid_from_client: unsafe { File::from_raw_fd(pcid_from_client_fd) },
+            pcid_to_client,
+            pcid_from_client,
+            config,
+            mapped_bars: [const { None }; 6],
         })
     }
     fn send(&mut self, req: &PcidClientRequest) -> Result<()> {
@@ -269,12 +288,8 @@ impl PcidServerHandle {
     fn recv(&mut self) -> Result<PcidClientResponse> {
         recv(&mut self.pcid_to_client)
     }
-    pub fn fetch_config(&mut self) -> Result<SubdriverArguments> {
-        self.send(&PcidClientRequest::RequestConfig)?;
-        match self.recv()? {
-            PcidClientResponse::Config(a) => Ok(a),
-            other => Err(PcidClientHandleError::InvalidResponse(other)),
-        }
+    pub fn config(&self) -> SubdriverArguments {
+        self.config.clone()
     }
 
     pub fn get_vendor_capabilities(&mut self) -> Result<Vec<VendorSpecificCapability>> {
@@ -327,6 +342,29 @@ impl PcidServerHandle {
         match self.recv()? {
             PcidClientResponse::WriteConfig => Ok(()),
             other => Err(PcidClientHandleError::InvalidResponse(other)),
+        }
+    }
+    pub unsafe fn map_bar(&mut self, bir: u8) -> Result<&MappedBar> {
+        let mapped_bar = &mut self.mapped_bars[bir as usize];
+        if let Some(mapped_bar) = mapped_bar {
+            Ok(mapped_bar)
+        } else {
+            let (bar, bar_size) = self.config.func.bars[bir as usize].expect_mem();
+            let ptr = unsafe {
+                common::physmap(
+                    bar,
+                    bar_size,
+                    common::Prot::RW,
+                    // FIXME once the kernel supports this use write-through for prefetchable BAR
+                    common::MemoryType::Uncacheable,
+                )
+            }
+            .map_err(|err| io::Error::other(format!("failed to map BAR at {bar:016X}: {err}")))?;
+
+            Ok(mapped_bar.insert(MappedBar {
+                ptr: NonNull::new(ptr.cast::<u8>()).expect("Mapping a BAR resulted in a nullptr"),
+                bar_size,
+            }))
         }
     }
 }

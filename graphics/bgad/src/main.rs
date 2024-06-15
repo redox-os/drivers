@@ -4,7 +4,7 @@ extern crate syscall;
 use std::fs::File;
 use std::io::{Read, Write};
 
-use pcid_interface::PcidServerHandle;
+use pcid_interface::PciFunctionHandle;
 use syscall::call::iopl;
 use syscall::data::Packet;
 use syscall::scheme::SchemeMut;
@@ -16,11 +16,9 @@ mod bga;
 mod scheme;
 
 fn main() {
-    let mut pcid_handle =
-        PcidServerHandle::connect_default().expect("bgad: failed to setup channel to pcid");
-    let pci_config = pcid_handle
-        .fetch_config()
-        .expect("bgad: failed to fetch config");
+    let pcid_handle =
+        PciFunctionHandle::connect_default().expect("bgad: failed to setup channel to pcid");
+    let pci_config = pcid_handle.config();
 
     let mut name = pci_config.func.name();
     name.push_str("_bga");

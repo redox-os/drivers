@@ -109,12 +109,12 @@ pub struct BlockVirtRequest {
 const_assert_eq!(core::mem::size_of::<BlockVirtRequest>(), 16);
 
 fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
-    let mut pcid_handle = PcidServerHandle::connect_default()?;
+    let mut pcid_handle = PciFunctionHandle::connect_default()?;
 
     // Double check that we have the right device.
     //
     // 0x1001 - virtio-blk
-    let pci_config = pcid_handle.fetch_config()?;
+    let pci_config = pcid_handle.config();
 
     assert_eq!(pci_config.func.full_device_id.device_id, 0x1001);
     log::info!("virtio-blk: initiating startup sequence :^)");

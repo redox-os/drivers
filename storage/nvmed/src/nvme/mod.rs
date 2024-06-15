@@ -23,7 +23,7 @@ use self::cq_reactor::NotifReq;
 pub use self::queues::{NvmeCmd, NvmeCmdQueue, NvmeComp, NvmeCompQueue};
 
 use pcid_interface::msi::{MsiInfo, MsixInfo, MsixTableEntry};
-use pcid_interface::PcidServerHandle;
+use pcid_interface::PciFunctionHandle;
 
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
@@ -173,7 +173,7 @@ pub type AtomicCmdId = AtomicU16;
 
 pub struct Nvme {
     interrupt_method: Mutex<InterruptMethod>,
-    pcid_interface: Mutex<PcidServerHandle>,
+    pcid_interface: Mutex<PciFunctionHandle>,
     regs: RwLock<&'static mut NvmeRegs>,
 
     pub(crate) submission_queues: RwLock<BTreeMap<SqId, (Mutex<NvmeCmdQueue>, CqId)>>,
@@ -209,7 +209,7 @@ impl Nvme {
     pub fn new(
         address: usize,
         interrupt_method: InterruptMethod,
-        pcid_interface: PcidServerHandle,
+        pcid_interface: PciFunctionHandle,
         reactor_sender: Sender<NotifReq>,
     ) -> Result<Self> {
         Ok(Nvme {

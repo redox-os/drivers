@@ -41,7 +41,7 @@ static_assertions::const_assert_eq!(std::mem::size_of::<MsixTableEntry>(), 16);
 pub const MSIX_PRIMARY_VECTOR: u16 = 0;
 
 #[cfg(not(target_arch = "x86_64"))]
-fn enable_msix(pcid_handle: &mut PcidServerHandle) -> Result<File, Error> {
+fn enable_msix(pcid_handle: &mut PciFunctionHandle) -> Result<File, Error> {
     panic!("Msi-X only supported on x86_64");
 }
 
@@ -59,8 +59,8 @@ fn enable_msix(pcid_handle: &mut PcidServerHandle) -> Result<File, Error> {
 ///
 /// ## Panics
 /// This function panics if the device is not a virtio device.
-pub fn probe_device(pcid_handle: &mut PcidServerHandle) -> Result<Device, Error> {
-    let pci_config = pcid_handle.fetch_config()?;
+pub fn probe_device(pcid_handle: &mut PciFunctionHandle) -> Result<Device, Error> {
+    let pci_config = pcid_handle.config();
 
     assert_eq!(
         pci_config.func.full_device_id.vendor_id, 6900,

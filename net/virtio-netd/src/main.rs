@@ -5,7 +5,7 @@ use std::io::{Read, Write};
 use std::mem;
 
 use driver_network::NetworkScheme;
-use pcid_interface::PcidServerHandle;
+use pcid_interface::PciFunctionHandle;
 
 use scheme::VirtioNet;
 
@@ -28,12 +28,12 @@ static_assertions::const_assert_eq!(core::mem::size_of::<VirtHeader>(), 12);
 const MAX_BUFFER_LEN: usize = 65535;
 
 fn deamon(daemon: redox_daemon::Daemon) -> Result<(), Box<dyn std::error::Error>> {
-    let mut pcid_handle = PcidServerHandle::connect_default()?;
+    let mut pcid_handle = PciFunctionHandle::connect_default()?;
 
     // Double check that we have the right device.
     //
     // 0x1000 - virtio-net
-    let pci_config = pcid_handle.fetch_config()?;
+    let pci_config = pcid_handle.config();
 
     assert_eq!(pci_config.func.full_device_id.device_id, 0x1000);
     log::info!("virtio-net: initiating startup sequence :^)");

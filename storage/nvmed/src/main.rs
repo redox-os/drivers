@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::{slice, usize};
 
 use libredox::flag;
-use pcid_interface::{PciFeature, PciFeatureInfo, PciFunction, PcidServerHandle};
+use pcid_interface::{PciFeature, PciFeatureInfo, PciFunction, PciFunctionHandle};
 use redox_scheme::{CallRequest, RequestKind, SignalBehavior, Socket, V2};
 use syscall::{
     Event, Mmio, Packet, Result, SchemeBlockMut,
@@ -24,53 +24,13 @@ use self::scheme::DiskScheme;
 mod nvme;
 mod scheme;
 
-/// A wrapper for a BAR allocation.
-pub struct Bar {
-    ptr: NonNull<u8>,
-    physical: usize,
-    bar_size: usize,
-}
-impl Bar {
-    pub fn allocate(bar: usize, bar_size: usize) -> Result<Self> {
-        Ok(Self {
-            ptr: NonNull::new(
-                unsafe { common::physmap(
-                    bar,
-                    bar_size,
-                    common::Prot { read: true, write: true },
-                    common::MemoryType::Uncacheable,
-                )? as *mut u8 },
-            )
-            .expect("Mapping a BAR resulted in a nullptr"),
-            physical: bar,
-            bar_size,
-        })
-    }
-}
-
-impl Drop for Bar {
-    fn drop(&mut self) {
-        let _ = unsafe {
-            libredox::call::munmap(
-                self.ptr.as_ptr().cast(),
-                self.bar_size.next_multiple_of(PAGE_SIZE),
-            )
-        };
-    }
-}
-
-/// The PCI BARs that may be allocated.
-#[derive(Default)]
-pub struct AllocatedBars(pub [Mutex<Option<Bar>>; 6]);
-
 /// Get the most optimal yet functional interrupt mechanism: either (in the order of preference):
 /// MSI-X, MSI, and INTx# pin. Returns both runtime interrupt structures (MSI/MSI-X capability
 /// structures), and the handles to the interrupts.
 #[cfg(target_arch = "x86_64")]
 fn get_int_method(
-    pcid_handle: &mut PcidServerHandle,
+    pcid_handle: &mut PciFunctionHandle,
     function: &PciFunction,
-    allocated_bars: &AllocatedBars,
 ) -> Result<(InterruptMethod, InterruptSources)> {
     log::trace!("Begin get_int_method");
     use pcid_interface::irq_helpers;
@@ -91,26 +51,11 @@ fn get_int_method(
             _ => unreachable!(),
         };
         msix_info.validate(function.bars);
-        fn bar_base(
-            allocated_bars: &AllocatedBars,
-            function: &PciFunction,
-            bir: u8,
-        ) -> Result<NonNull<u8>> {
-            let bir = usize::from(bir);
-            let mut bar_guard = allocated_bars.0[bir].lock().unwrap();
-            match &mut *bar_guard {
-                &mut Some(ref bar) => Ok(bar.ptr),
-                bar_to_set @ &mut None => {
-                    let (bar, bar_size) = function.bars[bir].expect_mem();
-
-                    let bar = Bar::allocate(bar, bar_size)?;
-                    *bar_to_set = Some(bar);
-                    Ok(bar_to_set.as_ref().unwrap().ptr)
-                }
-            }
+        fn bar_base(pcid_handle: &mut PciFunctionHandle, bir: u8) -> Result<NonNull<u8>> {
+            Ok(unsafe { pcid_handle.map_bar(bir) }.expect("nvmed").ptr)
         }
         let table_bar_base: *mut u8 =
-            bar_base(allocated_bars, function, msix_info.table_bar)?.as_ptr();
+            bar_base(pcid_handle, msix_info.table_bar)?.as_ptr();
         let table_base =
             unsafe { table_bar_base.offset(msix_info.table_offset as isize) };
 
@@ -194,9 +139,8 @@ fn get_int_method(
 //TODO: MSI on non-x86_64?
 #[cfg(not(target_arch = "x86_64"))]
 fn get_int_method(
-    pcid_handle: &mut PcidServerHandle,
+    pcid_handle: &mut PciFunctionHandle,
     function: &PciFunction,
-    allocated_bars: &AllocatedBars,
 ) -> Result<(InterruptMethod, InterruptSources)> {
     if let Some(irq) = function.legacy_interrupt_line {
         // INTx# pin based interrupts.
@@ -256,28 +200,16 @@ fn main() {
 }
 fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let mut pcid_handle =
-        PcidServerHandle::connect_default().expect("nvmed: failed to setup channel to pcid");
-    let pci_config = pcid_handle
-        .fetch_config()
-        .expect("nvmed: failed to fetch config");
+        PciFunctionHandle::connect_default().expect("nvmed: failed to setup channel to pcid");
+    let pci_config = pcid_handle.config();
 
     let scheme_name = format!("disk.{}-nvme", pci_config.func.name());
 
     let _logger_ref = setup_logging(&scheme_name);
 
-    let bar = &pci_config.func.bars[0];
-    let (bar_ptr, bar_size) = bar.expect_mem();
-
     log::debug!("NVME PCI CONFIG: {:?}", pci_config);
 
-    let allocated_bars = AllocatedBars::default();
-
-    let address = unsafe { bar.physmap_mem("nvmed") } as usize;
-    *allocated_bars.0[0].lock().unwrap() = Some(Bar {
-        physical: bar_ptr,
-        bar_size,
-        ptr: NonNull::new(address as *mut u8).expect("Physmapping BAR gave nullptr"),
-    });
+    let address = unsafe { pcid_handle.map_bar(0).expect("nvmed").ptr };
 
     let socket = Socket::<V2>::create(&scheme_name).expect("nvmed: failed to create disk scheme");
 
@@ -285,10 +217,15 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     let (reactor_sender, reactor_receiver) = crossbeam_channel::unbounded();
     let (interrupt_method, interrupt_sources) =
-        get_int_method(&mut pcid_handle, &pci_config.func, &allocated_bars)
+        get_int_method(&mut pcid_handle, &pci_config.func)
             .expect("nvmed: failed to find a suitable interrupt method");
-    let mut nvme = Nvme::new(address, interrupt_method, pcid_handle, reactor_sender)
-        .expect("nvmed: failed to allocate driver data");
+    let mut nvme = Nvme::new(
+        address.as_ptr() as usize,
+        interrupt_method,
+        pcid_handle,
+        reactor_sender,
+    )
+    .expect("nvmed: failed to allocate driver data");
     unsafe { nvme.init() }
     log::debug!("Finished base initialization");
     let nvme = Arc::new(nvme);

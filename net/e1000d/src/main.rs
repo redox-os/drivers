@@ -6,22 +6,18 @@ use std::rc::Rc;
 
 use driver_network::NetworkScheme;
 use event::{user_data, EventQueue};
-use pcid_interface::PcidServerHandle;
+use pcid_interface::PciFunctionHandle;
 use syscall::EventFlags;
 
 pub mod device;
 
 fn main() {
     let mut pcid_handle =
-        PcidServerHandle::connect_default().expect("e1000d: failed to setup channel to pcid");
-    let pci_config = pcid_handle
-        .fetch_config()
-        .expect("e1000d: failed to fetch config");
+        PciFunctionHandle::connect_default().expect("e1000d: failed to setup channel to pcid");
+    let pci_config = pcid_handle.config();
 
     let mut name = pci_config.func.name();
     name.push_str("_e1000");
-
-    let bar = &pci_config.func.bars[0];
 
     let irq = pci_config
         .func
@@ -33,7 +29,10 @@ fn main() {
     redox_daemon::Daemon::new(move |daemon| {
         let mut irq_file = irq.irq_handle("e1000d");
 
-        let address = unsafe { bar.physmap_mem("e1000d") } as usize;
+        let address = unsafe { pcid_handle.map_bar(0) }
+            .expect("e1000d")
+            .ptr
+            .as_ptr() as usize;
 
         let device =
             unsafe { device::Intel8254x::new(address).expect("e1000d: failed to allocate device") };

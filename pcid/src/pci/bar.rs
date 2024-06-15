@@ -52,18 +52,4 @@ impl PciBar {
             PciBar::None => panic!("expected BAR to exist"),
         }
     }
-
-    pub unsafe fn physmap_mem(&self, driver: &str) -> *mut () {
-        let (bar, bar_size) = self.expect_mem();
-        unsafe {
-            common::physmap(
-                bar,
-                bar_size,
-                common::Prot::RW,
-                // FIXME once the kernel supports this use write-through for prefetchable BAR
-                common::MemoryType::Uncacheable,
-            )
-        }
-        .unwrap_or_else(|err| panic!("{driver}: failed to map BAR at {bar:016X}: {err}"))
-    }
 }
