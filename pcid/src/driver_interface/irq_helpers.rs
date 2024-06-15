@@ -178,21 +178,21 @@ pub fn allocate_single_interrupt_vector(cpu_id: usize) -> io::Result<Option<(u8,
     Ok(Some((base, files.pop().unwrap())))
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 pub fn allocate_single_interrupt_vector_for_msi(cpu_id: usize) -> (MsiAddrAndData, File) {
-    use crate::pci::msi::x86_64 as x86_64_msix;
+    use crate::pci::msi::x86 as x86_msix;
 
     // FIXME for cpu_id >255 we need to use the IOMMU to use IRQ remapping
     let lapic_id = u8::try_from(cpu_id).expect("CPU id couldn't fit inside u8");
     let rh = false;
     let dm = false;
-    let addr = x86_64_msix::message_address(lapic_id, rh, dm);
+    let addr = x86_msix::message_address(lapic_id, rh, dm);
 
     let (vector, interrupt_handle) = allocate_single_interrupt_vector(cpu_id)
         .expect("failed to allocate interrupt vector")
         .expect("no interrupt vectors left");
     let msg_data =
-        x86_64_msix::message_data_edge_triggered(x86_64_msix::DeliveryMode::Fixed, vector);
+        x86_msix::message_data_edge_triggered(x86_msix::DeliveryMode::Fixed, vector);
 
     (MsiAddrAndData::new(addr, msg_data), interrupt_handle)
 }

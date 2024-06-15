@@ -92,8 +92,8 @@ pub struct MsixTableEntry {
     pub vec_ctl: Mmio<u32>,
 }
 
-#[cfg(target_arch = "x86_64")]
-pub mod x86_64 {
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+pub mod x86 {
     #[repr(u8)]
     pub enum TriggerMode {
         Edge = 0,
