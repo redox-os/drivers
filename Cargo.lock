@@ -591,6 +591,8 @@ dependencies = [
  "pcid",
  "redox-daemon",
  "redox-log",
+ "redox-scheme",
+ "redox_event",
  "redox_syscall 0.5.2",
 ]
 
