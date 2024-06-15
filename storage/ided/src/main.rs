@@ -2,7 +2,7 @@ use driver_block::Disk;
 use event::{EventFlags, RawEventQueue};
 use libredox::flag;
 use log::{error, info};
-use pcid_interface::{PciBar, PcidServerHandle};
+use pcid_interface::{PciBar, PciFunctionHandle};
 use redox_log::{OutputBuilder, RedoxLogger};
 use redox_scheme::{RequestKind, Response, SignalBehavior, Socket, V2};
 use std::{
@@ -75,7 +75,7 @@ fn main() {
 
 fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let mut pcid_handle =
-        PcidServerHandle::connect_default().expect("ided: failed to setup channel to pcid");
+        PciFunctionHandle::connect_default().expect("ided: failed to setup channel to pcid");
 
     let pci_config = pcid_handle.fetch_config().expect("ided: failed to fetch config");
 

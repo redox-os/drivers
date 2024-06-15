@@ -9,7 +9,7 @@ use std::os::fd::AsRawFd;
 use std::usize;
 
 use event::{EventFlags, RawEventQueue};
-use pcid_interface::PcidServerHandle;
+use pcid_interface::PciFunctionHandle;
 use redox_scheme::{RequestKind, Response, SignalBehavior, Socket, V2};
 use syscall::error::{Error, ENODEV};
 
@@ -72,7 +72,7 @@ fn main() {
 
 fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let mut pcid_handle =
-        PcidServerHandle::connect_default().expect("ahcid: failed to setup channel to pcid");
+        PciFunctionHandle::connect_default().expect("ahcid: failed to setup channel to pcid");
     let pci_config = pcid_handle
         .fetch_config()
         .expect("ahcid: failed to fetch config");

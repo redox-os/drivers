@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::env;
 
 use libredox::flag;
-use pcid_interface::{MsiSetFeatureInfo, PcidServerHandle, PciFeature, PciFeatureInfo, SetFeatureInfo};
+use pcid_interface::{MsiSetFeatureInfo, PciFunctionHandle, PciFeature, PciFeatureInfo, SetFeatureInfo};
 #[cfg(target_arch = "x86_64")]
 use pcid_interface::irq_helpers::allocate_single_interrupt_vector_for_msi;
 use pcid_interface::irq_helpers::read_bsp_apic_id;
@@ -85,7 +85,7 @@ fn setup_logging(name: &str) -> Option<&'static RedoxLogger> {
 }
 
 #[cfg(target_arch = "x86_64")]
-fn get_int_method(pcid_handle: &mut PcidServerHandle, bar0_address: usize) -> (Option<File>, InterruptMethod) {
+fn get_int_method(pcid_handle: &mut PciFunctionHandle, bar0_address: usize) -> (Option<File>, InterruptMethod) {
     let pci_config = pcid_handle.fetch_config().expect("xhcid: failed to fetch config");
 
     let all_pci_features = pcid_handle.fetch_all_features().expect("xhcid: failed to fetch pci features");
@@ -167,7 +167,7 @@ fn get_int_method(pcid_handle: &mut PcidServerHandle, bar0_address: usize) -> (O
 
 //TODO: MSI on non-x86_64?
 #[cfg(not(target_arch = "x86_64"))]
-fn get_int_method(pcid_handle: &mut PcidServerHandle, address: usize) -> (Option<File>, InterruptMethod) {
+fn get_int_method(pcid_handle: &mut PciFunctionHandle, address: usize) -> (Option<File>, InterruptMethod) {
     let pci_config = pcid_handle.fetch_config().expect("xhcid: failed to fetch config");
 
     if let Some(irq) = pci_config.func.legacy_interrupt_line {
@@ -184,7 +184,7 @@ fn main() {
 }
 
 fn daemon(daemon: redox_daemon::Daemon) -> ! {
-    let mut pcid_handle = PcidServerHandle::connect_default().expect("xhcid: failed to setup channel to pcid");
+    let mut pcid_handle = PciFunctionHandle::connect_default().expect("xhcid: failed to setup channel to pcid");
     let pci_config = pcid_handle.fetch_config().expect("xhcid: failed to fetch config");
 
     let mut name = pci_config.func.name();

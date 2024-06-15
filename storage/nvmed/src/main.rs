@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::{slice, usize};
 
 use libredox::flag;
-use pcid_interface::{PciFeature, PciFeatureInfo, PciFunction, PcidServerHandle};
+use pcid_interface::{PciFeature, PciFeatureInfo, PciFunction, PciFunctionHandle};
 use redox_scheme::{CallRequest, RequestKind, SignalBehavior, Socket, V2};
 use syscall::{
     Event, Mmio, Packet, Result, SchemeBlockMut,
@@ -58,7 +58,7 @@ pub struct AllocatedBars(pub [Mutex<Option<Bar>>; 6]);
 /// structures), and the handles to the interrupts.
 #[cfg(target_arch = "x86_64")]
 fn get_int_method(
-    pcid_handle: &mut PcidServerHandle,
+    pcid_handle: &mut PciFunctionHandle,
     function: &PciFunction,
     allocated_bars: &AllocatedBars,
 ) -> Result<(InterruptMethod, InterruptSources)> {
@@ -184,7 +184,7 @@ fn get_int_method(
 //TODO: MSI on non-x86_64?
 #[cfg(not(target_arch = "x86_64"))]
 fn get_int_method(
-    pcid_handle: &mut PcidServerHandle,
+    pcid_handle: &mut PciFunctionHandle,
     function: &PciFunction,
     allocated_bars: &AllocatedBars,
 ) -> Result<(InterruptMethod, InterruptSources)> {
@@ -246,7 +246,7 @@ fn main() {
 }
 fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let mut pcid_handle =
-        PcidServerHandle::connect_default().expect("nvmed: failed to setup channel to pcid");
+        PciFunctionHandle::connect_default().expect("nvmed: failed to setup channel to pcid");
     let pci_config = pcid_handle
         .fetch_config()
         .expect("nvmed: failed to fetch config");

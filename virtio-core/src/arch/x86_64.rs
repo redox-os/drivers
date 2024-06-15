@@ -8,7 +8,7 @@ use crate::{probe::MappedMsixRegs, MSIX_PRIMARY_VECTOR};
 
 use pcid_interface::*;
 
-pub fn enable_msix(pcid_handle: &mut PcidServerHandle) -> Result<File, Error> {
+pub fn enable_msix(pcid_handle: &mut PciFunctionHandle) -> Result<File, Error> {
     let pci_config = pcid_handle.fetch_config()?;
 
     // Extended message signaled interrupts.
@@ -50,7 +50,7 @@ pub fn enable_msix(pcid_handle: &mut PcidServerHandle) -> Result<File, Error> {
 
 pub fn probe_legacy_port_transport(
     pci_config: &SubdriverArguments,
-    pcid_handle: &mut PcidServerHandle,
+    pcid_handle: &mut PciFunctionHandle,
 ) -> Result<Device, Error> {
     let port = pci_config.func.bars[0].expect_port();
 

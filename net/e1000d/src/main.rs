@@ -6,14 +6,14 @@ use std::rc::Rc;
 
 use driver_network::NetworkScheme;
 use event::{user_data, EventQueue};
-use pcid_interface::PcidServerHandle;
+use pcid_interface::PciFunctionHandle;
 use syscall::EventFlags;
 
 pub mod device;
 
 fn main() {
     let mut pcid_handle =
-        PcidServerHandle::connect_default().expect("e1000d: failed to setup channel to pcid");
+        PciFunctionHandle::connect_default().expect("e1000d: failed to setup channel to pcid");
     let pci_config = pcid_handle
         .fetch_config()
         .expect("e1000d: failed to fetch config");

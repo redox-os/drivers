@@ -227,7 +227,7 @@ pub enum PcidClientResponse {
 // very similar to crossbeam-channel or libstd's mpsc (except the cycle, enqueue and dequeue fields
 // are stored in the same buffer as the actual data).
 /// A handle from a `pcid` client (e.g. `ahcid`) to `pcid`.
-pub struct PcidServerHandle {
+pub struct PciFunctionHandle {
     pcid_to_client: File,
     pcid_from_client: File,
 }
@@ -253,7 +253,7 @@ pub(crate) fn recv<R: Read, T: DeserializeOwned>(r: &mut R) -> Result<T> {
     Ok(bincode::deserialize_from(&data[..])?)
 }
 
-impl PcidServerHandle {
+impl PciFunctionHandle {
     pub fn connect_default() -> Result<Self> {
         let pcid_to_client_fd = env::var("PCID_TO_CLIENT_FD")?.parse::<RawFd>().map_err(PcidClientHandleError::EnvValidityError)?;
         let pcid_from_client_fd = env::var("PCID_FROM_CLIENT_FD")?.parse::<RawFd>().map_err(PcidClientHandleError::EnvValidityError)?;

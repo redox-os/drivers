@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use driver_network::NetworkScheme;
 use event::{user_data, EventQueue};
-use pcid_interface::PcidServerHandle;
+use pcid_interface::PciFunctionHandle;
 use syscall::EventFlags;
 
 pub mod device;
@@ -15,7 +15,7 @@ mod ixgbe;
 
 fn main() {
     let mut pcid_handle =
-        PcidServerHandle::connect_default().expect("ixgbed: failed to setup channel to pcid");
+        PciFunctionHandle::connect_default().expect("ixgbed: failed to setup channel to pcid");
     let pci_config = pcid_handle
         .fetch_config()
         .expect("ixgbed: failed to fetch config");

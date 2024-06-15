@@ -14,7 +14,7 @@ use std::usize;
 
 use event::{user_data, EventQueue};
 use libredox::flag;
-use pcid_interface::{PciBar, PcidServerHandle};
+use pcid_interface::{PciBar, PciFunctionHandle};
 use redox_log::{OutputBuilder, RedoxLogger};
 use syscall::{EventFlags, Packet, SchemeBlockMut};
 
@@ -66,7 +66,7 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
 
 fn main() {
     let mut pcid_handle =
-        PcidServerHandle::connect_default().expect("ac97d: failed to setup channel to pcid");
+        PciFunctionHandle::connect_default().expect("ac97d: failed to setup channel to pcid");
     let pci_config = pcid_handle
         .fetch_config()
         .expect("ac97d: failed to fetch config");
