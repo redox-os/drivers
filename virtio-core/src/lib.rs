@@ -10,12 +10,8 @@ mod probe;
 #[path="arch/aarch64.rs"]
 mod arch;
 
-#[cfg(target_arch = "x86")]
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[path="arch/x86.rs"]
-mod arch;
-
-#[cfg(target_arch = "x86_64")]
-#[path="arch/x86_64.rs"]
 mod arch;
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
