@@ -114,7 +114,11 @@ impl FeatureStatus {
         }
     }
     pub fn is_enabled(&self) -> bool {
-        if let &Self::Enabled = self { true } else { false }
+        if let &Self::Enabled = self {
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -125,10 +129,18 @@ pub enum PciFeature {
 }
 impl PciFeature {
     pub fn is_msi(self) -> bool {
-        if let Self::Msi = self { true } else { false }
+        if let Self::Msi = self {
+            true
+        } else {
+            false
+        }
     }
     pub fn is_msix(self) -> bool {
-        if let Self::MsiX = self { true } else { false }
+        if let Self::MsiX = self {
+            true
+        } else {
+            false
+        }
     }
 }
 #[derive(Debug, Serialize, Deserialize)]
@@ -263,8 +275,12 @@ pub(crate) fn recv<R: Read, T: DeserializeOwned>(r: &mut R) -> Result<T> {
 
 impl PciFunctionHandle {
     pub fn connect_default() -> Result<Self> {
-        let pcid_to_client_fd = env::var("PCID_TO_CLIENT_FD")?.parse::<RawFd>().map_err(PcidClientHandleError::EnvValidityError)?;
-        let pcid_from_client_fd = env::var("PCID_FROM_CLIENT_FD")?.parse::<RawFd>().map_err(PcidClientHandleError::EnvValidityError)?;
+        let pcid_to_client_fd = env::var("PCID_TO_CLIENT_FD")?
+            .parse::<RawFd>()
+            .map_err(PcidClientHandleError::EnvValidityError)?;
+        let pcid_from_client_fd = env::var("PCID_FROM_CLIENT_FD")?
+            .parse::<RawFd>()
+            .map_err(PcidClientHandleError::EnvValidityError)?;
 
         let mut pcid_to_client = unsafe { File::from_raw_fd(pcid_to_client_fd) };
         let mut pcid_from_client = unsafe { File::from_raw_fd(pcid_from_client_fd) };

@@ -20,29 +20,45 @@ pub fn read_bsp_apic_id() -> io::Result<usize> {
     (if bytes_read == 8 {
         usize::try_from(u64::from_le_bytes(buffer))
     } else if bytes_read == 4 {
-        usize::try_from(u32::from_le_bytes([buffer[0], buffer[1], buffer[2], buffer[3]]))
+        usize::try_from(u32::from_le_bytes([
+            buffer[0], buffer[1], buffer[2], buffer[3],
+        ]))
     } else {
-        panic!("`irq:` scheme responded with {} bytes, expected {}", bytes_read, std::mem::size_of::<usize>());
-    }).or(Err(io::Error::new(io::ErrorKind::InvalidData, "bad BSP int size")))
+        panic!(
+            "`irq:` scheme responded with {} bytes, expected {}",
+            bytes_read,
+            std::mem::size_of::<usize>()
+        );
+    })
+    .or(Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        "bad BSP int size",
+    )))
 }
 
 // TODO: Perhaps read the MADT instead?
 /// Obtains an interator over all of the visible CPU ids, for use in IRQ allocation and MSI
 /// capability structs or MSI-X tables.
 pub fn cpu_ids() -> io::Result<impl Iterator<Item = io::Result<usize>> + 'static> {
-    Ok(fs::read_dir("irq:")?
-        .filter_map(|entry| -> Option<io::Result<_>> { match entry {
-            Ok(e) => {
-                let path = e.path();
-                let file_name = path.file_name()?.to_str()?;
-                // the file name should be in the format `cpu-<CPU ID>`
-                if ! file_name.starts_with("cpu-") {
-                    return None;
+    Ok(
+        fs::read_dir("irq:")?.filter_map(|entry| -> Option<io::Result<_>> {
+            match entry {
+                Ok(e) => {
+                    let path = e.path();
+                    let file_name = path.file_name()?.to_str()?;
+                    // the file name should be in the format `cpu-<CPU ID>`
+                    if !file_name.starts_with("cpu-") {
+                        return None;
+                    }
+                    u8::from_str_radix(&file_name[4..], 16)
+                        .map(usize::from)
+                        .map(Ok)
+                        .ok()
                 }
-                u8::from_str_radix(&file_name[4..], 16).map(usize::from).map(Ok).ok()
+                Err(e) => Some(Err(e)),
             }
-            Err(e) => Some(Err(e)),
-        } }))
+        }),
+    )
 }
 
 /// Allocate multiple interrupt vectors, from the IDT of the specified processor, returning the
@@ -62,9 +78,15 @@ pub fn cpu_ids() -> io::Result<impl Iterator<Item = io::Result<usize>> + 'static
 /// individually allocated vectors that might be spread out, even on multiple CPUs. Thus, multiple
 /// invocations with alignment 1 and count 1 are totally acceptable, although allocating in bulk
 /// minimizes the initialization overhead.
-pub fn allocate_aligned_interrupt_vectors(cpu_id: usize, alignment: NonZeroU8, count: u8) -> io::Result<Option<(u8, Vec<File>)>> {
+pub fn allocate_aligned_interrupt_vectors(
+    cpu_id: usize,
+    alignment: NonZeroU8,
+    count: u8,
+) -> io::Result<Option<(u8, Vec<File>)>> {
     let cpu_id = u8::try_from(cpu_id).expect("usize cpu ids not implemented yet");
-    if count == 0 { return Ok(None) }
+    if count == 0 {
+        return Ok(None);
+    }
 
     let available_irqs = fs::read_dir(format!("irq:cpu-{:02x}", cpu_id))?;
     let mut available_irq_numbers = available_irqs.filter_map(|entry| -> Option<io::Result<_>> {
