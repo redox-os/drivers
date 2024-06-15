@@ -19,7 +19,7 @@ fdt = { git = "https://gitlab.redox-os.org/rosehuds/fdt.git" }
 libc = "0.2"
 log = "0.4"
 paw = "1.0"
-pci_types = "0.9.1"
+pci_types = "0.10"
 plain = "0.2"
 redox-log = "0.1"
 redox_syscall = "0.5"
