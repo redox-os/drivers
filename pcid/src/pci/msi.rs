@@ -40,10 +40,16 @@ pub struct MsixInfo {
 impl MsixInfo {
     pub fn validate(&self, bars: [PciBar; 6]) {
         if self.table_bar > 5 {
-            panic!("MSI-X Table BIR contained a reserved enum value: {}", self.table_bar);
+            panic!(
+                "MSI-X Table BIR contained a reserved enum value: {}",
+                self.table_bar
+            );
         }
         if self.pba_bar > 5 {
-            panic!("MSI-X PBA BIR contained a reserved enum value: {}", self.pba_bar);
+            panic!(
+                "MSI-X PBA BIR contained a reserved enum value: {}",
+                self.pba_bar
+            );
         }
 
         let table_size = self.table_size;
@@ -113,23 +119,46 @@ pub mod x86_64 {
     }
 
     // TODO: should the reserved field be preserved?
-    pub const fn message_address(destination_id: u8, redirect_hint: bool, dest_mode_logical: bool) -> u64 {
+    pub const fn message_address(
+        destination_id: u8,
+        redirect_hint: bool,
+        dest_mode_logical: bool,
+    ) -> u64 {
         0x0000_0000_FEE0_0000u64
             | ((destination_id as u64) << 12)
             | ((redirect_hint as u64) << 3)
             | ((dest_mode_logical as u64) << 2)
     }
-    pub const fn message_data(trigger_mode: TriggerMode, level_trigger_mode: LevelTriggerMode, delivery_mode: DeliveryMode, vector: u8) -> u32 {
+    pub const fn message_data(
+        trigger_mode: TriggerMode,
+        level_trigger_mode: LevelTriggerMode,
+        delivery_mode: DeliveryMode,
+        vector: u8,
+    ) -> u32 {
         ((trigger_mode as u32) << 15)
             | ((level_trigger_mode as u32) << 14)
             | ((delivery_mode as u32) << 8)
             | vector as u32
     }
-    pub const fn message_data_level_triggered(level_trigger_mode: LevelTriggerMode, delivery_mode: DeliveryMode, vector: u8) -> u32 {
-        message_data(TriggerMode::Level, level_trigger_mode, delivery_mode, vector)
+    pub const fn message_data_level_triggered(
+        level_trigger_mode: LevelTriggerMode,
+        delivery_mode: DeliveryMode,
+        vector: u8,
+    ) -> u32 {
+        message_data(
+            TriggerMode::Level,
+            level_trigger_mode,
+            delivery_mode,
+            vector,
+        )
     }
     pub const fn message_data_edge_triggered(delivery_mode: DeliveryMode, vector: u8) -> u32 {
-        message_data(TriggerMode::Edge, LevelTriggerMode::Deassert, delivery_mode, vector)
+        message_data(
+            TriggerMode::Edge,
+            LevelTriggerMode::Deassert,
+            delivery_mode,
+            vector,
+        )
     }
 }
 

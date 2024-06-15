@@ -1,6 +1,6 @@
 use pci_types::capability::PciCapabilityAddress;
 use pci_types::ConfigRegionAccess;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct VendorSpecificCapability {
@@ -8,7 +8,10 @@ pub struct VendorSpecificCapability {
 }
 
 impl VendorSpecificCapability {
-    pub(crate) unsafe fn parse(addr: PciCapabilityAddress, access: &dyn ConfigRegionAccess) -> Self {
+    pub(crate) unsafe fn parse(
+        addr: PciCapabilityAddress,
+        access: &dyn ConfigRegionAccess,
+    ) -> Self {
         let dword = access.read(addr.address, addr.offset);
         let next = (dword >> 8) & 0xFF;
         let length = ((dword >> 16) & 0xFF) as u16;
@@ -33,8 +36,6 @@ impl VendorSpecificCapability {
             log::warn!("Vendor specific capability is invalid");
             Vec::new()
         };
-        VendorSpecificCapability {
-            data
-        }
+        VendorSpecificCapability { data }
     }
 }
