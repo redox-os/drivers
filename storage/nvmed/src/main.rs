@@ -247,9 +247,7 @@ fn main() {
 fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let mut pcid_handle =
         PciFunctionHandle::connect_default().expect("nvmed: failed to setup channel to pcid");
-    let pci_config = pcid_handle
-        .fetch_config()
-        .expect("nvmed: failed to fetch config");
+    let pci_config = pcid_handle.config();
 
     let scheme_name = format!("disk.{}-nvme", pci_config.func.name());
 

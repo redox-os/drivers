@@ -9,7 +9,7 @@ use crate::{probe::MappedMsixRegs, MSIX_PRIMARY_VECTOR};
 use pcid_interface::*;
 
 pub fn enable_msix(pcid_handle: &mut PciFunctionHandle) -> Result<File, Error> {
-    let pci_config = pcid_handle.fetch_config()?;
+    let pci_config = pcid_handle.config();
 
     // Extended message signaled interrupts.
     let msix_info = match pcid_handle.feature_info(PciFeature::MsiX)? {

@@ -230,6 +230,7 @@ pub enum PcidClientResponse {
 pub struct PciFunctionHandle {
     pcid_to_client: File,
     pcid_from_client: File,
+    config: SubdriverArguments,
 }
 
 pub(crate) fn send<W: Write, T: Serialize>(w: &mut W, message: &T) -> Result<()> {
@@ -258,9 +259,19 @@ impl PciFunctionHandle {
         let pcid_to_client_fd = env::var("PCID_TO_CLIENT_FD")?.parse::<RawFd>().map_err(PcidClientHandleError::EnvValidityError)?;
         let pcid_from_client_fd = env::var("PCID_FROM_CLIENT_FD")?.parse::<RawFd>().map_err(PcidClientHandleError::EnvValidityError)?;
 
+        let mut pcid_to_client = unsafe { File::from_raw_fd(pcid_to_client_fd) };
+        let mut pcid_from_client = unsafe { File::from_raw_fd(pcid_from_client_fd) };
+
+        send(&mut pcid_from_client, &PcidClientRequest::RequestConfig)?;
+        let config = match recv(&mut pcid_to_client)? {
+            PcidClientResponse::Config(a) => a,
+            other => return Err(PcidClientHandleError::InvalidResponse(other)),
+        };
+
         Ok(Self {
-            pcid_to_client: unsafe { File::from_raw_fd(pcid_to_client_fd) },
-            pcid_from_client: unsafe { File::from_raw_fd(pcid_from_client_fd) },
+            pcid_to_client,
+            pcid_from_client,
+            config,
         })
     }
     fn send(&mut self, req: &PcidClientRequest) -> Result<()> {
@@ -269,12 +280,8 @@ impl PciFunctionHandle {
     fn recv(&mut self) -> Result<PcidClientResponse> {
         recv(&mut self.pcid_to_client)
     }
-    pub fn fetch_config(&mut self) -> Result<SubdriverArguments> {
-        self.send(&PcidClientRequest::RequestConfig)?;
-        match self.recv()? {
-            PcidClientResponse::Config(a) => Ok(a),
-            other => Err(PcidClientHandleError::InvalidResponse(other)),
-        }
+    pub fn config(&self) -> SubdriverArguments {
+        self.config.clone()
     }
 
     pub fn get_vendor_capabilities(&mut self) -> Result<Vec<VendorSpecificCapability>> {

@@ -86,7 +86,7 @@ fn setup_logging(name: &str) -> Option<&'static RedoxLogger> {
 
 #[cfg(target_arch = "x86_64")]
 fn get_int_method(pcid_handle: &mut PciFunctionHandle, bar0_address: usize) -> (Option<File>, InterruptMethod) {
-    let pci_config = pcid_handle.fetch_config().expect("xhcid: failed to fetch config");
+    let pci_config = pcid_handle.config();
 
     let all_pci_features = pcid_handle.fetch_all_features().expect("xhcid: failed to fetch pci features");
     log::debug!("XHCI PCI FEATURES: {:?}", all_pci_features);
@@ -168,7 +168,7 @@ fn get_int_method(pcid_handle: &mut PciFunctionHandle, bar0_address: usize) -> (
 //TODO: MSI on non-x86_64?
 #[cfg(not(target_arch = "x86_64"))]
 fn get_int_method(pcid_handle: &mut PciFunctionHandle, address: usize) -> (Option<File>, InterruptMethod) {
-    let pci_config = pcid_handle.fetch_config().expect("xhcid: failed to fetch config");
+    let pci_config = pcid_handle.config();
 
     if let Some(irq) = pci_config.func.legacy_interrupt_line {
         // legacy INTx# interrupt pins.
@@ -184,8 +184,8 @@ fn main() {
 }
 
 fn daemon(daemon: redox_daemon::Daemon) -> ! {
-    let mut pcid_handle = PciFunctionHandle::connect_default().expect("xhcid: failed to setup channel to pcid");
-    let pci_config = pcid_handle.fetch_config().expect("xhcid: failed to fetch config");
+    let pcid_handle = PciFunctionHandle::connect_default().expect("xhcid: failed to setup channel to pcid");
+    let pci_config = pcid_handle.config();
 
     let mut name = pci_config.func.name();
     name.push_str("_xhci");

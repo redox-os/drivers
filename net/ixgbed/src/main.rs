@@ -14,11 +14,9 @@ pub mod device;
 mod ixgbe;
 
 fn main() {
-    let mut pcid_handle =
+    let pcid_handle =
         PciFunctionHandle::connect_default().expect("ixgbed: failed to setup channel to pcid");
-    let pci_config = pcid_handle
-        .fetch_config()
-        .expect("ixgbed: failed to fetch config");
+    let pci_config = pcid_handle.config();
 
     let mut name = pci_config.func.name();
     name.push_str("_ixgbe");

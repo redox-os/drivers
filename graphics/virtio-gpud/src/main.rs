@@ -414,7 +414,7 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
     // Double check that we have the right device.
     //
     // 0x1050 - virtio-gpu
-    let pci_config = pcid_handle.fetch_config()?;
+    let pci_config = pcid_handle.config();
 
     assert_eq!(pci_config.func.full_device_id.device_id, 0x1050);
     log::info!("virtio-gpu: initiating startup sequence :^)");

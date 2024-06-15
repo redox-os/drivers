@@ -60,7 +60,7 @@ fn enable_msix(pcid_handle: &mut PciFunctionHandle) -> Result<File, Error> {
 /// ## Panics
 /// This function panics if the device is not a virtio device.
 pub fn probe_device(pcid_handle: &mut PciFunctionHandle) -> Result<Device, Error> {
-    let pci_config = pcid_handle.fetch_config()?;
+    let pci_config = pcid_handle.config();
 
     assert_eq!(
         pci_config.func.full_device_id.vendor_id, 6900,

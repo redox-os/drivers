@@ -96,7 +96,7 @@ impl MappedMsixRegs {
 
 #[cfg(target_arch = "x86_64")]
 fn get_int_method(pcid_handle: &mut PciFunctionHandle) -> File {
-    let pci_config = pcid_handle.fetch_config().expect("rtl8139d: failed to fetch config");
+    let pci_config = pcid_handle.config();
 
     let all_pci_features = pcid_handle.fetch_all_features().expect("rtl8139d: failed to fetch pci features");
     log::info!("PCI FEATURES: {:?}", all_pci_features);
@@ -178,7 +178,7 @@ fn get_int_method(pcid_handle: &mut PciFunctionHandle) -> File {
 //TODO: MSI on non-x86_64?
 #[cfg(not(target_arch = "x86_64"))]
 fn get_int_method(pcid_handle: &mut PciFunctionHandle) -> File {
-    let pci_config = pcid_handle.fetch_config().expect("rtl8139d: failed to fetch config");
+    let pci_config = pcid_handle.config();
 
     if let Some(irq) = pci_config.func.legacy_interrupt_line {
         // legacy INTx# interrupt pins.
@@ -211,7 +211,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     let mut pcid_handle = PciFunctionHandle::connect_default().expect("rtl8139d: failed to setup channel to pcid");
 
-    let pci_config = pcid_handle.fetch_config().expect("rtl8139d: failed to fetch config");
+    let pci_config = pcid_handle.config();
 
     let mut name = pci_config.func.name();
     name.push_str("_rtl8139");

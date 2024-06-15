@@ -65,11 +65,9 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
 }
 
 fn main() {
-    let mut pcid_handle =
+    let pcid_handle =
         PciFunctionHandle::connect_default().expect("ac97d: failed to setup channel to pcid");
-    let pci_config = pcid_handle
-        .fetch_config()
-        .expect("ac97d: failed to fetch config");
+    let pci_config = pcid_handle.config();
 
     let mut name = pci_config.func.name();
     name.push_str("_ac97");
