@@ -1,4 +1,4 @@
-use crate::{legacy_transport::LegacyTransport, reinit, transport::Error, Device};
+use crate::transport::Error;
 
 use pcid_interface::irq_helpers::{allocate_single_interrupt_vector_for_msi, read_bsp_apic_id};
 use pcid_interface::msi::MsixTableEntry;
@@ -47,35 +47,4 @@ pub fn enable_msix(pcid_handle: &mut PciFunctionHandle) -> Result<File, Error> {
 
     log::info!("virtio: using MSI-X (interrupt_handle={interrupt_handle:?})");
     Ok(interrupt_handle)
-}
-
-pub fn probe_legacy_port_transport(
-    pci_config: &SubdriverArguments,
-    pcid_handle: &mut PciFunctionHandle,
-) -> Result<Device, Error> {
-    let port = pci_config.func.bars[0].expect_port();
-
-    common::acquire_port_io_rights().expect("virtio: failed to set I/O privilege level");
-    log::warn!("virtio: using legacy transport");
-
-    let transport = LegacyTransport::new(port);
-
-    // Setup interrupts.
-    let all_pci_features = pcid_handle.fetch_all_features()?;
-    let has_msix = all_pci_features.iter().any(|feature| feature.is_msix());
-
-    // According to the virtio specification, the device REQUIRED to support MSI-X.
-    assert!(has_msix, "virtio: device does not support MSI-X");
-    let irq_handle = enable_msix(pcid_handle)?;
-
-    let device = Device {
-        transport,
-        irq_handle,
-        device_space: core::ptr::null_mut(),
-    };
-
-    device.transport.reset();
-    reinit(&device)?;
-
-    Ok(device)
 }
