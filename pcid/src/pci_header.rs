@@ -1,6 +1,5 @@
 use pci_types::{
-    ConfigRegionAccess, EndpointHeader, HeaderType, PciAddress, PciHeader as TyPciHeader,
-    PciPciBridgeHeader,
+    ConfigRegionAccess, HeaderType, PciAddress, PciHeader as TyPciHeader, PciPciBridgeHeader,
 };
 
 use crate::pci::FullDeviceId;
@@ -13,13 +12,13 @@ pub enum PciHeaderError {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SharedPciHeader {
-    full_device_id: FullDeviceId,
+    pub full_device_id: FullDeviceId,
     addr: PciAddress,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PciEndpointHeader {
-    shared: SharedPciHeader,
+    pub shared: SharedPciHeader,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -71,41 +70,5 @@ impl PciHeader {
             }
             ty => Err(PciHeaderError::UnknownHeaderType(ty)),
         }
-    }
-
-    /// Return all identifying information of the PCI function.
-    pub fn full_device_id(&self) -> &FullDeviceId {
-        match self {
-            PciHeader::General(PciEndpointHeader {
-                shared:
-                    SharedPciHeader {
-                        full_device_id: device_id,
-                        ..
-                    },
-                ..
-            })
-            | PciHeader::PciToPci {
-                shared:
-                    SharedPciHeader {
-                        full_device_id: device_id,
-                        ..
-                    },
-                ..
-            } => device_id,
-        }
-    }
-}
-
-impl PciEndpointHeader {
-    pub fn address(&self) -> PciAddress {
-        self.shared.addr
-    }
-
-    pub fn endpoint_header(&self, access: &impl ConfigRegionAccess) -> EndpointHeader {
-        EndpointHeader::from_header(TyPciHeader::new(self.shared.addr), access).unwrap()
-    }
-
-    pub fn full_device_id(&self) -> &FullDeviceId {
-        &self.shared.full_device_id
     }
 }

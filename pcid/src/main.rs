@@ -4,15 +4,17 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use log::{debug, info, trace, warn};
-use pci_types::{Bar as TyBar, CommandRegister, PciAddress};
+use pci_types::{
+    Bar as TyBar, CommandRegister, EndpointHeader, PciAddress, PciHeader as TyPciHeader,
+};
 use redox_log::{OutputBuilder, RedoxLogger};
 use structopt::StructOpt;
 
 use crate::cfg_access::Pcie;
 use crate::config::Config;
 use crate::driver_interface::LegacyInterruptLine;
-use crate::pci::PciBar;
-use crate::pci_header::{PciEndpointHeader, PciHeader, PciHeaderError};
+use crate::pci::{FullDeviceId, PciBar};
+use crate::pci_header::{PciHeader, PciHeaderError};
 
 mod cfg_access;
 mod config;
@@ -43,11 +45,14 @@ pub struct State {
     pcie: Pcie,
 }
 
-fn handle_parsed_header(state: Arc<State>, config: &Config, header: PciEndpointHeader) {
-    let mut endpoint_header = header.endpoint_header(&state.pcie);
-
+fn handle_parsed_header(
+    state: Arc<State>,
+    config: &Config,
+    mut endpoint_header: EndpointHeader,
+    full_device_id: FullDeviceId,
+) {
     for driver in config.drivers.iter() {
-        if !driver.match_function(header.full_device_id()) {
+        if !driver.match_function(&full_device_id) {
             continue;
         }
 
@@ -150,13 +155,13 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, header: PciEndpointH
 
         let func = driver_interface::PciFunction {
             bars,
-            addr: header.address(),
+            addr: endpoint_header.header().address(),
             legacy_interrupt_line: if legacy_interrupt_enabled {
                 Some(LegacyInterruptLine(irq))
             } else {
                 None
             },
-            full_device_id: header.full_device_id().clone(),
+            full_device_id: full_device_id.clone(),
         };
 
         driver_handler::DriverHandler::spawn(Arc::clone(&state), func, capabilities, args);
@@ -265,19 +270,33 @@ fn main(args: Args) {
             for func_num in 0..8 {
                 let func_addr = PciAddress::new(0, bus_num, dev_num, func_num);
                 match PciHeader::from_reader(&state.pcie, func_addr) {
-                    Ok(header) => {
-                        info!("PCI {} {}", func_addr, header.full_device_id().display());
-                        match header {
-                            PciHeader::General(endpoint_header) => {
-                                handle_parsed_header(Arc::clone(&state), &config, endpoint_header);
-                            }
-                            PciHeader::PciToPci {
-                                secondary_bus_num, ..
-                            } => {
-                                bus_nums.push(secondary_bus_num);
-                            }
+                    Ok(header) => match header {
+                        PciHeader::General(endpoint_header) => {
+                            info!(
+                                "PCI {} {}",
+                                func_addr,
+                                endpoint_header.shared.full_device_id.display()
+                            );
+                            handle_parsed_header(
+                                Arc::clone(&state),
+                                &config,
+                                EndpointHeader::from_header(
+                                    TyPciHeader::new(func_addr),
+                                    &state.pcie,
+                                )
+                                .unwrap(),
+                                endpoint_header.shared.full_device_id,
+                            );
                         }
-                    }
+                        PciHeader::PciToPci {
+                            shared,
+                            secondary_bus_num,
+                        } => {
+                            info!("PCI {} {}", func_addr, shared.full_device_id.display());
+
+                            bus_nums.push(secondary_bus_num);
+                        }
+                    },
                     Err(PciHeaderError::NoDevice) => {
                         if func_addr.function() == 0 {
                             trace!("PCI {:>02X}:{:>02X}: no dev", bus_num, dev_num);
