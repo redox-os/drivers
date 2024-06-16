@@ -715,8 +715,9 @@ dependencies = [
  "anyhow",
  "libredox 0.1.3",
  "redox-daemon",
+ "redox-scheme",
+ "redox_event",
  "redox_syscall 0.5.2",
- "slab",
 ]
 
 [[package]]
