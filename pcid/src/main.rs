@@ -4,13 +4,14 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use log::{debug, info, trace, warn};
-use pci_types::{CommandRegister, PciAddress};
+use pci_types::{Bar as TyBar, CommandRegister, PciAddress};
 use redox_log::{OutputBuilder, RedoxLogger};
 use structopt::StructOpt;
 
 use crate::cfg_access::Pcie;
 use crate::config::Config;
 use crate::driver_interface::LegacyInterruptLine;
+use crate::pci::PciBar;
 use crate::pci_header::{PciEndpointHeader, PciHeader, PciHeaderError};
 
 mod cfg_access;
@@ -43,6 +44,8 @@ pub struct State {
 }
 
 fn handle_parsed_header(state: Arc<State>, config: &Config, header: PciEndpointHeader) {
+    let mut endpoint_header = header.endpoint_header(&state.pcie);
+
     for driver in config.drivers.iter() {
         if !driver.match_function(header.full_device_id()) {
             continue;
@@ -52,8 +55,43 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, header: PciEndpointH
             continue;
         };
 
+        let mut bars = [PciBar::None; 6];
+        let mut skip = false;
+        for i in 0..6 {
+            if skip {
+                skip = false;
+                continue;
+            }
+            match endpoint_header.bar(i, &state.pcie) {
+                Some(TyBar::Io { port }) => {
+                    bars[i as usize] = PciBar::Port(port.try_into().unwrap())
+                }
+                Some(TyBar::Memory32 {
+                    address,
+                    size,
+                    prefetchable: _,
+                }) => {
+                    bars[i as usize] = PciBar::Memory32 {
+                        addr: address,
+                        size,
+                    }
+                }
+                Some(TyBar::Memory64 {
+                    address,
+                    size,
+                    prefetchable: _,
+                }) => {
+                    bars[i as usize] = PciBar::Memory64 {
+                        addr: address,
+                        size,
+                    };
+                    skip = true; // Each 64bit memory BAR occupies two slots
+                }
+                None => bars[i as usize] = PciBar::None,
+            }
+        }
+
         let mut string = String::new();
-        let bars = header.bars(&state.pcie);
         for (i, bar) in bars.iter().enumerate() {
             if !bar.is_none() {
                 string.push_str(&format!(" {i}={}", bar.display()));
@@ -63,8 +101,6 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, header: PciEndpointH
         if !string.is_empty() {
             info!("    BAR{}", string);
         }
-
-        let mut endpoint_header = header.endpoint_header(&state.pcie);
 
         // Enable bus mastering, memory space, and I/O space
         endpoint_header.update_command(&state.pcie, |cmd| {

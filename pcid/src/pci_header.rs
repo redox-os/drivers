@@ -1,9 +1,9 @@
 use pci_types::{
-    Bar as TyBar, ConfigRegionAccess, EndpointHeader, HeaderType, PciAddress,
-    PciHeader as TyPciHeader, PciPciBridgeHeader,
+    ConfigRegionAccess, EndpointHeader, HeaderType, PciAddress, PciHeader as TyPciHeader,
+    PciPciBridgeHeader,
 };
 
-use crate::pci::{FullDeviceId, PciBar};
+use crate::pci::FullDeviceId;
 
 #[derive(Debug, PartialEq)]
 pub enum PciHeaderError {
@@ -107,48 +107,6 @@ impl PciEndpointHeader {
 
     pub fn full_device_id(&self) -> &FullDeviceId {
         &self.shared.full_device_id
-    }
-
-    /// Return the Headers BARs.
-    pub fn bars(&self, access: &impl ConfigRegionAccess) -> [PciBar; 6] {
-        let endpoint_header = self.endpoint_header(access);
-
-        let mut bars = [PciBar::None; 6];
-        let mut skip = false;
-        for i in 0..6 {
-            if skip {
-                skip = false;
-                continue;
-            }
-            match endpoint_header.bar(i, access) {
-                Some(TyBar::Io { port }) => {
-                    bars[i as usize] = PciBar::Port(port.try_into().unwrap())
-                }
-                Some(TyBar::Memory32 {
-                    address,
-                    size,
-                    prefetchable: _,
-                }) => {
-                    bars[i as usize] = PciBar::Memory32 {
-                        addr: address,
-                        size,
-                    }
-                }
-                Some(TyBar::Memory64 {
-                    address,
-                    size,
-                    prefetchable: _,
-                }) => {
-                    bars[i as usize] = PciBar::Memory64 {
-                        addr: address,
-                        size,
-                    };
-                    skip = true; // Each 64bit memory BAR occupies two slots
-                }
-                None => bars[i as usize] = PciBar::None,
-            }
-        }
-        bars
     }
 }
 
