@@ -21,8 +21,6 @@ pub struct SharedPciHeader {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PciEndpointHeader {
     shared: SharedPciHeader,
-    subsystem_vendor_id: u16,
-    subsystem_id: u16,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -63,15 +61,7 @@ impl PciHeader {
         };
 
         match header_type {
-            HeaderType::Endpoint => {
-                let endpoint_header = EndpointHeader::from_header(header, access).unwrap();
-                let (subsystem_id, subsystem_vendor_id) = endpoint_header.subsystem(access);
-                Ok(PciHeader::General(PciEndpointHeader {
-                    shared,
-                    subsystem_vendor_id,
-                    subsystem_id,
-                }))
-            }
+            HeaderType::Endpoint => Ok(PciHeader::General(PciEndpointHeader { shared })),
             HeaderType::PciPciBridge => {
                 let bridge_header = PciPciBridgeHeader::from_header(header, access).unwrap();
                 let secondary_bus_num = bridge_header.secondary_bus_number(access);
