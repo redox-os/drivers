@@ -9,13 +9,14 @@ use std::os::unix::io::{FromRawFd, RawFd};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use thiserror::Error;
 
-pub use crate::pci::cap::VendorSpecificCapability;
 pub use crate::pci::msi;
 pub use crate::pci::PciAddress;
 pub use bar::PciBar;
+pub use cap::VendorSpecificCapability;
 pub use id::FullDeviceId;
 
 mod bar;
+pub mod cap;
 mod id;
 pub mod irq_helpers;
 
