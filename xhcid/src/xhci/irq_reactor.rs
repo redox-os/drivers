@@ -105,7 +105,7 @@ impl IrqReactor {
     }
     // TODO: Configure the amount of time wait when no more work can be done (for IRQ-less polling).
     fn pause(&self) {
-        std::thread::yield_now();
+        std::thread::sleep(std::time::Duration::from_millis(2));
     }
     fn run_polling(mut self) {
         debug!("Running IRQ reactor in polling mode.");
