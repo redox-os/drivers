@@ -4,35 +4,40 @@
 
 use std::fs::File;
 
-use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
 use std::str;
 
 use libredox::call::MmapArgs;
 use libredox::flag;
-use slab::Slab;
+use redox_scheme::{CallerCtx, OpenResult, RequestKind, SchemeMut, SignalBehavior, Socket, V2};
+
 use syscall::data::Stat;
-use syscall::{error::*, MapFlags, SchemeMut, Packet};
+use syscall::schemev2::NewFdFlags;
+use syscall::error::*;
 use syscall::flag::{MODE_DIR, MODE_FILE};
-use syscall::scheme::calc_seek_offset_usize;
 use syscall::PAGE_SIZE;
 
 use anyhow::{anyhow, Context, bail};
 
 const LIST: [u8; 2] = *b"0\n";
 
-struct Handle {
-    ty: HandleType,
-    seek: usize,
-}
+#[repr(usize)]
 enum HandleType {
-    TopLevel,
-    TheData,
+    TopLevel = 0,
+    TheData = 1,
+}
+impl HandleType {
+    fn try_from_raw(raw: usize) -> Option<Self> {
+        Some(match raw {
+            0 => Self::TopLevel,
+            1 => Self::TheData,
+            _ => return None,
+        })
+    }
 }
 
 pub struct DiskScheme {
     the_data: &'static mut [u8],
-    handles: Slab<Handle>,
 }
 
 impl DiskScheme {
@@ -79,100 +84,74 @@ impl DiskScheme {
 
         Ok(DiskScheme {
             the_data,
-            handles: Slab::with_capacity(32),
         })
     }
 }
 
 impl SchemeMut for DiskScheme {
-    fn seek(&mut self, id: usize, pos: isize, whence: usize) -> Result<isize> {
-        let handle = self.handles.get_mut(id).ok_or(Error::new(EBADF))?;
-        let len = match handle.ty {
-            HandleType::TopLevel => LIST.len(),
-            HandleType::TheData => self.the_data.len(),
-        };
-        let new_offset = calc_seek_offset_usize(handle.seek, pos, whence, len)?;
-        handle.seek = new_offset as usize;
-        Ok(new_offset)
+    fn fsize(&mut self, id: usize) -> Result<u64> {
+        Ok(match HandleType::try_from_raw(id).ok_or(Error::new(EBADF))? {
+            HandleType::TopLevel => LIST.len() as u64,
+            HandleType::TheData => self.the_data.len() as u64,
+        })
     }
 
-    fn fcntl(&mut self, id: usize, _cmd: usize, _arg: usize) -> Result<usize> {
-        let _handle = self.handles.get(id).ok_or(Error::new(EBADF))?;
-
+    fn fcntl(&mut self, _id: usize, _cmd: usize, _arg: usize) -> Result<usize> {
         Ok(0)
     }
 
-    fn fsync(&mut self, id: usize) -> Result<usize> {
-        let _handle = self.handles.get(id).ok_or(Error::new(EBADF))?;
-
+    fn fsync(&mut self, _id: usize) -> Result<usize> {
         Ok(0)
     }
 
-    fn close(&mut self, id: usize) -> Result<usize> {
-        let _ = self.handles.remove(id);
-
+    fn close(&mut self, _id: usize) -> Result<usize> {
         Ok(0)
     }
-    fn open(&mut self, path: &str, _flags: usize, uid: u32, _gid: u32) -> Result<usize> {
-        if uid != 0 {
+    fn xopen(&mut self, path: &str, _flags: usize, ctx: &CallerCtx) -> Result<OpenResult> {
+        if ctx.uid != 0 {
             return Err(Error::new(EACCES));
         }
 
         let path_trimmed = path.trim_matches('/');
 
-        let handle = match path_trimmed {
-            "" => {
-                Handle {
-                    //mode: MODE_DIR | 0o755,
-                    seek: 0,
-                    ty: HandleType::TopLevel,
+        Ok(OpenResult::ThisScheme {
+            number: match path_trimmed {
+                "" => {
+                    HandleType::TopLevel as usize
+                },
+                "0" => {
+                    HandleType::TheData as usize
                 }
+                _ => return Err(Error::new(ENOENT)),
             },
-            "0" => {
-                Handle {
-                    //mode: MODE_FILE | 0o644,
-                    seek: 0,
-                    ty: HandleType::TheData,
-                }
-            }
-            _ => return Err(Error::new(ENOENT)),
-        };
-
-        Ok(self.handles.insert(handle))
+            flags: NewFdFlags::POSITIONED,
+        })
     }
-    fn read(&mut self, id: usize, buf: &mut [u8]) -> Result<usize> {
-        let handle = self.handles.get_mut(id).ok_or(Error::new(EBADF))?;
-
-        let data = match handle.ty {
+    fn read(&mut self, id: usize, buf: &mut [u8], offset: u64, _flags: u32) -> Result<usize> {
+        let data = match HandleType::try_from_raw(id).ok_or(Error::new(EBADF))? {
             HandleType::TheData => &*self.the_data,
             HandleType::TopLevel => &LIST,
         };
 
-        let src = data.get(handle.seek..).unwrap_or(&[]);
+        let src = usize::try_from(offset).ok().and_then(|o| data.get(o..)).unwrap_or(&[]);
         let byte_count = std::cmp::min(src.len(), buf.len());
         buf[..byte_count].copy_from_slice(&src[..byte_count]);
-        handle.seek += byte_count;
+        Ok(byte_count)
+    }
+    fn write(&mut self, id: usize, buf: &[u8], offset: u64, _flags: u32) -> Result<usize> {
+        let data = match HandleType::try_from_raw(id).ok_or(Error::new(EBADF))? {
+            HandleType::TheData => &mut *self.the_data,
+            HandleType::TopLevel => return Err(Error::new(EBADF)),
+        };
 
+        let dst = usize::try_from(offset).ok().and_then(|o| data.get_mut(o..)).unwrap_or(&mut []);
+        let byte_count = std::cmp::min(dst.len(), buf.len());
+        dst[..byte_count].copy_from_slice(&buf[..byte_count]);
         Ok(byte_count)
     }
 
-    fn write(&mut self, id: usize, buffer: &[u8]) -> Result<usize> {
-        let handle = self.handles.get_mut(id).ok_or(Error::new(EBADF))?;
-
-        match handle.ty {
-            HandleType::TheData => {
-                let dst = self.the_data.get_mut(handle.seek..).unwrap_or(&mut []);
-                let byte_count = std::cmp::min(dst.len(), buffer.len());
-                dst[..byte_count].copy_from_slice(&buffer[..byte_count]);
-                handle.seek += byte_count;
-
-                Ok(byte_count)
-            },
-            HandleType::TopLevel => Err(Error::new(EBADF)),
-        }
-    }
     fn fpath(&mut self, id: usize, buf: &mut [u8]) -> Result<usize> {
-        let path = match self.handles.get(id).ok_or(Error::new(EBADF))?.ty {
+        let path = match HandleType::try_from_raw(id).ok_or(Error::new(EBADF))? {
             HandleType::TopLevel => "",
             HandleType::TheData => "0",
         };
@@ -185,9 +164,7 @@ impl SchemeMut for DiskScheme {
         Ok(byte_count)
     }
     fn fstat(&mut self, id: usize, stat_buf: &mut Stat) -> Result<usize> {
-        let handle = self.handles.get(id).ok_or(Error::new(EBADF))?;
-
-        let (len, mode) = match handle.ty {
+        let (len, mode) = match HandleType::try_from_raw(id).ok_or(Error::new(EBADF))? {
             HandleType::TheData => (self.the_data.len(), MODE_FILE | 0o644),
             HandleType::TopLevel => (LIST.len(), MODE_DIR | 0o755),
         };
@@ -205,20 +182,26 @@ impl SchemeMut for DiskScheme {
 }
 fn main() -> anyhow::Result<()> {
     redox_daemon::Daemon::new(move |daemon| {
-        let mut socket = File::create(":disk.live").expect("failed to open scheme");
+        let socket_fd = Socket::<V2>::create("disk.live").expect("failed to open scheme");
         let mut scheme = DiskScheme::new().unwrap_or_else(|err| {
             eprintln!("failed to initialize livedisk scheme: {}", err);
             std::process::exit(1)
         });
         daemon.ready().expect("failed to signal readiness");
 
-        let mut packet = Packet::default();
-
         loop {
-            socket.read_exact(&mut packet).expect("failed to read packet");
-            scheme.handle(&mut packet);
-            socket.write_all(&packet).expect("failed to write packet");
+            let req = match socket_fd.next_request(SignalBehavior::Restart).expect("failed to get next request") {
+                Some(r) => if let RequestKind::Call(c) = r.kind() {
+                    c
+                } else {
+                    continue;
+                },
+                None => break,
+            };
+            let resp = req.handle_scheme_mut(&mut scheme);
+            socket_fd.write_response(resp, SignalBehavior::Restart).expect("failed to write packet");
         }
 
+        std::process::exit(0);
     }).map_err(|err| anyhow!("failed to start daemon: {}", err))?;
 }
