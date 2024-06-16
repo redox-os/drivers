@@ -11,8 +11,10 @@ use thiserror::Error;
 
 pub use crate::pci::cap::VendorSpecificCapability;
 pub use crate::pci::msi;
-pub use crate::pci::{FullDeviceId, PciAddress, PciBar};
+pub use crate::pci::{PciAddress, PciBar};
+pub use id::FullDeviceId;
 
+mod id;
 pub mod irq_helpers;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]

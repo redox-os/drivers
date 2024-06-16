@@ -13,8 +13,8 @@ use structopt::StructOpt;
 
 use crate::cfg_access::Pcie;
 use crate::config::Config;
-use crate::driver_interface::LegacyInterruptLine;
-use crate::pci::{FullDeviceId, PciBar};
+use crate::driver_interface::{FullDeviceId, LegacyInterruptLine};
+use crate::pci::PciBar;
 
 mod cfg_access;
 mod config;
