@@ -8,7 +8,7 @@ pub struct VendorSpecificCapability {
 }
 
 impl VendorSpecificCapability {
-    pub(crate) unsafe fn parse(
+    pub unsafe fn parse(
         addr: PciCapabilityAddress,
         access: &dyn ConfigRegionAccess,
     ) -> Self {

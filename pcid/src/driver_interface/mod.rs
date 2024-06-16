@@ -9,14 +9,19 @@ use std::os::unix::io::{FromRawFd, RawFd};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use thiserror::Error;
 
-pub use crate::pci::cap::VendorSpecificCapability;
-pub use crate::pci::msi;
-pub use crate::pci::{FullDeviceId, PciAddress, PciBar};
+pub use bar::PciBar;
+pub use cap::VendorSpecificCapability;
+pub use id::FullDeviceId;
+pub use pci_types::PciAddress;
 
+mod bar;
+pub mod cap;
+mod id;
 pub mod irq_helpers;
+pub mod msi;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub struct LegacyInterruptLine(pub(crate) u8);
+pub struct LegacyInterruptLine(#[doc(hidden)] pub u8);
 
 impl LegacyInterruptLine {
     /// Get an IRQ handle for this interrupt line.
@@ -252,7 +257,8 @@ pub struct PciFunctionHandle {
     mapped_bars: [Option<MappedBar>; 6],
 }
 
-pub(crate) fn send<W: Write, T: Serialize>(w: &mut W, message: &T) -> Result<()> {
+#[doc(hidden)]
+pub fn send<W: Write, T: Serialize>(w: &mut W, message: &T) -> Result<()> {
     let mut data = Vec::new();
     bincode::serialize_into(&mut data, message)?;
     let length_bytes = u64::to_le_bytes(data.len() as u64);
@@ -260,7 +266,8 @@ pub(crate) fn send<W: Write, T: Serialize>(w: &mut W, message: &T) -> Result<()>
     w.write_all(&data)?;
     Ok(())
 }
-pub(crate) fn recv<R: Read, T: DeserializeOwned>(r: &mut R) -> Result<T> {
+#[doc(hidden)]
+pub fn recv<R: Read, T: DeserializeOwned>(r: &mut R) -> Result<T> {
     let mut length_bytes = [0u8; 8];
     r.read_exact(&mut length_bytes)?;
     let length = u64::from_le_bytes(length_bytes);

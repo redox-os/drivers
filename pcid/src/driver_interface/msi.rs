@@ -1,6 +1,6 @@
 use std::fmt;
 
-use super::bar::PciBar;
+use crate::driver_interface::PciBar;
 
 use serde::{Deserialize, Serialize};
 use syscall::{Io, Mmio};
@@ -11,14 +11,8 @@ use syscall::{Io, Mmio};
 /// For MSI-X you can have a single [MsiEntry] for each interrupt vector.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct MsiAddrAndData {
-    pub(crate) addr: u64,
-    pub(crate) data: u32,
-}
-
-impl MsiAddrAndData {
-    pub fn new(addr: u64, data: u32) -> Self {
-        MsiAddrAndData { addr, data }
-    }
+    pub addr: u64,
+    pub data: u32,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

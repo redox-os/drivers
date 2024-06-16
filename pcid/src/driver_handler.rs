@@ -8,7 +8,6 @@ use log::{error, info};
 use pci_types::capability::{MultipleMessageSupport, PciCapability};
 use pci_types::{ConfigRegionAccess, PciAddress};
 
-use crate::driver_interface;
 use crate::State;
 
 pub struct DriverHandler {
@@ -21,11 +20,11 @@ pub struct DriverHandler {
 impl DriverHandler {
     pub fn spawn(
         state: Arc<State>,
-        func: driver_interface::PciFunction,
+        func: pcid_interface::PciFunction,
         capabilities: Vec<PciCapability>,
         args: &[String],
     ) {
-        let subdriver_args = driver_interface::SubdriverArguments { func };
+        let subdriver_args = pcid_interface::SubdriverArguments { func };
 
         let mut args = args.iter();
         if let Some(program) = args.next() {
@@ -94,11 +93,12 @@ impl DriverHandler {
 
     fn respond(
         &mut self,
-        request: driver_interface::PcidClientRequest,
-        args: &driver_interface::SubdriverArguments,
-    ) -> driver_interface::PcidClientResponse {
-        use driver_interface::*;
+        request: pcid_interface::PcidClientRequest,
+        args: &pcid_interface::SubdriverArguments,
+    ) -> pcid_interface::PcidClientResponse {
+        use pcid_interface::*;
 
+        #[forbid(non_exhaustive_omitted_patterns)]
         match request {
             PcidClientRequest::RequestVendorCapabilities => PcidClientResponse::VendorCapabilities(
                 self.capabilities
@@ -320,6 +320,7 @@ impl DriverHandler {
                         );
                     }
                 }
+                _ => unreachable!(),
             },
             PcidClientRequest::ReadConfig(offset) => {
                 let value = unsafe { self.state.pcie.read(self.addr, offset) };
@@ -331,15 +332,16 @@ impl DriverHandler {
                 }
                 return PcidClientResponse::WriteConfig;
             }
+            _ => unreachable!(),
         }
     }
     fn handle_spawn(
         mut self,
         pcid_to_client_write: usize,
         pcid_from_client_read: usize,
-        args: driver_interface::SubdriverArguments,
+        args: pcid_interface::SubdriverArguments,
     ) {
-        use driver_interface::*;
+        use pcid_interface::*;
 
         let mut pcid_to_client = unsafe { File::from_raw_fd(pcid_to_client_write as RawFd) };
         let mut pcid_from_client = unsafe { File::from_raw_fd(pcid_from_client_read as RawFd) };

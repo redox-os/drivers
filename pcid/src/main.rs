@@ -1,3 +1,5 @@
+#![feature(non_exhaustive_omitted_patterns_lint)]
+
 use std::fs::{metadata, read_dir, File};
 use std::io::prelude::*;
 use std::sync::{Arc, Mutex};
@@ -13,14 +15,11 @@ use structopt::StructOpt;
 
 use crate::cfg_access::Pcie;
 use crate::config::Config;
-use crate::driver_interface::LegacyInterruptLine;
-use crate::pci::{FullDeviceId, PciBar};
+use pcid_interface::{FullDeviceId, LegacyInterruptLine, PciBar};
 
 mod cfg_access;
 mod config;
 mod driver_handler;
-mod driver_interface;
-mod pci;
 
 #[derive(StructOpt)]
 #[structopt(about)]
@@ -152,7 +151,7 @@ fn handle_parsed_header(
             capabilities
         );
 
-        let func = driver_interface::PciFunction {
+        let func = pcid_interface::PciFunction {
             bars,
             addr: endpoint_header.header().address(),
             legacy_interrupt_line: if legacy_interrupt_enabled {
