@@ -1,6 +1,6 @@
 use std::fmt;
 
-use super::bar::PciBar;
+use crate::driver_interface::PciBar;
 
 use serde::{Deserialize, Serialize};
 use syscall::{Io, Mmio};
