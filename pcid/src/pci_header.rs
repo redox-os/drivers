@@ -96,67 +96,33 @@ impl PciHeader {
         }
     }
 
-    /// Return the PCI address.
-    pub fn address(&self) -> PciAddress {
-        match self {
-            PciHeader::General(header) => header.address(),
-            PciHeader::PciToPci { shared, .. } => shared.addr,
-        }
-    }
-
-    /// Return the Vendor ID field.
-    pub fn vendor_id(&self) -> u16 {
-        self.full_device_id().vendor_id
-    }
-
-    /// Return the Device ID field.
-    pub fn device_id(&self) -> u16 {
-        self.full_device_id().device_id
-    }
-
-    /// Return the Revision field.
-    pub fn revision(&self) -> u8 {
-        self.full_device_id().revision
-    }
-
-    /// Return the Interface field.
-    pub fn interface(&self) -> u8 {
-        self.full_device_id().interface
-    }
-
-    /// Return the Subclass field.
-    pub fn subclass(&self) -> u8 {
-        self.full_device_id().subclass
-    }
-
-    /// Return the Class field.
-    pub fn class(&self) -> u8 {
-        self.full_device_id().class
-    }
-
     /// Format a human readable string indicating the address and type of PCI device.
     pub fn display(&self) -> String {
         let mut string = format!(
             "PCI {} {:>04X}:{:>04X} {:>02X}.{:>02X}.{:>02X}.{:>02X} {:?}",
-            self.address(),
-            self.vendor_id(),
-            self.device_id(),
-            self.class(),
-            self.subclass(),
-            self.interface(),
-            self.revision(),
-            self.class()
+            match self {
+                PciHeader::General(header) => header.address(),
+                PciHeader::PciToPci { shared, .. } => shared.addr,
+            },
+            self.full_device_id().vendor_id,
+            self.full_device_id().device_id,
+            self.full_device_id().class,
+            self.full_device_id().subclass,
+            self.full_device_id().interface,
+            self.full_device_id().revision,
+            self.full_device_id().class,
         );
-        let device_type = DeviceType::from((self.class(), self.subclass()));
+        let device_type =
+            DeviceType::from((self.full_device_id().class, self.full_device_id().subclass));
         match device_type {
             DeviceType::LegacyVgaCompatible => string.push_str("  VGA CTL"),
             DeviceType::IdeController => string.push_str(" IDE"),
-            DeviceType::SataController => match self.interface() {
+            DeviceType::SataController => match self.full_device_id().interface {
                 0 => string.push_str(" SATA VND"),
                 1 => string.push_str(" SATA AHCI"),
                 _ => (),
             },
-            DeviceType::UsbController => match self.interface() {
+            DeviceType::UsbController => match self.full_device_id().interface {
                 0x00 => string.push_str(" UHCI"),
                 0x10 => string.push_str(" OHCI"),
                 0x20 => string.push_str(" EHCI"),
@@ -286,15 +252,18 @@ mod test {
             PciHeader::General { .. } => {}
             _ => panic!("wrong header type"),
         }
-        assert_eq!(header.device_id(), 0x1533);
-        assert_eq!(header.vendor_id(), 0x8086);
-        assert_eq!(header.revision(), 3);
-        assert_eq!(header.interface(), 0);
+        assert_eq!(header.full_device_id().device_id, 0x1533);
+        assert_eq!(header.full_device_id().vendor_id, 0x8086);
+        assert_eq!(header.full_device_id().revision, 3);
+        assert_eq!(header.full_device_id().interface, 0);
         assert_eq!(
-            DeviceType::from((header.class(), header.subclass())),
+            DeviceType::from((
+                header.full_device_id().class,
+                header.full_device_id().subclass
+            )),
             DeviceType::EthernetController
         );
-        assert_eq!(header.subclass(), 0);
+        assert_eq!(header.full_device_id().subclass, 0);
     }
 
     #[test]
