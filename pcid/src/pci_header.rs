@@ -129,6 +129,7 @@ impl PciHeader {
                 0x30 => string.push_str(" XHCI"),
                 _ => (),
             },
+            DeviceType::NvmeController => string.push_str(" NVME"),
             _ => (),
         }
         string
