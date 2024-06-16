@@ -463,7 +463,7 @@ pub trait Transport: Sync + Send {
     fn ack_driver_feature(&self, feature: u32);
 
     /// Finalizes the acknowledged features by setting the `FEATURES_OK` bit in the
-    /// device status flags. No-op on a legacy device.
+    /// device status flags.
     fn finalize_features(&self);
 
     /// Runs the device.

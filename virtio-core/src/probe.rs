@@ -131,48 +131,46 @@ pub fn probe_device(pcid_handle: &mut PciFunctionHandle) -> Result<Device, Error
         log::trace!("virtio-core::device-probe: {capability:?}");
     }
 
-    if let (Some(common_addr), Some(device_addr), Some((notify_addr, notify_multiplier))) =
-        (common_addr, device_addr, notify_addr)
-    {
-        // FIXME this is explicitly allowed by the virtio specification to happen
-        assert!(
-            notify_multiplier != 0,
-            "virtio-core::device_probe: device uses the same Queue Notify addresses for all queues"
-        );
+    let common_addr = common_addr.expect("virtio common capability missing");
+    let device_addr = device_addr.expect("virtio device capability missing");
+    let (notify_addr, notify_multiplier) = notify_addr.expect("virtio notify capability missing");
 
-        let common = unsafe { &mut *(common_addr as *mut CommonCfg) };
-        let device_space = unsafe { &mut *(device_addr as *mut u8) };
+    // FIXME this is explicitly allowed by the virtio specification to happen
+    assert!(
+        notify_multiplier != 0,
+        "virtio-core::device_probe: device uses the same Queue Notify addresses for all queues"
+    );
 
-        let transport = StandardTransport::new(
-            common,
-            notify_addr as *const u8,
-            notify_multiplier,
-            device_space,
-        );
+    let common = unsafe { &mut *(common_addr as *mut CommonCfg) };
+    let device_space = unsafe { &mut *(device_addr as *mut u8) };
 
-        // Setup interrupts.
-        let all_pci_features = pcid_handle.fetch_all_features()?;
-        let has_msix = all_pci_features.iter().any(|feature| feature.is_msix());
+    let transport = StandardTransport::new(
+        common,
+        notify_addr as *const u8,
+        notify_multiplier,
+        device_space,
+    );
 
-        // According to the virtio specification, the device REQUIRED to support MSI-X.
-        assert!(has_msix, "virtio: device does not support MSI-X");
-        let irq_handle = crate::arch::enable_msix(pcid_handle)?;
+    // Setup interrupts.
+    let all_pci_features = pcid_handle.fetch_all_features()?;
+    let has_msix = all_pci_features.iter().any(|feature| feature.is_msix());
 
-        log::info!("virtio: using standard PCI transport");
+    // According to the virtio specification, the device REQUIRED to support MSI-X.
+    assert!(has_msix, "virtio: device does not support MSI-X");
+    let irq_handle = crate::arch::enable_msix(pcid_handle)?;
 
-        let device = Device {
-            transport,
-            device_space,
-            irq_handle,
-        };
+    log::info!("virtio: using standard PCI transport");
 
-        device.transport.reset();
-        reinit(&device)?;
+    let device = Device {
+        transport,
+        device_space,
+        irq_handle,
+    };
 
-        Ok(device)
-    } else {
-        crate::arch::probe_legacy_port_transport(&pci_config, pcid_handle)
-    }
+    device.transport.reset();
+    reinit(&device)?;
+
+    Ok(device)
 }
 
 pub fn reinit(device: &Device) -> Result<(), Error> {

@@ -14,8 +14,5 @@ mod arch;
 #[path="arch/x86.rs"]
 mod arch;
 
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-mod legacy_transport;
-
 
 pub use probe::{probe_device, reinit, Device, MSIX_PRIMARY_VECTOR};
