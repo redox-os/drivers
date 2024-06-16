@@ -8,7 +8,7 @@ use std::fs::{self, File};
 use std::io::{self, prelude::*};
 use std::num::NonZeroU8;
 
-use crate::pci::msi::MsiAddrAndData;
+use crate::driver_interface::msi::MsiAddrAndData;
 
 /// Read the local APIC ID of the bootstrap processor.
 pub fn read_bsp_apic_id() -> io::Result<usize> {
@@ -180,7 +180,7 @@ pub fn allocate_single_interrupt_vector(cpu_id: usize) -> io::Result<Option<(u8,
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 pub fn allocate_single_interrupt_vector_for_msi(cpu_id: usize) -> (MsiAddrAndData, File) {
-    use crate::pci::msi::x86 as x86_msix;
+    use crate::driver_interface::msi::x86 as x86_msix;
 
     // FIXME for cpu_id >255 we need to use the IOMMU to use IRQ remapping
     let lapic_id = u8::try_from(cpu_id).expect("CPU id couldn't fit inside u8");

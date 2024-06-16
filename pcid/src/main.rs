@@ -19,7 +19,6 @@ mod cfg_access;
 mod config;
 mod driver_handler;
 mod driver_interface;
-mod pci;
 
 #[derive(StructOpt)]
 #[structopt(about)]
