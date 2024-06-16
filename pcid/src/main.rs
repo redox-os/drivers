@@ -4,21 +4,23 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use log::{debug, info, trace, warn};
-use pci_types::{CommandRegister, PciAddress};
+use pci_types::{
+    Bar as TyBar, CommandRegister, EndpointHeader, HeaderType, PciAddress,
+    PciHeader as TyPciHeader, PciPciBridgeHeader,
+};
 use redox_log::{OutputBuilder, RedoxLogger};
 use structopt::StructOpt;
 
 use crate::cfg_access::Pcie;
 use crate::config::Config;
 use crate::driver_interface::LegacyInterruptLine;
-use crate::pci_header::{PciEndpointHeader, PciHeader, PciHeaderError};
+use crate::pci::{FullDeviceId, PciBar};
 
 mod cfg_access;
 mod config;
 mod driver_handler;
 mod driver_interface;
 mod pci;
-mod pci_header;
 
 #[derive(StructOpt)]
 #[structopt(about)]
@@ -42,9 +44,14 @@ pub struct State {
     pcie: Pcie,
 }
 
-fn handle_parsed_header(state: Arc<State>, config: &Config, header: PciEndpointHeader) {
+fn handle_parsed_header(
+    state: Arc<State>,
+    config: &Config,
+    mut endpoint_header: EndpointHeader,
+    full_device_id: FullDeviceId,
+) {
     for driver in config.drivers.iter() {
-        if !driver.match_function(header.full_device_id()) {
+        if !driver.match_function(&full_device_id) {
             continue;
         }
 
@@ -52,8 +59,43 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, header: PciEndpointH
             continue;
         };
 
+        let mut bars = [PciBar::None; 6];
+        let mut skip = false;
+        for i in 0..6 {
+            if skip {
+                skip = false;
+                continue;
+            }
+            match endpoint_header.bar(i, &state.pcie) {
+                Some(TyBar::Io { port }) => {
+                    bars[i as usize] = PciBar::Port(port.try_into().unwrap())
+                }
+                Some(TyBar::Memory32 {
+                    address,
+                    size,
+                    prefetchable: _,
+                }) => {
+                    bars[i as usize] = PciBar::Memory32 {
+                        addr: address,
+                        size,
+                    }
+                }
+                Some(TyBar::Memory64 {
+                    address,
+                    size,
+                    prefetchable: _,
+                }) => {
+                    bars[i as usize] = PciBar::Memory64 {
+                        addr: address,
+                        size,
+                    };
+                    skip = true; // Each 64bit memory BAR occupies two slots
+                }
+                None => bars[i as usize] = PciBar::None,
+            }
+        }
+
         let mut string = String::new();
-        let bars = header.bars(&state.pcie);
         for (i, bar) in bars.iter().enumerate() {
             if !bar.is_none() {
                 string.push_str(&format!(" {i}={}", bar.display()));
@@ -63,8 +105,6 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, header: PciEndpointH
         if !string.is_empty() {
             info!("    BAR{}", string);
         }
-
-        let mut endpoint_header = header.endpoint_header(&state.pcie);
 
         // Enable bus mastering, memory space, and I/O space
         endpoint_header.update_command(&state.pcie, |cmd| {
@@ -114,13 +154,13 @@ fn handle_parsed_header(state: Arc<State>, config: &Config, header: PciEndpointH
 
         let func = driver_interface::PciFunction {
             bars,
-            addr: header.address(),
+            addr: endpoint_header.header().address(),
             legacy_interrupt_line: if legacy_interrupt_enabled {
                 Some(LegacyInterruptLine(irq))
             } else {
                 None
             },
-            full_device_id: header.full_device_id().clone(),
+            full_device_id: full_device_id.clone(),
         };
 
         driver_handler::DriverHandler::spawn(Arc::clone(&state), func, capabilities, args);
@@ -227,29 +267,46 @@ fn main(args: Args) {
 
         'dev: for dev_num in 0..32 {
             for func_num in 0..8 {
-                let func_addr = PciAddress::new(0, bus_num, dev_num, func_num);
-                match PciHeader::from_reader(&state.pcie, func_addr) {
-                    Ok(header) => {
-                        info!("{}", header.display());
-                        match header {
-                            PciHeader::General(endpoint_header) => {
-                                handle_parsed_header(Arc::clone(&state), &config, endpoint_header);
-                            }
-                            PciHeader::PciToPci {
-                                secondary_bus_num, ..
-                            } => {
-                                bus_nums.push(secondary_bus_num);
-                            }
-                        }
+                let header = TyPciHeader::new(PciAddress::new(0, bus_num, dev_num, func_num));
+
+                let (vendor_id, device_id) = header.id(&state.pcie);
+                if vendor_id == 0xffff && device_id == 0xffff {
+                    if func_num == 0 {
+                        trace!("PCI {:>02X}:{:>02X}: no dev", bus_num, dev_num);
+                        continue 'dev;
                     }
-                    Err(PciHeaderError::NoDevice) => {
-                        if func_addr.function() == 0 {
-                            trace!("PCI {:>02X}:{:>02X}: no dev", bus_num, dev_num);
-                            continue 'dev;
-                        }
+
+                    continue;
+                }
+
+                let (revision, class, subclass, interface) = header.revision_and_class(&state.pcie);
+                let full_device_id = FullDeviceId {
+                    vendor_id,
+                    device_id,
+                    class,
+                    subclass,
+                    interface,
+                    revision,
+                };
+
+                info!("PCI {} {}", header.address(), full_device_id.display());
+
+                match header.header_type(&state.pcie) {
+                    HeaderType::Endpoint => {
+                        handle_parsed_header(
+                            Arc::clone(&state),
+                            &config,
+                            EndpointHeader::from_header(header, &state.pcie).unwrap(),
+                            full_device_id,
+                        );
                     }
-                    Err(PciHeaderError::UnknownHeaderType(id)) => {
-                        warn!("pcid: unknown header type: {id:?}");
+                    HeaderType::PciPciBridge => {
+                        let bridge_header =
+                            PciPciBridgeHeader::from_header(header, &state.pcie).unwrap();
+                        bus_nums.push(bridge_header.secondary_bus_number(&state.pcie));
+                    }
+                    ty => {
+                        warn!("pcid: unknown header type: {ty:?}");
                     }
                 }
             }
