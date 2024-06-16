@@ -3,7 +3,7 @@ use std::ops::Range;
 
 use serde::Deserialize;
 
-use crate::driver_interface::FullDeviceId;
+use pcid_interface::FullDeviceId;
 
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct Config {

@@ -13,7 +13,7 @@ pub struct FullDeviceId {
 }
 
 impl FullDeviceId {
-    pub(crate) fn display(&self) -> String {
+    pub fn display(&self) -> String {
         let mut string = format!(
             "{:>04X}:{:>04X} {:>02X}.{:>02X}.{:>02X}.{:>02X} {:?}",
             self.vendor_id,

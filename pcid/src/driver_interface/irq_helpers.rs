@@ -194,5 +194,5 @@ pub fn allocate_single_interrupt_vector_for_msi(cpu_id: usize) -> (MsiAddrAndDat
     let msg_data =
         x86_msix::message_data_edge_triggered(x86_msix::DeliveryMode::Fixed, vector);
 
-    (MsiAddrAndData::new(addr, msg_data), interrupt_handle)
+    (MsiAddrAndData { addr, data: msg_data }, interrupt_handle)
 }
