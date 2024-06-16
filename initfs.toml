@@ -5,21 +5,21 @@
 name = "AHCI storage"
 class = 1
 subclass = 6
-command = ["ahcid"]
+command = ["/scheme/initfs/lib/drivers/ahcid"]
 
 # ided
 [[drivers]]
 name = "IDE storage"
 class = 1
 subclass = 1
-command = ["ided"]
+command = ["/scheme/initfs/lib/drivers/ided"]
 
 # nvmed
 [[drivers]]
 name = "NVME storage"
 class = 1
 subclass = 8
-command = ["nvmed"]
+command = ["/scheme/initfs/lib/drivers/nvmed"]
 
 [[drivers]]
 name = "virtio-blk"
@@ -27,11 +27,11 @@ class = 1
 subclass = 0
 vendor = 0x1AF4
 device = 0x1001
-command = ["virtio-blkd"]
+command = ["/scheme/initfs/lib/drivers/virtio-blkd"]
 
 [[drivers]]
 name = "virtio-gpu"
 class = 3
 vendor = 0x1AF4
 device = 0x1050
-command = ["virtio-gpud"]
+command = ["/scheme/initfs/lib/drivers/virtio-gpud"]

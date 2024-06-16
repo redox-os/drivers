@@ -28,6 +28,11 @@ impl DriverHandler {
 
         let mut args = args.iter();
         if let Some(program) = args.next() {
+            let program = if program.starts_with('/') {
+                program.to_owned()
+            } else {
+                "/usr/lib/drivers/".to_owned() + program
+            };
             let mut command = Command::new(program);
             for arg in args {
                 if arg.starts_with("$") {
