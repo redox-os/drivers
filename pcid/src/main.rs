@@ -230,7 +230,7 @@ fn main(args: Args) {
                 let func_addr = PciAddress::new(0, bus_num, dev_num, func_num);
                 match PciHeader::from_reader(&state.pcie, func_addr) {
                     Ok(header) => {
-                        info!("{}", header.display());
+                        info!("PCI {} {}", func_addr, header.full_device_id().display());
                         match header {
                             PciHeader::General(endpoint_header) => {
                                 handle_parsed_header(Arc::clone(&state), &config, endpoint_header);
