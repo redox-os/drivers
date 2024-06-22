@@ -847,6 +847,11 @@ impl Xhci {
                 info!("Loading subdriver \"{}\"", driver.name);
                 let (command, args) = driver.command.split_first().ok_or(Error::new(EBADMSG))?;
 
+                let command = if command.starts_with('/') {
+                    command.to_owned()
+                } else {
+                    "/usr/lib/drivers/".to_owned() + command
+                };
                 let process = process::Command::new(command)
                     .args(
                         args.into_iter()
