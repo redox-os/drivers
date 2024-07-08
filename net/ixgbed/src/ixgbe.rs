@@ -14,6 +14,7 @@ pub const IXGBE_EEC: u32                        = 0x10010;
 pub const IXGBE_EEC_ARD: u32                    = 0x00000200; /* EEPROM Auto Read Done */
 
 pub const IXGBE_RDRXCTL: u32                    = 0x02F00;
+pub const IXGBE_RDRXCTL_RESERVED_BITS: u32      = 1 << 25 | 1 << 26;
 pub const IXGBE_RDRXCTL_DMAIDONE: u32           = 0x00000008; /* DMA init cycle done */
 
 pub const IXGBE_AUTOC: u32                      = 0x042A0;

@@ -290,7 +290,7 @@ impl Intel8259x {
         self.wait_write_reg(IXGBE_EEC, IXGBE_EEC_ARD);
 
         // section 4.6.3 - wait for dma initialization done
-        self.wait_write_reg(IXGBE_RDRXCTL, IXGBE_RDRXCTL_DMAIDONE);
+        self.wait_write_reg(IXGBE_RDRXCTL, IXGBE_RDRXCTL_DMAIDONE | IXGBE_RDRXCTL_RESERVED_BITS);
 
         // section 4.6.4 - initialize link (auto negotiation)
         self.init_link();
@@ -397,7 +397,7 @@ impl Intel8259x {
         }
 
         // required when not using DCB/VTd
-        self.write_reg(IXGBE_DTXMXSZRQ, 0xffff);
+        self.write_reg(IXGBE_DTXMXSZRQ, 0xfff);
         self.clear_flag(IXGBE_RTTDCS, IXGBE_RTTDCS_ARBDIS);
 
         // configure a single transmit queue/ring
@@ -508,11 +508,15 @@ impl Intel8259x {
 
     /// Enables or disables promisc mode of this device.
     fn set_promisc(&self, enabled: bool) {
+        self.clear_flag(IXGBE_RXCTRL, IXGBE_RXCTRL_RXEN);
+
         if enabled {
             self.write_flag(IXGBE_FCTRL, IXGBE_FCTRL_MPE | IXGBE_FCTRL_UPE);
         } else {
             self.clear_flag(IXGBE_FCTRL, IXGBE_FCTRL_MPE | IXGBE_FCTRL_UPE);
         }
+    
+        self.write_flag(IXGBE_RXCTRL, IXGBE_RXCTRL_RXEN);
     }
 
     /// Set the IVAR registers, mapping interrupt causes to vectors.
