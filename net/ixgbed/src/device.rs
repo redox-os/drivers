@@ -290,7 +290,7 @@ impl Intel8259x {
         self.wait_write_reg(IXGBE_EEC, IXGBE_EEC_ARD);
 
         // section 4.6.3 - wait for dma initialization done
-        self.wait_write_reg(IXGBE_RDRXCTL, IXGBE_RDRXCTL_DMAIDONE);
+        self.wait_write_reg(IXGBE_RDRXCTL, IXGBE_RDRXCTL_DMAIDONE | IXGBE_RDRXCTL_RESERVED_BITS);
 
         // section 4.6.4 - initialize link (auto negotiation)
         self.init_link();
@@ -313,9 +313,6 @@ impl Intel8259x {
 
         // section 4.6.3.9 - enable interrupts
         self.enable_msix_interrupt(0);
-
-        // enable promisc mode by default to make testing easier
-        self.set_promisc(true);
 
         // wait some time for the link to come up
         self.wait_for_link();
@@ -380,6 +377,10 @@ impl Intel8259x {
         // probably a broken feature, this flag is initialized with 1 but has to be set to 0
         self.clear_flag(IXGBE_DCA_RXCTRL(i), 1 << 12);
 
+        // enable promisc mode by default to make testing easier
+        // this has to be done when the rxctrl.rxen bit is not set
+        self.set_promisc(true);
+
         // start rx
         self.write_flag(IXGBE_RXCTRL, IXGBE_RXCTRL_RXEN);
     }
@@ -397,7 +398,7 @@ impl Intel8259x {
         }
 
         // required when not using DCB/VTd
-        self.write_reg(IXGBE_DTXMXSZRQ, 0xffff);
+        self.write_reg(IXGBE_DTXMXSZRQ, 0xfff);
         self.clear_flag(IXGBE_RTTDCS, IXGBE_RTTDCS_ARBDIS);
 
         // configure a single transmit queue/ring
