@@ -1,18 +1,20 @@
 use std::collections::BTreeMap;
 use std::convert::{TryFrom, TryInto};
 use std::fmt::Write;
-use std::io;
+use std::io::{self, Cursor};
 use std::io::prelude::*;
 use std::sync::Arc;
 use std::{cmp, str};
 
 use syscall::schemev2::NewFdFlags;
 use syscall::{
-    Error, Io, Result, Stat, EACCES, EBADF, EINVAL, EISDIR, ENOENT, ENOLCK, EOVERFLOW, MODE_DIR,
-    MODE_FILE, O_DIRECTORY, O_STAT, SEEK_CUR, SEEK_END, SEEK_SET,
+    Error, Result, Stat, EACCES, EBADF, EINVAL, EISDIR, ENOENT, ENOLCK, EOVERFLOW, MODE_DIR,
+    MODE_FILE, O_DIRECTORY, O_STAT
 };
-use redox_scheme::{CallerCtx, OpenResult, SchemeBlockMut};
+use redox_scheme::scheme::SchemeAsync;
+use redox_scheme::{CallerCtx, OpenResult};
 
+use crate::nvme::executor::NvmeExecutor;
 use crate::nvme::{Nvme, NvmeNamespace};
 
 use partitionlib::{LogicalBlockSize, PartitionTable};
@@ -45,6 +47,7 @@ impl DiskWrapper {
         struct Device<'a, 'b> {
             disk: &'a mut NvmeNamespace,
             nvme: &'a Nvme,
+            executor: &'a NvmeExecutor,
             offset: u64,
             block_bytes: &'b mut [u8],
         }
@@ -78,24 +81,18 @@ impl DiskWrapper {
 
                 let disk = &mut self.disk;
                 let nvme = &mut self.nvme;
+                let executor = &self.executor;
 
                 let read_block = |block: u64, block_bytes: &mut [u8]| {
                     if block >= size_in_blocks {
                         return Err(io::Error::from_raw_os_error(syscall::EOVERFLOW));
                     }
                     loop {
-                        match nvme.namespace_read(disk, disk.id, block, block_bytes)
-                            .map_err(|err| io::Error::from_raw_os_error(err.errno))? {
-                            Some(bytes) => {
-                                assert_eq!(bytes, block_bytes.len());
-                                assert_eq!(bytes, blksize as usize);
-                                return Ok(());
-                            }
-                            None => {
-                                std::thread::yield_now();
-                                continue;
-                            } // TODO: Does this driver have (internal) error handling at all?
-                        }
+                        let bytes = executor.block_on(nvme.namespace_read(disk, disk.id, block, block_bytes))
+                            .map_err(|err| io::Error::from_raw_os_error(err.errno))?;
+                        assert_eq!(bytes, block_bytes.len());
+                        assert_eq!(bytes, blksize as usize);
+                        return Ok(());
                     }
                 };
                 let bytes_read = driver_block::block_read(
@@ -120,6 +117,7 @@ impl DiskWrapper {
                 nvme,
                 offset: 0,
                 block_bytes: &mut block_bytes[..bs.into()],
+                executor: &NvmeExecutor::current(),
             },
             bs,
         )
@@ -184,8 +182,8 @@ impl DiskScheme {
     }
 }
 
-impl SchemeBlockMut for DiskScheme {
-    fn xopen(&mut self, path_str: &str, flags: usize, ctx: &CallerCtx) -> Result<Option<OpenResult>> {
+impl SchemeAsync for DiskScheme {
+    async fn open(&mut self, path_str: &str, flags: usize, ctx: &CallerCtx) -> Result<OpenResult> {
         if ctx.uid != 0 {
             return Err(Error::new(EACCES));
         }
@@ -253,10 +251,10 @@ impl SchemeBlockMut for DiskScheme {
         let id = self.next_id;
         self.next_id += 1;
         self.handles.insert(id, handle);
-        Ok(Some(OpenResult::ThisScheme { number: id, flags: NewFdFlags::POSITIONED }))
+        Ok(OpenResult::ThisScheme { number: id, flags: NewFdFlags::POSITIONED })
     }
 
-    fn dup(&mut self, id: usize, buf: &[u8]) -> Result<Option<usize>> {
+    async fn dup(&mut self, id: usize, buf: &[u8], _ctx: &CallerCtx) -> Result<OpenResult> {
         if !buf.is_empty() {
             return Err(Error::new(EINVAL));
         }
@@ -269,15 +267,14 @@ impl SchemeBlockMut for DiskScheme {
         let new_id = self.next_id;
         self.next_id += 1;
         self.handles.insert(new_id, new_handle);
-        Ok(Some(new_id))
+        Ok(OpenResult::ThisScheme { number: new_id, flags: NewFdFlags::POSITIONED })
     }
 
-    fn fstat(&mut self, id: usize, stat: &mut Stat) -> Result<Option<usize>> {
+    async fn fstat(&mut self, id: usize, stat: &mut Stat, _ctx: &CallerCtx) -> Result<()> {
         match *self.handles.get(&id).ok_or(Error::new(EBADF))? {
             Handle::List(ref data) => {
                 stat.st_mode = MODE_DIR;
                 stat.st_size = data.len() as u64;
-                Ok(Some(0))
             }
             Handle::Disk(number) => {
                 let disk = self.disks.get_mut(&number).ok_or(Error::new(EBADF))?;
@@ -289,7 +286,6 @@ impl SchemeBlockMut for DiskScheme {
                     .try_into()
                     .expect("Unreasonable block size of over 2^32 bytes");
                 stat.st_size = disk.as_ref().blocks * disk.as_ref().block_size;
-                Ok(Some(0))
             }
             Handle::Partition(disk_num, part_num) => {
                 let disk = self.disks.get_mut(&disk_num).ok_or(Error::new(EBADF))?;
@@ -308,68 +304,45 @@ impl SchemeBlockMut for DiskScheme {
                     .block_size
                     .try_into()
                     .expect("Unreasonable block size of over 2^32 bytes");
-                Ok(Some(0))
             }
         }
+        Ok(())
     }
 
-    fn fpath(&mut self, id: usize, buf: &mut [u8]) -> Result<Option<usize>> {
+    async fn fpath(&mut self, id: usize, buf: &mut [u8], _ctx: &CallerCtx) -> Result<usize> {
+        use std::io::prelude::*;
+
         let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
-        let mut i = 0;
-
-        let scheme_name = self.scheme_name.as_bytes();
-        let mut j = 0;
-        while i < buf.len() && j < scheme_name.len() {
-            buf[i] = scheme_name[j];
-            i += 1;
-            j += 1;
-        }
-
-        if i < buf.len() {
-            buf[i] = b':';
-            i += 1;
-        }
+        let mut dst = Cursor::new(buf);
+        write!(dst, "{}:", self.scheme_name);
 
         match *handle {
             Handle::List(_) => (),
             Handle::Disk(number) => {
-                let number_str = format!("{}", number);
-                let number_bytes = number_str.as_bytes();
-                j = 0;
-                while i < buf.len() && j < number_bytes.len() {
-                    buf[i] = number_bytes[j];
-                    i += 1;
-                    j += 1;
-                }
+                write!(dst, "{number}");
             }
             Handle::Partition(disk_num, part_num) => {
-                let number_str = format!("{}p{}", disk_num, part_num);
-                let number_bytes = number_str.as_bytes();
-                j = 0;
-                while i < buf.len() && j < number_bytes.len() {
-                    buf[i] = number_bytes[j];
-                    i += 1;
-                    j += 1;
-                }
+                write!(dst, "{disk_num}p{part_num}");
             }
         }
 
-        Ok(Some(i))
+        Ok(dst.stream_position().unwrap() as usize)
     }
 
-    fn read(&mut self, id: usize, buf: &mut [u8], offset: u64, _fcntl_flags: u32) -> Result<Option<usize>> {
+    async fn read(&mut self, id: usize, buf: &mut [u8], offset: u64, _fcntl_flags: u32, _ctx: &CallerCtx) -> Result<usize> {
         match *self.handles.get_mut(&id).ok_or(Error::new(EBADF))? {
             Handle::List(ref handle) => {
                 let src = usize::try_from(offset).ok().and_then(|o| handle.get(o..)).unwrap_or(&[]);
                 let count = core::cmp::min(src.len(), buf.len());
                 buf[..count].copy_from_slice(&src[..count]);
-                Ok(Some(count))
+                Ok(count)
             }
             Handle::Disk(number) => {
                 let disk = self.disks.get_mut(&number).ok_or(Error::new(EBADF))?;
                 let block_size = disk.as_ref().block_size;
-                self.nvme.namespace_read(disk.as_ref(), disk.as_ref().id, offset / block_size, buf)
+
+                self.nvme.namespace_read(disk.as_ref(), disk.as_ref().id, offset / block_size, buf).await
             }
             Handle::Partition(disk_num, part_num) => {
                 let disk = self.disks.get_mut(&disk_num).ok_or(Error::new(EBADF))?;
@@ -389,18 +362,19 @@ impl SchemeBlockMut for DiskScheme {
 
                 let abs_block = part.start_lba + rel_block;
 
-                self.nvme.namespace_read(disk.as_ref(), disk.as_ref().id, abs_block, buf)
+                self.nvme.namespace_read(disk.as_ref(), disk.as_ref().id, abs_block, buf).await
             }
         }
     }
 
-    fn write(&mut self, id: usize, buf: &[u8], offset: u64, _fcntl_flags: u32) -> Result<Option<usize>> {
+    async fn write(&mut self, id: usize, buf: &[u8], offset: u64, _fcntl_flags: u32, _ctx: &CallerCtx) -> Result<usize> {
         match *self.handles.get_mut(&id).ok_or(Error::new(EBADF))? {
             Handle::List(_) => Err(Error::new(EBADF)),
             Handle::Disk(number) => {
                 let disk = self.disks.get_mut(&number).ok_or(Error::new(EBADF))?;
                 let block_size = disk.as_ref().block_size;
-                self.nvme.namespace_write(disk.as_ref(), disk.as_ref().id, offset / block_size, buf)
+
+                self.nvme.namespace_write(disk.as_ref(), disk.as_ref().id, offset / block_size, buf).await
             }
             Handle::Partition(disk_num, part_num) => {
                 let disk = self.disks.get_mut(&disk_num).ok_or(Error::new(EBADF))?;
@@ -420,13 +394,13 @@ impl SchemeBlockMut for DiskScheme {
 
                 let abs_block = part.start_lba + rel_block;
 
-                self.nvme.namespace_write(disk.as_ref(), disk.as_ref().id, abs_block, buf)
+                self.nvme.namespace_write(disk.as_ref(), disk.as_ref().id, abs_block, buf).await
             }
         }
     }
 
-    fn fsize(&mut self, id: usize) -> Result<Option<u64>> {
-        Ok(Some(match *self.handles.get_mut(&id).ok_or(Error::new(EBADF))? {
+    async fn fsize(&mut self, id: usize, _ctx: &CallerCtx) -> Result<u64> {
+        Ok(match *self.handles.get_mut(&id).ok_or(Error::new(EBADF))? {
             Handle::List(ref handle) => handle.len() as u64,
             Handle::Disk(number) => {
                 let disk = self.disks.get_mut(&number).ok_or(Error::new(EBADF))?;
@@ -444,13 +418,13 @@ impl SchemeBlockMut for DiskScheme {
 
                 part.size * disk.as_ref().block_size
             }
-        }))
+        })
     }
 
-    fn close(&mut self, id: usize) -> Result<Option<usize>> {
+    async fn close(&mut self, id: usize) -> Result<()> {
         self.handles
             .remove(&id)
-            .ok_or(Error::new(EBADF))
-            .and(Ok(Some(0)))
+            .ok_or(Error::new(EBADF))?;
+        Ok(())
     }
 }
