@@ -81,8 +81,8 @@ fn setup_logging() -> Option<&'static RedoxLogger> {
 fn daemon(daemon: redox_daemon::Daemon) -> ! {
     setup_logging();
 
-    let rxsdt_raw_data: Arc<[u8]> = std::fs::read("kernel.acpi:rxsdt")
-        .expect("acpid: failed to read `kernel.acpi:rxsdt`")
+    let rxsdt_raw_data: Arc<[u8]> = std::fs::read("/scheme/kernel.acpi/rxsdt")
+        .expect("acpid: failed to read `/scheme/kernel.acpi/rxsdt`")
         .into();
 
     let sdt = self::acpi::Sdt::new(rxsdt_raw_data)
@@ -116,14 +116,14 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     // TODO: I/O permission bitmap?
     common::acquire_port_io_rights().expect("acpid: failed to set I/O privilege level to Ring 3");
 
-    let shutdown_pipe = File::open("kernel.acpi:kstop")
-        .expect("acpid: failed to open `kernel.acpi:kstop`");
+    let shutdown_pipe = File::open("/scheme/kernel.acpi/kstop")
+        .expect("acpid: failed to open `/scheme/kernel.acpi/kstop`");
 
     let mut event_queue = OpenOptions::new()
         .write(true)
         .read(true)
         .create(false)
-        .open("event:")
+        .open("/scheme/event")
         .expect("acpid: failed to open event queue");
 
     let mut scheme_socket = OpenOptions::new()

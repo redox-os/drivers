@@ -126,7 +126,7 @@ struct PcieAllocs<'a>(&'a [PcieAlloc]);
 
 impl Mcfg {
     fn with<T>(f: impl FnOnce(PcieAllocs<'_>) -> io::Result<T>) -> io::Result<T> {
-        let table_dir = fs::read_dir("acpi:tables")?;
+        let table_dir = fs::read_dir("/scheme/acpi/tables")?;
 
         // TODO: validate/print MCFG?
 

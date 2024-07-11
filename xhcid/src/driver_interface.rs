@@ -414,7 +414,7 @@ impl XhciClientHandle {
     }
 
     pub fn get_standard_descs(&self) -> result::Result<DevDesc, XhciClientHandleError> {
-        let path = format!("{}:port{}/descriptors", self.scheme, self.port);
+        let path = format!("/scheme/{}/port{}/descriptors", self.scheme, self.port);
         let json = std::fs::read(path)?;
         Ok(serde_json::from_slice(&json)?)
     }
@@ -422,7 +422,7 @@ impl XhciClientHandle {
         &self,
         req: &ConfigureEndpointsReq,
     ) -> result::Result<(), XhciClientHandleError> {
-        let path = format!("{}:port{}/configure", self.scheme, self.port);
+        let path = format!("/scheme/{}/port{}/configure", self.scheme, self.port);
         let json = serde_json::to_vec(req)?;
         let mut file = OpenOptions::new().read(false).write(true).open(path)?;
         let json_bytes_written = file.write(&json)?;
@@ -434,16 +434,16 @@ impl XhciClientHandle {
         Ok(())
     }
     pub fn port_state(&self) -> result::Result<PortState, XhciClientHandleError> {
-        let path = format!("{}:port{}/state", self.scheme, self.port);
+        let path = format!("/scheme/{}/port{}/state", self.scheme, self.port);
         let string = std::fs::read_to_string(path)?;
         Ok(string.parse()?)
     }
     pub fn open_endpoint_ctl(&self, num: u8) -> result::Result<File, XhciClientHandleError> {
-        let path = format!("{}:port{}/endpoints/{}/ctl", self.scheme, self.port, num);
+        let path = format!("/scheme/{}/port{}/endpoints/{}/ctl", self.scheme, self.port, num);
         Ok(File::open(path)?)
     }
     pub fn open_endpoint_data(&self, num: u8) -> result::Result<File, XhciClientHandleError> {
-        let path = format!("{}:port{}/endpoints/{}/data", self.scheme, self.port, num);
+        let path = format!("/scheme/{}/port{}/endpoints/{}/data", self.scheme, self.port, num);
         Ok(File::open(path)?)
     }
     pub fn open_endpoint(&self, num: u8) -> result::Result<XhciEndpHandle, XhciClientHandleError> {
@@ -476,7 +476,7 @@ impl XhciClientHandle {
         };
         let json = serde_json::to_vec(&req)?;
 
-        let path = format!("{}:port{}/request", self.scheme, self.port);
+        let path = format!("/scheme/{}/port{}/request", self.scheme, self.port);
         let mut file = File::open(path)?;
 
         let json_bytes_written = file.write(&json)?;

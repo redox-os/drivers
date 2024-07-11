@@ -45,40 +45,40 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     let input = OpenOptions::new()
         .write(true)
-        .open("input:producer")
-        .expect("ps2d: failed to open input:producer");
+        .open("/scheme/input/producer")
+        .expect("ps2d: failed to open /scheme/input/producer");
 
     let mut event_file = OpenOptions::new()
         .read(true)
         .write(true)
-        .open("event:")
-        .expect("ps2d: failed to open event:");
+        .open("/scheme/event")
+        .expect("ps2d: failed to open /scheme/event");
 
     let mut key_file = OpenOptions::new()
         .read(true)
         .write(true)
         .custom_flags(syscall::O_NONBLOCK as i32)
-        .open("serio:0")
-        .expect("ps2d: failed to open serio:0");
+        .open("/scheme/serio/0")
+        .expect("ps2d: failed to open /scheme/serio/0");
 
     event_file.write(&syscall::Event {
         id: key_file.as_raw_fd() as usize,
         flags: syscall::EVENT_READ,
         data: 0
-    }).expect("ps2d: failed to event serio:0");
+    }).expect("ps2d: failed to event /scheme/serio/0");
 
     let mut mouse_file = OpenOptions::new()
         .read(true)
         .write(true)
         .custom_flags(syscall::O_NONBLOCK as i32)
-        .open("serio:1")
-        .expect("ps2d: failed to open serio:1");
+        .open("/scheme/serio/1")
+        .expect("ps2d: failed to open /scheme/serio/1");
 
     event_file.write(&syscall::Event {
         id: mouse_file.as_raw_fd() as usize,
         flags: syscall::EVENT_READ,
         data: 1
-    }).expect("ps2d: failed to event irq:12");
+    }).expect("ps2d: failed to event /scheme/serio/1");
 
     libredox::call::setrens(0, 0).expect("ps2d: failed to enter null namespace");
 

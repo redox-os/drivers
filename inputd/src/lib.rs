@@ -25,7 +25,7 @@ pub struct Handle(File);
 
 impl Handle {
     pub fn new<S: Into<String>>(device_name: S) -> Result<Self, Error> {
-        let path = format!("input:handle/display/{}", device_name.into());
+        let path = format!("/scheme/input/handle/display/{}", device_name.into());
         Ok(Self(File::open(path)?))
     }
 

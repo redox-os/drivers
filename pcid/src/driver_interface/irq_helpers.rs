@@ -1,7 +1,7 @@
 //! IRQ helpers.
 //!
-//! This module allows easy handling of the `irq:` scheme, and allocating interrupt vectors for use
-//! by INTx#, MSI, or MSI-X.
+//! This module allows easy handling of the `/scheme/irq` scheme, and allocating interrupt vectors
+//! for use by INTx#, MSI, or MSI-X.
 
 use std::convert::TryFrom;
 use std::fs::{self, File};
@@ -14,7 +14,7 @@ use crate::driver_interface::msi::MsiAddrAndData;
 pub fn read_bsp_apic_id() -> io::Result<usize> {
     let mut buffer = [0u8; 8];
 
-    let mut file = File::open("irq:bsp")?;
+    let mut file = File::open("/scheme/irq/bsp")?;
     let bytes_read = file.read(&mut buffer)?;
 
     (if bytes_read == 8 {
@@ -25,7 +25,7 @@ pub fn read_bsp_apic_id() -> io::Result<usize> {
         ]))
     } else {
         panic!(
-            "`irq:` scheme responded with {} bytes, expected {}",
+            "`/scheme/irq` scheme responded with {} bytes, expected {}",
             bytes_read,
             std::mem::size_of::<usize>()
         );
@@ -41,7 +41,7 @@ pub fn read_bsp_apic_id() -> io::Result<usize> {
 /// capability structs or MSI-X tables.
 pub fn cpu_ids() -> io::Result<impl Iterator<Item = io::Result<usize>> + 'static> {
     Ok(
-        fs::read_dir("irq:")?.filter_map(|entry| -> Option<io::Result<_>> {
+        fs::read_dir("/scheme/irq")?.filter_map(|entry| -> Option<io::Result<_>> {
             match entry {
                 Ok(e) => {
                     let path = e.path();
@@ -88,7 +88,7 @@ pub fn allocate_aligned_interrupt_vectors(
         return Ok(None);
     }
 
-    let available_irqs = fs::read_dir(format!("irq:cpu-{:02x}", cpu_id))?;
+    let available_irqs = fs::read_dir(format!("/scheme/irq/cpu-{:02x}", cpu_id))?;
     let mut available_irq_numbers = available_irqs.filter_map(|entry| -> Option<io::Result<_>> {
         let entry = match entry {
             Ok(e) => e,
@@ -113,7 +113,7 @@ pub fn allocate_aligned_interrupt_vectors(
         }
     });
 
-    // TODO: fcntl F_SETLK on `irq:/`?
+    // TODO: fcntl F_SETLK on `/scheme/irq/`?
 
     let mut handles = Vec::with_capacity(usize::from(count));
 
@@ -137,7 +137,7 @@ pub fn allocate_aligned_interrupt_vectors(
         }
 
         // if found, reserve the irq
-        let irq_handle = match File::create(format!("irq:cpu-{:02x}/{}", cpu_id, irq_number)) {
+        let irq_handle = match File::create(format!("/scheme/irq/cpu-{:02x}/{}", cpu_id, irq_number)) {
             Ok(handle) => handle,
 
             // return early if the entire range couldn't be allocated

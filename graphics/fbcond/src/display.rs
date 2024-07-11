@@ -56,7 +56,7 @@ impl Display {
         let input_handle = OpenOptions::new()
             .read(true)
             .custom_flags(O_NONBLOCK as i32)
-            .open(format!("input:consumer/{vt}"))?;
+            .open(format!("/scheme/input/consumer/{vt}"))?;
         let fd = input_handle.as_raw_fd();
 
         let written = libredox::call::fpath(fd as usize, &mut buffer)

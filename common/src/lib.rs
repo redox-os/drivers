@@ -51,7 +51,7 @@ pub unsafe fn physmap(
 ) -> Result<*mut ()> {
     // TODO: arraystring?
     let path = format!(
-        "memory:physical@{}",
+        "/scheme/memory/physical@{}",
         match ty {
             MemoryType::Writeback => "wb",
             MemoryType::Uncacheable => "uc",

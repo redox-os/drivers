@@ -238,14 +238,14 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         .expect("ided: failed to create disk scheme");
 
     let primary_irq_fd = libredox::call::open(
-        &format!("irq:{}", primary_irq),
+        &format!("/scheme/irq/{}", primary_irq),
         flag::O_RDWR | flag::O_NONBLOCK,
         0,
     ).expect("ided: failed to open irq file");
     let mut primary_irq_file = unsafe { File::from_raw_fd(primary_irq_fd as RawFd) };
 
     let secondary_irq_fd = libredox::call::open(
-        &format!("irq:{}", secondary_irq),
+        &format!("/scheme/irq/{}", secondary_irq),
         flag::O_RDWR | flag::O_NONBLOCK,
         0,
     ).expect("ided: failed to open irq file");
