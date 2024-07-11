@@ -46,7 +46,7 @@ impl DiskScheme {
         let mut size = 0;
 
         // TODO: handle error
-        for line in std::fs::read_to_string("sys:env").context("failed to read env")?.lines() {
+        for line in std::fs::read_to_string("/scheme/sys/env").context("failed to read env")?.lines() {
             let mut parts = line.splitn(2, '=');
             let name = parts.next().unwrap_or("");
             let value = parts.next().unwrap_or("");
@@ -69,7 +69,7 @@ impl DiskScheme {
         let size = end - start;
 
         let the_data = unsafe {
-            let file = File::open("memory:physical")?;
+            let file = File::open("/scheme/memory/physical")?;
             let base = libredox::call::mmap(MmapArgs {
                 fd: file.as_raw_fd() as usize,
                 addr: core::ptr::null_mut(),

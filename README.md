@@ -46,12 +46,12 @@ This section cover the interfaces used by Redox drivers.
 
 ### Schemes
 
-- `memory:physical` - allows mapping physical memory frames to driver-accessible virtual memory pages, with various available memory types:
-    - `memory:physical`: default memory type (currently writeback)
-    - `memory:physical@wb` writeback cached memory
-    - `memory:physical@uc`: uncacheable memory
-    - `memory:physical@wc`: write-combining memory
-- `irq:` - allows getting events from interrupts. It is used primarily by listening for its file descriptors using the `event:` scheme.
+- `/scheme/memory/physical` - allows mapping physical memory frames to driver-accessible virtual memory pages, with various available memory types:
+    - `/scheme/memory/physical`: default memory type (currently writeback)
+    - `/scheme/memory/physical@wb` writeback cached memory
+    - `/scheme/memory/physical@uc`: uncacheable memory
+    - `/scheme/memory/physical@wc`: write-combining memory
+- `/scheme/irq` - allows getting events from interrupts. It is used primarily by listening for its file descriptors using the `/scheme/event` scheme.
 
 ## Contributing
 

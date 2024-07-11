@@ -35,7 +35,7 @@ fn main() {
 
         let mut scheme = BgaScheme {
             bga,
-            display: File::open("input:producer").ok(),
+            display: File::open("/scheme/input/producer").ok(),
         };
 
         scheme.update_size();

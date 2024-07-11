@@ -113,7 +113,7 @@ fn get_int_method(pcid_handle: &mut PciFunctionHandle) -> File {
         log::debug!("Legacy IRQ {}", irq);
 
         // legacy INTx# interrupt pins.
-        File::open(format!("irq:{}", irq)).expect("ihdad: failed to open legacy IRQ file")
+        irq.irq_handle("ihdad")
     } else {
         panic!("ihdad: no interrupts supported at all")
     }
@@ -126,7 +126,7 @@ fn get_int_method(pcid_handle: &mut PciFunctionHandle) -> File {
 
     if let Some(irq) = pci_config.func.legacy_interrupt_line {
         // legacy INTx# interrupt pins.
-        File::open(format!("irq:{}", irq)).expect("ihdad: failed to open legacy IRQ file")
+        irq.irq_handle("ihdad")
     } else {
         panic!("ihdad: no interrupts supported at all")
     }

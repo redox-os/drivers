@@ -73,7 +73,7 @@ impl Vt {
 
     pub fn inner(&self) -> &Mutex<VtInner> {
         self.inner.call_once(|| {
-            let handle_file = File::open(format!("{}:handle", self.display)).unwrap();
+            let handle_file = File::open(format!("/scheme/{}/handle", self.display)).unwrap();
             Mutex::new(VtInner {
                 handle_file,
                 mode: VtMode::Default,
@@ -531,7 +531,7 @@ pub fn main() {
             "-A" => {
                 let vt = args.next().unwrap().parse::<usize>().unwrap();
 
-                let handle = File::open(format!("input:consumer/{vt}"))
+                let handle = File::open(format!("/scheme/input/consumer/{vt}"))
                     .expect("inputd: failed to open consumer handle");
                 let mut display_path = [0; 4096];
 

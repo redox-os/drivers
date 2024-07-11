@@ -40,7 +40,7 @@ fn main() {
 
         daemon.ready().expect("alxd: failed to signal readiness");
 
-        let mut irq_file = File::open(format!("irq:{}", irq)).expect("alxd: failed to open IRQ file");
+        let mut irq_file = File::open(format!("/scheme/irq/{}", irq)).expect("alxd: failed to open IRQ file");
 
         let address = unsafe { common::physmap(bar, 128*1024, common::Prot::RW, common::MemoryType::Uncacheable).expect("alxd: failed to map address") as usize };
         {

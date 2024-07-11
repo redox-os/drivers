@@ -26,7 +26,7 @@ pub struct LegacyInterruptLine(#[doc(hidden)] pub u8);
 impl LegacyInterruptLine {
     /// Get an IRQ handle for this interrupt line.
     pub fn irq_handle(self, driver: &str) -> File {
-        File::open(format!("irq:{}", self.0))
+        File::open(format!("/scheme/irq/{}", self.0))
             .unwrap_or_else(|err| panic!("{driver}: failed to open IRQ file: {err}"))
     }
 }

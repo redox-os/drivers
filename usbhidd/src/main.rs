@@ -313,7 +313,7 @@ fn main() {
     let report_id = 0;
 
     let mut display =
-        File::open("input:producer").expect("Failed to open orbital input socket");
+        File::open("/scheme/input/producer").expect("Failed to open orbital input socket");
     let mut endpoint_opt = match endpoint_num_opt {
         Some(endpoint_num) => match handle.open_endpoint(endpoint_num as u8) {
             Ok(ok) => Some(ok),

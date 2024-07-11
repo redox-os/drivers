@@ -73,7 +73,7 @@ fn main() {
 
         //TODO: error on multiple IRQs?
         let irq_file = match device.irqs.first() {
-            Some(irq) => Fd::open(&format!("irq:{}", irq), flag::O_RDWR, 0).expect("sb16d: failed to open IRQ file"),
+            Some(irq) => Fd::open(&format!("/scheme/irq/{}", irq), flag::O_RDWR, 0).expect("sb16d: failed to open IRQ file"),
             None => panic!("sb16d: no IRQs found"),
         };
         user_data! {

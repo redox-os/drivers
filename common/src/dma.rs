@@ -22,7 +22,7 @@ const DMA_MEMTY: MemoryType = {
 
 pub(crate) fn phys_contiguous_fd() -> Result<Fd> {
     Fd::open(
-        &format!("memory:zeroed@{DMA_MEMTY}?phys_contiguous"),
+        &format!("/scheme/memory/zeroed@{DMA_MEMTY}?phys_contiguous"),
         flag::O_CLOEXEC,
         0,
     )
