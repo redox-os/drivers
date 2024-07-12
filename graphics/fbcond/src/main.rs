@@ -41,7 +41,7 @@ fn inner(daemon: redox_daemon::Daemon, vt_ids: &[usize]) -> ! {
         .create(true)
         .truncate(true)
         .custom_flags(O_NONBLOCK as i32)
-        .open("/scheme/fbcon")
+        .open(":fbcon")
         .expect("fbcond: failed to create fbcon scheme");
     event_queue
         .subscribe(
