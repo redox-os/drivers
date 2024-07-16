@@ -544,7 +544,7 @@ pub fn main() {
                 let display_path = std::str::from_utf8(&display_path[..written])
                     .expect("inputd: display path UTF-8 validation failed");
                 let display_name = display_path
-                    .split('/')
+                    .split('.')
                     .skip(1)
                     .next()
                     .expect("inputd: invalid display path");
