@@ -35,13 +35,27 @@ pub unsafe fn cmd(cmd: u32, arg: u32) -> (u32, u32, u32, u32) {
 
     // ebx can't be used as input or output constraint in rust as LLVM reserves it.
     // Use xchg to pass it through r9 instead while restoring the original value in
-    // rbx when leaving the inline asm block.
+    // rbx when leaving the inline asm block. si and di are clobbered too.
+    #[cfg(not(target_arch = "x86"))]
     asm!(
-        "xchg edi, ebx; in eax, dx; xchg edi, ebx",
+        "xchg r9, rbx; in eax, dx; xchg r9, rbx",
         inout("eax") MAGIC => a,
-        inout("edi") arg => b,
+        inout("r9") arg => b,
         inout("ecx") cmd => c,
         inout("edx") PORT as u32 => d,
+        out("rsi") _,
+        out("rdi") _,
+    );
+
+    // On x86 we don't have a spare register, so push ebx to the stack instead.
+    #[cfg(target_arch = "x86")]
+    asm!(
+        "push ebx; mov ebx, esi; in eax, dx; mov esi, ebx; pop ebx",
+        inout("eax") MAGIC => a,
+        inout("esi") arg => b,
+        inout("ecx") cmd => c,
+        inout("edx") PORT as u32 => d,
+        out("edi") _,
     );
 
     (a, b, c, d)
