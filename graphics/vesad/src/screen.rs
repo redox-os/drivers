@@ -6,10 +6,11 @@ use orbclient::{Event, ResizeEvent};
 use syscall::error::*;
 
 use crate::display::OffscreenBuffer;
+use crate::framebuffer::FrameBuffer;
 
 // Keep synced with orbital
 #[derive(Clone, Copy)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct SyncRect {
     pub x: i32,
     pub y: i32,
@@ -52,11 +53,7 @@ impl GraphicScreen {
 
             for _y in 0..cmp::min(height, self.height) {
                 unsafe {
-                    ptr::copy(
-                        old_ptr as *const u8,
-                        new_ptr as *mut u8,
-                        cmp::min(width, self.width) * 4,
-                    );
+                    ptr::copy(old_ptr, new_ptr, cmp::min(width, self.width));
                     if width > self.width {
                         ptr::write_bytes(
                             new_ptr.offset(self.width as isize),
@@ -134,7 +131,7 @@ impl GraphicScreen {
         Ok(sync_rects.len() * mem::size_of::<SyncRect>())
     }
 
-    pub fn sync(&mut self, onscreen: &mut [u32], stride: usize) {
+    pub fn sync(&mut self, framebuffer: &mut FrameBuffer) {
         for sync_rect in self.sync_rects.drain(..) {
             let x = sync_rect.x.try_into().unwrap_or(0);
             let y = sync_rect.y.try_into().unwrap_or(0);
@@ -145,27 +142,27 @@ impl GraphicScreen {
             let end_y = cmp::min(self.height, y + h);
 
             let start_x = cmp::min(self.width, x);
-            let len = (cmp::min(self.width, x + w) - start_x) * 4;
+            let row_pixel_count = cmp::min(self.width, x + w) - start_x;
 
-            let mut offscreen_ptr = self.offscreen.as_mut_ptr() as usize;
-            let mut onscreen_ptr = onscreen.as_mut_ptr() as usize;
+            let mut offscreen_ptr = self.offscreen.as_mut_ptr();
+            let mut onscreen_ptr = framebuffer.onscreen as *mut u32; // FIXME use as_mut_ptr once stable
 
-            offscreen_ptr += (y * self.width + start_x) * 4;
-            onscreen_ptr += (y * stride + start_x) * 4;
+            unsafe {
+                offscreen_ptr = offscreen_ptr.add(y * self.width + start_x);
+                onscreen_ptr = onscreen_ptr.add(y * framebuffer.stride + start_x);
 
-            let mut rows = end_y - start_y;
-            while rows > 0 {
-                unsafe {
-                    ptr::copy(offscreen_ptr as *const u8, onscreen_ptr as *mut u8, len);
+                let mut rows = end_y - start_y;
+                while rows > 0 {
+                    ptr::copy(offscreen_ptr, onscreen_ptr, row_pixel_count);
+                    offscreen_ptr = offscreen_ptr.add(self.width);
+                    onscreen_ptr = onscreen_ptr.add(framebuffer.stride);
+                    rows -= 1;
                 }
-                offscreen_ptr += self.width * 4;
-                onscreen_ptr += stride * 4;
-                rows -= 1;
             }
         }
     }
 
-    pub fn redraw(&mut self, onscreen: &mut [u32], stride: usize) {
+    pub fn redraw(&mut self, framebuffer: &mut FrameBuffer) {
         let width = self.width.try_into().unwrap();
         let height = self.height.try_into().unwrap();
         self.sync_rects.push(SyncRect {
@@ -174,6 +171,6 @@ impl GraphicScreen {
             w: width,
             h: height,
         });
-        self.sync(onscreen, stride);
+        self.sync(framebuffer);
     }
 }

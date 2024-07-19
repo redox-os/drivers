@@ -1,9 +1,7 @@
 use std::collections::BTreeMap;
-use std::{mem, ptr, slice, str};
+use std::str;
 
-use syscall::{
-    Error, EventFlags, MapFlags, Result, SchemeMut, EBADF, EINVAL, ENOENT, O_NONBLOCK, PAGE_SIZE,
-};
+use syscall::{Error, EventFlags, MapFlags, Result, SchemeMut, EBADF, EINVAL, ENOENT, O_NONBLOCK};
 
 use crate::{framebuffer::FrameBuffer, screen::GraphicScreen};
 
@@ -29,7 +27,6 @@ pub struct Handle {
 
 pub struct DisplayScheme {
     framebuffers: Vec<FrameBuffer>,
-    onscreens: Vec<&'static mut [u32]>,
     active: VtIndex,
     pub vts: BTreeMap<VtIndex, BTreeMap<ScreenIndex, GraphicScreen>>,
     next_id: usize,
@@ -38,13 +35,8 @@ pub struct DisplayScheme {
 }
 
 impl DisplayScheme {
-    pub fn new(mut framebuffers: Vec<FrameBuffer>, spec: &[()]) -> DisplayScheme {
+    pub fn new(framebuffers: Vec<FrameBuffer>, spec: &[()]) -> DisplayScheme {
         let mut inputd_handle = inputd::Handle::new("vesa").unwrap();
-
-        let mut onscreens = Vec::new();
-        for fb in framebuffers.iter_mut() {
-            onscreens.push(unsafe { fb.map().expect("vesad: failed to map framebuffer") });
-        }
 
         let mut vts = BTreeMap::<VtIndex, BTreeMap<ScreenIndex, GraphicScreen>>::new();
 
@@ -59,7 +51,6 @@ impl DisplayScheme {
 
         DisplayScheme {
             framebuffers,
-            onscreens,
             active: VtIndex(1),
             vts,
             next_id: 0,
@@ -96,38 +87,9 @@ impl DisplayScheme {
             fb_i, width, height, stride
         );
 
-        // Unmap old onscreen
         unsafe {
-            let slice = mem::take(&mut self.onscreens[fb_i]);
-            libredox::call::munmap(
-                slice.as_mut_ptr().cast(),
-                (slice.len() * 4).next_multiple_of(PAGE_SIZE),
-            )
-            .expect("vesad: failed to unmap framebuffer");
+            self.framebuffers[fb_i].resize(width, height, stride);
         }
-
-        // Map new onscreen
-        self.onscreens[fb_i] = unsafe {
-            let size = stride * height;
-            let onscreen_ptr = common::physmap(
-                self.framebuffers[fb_i].phys,
-                size * 4,
-                common::Prot {
-                    read: true,
-                    write: true,
-                },
-                common::MemoryType::WriteCombining,
-            )
-            .expect("vesad: failed to map framebuffer") as *mut u32;
-            ptr::write_bytes(onscreen_ptr, 0, size);
-
-            slice::from_raw_parts_mut(onscreen_ptr, size)
-        };
-
-        // Update size
-        self.framebuffers[fb_i].width = width;
-        self.framebuffers[fb_i].height = height;
-        self.framebuffers[fb_i].stride = stride;
 
         // Resize screens
         for (vt_i, screens) in self.vts.iter_mut() {
@@ -135,7 +97,7 @@ impl DisplayScheme {
                 if screen_i.0 == fb_i {
                     screen.resize(width, height);
                     if *vt_i == self.active {
-                        screen.redraw(self.onscreens[fb_i], self.framebuffers[fb_i].stride);
+                        screen.redraw(&mut self.framebuffers[screen_i.0]);
                     }
                 }
             }
@@ -265,10 +227,7 @@ impl SchemeMut for DisplayScheme {
             if let Some(screens) = self.vts.get_mut(&vt_i) {
                 if let Some(screen) = screens.get_mut(&screen_i) {
                     if vt_i == self.active {
-                        screen.sync(
-                            self.onscreens[screen_i.0],
-                            self.framebuffers[screen_i.0].stride,
-                        );
+                        screen.sync(&mut self.framebuffers[screen_i.0]);
                     }
                     return Ok(0);
                 }
@@ -307,10 +266,7 @@ impl SchemeMut for DisplayScheme {
 
                         if let Some(screens) = self.vts.get_mut(&vt_i) {
                             for (screen_i, screen) in screens.iter_mut() {
-                                screen.redraw(
-                                    self.onscreens[screen_i.0],
-                                    self.framebuffers[screen_i.0].stride,
-                                );
+                                screen.redraw(&mut self.framebuffers[screen_i.0]);
                             }
                         }
 
@@ -338,10 +294,7 @@ impl SchemeMut for DisplayScheme {
                     if let Some(screen) = screens.get_mut(&screen_i) {
                         let count = screen.write(buf)?;
                         if vt_i == self.active {
-                            screen.sync(
-                                self.onscreens[screen_i.0],
-                                self.framebuffers[screen_i.0].stride,
-                            );
+                            screen.sync(&mut self.framebuffers[screen_i.0]);
                         }
                         Ok(count)
                     } else {

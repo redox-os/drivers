@@ -54,12 +54,12 @@ fn main() {
         return;
     }
 
-    let mut framebuffers = vec![FrameBuffer::new(phys, width, height, stride)];
+    let mut framebuffers = vec![unsafe { FrameBuffer::new(phys, width, height, stride) }];
 
     //TODO: ideal maximum number of outputs?
     for i in 1..1024 {
         match env::var(&format!("FRAMEBUFFER{}", i)) {
-            Ok(var) => match FrameBuffer::parse(&var) {
+            Ok(var) => match unsafe { FrameBuffer::parse(&var) } {
                 Some(fb) => {
                     println!(
                         "vesad: framebuffer {}: {}x{} stride {} at 0x{:X}",
