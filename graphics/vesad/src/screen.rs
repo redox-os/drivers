@@ -6,6 +6,7 @@ use orbclient::{Event, ResizeEvent};
 use syscall::error::*;
 
 use crate::display::OffscreenBuffer;
+use crate::framebuffer::FrameBuffer;
 
 // Keep synced with orbital
 #[derive(Clone, Copy)]
@@ -130,7 +131,7 @@ impl GraphicScreen {
         Ok(sync_rects.len() * mem::size_of::<SyncRect>())
     }
 
-    pub fn sync(&mut self, onscreen: &mut [u32], stride: usize) {
+    pub fn sync(&mut self, framebuffer: &mut FrameBuffer) {
         for sync_rect in self.sync_rects.drain(..) {
             let x = sync_rect.x.try_into().unwrap_or(0);
             let y = sync_rect.y.try_into().unwrap_or(0);
@@ -144,24 +145,24 @@ impl GraphicScreen {
             let row_pixel_count = cmp::min(self.width, x + w) - start_x;
 
             let mut offscreen_ptr = self.offscreen.as_mut_ptr();
-            let mut onscreen_ptr = onscreen.as_mut_ptr();
+            let mut onscreen_ptr = framebuffer.onscreen as *mut u32; // FIXME use as_mut_ptr once stable
 
             unsafe {
                 offscreen_ptr = offscreen_ptr.add(y * self.width + start_x);
-                onscreen_ptr = onscreen_ptr.add(y * stride + start_x);
+                onscreen_ptr = onscreen_ptr.add(y * framebuffer.stride + start_x);
 
                 let mut rows = end_y - start_y;
                 while rows > 0 {
                     ptr::copy(offscreen_ptr, onscreen_ptr, row_pixel_count);
                     offscreen_ptr = offscreen_ptr.add(self.width);
-                    onscreen_ptr = onscreen_ptr.add(stride);
+                    onscreen_ptr = onscreen_ptr.add(framebuffer.stride);
                     rows -= 1;
                 }
             }
         }
     }
 
-    pub fn redraw(&mut self, onscreen: &mut [u32], stride: usize) {
+    pub fn redraw(&mut self, framebuffer: &mut FrameBuffer) {
         let width = self.width.try_into().unwrap();
         let height = self.height.try_into().unwrap();
         self.sync_rects.push(SyncRect {
@@ -170,6 +171,6 @@ impl GraphicScreen {
             w: width,
             h: height,
         });
-        self.sync(onscreen, stride);
+        self.sync(framebuffer);
     }
 }
