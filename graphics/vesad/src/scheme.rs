@@ -1,9 +1,7 @@
 use std::collections::BTreeMap;
-use std::{mem, ptr, slice, str};
+use std::str;
 
-use syscall::{
-    Error, EventFlags, MapFlags, Result, SchemeMut, EBADF, EINVAL, ENOENT, O_NONBLOCK, PAGE_SIZE,
-};
+use syscall::{Error, EventFlags, MapFlags, Result, SchemeMut, EBADF, EINVAL, ENOENT, O_NONBLOCK};
 
 use crate::{framebuffer::FrameBuffer, screen::GraphicScreen};
 
@@ -43,7 +41,7 @@ impl DisplayScheme {
 
         let mut onscreens = Vec::new();
         for fb in framebuffers.iter_mut() {
-            onscreens.push(unsafe { fb.map().expect("vesad: failed to map framebuffer") });
+            onscreens.push(unsafe { &mut *fb.onscreen });
         }
 
         let mut vts = BTreeMap::<VtIndex, BTreeMap<ScreenIndex, GraphicScreen>>::new();
@@ -96,38 +94,10 @@ impl DisplayScheme {
             fb_i, width, height, stride
         );
 
-        // Unmap old onscreen
         unsafe {
-            let slice = mem::take(&mut self.onscreens[fb_i]);
-            libredox::call::munmap(
-                slice.as_mut_ptr().cast(),
-                (slice.len() * 4).next_multiple_of(PAGE_SIZE),
-            )
-            .expect("vesad: failed to unmap framebuffer");
+            self.framebuffers[fb_i].resize(width, height, stride);
+            self.onscreens[fb_i] = &mut *self.framebuffers[fb_i].onscreen;
         }
-
-        // Map new onscreen
-        self.onscreens[fb_i] = unsafe {
-            let size = stride * height;
-            let onscreen_ptr = common::physmap(
-                self.framebuffers[fb_i].phys,
-                size * 4,
-                common::Prot {
-                    read: true,
-                    write: true,
-                },
-                common::MemoryType::WriteCombining,
-            )
-            .expect("vesad: failed to map framebuffer") as *mut u32;
-            ptr::write_bytes(onscreen_ptr, 0, size);
-
-            slice::from_raw_parts_mut(onscreen_ptr, size)
-        };
-
-        // Update size
-        self.framebuffers[fb_i].width = width;
-        self.framebuffers[fb_i].height = height;
-        self.framebuffers[fb_i].stride = stride;
 
         // Resize screens
         for (vt_i, screens) in self.vts.iter_mut() {
