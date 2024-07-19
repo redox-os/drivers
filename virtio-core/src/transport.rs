@@ -69,7 +69,9 @@ pub fn spawn_irq_thread(irq_handle: &File, queue: &Arc<Queue<'static>>) {
     std::thread::spawn(move || {
         let mut event_queue = RawEventQueue::new().unwrap();
 
-        event_queue.subscribe(irq_fd as usize, 0, event::EventFlags::READ).unwrap();
+        event_queue
+            .subscribe(irq_fd as usize, 0, event::EventFlags::READ)
+            .unwrap();
 
         for event in event_queue.map(Result::unwrap) {
             // Wake up the tasks waiting on the queue.
@@ -275,13 +277,23 @@ impl<'a> Mem<'a> {
     pub fn as_ptr<T>(&self) -> *const T {
         match *self {
             Self::Owned(ref dma) => dma.as_ptr().cast(),
-            Self::Borrowed(Borrowed { phys, virt, size, _unused }) => virt as *const T,
+            Self::Borrowed(Borrowed {
+                phys,
+                virt,
+                size,
+                _unused,
+            }) => virt as *const T,
         }
     }
     pub fn as_mut_ptr<T>(&mut self) -> *mut T {
         match *self {
             Self::Owned(ref mut dma) => dma.as_mut_ptr().cast(),
-            Self::Borrowed(Borrowed { phys, virt, size, _unused }) => virt as *mut T,
+            Self::Borrowed(Borrowed {
+                phys,
+                virt,
+                size,
+                _unused,
+            }) => virt as *mut T,
         }
     }
     pub fn physical(&self) -> usize {
@@ -301,17 +313,18 @@ impl<'a> Available<'a> {
     }
     pub fn new(queue_size: usize) -> Result<Self, Error> {
         let (_, _, size) = queue_part_sizes(queue_size);
-        let mem = unsafe { Dma::zeroed_slice(size).map_err(Error::SyscallError)?.assume_init() };
+        let mem = unsafe {
+            Dma::zeroed_slice(size)
+                .map_err(Error::SyscallError)?
+                .assume_init()
+        };
 
         unsafe { Self::from_raw(Mem::Owned(mem), queue_size) }
     }
 
     /// `addr` is the physical address of the ring.
     pub unsafe fn from_raw(mem: Mem<'a>, queue_size: usize) -> Result<Self, Error> {
-        let ring = Self {
-            mem,
-            queue_size,
-        };
+        let ring = Self { mem, queue_size };
 
         for i in 0..queue_size {
             // Setting them to `u16::MAX` helps with debugging since qemu reports them
@@ -353,7 +366,10 @@ impl<'a> Available<'a> {
 
 impl<'a> Drop for Available<'a> {
     fn drop(&mut self) {
-        log::warn!("virtio-core: dropping 'available' ring at {:#x}", self.phys_addr());
+        log::warn!(
+            "virtio-core: dropping 'available' ring at {:#x}",
+            self.phys_addr()
+        );
     }
 }
 
@@ -373,7 +389,11 @@ impl<'a> Used<'a> {
 
     pub fn new(queue_size: usize) -> Result<Self, Error> {
         let (_, _, size) = queue_part_sizes(queue_size);
-        let mem = unsafe { Dma::zeroed_slice(size).map_err(Error::SyscallError)?.assume_init() };
+        let mem = unsafe {
+            Dma::zeroed_slice(size)
+                .map_err(Error::SyscallError)?
+                .assume_init()
+        };
 
         unsafe { Self::from_raw(Mem::Owned(mem), queue_size) }
     }
@@ -439,7 +459,10 @@ impl<'a> Used<'a> {
 
 impl Drop for Used<'_> {
     fn drop(&mut self) {
-        log::warn!("virtio-core: dropping 'used' ring at {:#x}", self.phys_addr());
+        log::warn!(
+            "virtio-core: dropping 'used' ring at {:#x}",
+            self.phys_addr()
+        );
     }
 }
 
@@ -597,7 +620,9 @@ impl Transport for StandardTransport<'_> {
 
         // Allocate memory for the queue structues.
         let descriptor = unsafe {
-            Dma::<[Descriptor]>::zeroed_slice(queue_size).map_err(Error::SyscallError)?.assume_init()
+            Dma::<[Descriptor]>::zeroed_slice(queue_size)
+                .map_err(Error::SyscallError)?
+                .assume_init()
         };
 
         let avail = Available::new(queue_size)?;

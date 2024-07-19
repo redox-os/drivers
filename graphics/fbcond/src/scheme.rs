@@ -47,11 +47,13 @@ impl FbconScheme {
 
         for &vt_i in vt_ids {
             let display = Display::open_vt(vt_i).expect("Failed to open display for vt");
-            event_queue.subscribe(
-                display.input_handle.as_raw_fd().as_raw_fd() as usize,
-                VtIndex(vt_i),
-                event::EventFlags::READ,
-            ).expect("Failed to subscribe to input events for vt");
+            event_queue
+                .subscribe(
+                    display.input_handle.as_raw_fd().as_raw_fd() as usize,
+                    VtIndex(vt_i),
+                    event::EventFlags::READ,
+                )
+                .expect("Failed to subscribe to input events for vt");
             vts.insert(VtIndex(vt_i), TextScreen::new(display));
         }
 

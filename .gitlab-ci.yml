@@ -1,0 +1,19 @@
+image: "redoxos/redoxer:latest"
+
+stages:
+  - build
+
+  # TODO?
+  # - test
+
+# TODO check if all drivers build
+
+fmt:
+    stage: build
+    needs: []
+    script:
+        - rustup component add rustfmt-preview
+        # TODO add more packages as they get formatted
+        - CHECK_ONLY=1 ./fmt.sh
+
+# TODO: unit tests

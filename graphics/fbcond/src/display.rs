@@ -1,3 +1,4 @@
+use libredox::flag;
 use std::fs::OpenOptions;
 use std::mem;
 use std::os::unix::fs::OpenOptionsExt;
@@ -8,7 +9,6 @@ use std::{
     os::unix::io::{AsRawFd, FromRawFd},
     slice,
 };
-use libredox::flag;
 use syscall::{O_CLOEXEC, O_NONBLOCK, O_RDWR};
 
 // Keep synced with vesad
@@ -67,15 +67,16 @@ impl Display {
         let display_path =
             std::str::from_utf8(&buffer[..written]).expect("init: display path UTF-8 check failed");
 
-        let display_file = libredox::call::open(display_path, (O_CLOEXEC | O_NONBLOCK | O_RDWR) as _, 0)
-            .map(|socket| unsafe { File::from_raw_fd(socket as RawFd) })
-            .unwrap_or_else(|err| {
-                panic!("failed to open display {}: {}", display_path, err);
-            });
+        let display_file =
+            libredox::call::open(display_path, (O_CLOEXEC | O_NONBLOCK | O_RDWR) as _, 0)
+                .map(|socket| unsafe { File::from_raw_fd(socket as RawFd) })
+                .unwrap_or_else(|err| {
+                    panic!("failed to open display {}: {}", display_path, err);
+                });
 
         let mut buf: [u8; 4096] = [0; 4096];
-        let count =
-            libredox::call::fpath(display_file.as_raw_fd() as usize, &mut buf).unwrap_or_else(|e| {
+        let count = libredox::call::fpath(display_file.as_raw_fd() as usize, &mut buf)
+            .unwrap_or_else(|e| {
                 panic!("Could not read display path with fpath(): {e}");
             });
 

@@ -4,8 +4,8 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use inputd::Damage;
 use common::{dma::Dma, sgl};
+use inputd::Damage;
 
 use syscall::{Error as SysError, MapFlags, SchemeMut, EAGAIN, EINVAL, PAGE_SIZE};
 
@@ -117,7 +117,8 @@ impl<'a> Display<'a> {
         let fb_size = self.width as usize * self.height as usize * bpp / 8;
 
         let mapped = self.mapped.get().unwrap();
-        self.map_screen_with(0, fb_size, mapped.as_ptr(), mapped.chunks()).await
+        self.map_screen_with(0, fb_size, mapped.as_ptr(), mapped.chunks())
+            .await
     }
 
     async fn map_screen(&self, offset: usize) -> Result<*mut u8, Error> {
@@ -135,7 +136,8 @@ impl<'a> Display<'a> {
         let _ = self.mapped.set(mapped);
         let mapped = self.mapped.get().unwrap();
 
-        self.map_screen_with(offset, fb_size, mapped.as_ptr(), mapped.chunks()).await
+        self.map_screen_with(offset, fb_size, mapped.as_ptr(), mapped.chunks())
+            .await
     }
 
     async fn map_screen_with(
@@ -167,7 +169,10 @@ impl<'a> Display<'a> {
             };
         }
 
-        let attach_request = Dma::new(AttachBacking::new(self.resource_id, mem_entries.len() as u32))?;
+        let attach_request = Dma::new(AttachBacking::new(
+            self.resource_id,
+            mem_entries.len() as u32,
+        ))?;
         let header = Dma::new(ControlHeader::default())?;
         let command = ChainBuilder::new()
             .chain(Buffer::new(&attach_request))
@@ -462,12 +467,19 @@ impl<'a> SchemeMut for Scheme<'a> {
     fn close(&mut self, _id: usize) -> syscall::Result<usize> {
         Ok(0)
     }
-    fn mmap_prep(&mut self, id: usize, offset: u64, size: usize, flags: MapFlags) -> syscall::Result<usize> {
+    fn mmap_prep(
+        &mut self,
+        id: usize,
+        offset: u64,
+        size: usize,
+        flags: MapFlags,
+    ) -> syscall::Result<usize> {
         log::info!("KSMSG MMAP {} {:?} {} {}", id, flags, offset, size);
         match self.handles.get(&id).ok_or(SysError::new(EINVAL))? {
-            Handle::Vt { display, .. } => {
-                Ok(futures::executor::block_on(display.map_screen(offset as usize)).unwrap() as usize)
-            }
+            Handle::Vt { display, .. } => Ok(futures::executor::block_on(
+                display.map_screen(offset as usize),
+            )
+            .unwrap() as usize),
             _ => unreachable!(),
         }
     }

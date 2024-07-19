@@ -1,7 +1,4 @@
-use std::{
-    ptr,
-    slice
-};
+use std::{ptr, slice};
 
 pub struct FrameBuffer {
     pub phys: usize,
@@ -49,15 +46,15 @@ impl FrameBuffer {
         let virt = common::physmap(
             self.phys,
             size * 4,
-            common::Prot { read: true, write: true },
+            common::Prot {
+                read: true,
+                write: true,
+            },
             common::MemoryType::WriteCombining,
         )? as *mut u32;
         //TODO: should we clear the framebuffer here?
         ptr::write_bytes(virt, 0, size);
 
-        Ok(slice::from_raw_parts_mut(
-            virt,
-            size
-        ))
+        Ok(slice::from_raw_parts_mut(virt, size))
     }
 }

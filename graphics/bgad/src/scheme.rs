@@ -1,8 +1,8 @@
 use std::fs::File;
 use std::io::Write;
 use std::str;
-use syscall::{Error, Result, SchemeMut, EACCES, EINVAL, MODE_CHR};
 use syscall::data::Stat;
+use syscall::{Error, Result, SchemeMut, EACCES, EINVAL, MODE_CHR};
 
 use crate::bga::Bga;
 
@@ -14,10 +14,13 @@ pub struct BgaScheme {
 impl BgaScheme {
     pub fn update_size(&mut self) {
         if let Some(ref mut display) = self.display {
-            let _ = display.write(&orbclient::ResizeEvent {
-                width: self.bga.width() as u32,
-                height: self.bga.height() as u32,
-            }.to_event());
+            let _ = display.write(
+                &orbclient::ResizeEvent {
+                    width: self.bga.width() as u32,
+                    height: self.bga.height() as u32,
+                }
+                .to_event(),
+            );
         }
     }
 }
@@ -32,7 +35,7 @@ impl SchemeMut for BgaScheme {
     }
 
     fn dup(&mut self, file: usize, buf: &[u8]) -> Result<usize> {
-        if ! buf.is_empty() {
+        if !buf.is_empty() {
             return Err(Error::new(EINVAL));
         }
 

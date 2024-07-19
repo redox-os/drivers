@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 use std::convert::TryInto;
-use std::{mem, slice, cmp, ptr};
+use std::{cmp, mem, ptr, slice};
 
 use orbclient::{Event, ResizeEvent};
 use syscall::error::*;
@@ -55,13 +55,13 @@ impl GraphicScreen {
                     ptr::copy(
                         old_ptr as *const u8,
                         new_ptr as *mut u8,
-                        cmp::min(width, self.width) * 4
+                        cmp::min(width, self.width) * 4,
                     );
                     if width > self.width {
                         ptr::write_bytes(
                             new_ptr.offset(self.width as isize),
                             0,
-                            width - self.width
+                            width - self.width,
                         );
                     }
                     old_ptr = old_ptr.offset(self.width as isize);
@@ -86,18 +86,26 @@ impl GraphicScreen {
             println!("Display is already {}, {}", width, height);
         };
 
-        self.input.push_back(ResizeEvent {
-            width: width as u32,
-            height: height as u32,
-        }.to_event());
+        self.input.push_back(
+            ResizeEvent {
+                width: width as u32,
+                height: height as u32,
+            }
+            .to_event(),
+        );
     }
 
     pub fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
         let mut i = 0;
 
-        let event_buf = unsafe { slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut Event, buf.len()/mem::size_of::<Event>()) };
+        let event_buf = unsafe {
+            slice::from_raw_parts_mut(
+                buf.as_mut_ptr() as *mut Event,
+                buf.len() / mem::size_of::<Event>(),
+            )
+        };
 
-        while i < event_buf.len() && ! self.input.is_empty() {
+        while i < event_buf.len() && !self.input.is_empty() {
             event_buf[i] = self.input.pop_front().unwrap();
             i += 1;
         }
@@ -117,7 +125,7 @@ impl GraphicScreen {
         let sync_rects = unsafe {
             slice::from_raw_parts(
                 buf.as_ptr() as *const SyncRect,
-                buf.len() / mem::size_of::<SyncRect>()
+                buf.len() / mem::size_of::<SyncRect>(),
             )
         };
 
@@ -148,23 +156,24 @@ impl GraphicScreen {
             let mut rows = end_y - start_y;
             while rows > 0 {
                 unsafe {
-                    ptr::copy(
-                        offscreen_ptr as *const u8,
-                        onscreen_ptr as *mut u8,
-                        len
-                    );
+                    ptr::copy(offscreen_ptr as *const u8, onscreen_ptr as *mut u8, len);
                 }
                 offscreen_ptr += self.width * 4;
                 onscreen_ptr += stride * 4;
                 rows -= 1;
-            };
+            }
         }
     }
 
     pub fn redraw(&mut self, onscreen: &mut [u32], stride: usize) {
         let width = self.width.try_into().unwrap();
         let height = self.height.try_into().unwrap();
-        self.sync_rects.push(SyncRect { x: 0, y: 0, w: width, h: height });
+        self.sync_rects.push(SyncRect {
+            x: 0,
+            y: 0,
+            w: width,
+            h: height,
+        });
         self.sync(onscreen, stride);
     }
 }
