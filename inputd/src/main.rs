@@ -481,52 +481,6 @@ pub fn main() {
 
     if let Some(val) = args.next() {
         match val.as_ref() {
-            // Sets the VT mode of the specified VT to [`VtMode::Graphic`].
-            "-G" => {
-                let vt = args.next().unwrap().parse::<usize>().unwrap();
-
-                // On startup, the VESA display driver is started which basically makes use of the framebuffer
-                // provided by the firmware. The GPU devices are latter started by `pcid` (such as `virtio-gpu`).
-                let mut devices = vec![];
-                let schemes = std::fs::read_dir(":").unwrap();
-
-                for entry in schemes {
-                    let path = entry.unwrap().path();
-                    let path_str = path
-                        .into_os_string()
-                        .into_string()
-                        .expect("inputd: failed to convert path to string");
-
-                    if path_str.contains("display") {
-                        println!("inputd: found display scheme {}", path_str);
-                        devices.push(path_str);
-                    }
-                }
-
-                if devices.is_empty() {
-                    // No display devices found.
-                    return;
-                }
-
-                let device = devices
-                    .iter()
-                    .filter(|d| !d.contains("vesa"))
-                    .collect::<Vec<_>>();
-                let device = if device.is_empty() {
-                    "vesa"
-                } else {
-                    // TODO: What should we do when there are multiple display devices?
-                    device[0][2..].split('.').nth(1).unwrap()
-                };
-
-                let mut handle =
-                    inputd::Handle::new(device).expect("inputd: failed to open display handle");
-
-                handle
-                    .activate(vt, VtMode::Graphic)
-                    .expect("inputd: failed to activate VT in graphic mode");
-            }
-
             // Activates a VT.
             "-A" => {
                 let vt = args.next().unwrap().parse::<usize>().unwrap();
