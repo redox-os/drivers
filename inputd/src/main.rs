@@ -18,7 +18,7 @@ use std::os::fd::AsRawFd;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use inputd::{Cmd, VtActivate, VtMode};
+use inputd::{Cmd, VtActivate};
 
 use spin::Mutex;
 
@@ -50,7 +50,6 @@ impl Handle {
 /// requires the system call to return first. Otherwise, it will block indefinitely.
 struct VtInner {
     handle_file: File,
-    mode: VtMode,
 }
 
 struct Vt {
@@ -74,10 +73,7 @@ impl Vt {
     pub fn inner(&self) -> &Mutex<VtInner> {
         self.inner.call_once(|| {
             let handle_file = File::open(format!("/scheme/{}/handle", self.display)).unwrap();
-            Mutex::new(VtInner {
-                handle_file,
-                mode: VtMode::Default,
-            })
+            Mutex::new(VtInner { handle_file })
         })
     }
 }
@@ -292,7 +288,6 @@ impl SchemeMut for InputScheme {
                         &mut vt_inner.handle_file,
                         Cmd::Activate {
                             vt: new_active.index,
-                            mode: VtMode::Default,
                         },
                     )?;
                     self.active_vt = Some(new_active.clone());
@@ -379,17 +374,12 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
             let mut vt_inner = vt.inner().lock();
 
             // Failing to activate a VT is not a fatal error.
-            if let Err(err) = inputd::send_comand(
-                &mut vt_inner.handle_file,
-                Cmd::Activate {
-                    vt: vt.index,
-                    mode: cmd.mode,
-                },
-            ) {
+            if let Err(err) =
+                inputd::send_comand(&mut vt_inner.handle_file, Cmd::Activate { vt: vt.index })
+            {
                 log::error!("inputd: failed to activate VT #{}: {err}", vt.index)
             }
 
-            vt_inner.mode = cmd.mode;
             scheme.active_vt = Some(vt.clone());
         }
 
@@ -509,9 +499,7 @@ pub fn main() {
 
                 let mut handle = inputd::Handle::new(display_scheme)
                     .expect("inputd: failed to open display handle");
-                handle
-                    .activate(vt, VtMode::Default)
-                    .expect("inputd: failed to activate VT");
+                handle.activate(vt).expect("inputd: failed to activate VT");
             }
 
             _ => panic!("inputd: invalid argument: {}", val),

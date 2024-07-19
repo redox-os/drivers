@@ -57,10 +57,7 @@ fn inner(daemon: redox_daemon::Daemon, vt_ids: &[usize]) -> ! {
 
     daemon.ready().expect("failed to notify parent");
 
-    scheme
-        .inputd_handle
-        .activate(1, inputd::VtMode::Default)
-        .unwrap();
+    scheme.inputd_handle.activate(1).unwrap();
 
     let mut blocked = Vec::new();
 

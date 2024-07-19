@@ -409,13 +409,12 @@ impl<'a> SchemeMut for Scheme<'a> {
             }
 
             Handle::Input => {
-                use inputd::{Cmd as DisplayCommand, VtMode};
+                use inputd::Cmd as DisplayCommand;
 
                 let command = inputd::parse_command(buf).unwrap();
 
                 match command {
-                    DisplayCommand::Activate { mode, vt } => {
-                        assert!(mode == VtMode::Graphic || mode == VtMode::Default);
+                    DisplayCommand::Activate { vt } => {
                         let target_vt = vt;
 
                         for handle in self.handles.values() {

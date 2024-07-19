@@ -7,18 +7,10 @@ unsafe fn any_as_u8_slice<T: Sized>(p: &T) -> &[u8] {
     ::core::slice::from_raw_parts((p as *const T) as *const u8, ::core::mem::size_of::<T>())
 }
 
-#[derive(Debug, Copy, Clone, PartialEq)]
-#[repr(usize)]
-pub enum VtMode {
-    Graphic = 1,
-    Default = 2,
-}
-
 #[derive(Debug, Clone)]
 #[repr(C)]
 pub struct VtActivate {
     pub vt: usize,
-    pub mode: VtMode,
 }
 
 pub struct Handle(File);
@@ -35,8 +27,8 @@ impl Handle {
         self.0.read(&mut [])
     }
 
-    pub fn activate(&mut self, vt: usize, mode: VtMode) -> Result<usize, Error> {
-        let cmd = VtActivate { vt, mode };
+    pub fn activate(&mut self, vt: usize) -> Result<usize, Error> {
+        let cmd = VtActivate { vt };
         self.0.write(unsafe { any_as_u8_slice(&cmd) })
     }
 }
@@ -67,7 +59,6 @@ pub enum Cmd {
     // TODO(andypython): #VT should really need to be a `u8`.
     Activate {
         vt: usize,
-        mode: VtMode,
     },
 
     Deactivate(usize /* #VT */),
@@ -98,8 +89,8 @@ pub fn send_comand(file: &mut File, command: Cmd) -> Result<(), libredox::error:
     result.push(command.ty() as u8);
 
     match command {
-        Cmd::Activate { vt, mode } => {
-            let cmd = VtActivate { vt, mode };
+        Cmd::Activate { vt } => {
+            let cmd = VtActivate { vt };
             let bytes = unsafe { any_as_u8_slice(&cmd) };
 
             result.extend_from_slice(bytes);
@@ -138,10 +129,7 @@ pub fn parse_command(buffer: &[u8]) -> Option<Cmd> {
     match command {
         CmdTy::Activate => {
             let cmd = unsafe { &*buffer.as_ptr().offset(1).cast::<VtActivate>() };
-            Some(Cmd::Activate {
-                vt: cmd.vt,
-                mode: cmd.mode,
-            })
+            Some(Cmd::Activate { vt: cmd.vt })
         }
 
         CmdTy::Deactivate => Some(Cmd::Deactivate(vt)),
