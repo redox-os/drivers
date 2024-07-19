@@ -52,11 +52,7 @@ impl GraphicScreen {
 
             for _y in 0..cmp::min(height, self.height) {
                 unsafe {
-                    ptr::copy(
-                        old_ptr as *const u8,
-                        new_ptr as *mut u8,
-                        cmp::min(width, self.width) * 4,
-                    );
+                    ptr::copy(old_ptr, new_ptr, cmp::min(width, self.width));
                     if width > self.width {
                         ptr::write_bytes(
                             new_ptr.offset(self.width as isize),
@@ -145,22 +141,22 @@ impl GraphicScreen {
             let end_y = cmp::min(self.height, y + h);
 
             let start_x = cmp::min(self.width, x);
-            let len = (cmp::min(self.width, x + w) - start_x) * 4;
+            let row_pixel_count = cmp::min(self.width, x + w) - start_x;
 
-            let mut offscreen_ptr = self.offscreen.as_mut_ptr() as usize;
-            let mut onscreen_ptr = onscreen.as_mut_ptr() as usize;
+            let mut offscreen_ptr = self.offscreen.as_mut_ptr();
+            let mut onscreen_ptr = onscreen.as_mut_ptr();
 
-            offscreen_ptr += (y * self.width + start_x) * 4;
-            onscreen_ptr += (y * stride + start_x) * 4;
+            unsafe {
+                offscreen_ptr = offscreen_ptr.add(y * self.width + start_x);
+                onscreen_ptr = onscreen_ptr.add(y * stride + start_x);
 
-            let mut rows = end_y - start_y;
-            while rows > 0 {
-                unsafe {
-                    ptr::copy(offscreen_ptr as *const u8, onscreen_ptr as *mut u8, len);
+                let mut rows = end_y - start_y;
+                while rows > 0 {
+                    ptr::copy(offscreen_ptr, onscreen_ptr, row_pixel_count);
+                    offscreen_ptr = offscreen_ptr.add(self.width);
+                    onscreen_ptr = onscreen_ptr.add(stride);
+                    rows -= 1;
                 }
-                offscreen_ptr += self.width * 4;
-                onscreen_ptr += stride * 4;
-                rows -= 1;
             }
         }
     }
