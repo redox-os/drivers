@@ -9,7 +9,7 @@ use crate::display::OffscreenBuffer;
 
 // Keep synced with orbital
 #[derive(Clone, Copy)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct SyncRect {
     pub x: i32,
     pub y: i32,

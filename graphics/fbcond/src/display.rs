@@ -13,7 +13,7 @@ use syscall::{O_CLOEXEC, O_NONBLOCK, O_RDWR};
 
 // Keep synced with vesad
 #[derive(Clone, Copy)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct SyncRect {
     pub x: i32,
     pub y: i32,
