@@ -279,7 +279,7 @@ impl SchemeMut for DisplayScheme {
                 let command = inputd::parse_command(buf).unwrap();
 
                 match command {
-                    DisplayCommand::Activate { vt, mode: _ } => {
+                    DisplayCommand::Activate { vt } => {
                         let vt_i = VtIndex(vt);
 
                         if let Some(screens) = self.vts.get_mut(&vt_i) {
