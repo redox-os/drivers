@@ -453,9 +453,7 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
         socket_file
             .read(&mut packet)
             .expect("virtio-gpud: failed to read disk scheme");
-        unsafe {
-            scheme.handle(&mut packet);
-        }
+        scheme.handle(&mut packet);
         socket_file
             .write(&packet)
             .expect("virtio-gpud: failed to read disk scheme");
