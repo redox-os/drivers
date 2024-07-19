@@ -36,9 +36,8 @@ fn display_fd_map(width: usize, height: usize, display_fd: usize) -> syscall::Re
     }
 }
 
-unsafe fn display_fd_unmap(image: *mut [u32], size: usize) {
-    // FIXME use image.len() instead of size once it is stable.
-    let _ = libredox::call::munmap(image as *mut (), size * 4);
+unsafe fn display_fd_unmap(image: *mut [u32]) {
+    let _ = libredox::call::munmap(image as *mut (), image.len());
 }
 
 pub struct Display {
@@ -125,7 +124,7 @@ impl Display {
         match display_fd_map(width, height, self.display_file.as_raw_fd() as usize) {
             Ok(ok) => {
                 unsafe {
-                    display_fd_unmap(self.offscreen, (self.width * self.height) as usize);
+                    display_fd_unmap(self.offscreen);
                 }
                 self.offscreen = ok;
                 self.width = width;
@@ -154,7 +153,7 @@ impl Display {
 impl Drop for Display {
     fn drop(&mut self) {
         unsafe {
-            display_fd_unmap(self.offscreen, self.width * self.height);
+            display_fd_unmap(self.offscreen);
         }
     }
 }
