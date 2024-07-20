@@ -22,6 +22,8 @@ fmt common \
     graphics/vesad \
     graphics/virtio-gpud \
     inputd \
+    net/driver-network \
     net/virtio-netd \
     pcid \
+    storage/driver-block \
     virtio-core

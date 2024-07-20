@@ -126,13 +126,8 @@ impl DiskWrapper {
                         }
                     }
                 };
-                let bytes_read = block_read(
-                    self.offset,
-                    blksize,
-                    buf,
-                    self.block_bytes,
-                    read_block,
-                )?;
+                let bytes_read =
+                    block_read(self.offset, blksize, buf, self.block_bytes, read_block)?;
 
                 self.offset += bytes_read as u64;
                 Ok(bytes_read)
