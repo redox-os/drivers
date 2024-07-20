@@ -8,10 +8,7 @@ pub struct VendorSpecificCapability {
 }
 
 impl VendorSpecificCapability {
-    pub unsafe fn parse(
-        addr: PciCapabilityAddress,
-        access: &dyn ConfigRegionAccess,
-    ) -> Self {
+    pub unsafe fn parse(addr: PciCapabilityAddress, access: &dyn ConfigRegionAccess) -> Self {
         let dword = access.read(addr.address, addr.offset);
         let next = (dword >> 8) & 0xFF;
         let length = ((dword >> 16) & 0xFF) as u16;

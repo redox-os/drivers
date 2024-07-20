@@ -22,4 +22,5 @@ fmt graphics/bgad \
     graphics/virtio-gpud \
     inputd \
     net/virtio-netd \
+    pcid \
     virtio-core
