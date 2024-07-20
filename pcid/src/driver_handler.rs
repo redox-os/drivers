@@ -74,18 +74,17 @@ impl DriverHandler {
                 Ok(mut child) => {
                     let driver_handler = DriverHandler {
                         addr: func.addr,
-                        state,
+                        state: state.clone(),
                         capabilities,
                     };
-                    let _handle = thread::spawn(move || {
+                    let handle = thread::spawn(move || {
                         driver_handler.handle_spawn(
                             pcid_to_client_write,
                             pcid_from_client_read,
                             subdriver_args,
                         );
                     });
-                    // FIXME this currently deadlocks as pcid doesn't daemonize
-                    //state.threads.lock().unwrap().push(handle);
+                    state.threads.lock().unwrap().push(handle);
                     match child.wait() {
                         Ok(_status) => (),
                         Err(err) => error!("pcid: failed to wait for {:?}: {}", command, err),

@@ -137,14 +137,15 @@ pub fn allocate_aligned_interrupt_vectors(
         }
 
         // if found, reserve the irq
-        let irq_handle = match File::create(format!("/scheme/irq/cpu-{:02x}/{}", cpu_id, irq_number)) {
-            Ok(handle) => handle,
+        let irq_handle =
+            match File::create(format!("/scheme/irq/cpu-{:02x}/{}", cpu_id, irq_number)) {
+                Ok(handle) => handle,
 
-            // return early if the entire range couldn't be allocated
-            Err(err) if err.kind() == io::ErrorKind::NotFound => break,
+                // return early if the entire range couldn't be allocated
+                Err(err) if err.kind() == io::ErrorKind::NotFound => break,
 
-            Err(err) => return Err(err),
-        };
+                Err(err) => return Err(err),
+            };
         handles.push(irq_handle);
         index += 1;
     }
@@ -191,8 +192,13 @@ pub fn allocate_single_interrupt_vector_for_msi(cpu_id: usize) -> (MsiAddrAndDat
     let (vector, interrupt_handle) = allocate_single_interrupt_vector(cpu_id)
         .expect("failed to allocate interrupt vector")
         .expect("no interrupt vectors left");
-    let msg_data =
-        x86_msix::message_data_edge_triggered(x86_msix::DeliveryMode::Fixed, vector);
+    let msg_data = x86_msix::message_data_edge_triggered(x86_msix::DeliveryMode::Fixed, vector);
 
-    (MsiAddrAndData { addr, data: msg_data }, interrupt_handle)
+    (
+        MsiAddrAndData {
+            addr,
+            data: msg_data,
+        },
+        interrupt_handle,
+    )
 }

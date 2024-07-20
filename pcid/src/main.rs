@@ -248,6 +248,10 @@ fn main(args: Args) {
 
     let _logger_ref = setup_logging(args.verbose);
 
+    redox_daemon::Daemon::new(move |daemon| main_inner(config, daemon)).unwrap();
+}
+
+fn main_inner(config: Config, daemon: redox_daemon::Daemon) -> ! {
     let state = Arc::new(State {
         pcie: Pcie::new(),
         threads: Mutex::new(Vec::new()),
@@ -312,7 +316,11 @@ fn main(args: Args) {
         }
     }
 
+    daemon.ready().unwrap();
+
     for thread in state.threads.lock().unwrap().drain(..) {
         thread.join().unwrap();
     }
+
+    std::process::exit(0);
 }

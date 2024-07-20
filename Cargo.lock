@@ -937,6 +937,7 @@ dependencies = [
  "paw",
  "pci_types",
  "plain",
+ "redox-daemon",
  "redox-log",
  "redox_syscall 0.5.3",
  "serde",
