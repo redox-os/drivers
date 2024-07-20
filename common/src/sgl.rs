@@ -35,7 +35,8 @@ impl Sgl {
                 offset: 0,
                 fd: !0,
                 addr: core::ptr::null_mut(),
-            })?.cast::<u8>();
+            })?
+            .cast::<u8>();
 
             let mut this = Self {
                 virt,
@@ -51,7 +52,9 @@ impl Sgl {
 
             let mut offset = 0;
             while offset < unaligned_length.get() {
-                let chunk_length = (aligned_length - offset).min(MAX_ALLOC_SIZE).next_power_of_two();
+                let chunk_length = (aligned_length - offset)
+                    .min(MAX_ALLOC_SIZE)
+                    .next_power_of_two();
                 libredox::call::mmap(MmapArgs {
                     addr: virt.add(offset).cast(),
                     flags: MAP_PRIVATE | (MAP_FIXED.bits() as u32),
@@ -62,7 +65,12 @@ impl Sgl {
                     offset: 0,
                 })?;
                 let phys = syscall::virttophys(virt as usize + offset)?;
-                this.chunks.push(Chunk { offset, phys, length: (unaligned_length.get() - offset).min(chunk_length), virt: virt.add(offset) });
+                this.chunks.push(Chunk {
+                    offset,
+                    phys,
+                    length: (unaligned_length.get() - offset).min(chunk_length),
+                    virt: virt.add(offset),
+                });
                 offset += chunk_length;
             }
 

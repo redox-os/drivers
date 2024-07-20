@@ -16,7 +16,8 @@ function fmt() {
     done
 }
 
-fmt graphics/bgad \
+fmt common \
+    graphics/bgad \
     graphics/fbcond \
     graphics/vesad \
     graphics/virtio-gpud \
