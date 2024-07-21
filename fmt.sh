@@ -16,11 +16,14 @@ function fmt() {
     done
 }
 
-fmt graphics/bgad \
+fmt common \
+    graphics/bgad \
     graphics/fbcond \
     graphics/vesad \
     graphics/virtio-gpud \
     inputd \
+    net/driver-network \
     net/virtio-netd \
     pcid \
+    storage/driver-block \
     virtio-core

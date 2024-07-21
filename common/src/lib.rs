@@ -1,8 +1,8 @@
 #![feature(int_roundings)]
 
 use libredox::call::MmapArgs;
-use libredox::{Fd, error::*, errno::EINVAL};
 use libredox::flag::{self, O_CLOEXEC, O_RDONLY, O_RDWR, O_WRONLY};
+use libredox::{errno::EINVAL, error::*, Fd};
 use syscall::PAGE_SIZE;
 
 pub mod dma;

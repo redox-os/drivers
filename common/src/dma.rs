@@ -3,7 +3,7 @@ use std::ops::{Deref, DerefMut};
 use std::ptr;
 
 use libredox::call::MmapArgs;
-use libredox::{flag, error::Result, Fd};
+use libredox::{error::Result, flag, Fd};
 use syscall::PAGE_SIZE;
 
 use crate::MemoryType;
@@ -34,7 +34,7 @@ fn alloc_and_map(length: usize) -> Result<(usize, *mut ())> {
         let fd = phys_contiguous_fd()?;
         let virt = libredox::call::mmap(MmapArgs {
             fd: fd.raw(),
-            offset: 0,  // ignored
+            offset: 0,                   // ignored
             addr: core::ptr::null_mut(), // ignored
             length,
             flags: flag::MAP_PRIVATE,
@@ -42,7 +42,11 @@ fn alloc_and_map(length: usize) -> Result<(usize, *mut ())> {
         })?;
         let phys = syscall::virttophys(virt as usize)?;
         for i in 1..length.div_ceil(PAGE_SIZE) {
-            debug_assert_eq!(syscall::virttophys(virt as usize + i * PAGE_SIZE), Ok(phys + i * PAGE_SIZE), "NOT CONTIGUOUS");
+            debug_assert_eq!(
+                syscall::virttophys(virt as usize + i * PAGE_SIZE),
+                Ok(phys + i * PAGE_SIZE),
+                "NOT CONTIGUOUS"
+            );
         }
         Ok((phys, virt as *mut ()))
     }
