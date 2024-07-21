@@ -6,6 +6,8 @@
 
 use core::arch::asm;
 
+use log::{error, info, trace};
+
 const MAGIC: u32 = 0x564D5868;
 const PORT: u16 = 0x5658;
 
@@ -58,38 +60,40 @@ pub unsafe fn cmd(cmd: u32, arg: u32) -> (u32, u32, u32, u32) {
     );
 
     (a, b, c, d)
-
 }
 
 pub fn enable(relative: bool) -> bool {
-    eprintln!("ps2d: Enable vmmouse");
+    trace!("ps2d: Enable vmmouse");
 
     unsafe {
         let (eax, ebx, _, _) = cmd(GETVERSION, 0);
         if ebx != MAGIC || eax == 0xFFFFFFFF {
-            eprintln!("ps2d: No vmmouse support");
+            info!("ps2d: No vmmouse support");
             return false;
         }
 
         let _ = cmd(ABSPOINTER_COMMAND, CMD_ENABLE);
 
         let (status, _, _, _) = cmd(ABSPOINTER_STATUS, 0);
-    	if (status & 0x0000ffff) == 0 {
-        	eprintln!("ps2d: No vmmouse");
-    		return false;
-    	}
+        if (status & 0x0000ffff) == 0 {
+            info!("ps2d: No vmmouse");
+            return false;
+        }
 
         let (version, _, _, _) = cmd(ABSPOINTER_DATA, 1);
         if version != VERSION {
-            eprintln!("ps2d: Invalid vmmouse version: {} instead of {}", version, VERSION);
+            error!(
+                "ps2d: Invalid vmmouse version: {} instead of {}",
+                version, VERSION
+            );
             let _ = cmd(ABSPOINTER_COMMAND, CMD_DISABLE);
             return false;
         }
 
         if relative {
-        	cmd(ABSPOINTER_COMMAND, CMD_REQUEST_RELATIVE);
+            cmd(ABSPOINTER_COMMAND, CMD_REQUEST_RELATIVE);
         } else {
-        	cmd(ABSPOINTER_COMMAND, CMD_REQUEST_ABSOLUTE);
+            cmd(ABSPOINTER_COMMAND, CMD_REQUEST_ABSOLUTE);
         }
     }
 
