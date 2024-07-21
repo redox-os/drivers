@@ -310,8 +310,6 @@ impl Pcie {
             "multiple segments not yet implemented"
         );
 
-        assert_eq!(offset & 0xFC, offset, "pci offset is not aligned");
-
         let bus_addr = self.bus_addr(address.segment(), address.bus())?;
         Some(unsafe { bus_addr.add(Self::bus_addr_offset_in_dwords(address, offset)) })
     }
