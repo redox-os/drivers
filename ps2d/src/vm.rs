@@ -50,12 +50,11 @@ pub unsafe fn cmd(cmd: u32, arg: u32) -> (u32, u32, u32, u32) {
     // On x86 we don't have a spare register, so push ebx to the stack instead.
     #[cfg(target_arch = "x86")]
     asm!(
-        "push ebx; mov ebx, esi; in eax, dx; mov esi, ebx; pop ebx",
+        "push ebx; mov ebx, edi; in eax, dx; mov edi, ebx; pop ebx",
         inout("eax") MAGIC => a,
-        inout("esi") arg => b,
+        inout("edi") arg => b,
         inout("ecx") cmd => c,
         inout("edx") PORT as u32 => d,
-        out("edi") _,
     );
 
     (a, b, c, d)
