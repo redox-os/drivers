@@ -3,6 +3,7 @@ use std::io::Write;
 use std::os::unix::io::AsRawFd;
 use std::str;
 
+use log::{error, warn};
 use orbclient::{KeyEvent, MouseEvent, MouseRelativeEvent, ButtonEvent, ScrollEvent};
 
 use crate::controller::Ps2;
@@ -115,7 +116,7 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
                         /* 0x80 to 0xFF used for press/release detection */
                         _ => {
                             if pressed {
-                                println!("ps2d: unknown extended scancode {:02X}", ps2_scancode);
+                                warn!("ps2d: unknown extended scancode {:02X}", ps2_scancode);
                             }
                             0
                         }
@@ -213,7 +214,7 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
                         /* 0x80 to 0xFF used for press/release detection */
                         _ => {
                             if pressed {
-                                println!("ps2d: unknown scancode {:02X}", ps2_scancode);
+                                warn!("ps2d: unknown scancode {:02X}", ps2_scancode);
                             }
                             0
                         }
@@ -245,7 +246,7 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
                 }
 
                 if queue_length % 4 != 0 {
-                    eprintln!("ps2d: queue length not a multiple of 4: {}", queue_length);
+                    error!("ps2d: queue length not a multiple of 4: {}", queue_length);
                     break;
                 }
 
@@ -297,7 +298,7 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
 
             let flags = MousePacketFlags::from_bits_truncate(self.packets[0]);
             if ! flags.contains(MousePacketFlags::ALWAYS_ON) {
-                eprintln!("ps2d: mouse misalign {:X}", self.packets[0]);
+                error!("ps2d: mouse misalign {:X}", self.packets[0]);
 
                 self.packets = [0; 4];
                 self.packet_i = 0;
@@ -350,7 +351,7 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
                         }.to_event()).expect("ps2d: failed to write button event");
                     }
                 } else {
-                    eprintln!("ps2d: overflow {:X} {:X} {:X} {:X}", self.packets[0], self.packets[1], self.packets[2], self.packets[3]);
+                    warn!("ps2d: overflow {:X} {:X} {:X} {:X}", self.packets[0], self.packets[1], self.packets[2], self.packets[3]);
                 }
 
                 self.packets = [0; 4];

@@ -1,3 +1,4 @@
+use log::{debug, error, info, trace};
 use syscall::io::{Io, Pio, ReadOnly, WriteOnly};
 
 use std::fmt;
@@ -39,7 +40,7 @@ bitflags! {
 
 bitflags! {
     pub struct ConfigFlags: u8 {
-        const FIRST_INTERRUPT = 1;
+        const FIRST_INTERRUPT = 1 << 0;
         const SECOND_INTERRUPT = 1 << 1;
         const POST_PASSED = 1 << 2;
         // 1 << 3 should be zero
@@ -153,7 +154,8 @@ impl Ps2 {
         let mut timeout = 100;
         while timeout > 0 {
             if self.status().contains(StatusFlags::OUTPUT_FULL) {
-                eprintln!("ps2d: flush {}: {:X}", message, self.data.read());
+                let val = self.data.read();
+                trace!("ps2d: flush {}: {:X}", message, val);
             }
             unsafe { pause(); }
             timeout -= 1;
@@ -178,7 +180,7 @@ impl Ps2 {
     }
 
     fn retry<F: Fn(&mut Self) -> Result<u8, Error>>(&mut self, name: fmt::Arguments, retries: usize, f: F) -> Result<u8, Error> {
-        eprintln!("ps2d: {}", name);
+        trace!("ps2d: {}", name);
         let mut res = Err(Error::NoMoreTries);
         for retry in 0..retries {
             res = f(self);
@@ -187,7 +189,7 @@ impl Ps2 {
                     return Ok(ok);
                 },
                 Err(ref err) => {
-                    eprintln!("ps2d: {}: retry {}/{}: {:?}", name, retry + 1, retries, err);
+                    info!("ps2d: {}: retry {}/{}: {:?}", name, retry + 1, retries, err);
                 }
             }
         }
@@ -311,10 +313,10 @@ impl Ps2 {
             if b == 0xFA {
                 b = self.read().unwrap_or(0);
                 if b != 0xAA {
-                    eprintln!("ps2d: keyboard failed self test: {:02X}", b);
+                    error!("ps2d: keyboard failed self test: {:02X}", b);
                 }
             } else {
-                eprintln!("ps2d: keyboard failed to reset: {:02X}", b);
+                error!("ps2d: keyboard failed to reset: {:02X}", b);
             }
 
             // Clear remaining data
@@ -330,7 +332,7 @@ impl Ps2 {
                 // Set defaults and disable scanning
                 let b = x.keyboard_command(KeyboardCommand::SetDefaultsDisable)?;
                 if b != 0xFA {
-                    eprintln!("ps2d: keyboard failed to set defaults: {:02X}", b);
+                    error!("ps2d: keyboard failed to set defaults: {:02X}", b);
                     return Err(Error::CommandRetry);
                 }
 
@@ -346,7 +348,7 @@ impl Ps2 {
             let scancode_set = 2;
             b = self.keyboard_command_data(KeyboardCommandData::ScancodeSet, scancode_set)?;
             if b != 0xFA {
-                eprintln!("ps2d: keyboard failed to set scancode set {}: {:02X}", scancode_set, b);
+                error!("ps2d: keyboard failed to set scancode set {}: {:02X}", scancode_set, b);
             }
 
             // Clear remaining data
@@ -379,17 +381,17 @@ impl Ps2 {
                 if b == 0xFA {
                     b = x.read()?;
                     if b != 0xAA {
-                        eprintln!("ps2d: mouse failed self test 1: {:02X}", b);
+                        error!("ps2d: mouse failed self test 1: {:02X}", b);
                         return Err(Error::CommandRetry);
                     }
 
                     b = x.read()?;
                     if b != 0x00 {
-                        eprintln!("ps2d: mouse failed self test 2: {:02X}", b);
+                        error!("ps2d: mouse failed self test 2: {:02X}", b);
                         return Err(Error::CommandRetry);
                     }
                 } else {
-                    eprintln!("ps2d: mouse failed to reset: {:02X}", b);
+                    error!("ps2d: mouse failed to reset: {:02X}", b);
                     return Err(Error::CommandRetry);
                 }
 
@@ -404,7 +406,7 @@ impl Ps2 {
             // Set defaults
             b = self.mouse_command(MouseCommand::SetDefaults)?;
             if b != 0xFA {
-                eprintln!("ps2d: mouse failed to set defaults: {:02X}", b);
+                error!("ps2d: mouse failed to set defaults: {:02X}", b);
             }
 
             // Clear remaining data
@@ -417,7 +419,7 @@ impl Ps2 {
             if self.mouse_command_data(MouseCommandData::SetSampleRate, 200)? != 0xFA
             || self.mouse_command_data(MouseCommandData::SetSampleRate, 100)? != 0xFA
             || self.mouse_command_data(MouseCommandData::SetSampleRate, 80)? != 0xFA {
-                eprintln!("ps2d: mouse failed to enable extra packet");
+                error!("ps2d: mouse failed to enable extra packet");
             }
 
             // Clear remaining data
@@ -428,7 +430,7 @@ impl Ps2 {
         let mouse_extra = if b == 0xFA {
             self.read()? == 3
         } else {
-            eprintln!("ps2d: mouse failed to get device id: {:02X}", b);
+            error!("ps2d: mouse failed to get device id: {:02X}", b);
             false
         };
 
@@ -440,7 +442,7 @@ impl Ps2 {
             let resolution = 3;
             b = self.mouse_command_data(MouseCommandData::SetResolution, resolution)?;
             if b != 0xFA {
-                eprintln!("ps2d: mouse failed to set resolution to {}: {:02X}", resolution, b);
+                error!("ps2d: mouse failed to set resolution to {}: {:02X}", resolution, b);
             }
 
             // Clear remaining data
@@ -451,7 +453,7 @@ impl Ps2 {
             // Set scaling to 1:1
             b = self.mouse_command(MouseCommand::SetScaling1To1)?;
             if b != 0xFA {
-                eprintln!("ps2d: mouse failed to set scaling: {:02X}",  b);
+                error!("ps2d: mouse failed to set scaling: {:02X}",  b);
             }
 
             // Clear remaining data
@@ -463,7 +465,7 @@ impl Ps2 {
             let sample_rate = 200;
             b = self.mouse_command_data(MouseCommandData::SetSampleRate, sample_rate)?;
             if b != 0xFA {
-                eprintln!("ps2d: mouse failed to set sample rate to {}: {:02X}", sample_rate, b);
+                error!("ps2d: mouse failed to set sample rate to {}: {:02X}", sample_rate, b);
             }
 
             // Clear remaining data
@@ -473,13 +475,13 @@ impl Ps2 {
         {
             b = self.mouse_command(MouseCommand::StatusRequest)?;
             if b != 0xFA {
-                eprintln!("ps2d: mouse failed to request status: {:02X}",  b);
+                error!("ps2d: mouse failed to request status: {:02X}",  b);
             } else {
                 let a = self.read()?;
                 let b = self.read()?;
                 let c = self.read()?;
 
-                eprintln!("ps2d: mouse status {:#x} resolution {:#x} sample rate {:#x}", a, b, c);
+                debug!("ps2d: mouse status {:#x} resolution {:#x} sample rate {:#x}", a, b, c);
             }
         }
 
@@ -507,7 +509,7 @@ impl Ps2 {
             config = ConfigFlags::POST_PASSED |
                 ConfigFlags::FIRST_DISABLED |
                 ConfigFlags::SECOND_DISABLED;
-            eprintln!("ps2d: config set {:?}", config);
+            trace!("ps2d: config set {:?}", config);
             self.set_config(config)?;
 
             // Clear remaining data
@@ -530,7 +532,7 @@ impl Ps2 {
         let (mouse_found, mouse_extra) = match self.init_mouse() {
             Ok(ok) => (true, ok),
             Err(err) => {
-                eprintln!("ps2d: failed to initialize mouse: {:?}", err);
+                error!("ps2d: failed to initialize mouse: {:?}", err);
                 (false, false)
             }
         };
@@ -563,7 +565,7 @@ impl Ps2 {
                 config.insert(ConfigFlags::SECOND_DISABLED);
                 config.remove(ConfigFlags::SECOND_INTERRUPT);
             }
-            eprintln!("ps2d: config set {:?}", config);
+            trace!("ps2d: config set {:?}", config);
             self.set_config(config)?;
         }
 
