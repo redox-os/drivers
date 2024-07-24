@@ -10,7 +10,6 @@ log = "0.4"
 redox_event = "0.4.1"
 redox_syscall = "0.5"
 redox-daemon = "0.1"
-redox-log = "0.1"
 
 common = { path = "../../common" }
 driver-network = { path = "../driver-network" }

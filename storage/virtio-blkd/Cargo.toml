@@ -13,7 +13,6 @@ futures = { version = "0.3.28", features = ["executor"] }
 spin = "*"
 
 redox-daemon = "0.1"
-redox-log = "0.1"
 redox_syscall = { version = "0.5", features = ["std"] }
 redox-scheme = { git = "https://gitlab.redox-os.org/redox-os/redox-scheme.git" }
 partitionlib = { git = "https://gitlab.redox-os.org/redox-os/partitionlib.git" }

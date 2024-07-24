@@ -10,7 +10,6 @@ use pci_types::{
     Bar as TyBar, CommandRegister, EndpointHeader, HeaderType, PciAddress,
     PciHeader as TyPciHeader, PciPciBridgeHeader,
 };
-use redox_log::{OutputBuilder, RedoxLogger};
 use structopt::StructOpt;
 
 use crate::cfg_access::Pcie;
@@ -166,57 +165,6 @@ fn handle_parsed_header(
     }
 }
 
-fn setup_logging(verbosity: u8) -> Option<&'static RedoxLogger> {
-    let log_level = match verbosity {
-        0 => log::LevelFilter::Info,
-        1 => log::LevelFilter::Debug,
-        _ => log::LevelFilter::Trace,
-    };
-    let mut logger = RedoxLogger::new().with_output(
-        OutputBuilder::stderr()
-            .with_ansi_escape_codes()
-            .with_filter(log_level)
-            .flush_on_newline(true)
-            .build(),
-    );
-
-    #[cfg(target_os = "redox")]
-    {
-        match OutputBuilder::in_redox_logging_scheme("bus", "pci", "pcid.log") {
-            Ok(b) => {
-                logger = logger.with_output(
-                    b.with_filter(log::LevelFilter::Trace)
-                        .flush_on_newline(true)
-                        .build(),
-                )
-            }
-            Err(error) => eprintln!("pcid: failed to open pcid.log"),
-        }
-        match OutputBuilder::in_redox_logging_scheme("bus", "pci", "pcid.ansi.log") {
-            Ok(b) => {
-                logger = logger.with_output(
-                    b.with_filter(log::LevelFilter::Trace)
-                        .with_ansi_escape_codes()
-                        .flush_on_newline(true)
-                        .build(),
-                )
-            }
-            Err(error) => eprintln!("pcid: failed to open pcid.ansi.log"),
-        }
-    }
-
-    match logger.enable() {
-        Ok(logger_ref) => {
-            eprintln!("pcid: enabled logger");
-            Some(logger_ref)
-        }
-        Err(error) => {
-            eprintln!("pcid: failed to set default logger: {}", error);
-            None
-        }
-    }
-}
-
 #[paw::main]
 fn main(args: Args) {
     let mut config = Config::default();
@@ -246,7 +194,13 @@ fn main(args: Args) {
         }
     }
 
-    let _logger_ref = setup_logging(args.verbose);
+    let log_level = match args.verbose {
+        0 => log::LevelFilter::Info,
+        1 => log::LevelFilter::Debug,
+        _ => log::LevelFilter::Trace,
+    };
+
+    common::setup_logging("bus", "pci", "pcid", log_level, log::LevelFilter::Trace);
 
     redox_daemon::Daemon::new(move |daemon| main_inner(config, daemon)).unwrap();
 }

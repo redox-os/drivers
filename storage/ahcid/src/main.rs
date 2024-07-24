@@ -14,57 +14,12 @@ use redox_scheme::{RequestKind, Response, SignalBehavior, Socket, V2};
 use syscall::error::{Error, ENODEV};
 
 use log::{error, info};
-use redox_log::{OutputBuilder, RedoxLogger};
 use syscall::{EAGAIN, EWOULDBLOCK};
 
 use crate::scheme::DiskScheme;
 
 pub mod ahci;
 pub mod scheme;
-
-fn setup_logging(name: &str) -> Option<&'static RedoxLogger> {
-    let mut logger = RedoxLogger::new()
-        .with_output(
-            OutputBuilder::stderr()
-                .with_filter(log::LevelFilter::Info) // limit global output to important info
-                .with_ansi_escape_codes()
-                .flush_on_newline(true)
-                .build()
-        );
-
-    #[cfg(target_os = "redox")]
-    match OutputBuilder::in_redox_logging_scheme("disk", "pcie", &format!("{}.log", name)) {
-        Ok(b) => logger = logger.with_output(
-            // TODO: Add a configuration file for this
-            b.with_filter(log::LevelFilter::Info)
-                .flush_on_newline(true)
-                .build()
-        ),
-        Err(error) => eprintln!("ahcid: failed to create log: {}", error),
-    }
-
-    #[cfg(target_os = "redox")]
-    match OutputBuilder::in_redox_logging_scheme("disk", "pcie", &format!("{}.ansi.log", name)) {
-        Ok(b) => logger = logger.with_output(
-            b.with_filter(log::LevelFilter::Info)
-                .with_ansi_escape_codes()
-                .flush_on_newline(true)
-                .build()
-        ),
-        Err(error) => eprintln!("ahcid: failed to create ansi log: {}", error),
-    }
-
-    match logger.enable() {
-        Ok(logger_ref) => {
-            eprintln!("ahcid: enabled logger");
-            Some(logger_ref)
-        }
-        Err(error) => {
-            eprintln!("ahcid: failed to set default logger: {}", error);
-            None
-        }
-    }
-}
 
 fn main() {
     redox_daemon::Daemon::new(daemon).expect("ahcid: failed to daemonize");
@@ -80,7 +35,13 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     let irq = pci_config.func.legacy_interrupt_line.expect("ahcid: no legacy interrupts supported");
 
-    let _logger_ref = setup_logging(&name);
+    common::setup_logging(
+        "disk",
+        "pcie",
+        &name,
+        log::LevelFilter::Info,
+        log::LevelFilter::Info,
+    );
 
     info!(" + AHCI {}", pci_config.func.display());
 

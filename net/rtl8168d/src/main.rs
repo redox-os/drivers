@@ -13,54 +13,9 @@ use pcid_interface::{MsiSetFeatureInfo, PciFunctionHandle, PciFeature, PciFeatur
 use pcid_interface::irq_helpers::allocate_single_interrupt_vector_for_msi;
 use pcid_interface::irq_helpers::read_bsp_apic_id;
 use pcid_interface::msi::{MsixInfo, MsixTableEntry};
-use redox_log::{RedoxLogger, OutputBuilder};
 use syscall::EventFlags;
 
 pub mod device;
-
-fn setup_logging() -> Option<&'static RedoxLogger> {
-    let mut logger = RedoxLogger::new()
-        .with_output(
-            OutputBuilder::stderr()
-                .with_filter(log::LevelFilter::Info) // limit global output to important info
-                .with_ansi_escape_codes()
-                .flush_on_newline(true)
-                .build()
-        );
-
-    #[cfg(target_os = "redox")]
-    match OutputBuilder::in_redox_logging_scheme("net", "pcie", "rtl8168.log") {
-        Ok(b) => logger = logger.with_output(
-            // TODO: Add a configuration file for this
-            b.with_filter(log::LevelFilter::Info)
-                .flush_on_newline(true)
-                .build()
-        ),
-        Err(error) => eprintln!("Failed to create rtl8168.log: {}", error),
-    }
-
-    #[cfg(target_os = "redox")]
-    match OutputBuilder::in_redox_logging_scheme("net", "pcie", "rtl8168.ansi.log") {
-        Ok(b) => logger = logger.with_output(
-            b.with_filter(log::LevelFilter::Info)
-                .with_ansi_escape_codes()
-                .flush_on_newline(true)
-                .build()
-        ),
-        Err(error) => eprintln!("Failed to create rtl8168.ansi.log: {}", error),
-    }
-
-    match logger.enable() {
-        Ok(logger_ref) => {
-            eprintln!("rtl8168d: enabled logger");
-            Some(logger_ref)
-        }
-        Err(error) => {
-            eprintln!("rtl8168d: failed to set default logger: {}", error);
-            None
-        }
-    }
-}
 
 use std::ops::{Add, Div, Rem};
 pub fn div_round_up<T>(a: T, b: T) -> T
@@ -203,7 +158,13 @@ fn find_bar(pci_config: &SubdriverArguments) -> Option<(usize, usize)> {
 }
 
 fn daemon(daemon: redox_daemon::Daemon) -> ! {
-    let _logger_ref = setup_logging();
+    common::setup_logging(
+        "net",
+        "pcie",
+        "rtl8168",
+        log::LevelFilter::Info,
+        log::LevelFilter::Info,
+    );
 
     let mut pcid_handle = PciFunctionHandle::connect_default().expect("rtl8168d: failed to setup channel to pcid");
 

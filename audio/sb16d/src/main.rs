@@ -6,53 +6,8 @@ use libredox::{flag, Fd};
 use syscall::{Packet, SchemeBlockMut};
 
 use event::{user_data, EventQueue};
-use redox_log::{OutputBuilder, RedoxLogger};
 
 pub mod device;
-
-fn setup_logging() -> Option<&'static RedoxLogger> {
-    let mut logger = RedoxLogger::new()
-        .with_output(
-            OutputBuilder::stderr()
-                .with_filter(log::LevelFilter::Info) // limit global output to important info
-                .with_ansi_escape_codes()
-                .flush_on_newline(true)
-                .build()
-        );
-
-    #[cfg(target_os = "redox")]
-    match OutputBuilder::in_redox_logging_scheme("audio", "pcie", "sb16.log") {
-        Ok(b) => logger = logger.with_output(
-            // TODO: Add a configuration file for this
-            b.with_filter(log::LevelFilter::Info)
-                .flush_on_newline(true)
-                .build()
-        ),
-        Err(error) => eprintln!("sb16d: failed to create sb16.log: {}", error),
-    }
-
-    #[cfg(target_os = "redox")]
-    match OutputBuilder::in_redox_logging_scheme("audio", "pcie", "sb16.ansi.log") {
-        Ok(b) => logger = logger.with_output(
-            b.with_filter(log::LevelFilter::Info)
-                .with_ansi_escape_codes()
-                .flush_on_newline(true)
-                .build()
-        ),
-        Err(error) => eprintln!("sb16d: failed to create sb16.ansi.log: {}", error),
-    }
-
-    match logger.enable() {
-        Ok(logger_ref) => {
-            eprintln!("sb16d: enabled logger");
-            Some(logger_ref)
-        }
-        Err(error) => {
-            eprintln!("sb16d: failed to set default logger: {}", error);
-            None
-        }
-    }
-}
 
 fn main() {
     let mut args = env::args().skip(1);
@@ -64,7 +19,13 @@ fn main() {
 
     // Daemonize
     redox_daemon::Daemon::new(move |daemon| {
-        let _logger_ref = setup_logging();
+        common::setup_logging(
+            "audio",
+            "pcie",
+            "sb16",
+            log::LevelFilter::Info,
+            log::LevelFilter::Info,
+        );
 
         common::acquire_port_io_rights().expect("sb16d: failed to acquire port IO rights");
 
