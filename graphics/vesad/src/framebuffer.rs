@@ -23,8 +23,6 @@ impl FrameBuffer {
             common::MemoryType::WriteCombining,
         )
         .expect("vesad: failed to map framebuffer") as *mut u32;
-        //TODO: should we clear the framebuffer here?
-        ptr::write_bytes(virt, 0, size);
 
         let onscreen = ptr::slice_from_raw_parts_mut(virt, size);
 
