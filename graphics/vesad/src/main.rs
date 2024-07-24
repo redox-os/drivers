@@ -83,6 +83,8 @@ fn inner(daemon: redox_daemon::Daemon, framebuffers: Vec<FrameBuffer>, spec: &[(
 
     let mut scheme = DisplayScheme::new(framebuffers, &spec);
 
+    let _ = File::open("/scheme/debug/disable-graphical-debug");
+
     libredox::call::setrens(0, 0).expect("vesad: failed to enter null namespace");
 
     daemon.ready().expect("failed to notify parent");
