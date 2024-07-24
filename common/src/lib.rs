@@ -6,7 +6,10 @@ use libredox::{errno::EINVAL, error::*, Fd};
 use syscall::PAGE_SIZE;
 
 pub mod dma;
+mod logger;
 pub mod sgl;
+
+pub use logger::setup_logging;
 
 #[derive(Clone, Copy, Debug)]
 pub enum MemoryType {

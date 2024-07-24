@@ -14,7 +14,6 @@ thiserror = "1.0.40"
 futures = { version = "0.3.28", features = ["executor"] }
 crossbeam-queue = "0.3.8"
 
-redox-log = "0.1"
 redox_event = "0.4.1"
 
 common = { path = "../common" }

@@ -35,8 +35,13 @@ pub enum Error {
 }
 
 pub fn main() -> anyhow::Result<()> {
-    #[cfg(target_os = "redox")]
-    virtio_core::utils::setup_logging(log::LevelFilter::Trace, "virtio-blkd");
+    common::setup_logging(
+        "disk",
+        "pcie",
+        "virtio-blkd",
+        log::LevelFilter::Trace,
+        log::LevelFilter::Trace,
+    );
     redox_daemon::Daemon::new(daemon_runner).expect("virtio-core: failed to daemonize");
 }
 

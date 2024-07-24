@@ -19,7 +19,6 @@ use pcid_interface::irq_helpers::read_bsp_apic_id;
 use pcid_interface::msi::MsixTableEntry;
 
 use event::{Event, RawEventQueue};
-use redox_log::{RedoxLogger, OutputBuilder};
 use syscall::data::Packet;
 use syscall::error::EWOULDBLOCK;
 use syscall::flag::EventFlags;
@@ -38,50 +37,6 @@ mod xhci;
 
 async fn handle_packet(hci: Arc<Xhci>, packet: Packet) -> Packet {
     todo!()
-}
-
-fn setup_logging(name: &str) -> Option<&'static RedoxLogger> {
-    let mut logger = RedoxLogger::new()
-        .with_output(
-            OutputBuilder::stderr()
-                .with_filter(log::LevelFilter::Info) // limit global output to important info
-                .with_ansi_escape_codes()
-                .flush_on_newline(true)
-                .build()
-        );
-
-    #[cfg(target_os = "redox")]
-    match OutputBuilder::in_redox_logging_scheme("usb", "host", &format!("{}.log", name)) {
-        Ok(b) => logger = logger.with_output(
-            // TODO: Add a configuration file for this
-            b.with_filter(log::LevelFilter::Debug)
-                .flush_on_newline(true)
-                .build()
-        ),
-        Err(error) => eprintln!("Failed to create {}.log: {}", name, error),
-    }
-
-    #[cfg(target_os = "redox")]
-    match OutputBuilder::in_redox_logging_scheme("usb", "host", &format!("{}.ansi.log", name)) {
-        Ok(b) => logger = logger.with_output(
-            b.with_filter(log::LevelFilter::Debug)
-                .with_ansi_escape_codes()
-                .flush_on_newline(true)
-                .build()
-        ),
-        Err(error) => eprintln!("Failed to create {}.ansi.log: {}", name, error),
-    }
-
-    match logger.enable() {
-        Ok(logger_ref) => {
-            eprintln!("xhcid: enabled logger");
-            Some(logger_ref)
-        }
-        Err(error) => {
-            eprintln!("xhcid: failed to set default logger: {}", error);
-            None
-        }
-    }
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -191,7 +146,13 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let mut name = pci_config.func.name();
     name.push_str("_xhci");
 
-    let _logger_ref = setup_logging(&name);
+    common::setup_logging(
+        "usb",
+        "host",
+        &name,
+        log::LevelFilter::Info,
+        log::LevelFilter::Debug,
+    );
 
     log::debug!("XHCI PCI CONFIG: {:?}", pci_config);
 

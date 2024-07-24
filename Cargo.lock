@@ -12,7 +12,6 @@ dependencies = [
  "log",
  "pcid",
  "redox-daemon",
- "redox-log",
  "redox_event",
  "redox_syscall 0.5.3",
  "spin",
@@ -32,7 +31,6 @@ dependencies = [
  "parking_lot 0.11.2",
  "plain",
  "redox-daemon",
- "redox-log",
  "redox_syscall 0.5.3",
  "rustc-hash",
  "serde_json",
@@ -51,7 +49,6 @@ dependencies = [
  "log",
  "pcid",
  "redox-daemon",
- "redox-log",
  "redox-scheme",
  "redox_event",
  "redox_syscall 0.5.3",
@@ -286,6 +283,8 @@ name = "common"
 version = "0.1.0"
 dependencies = [
  "libredox 0.1.3",
+ "log",
+ "redox-log",
  "redox_syscall 0.5.3",
 ]
 
@@ -590,7 +589,6 @@ dependencies = [
  "log",
  "pcid",
  "redox-daemon",
- "redox-log",
  "redox-scheme",
  "redox_event",
  "redox_syscall 0.5.3",
@@ -606,7 +604,6 @@ dependencies = [
  "log",
  "pcid",
  "redox-daemon",
- "redox-log",
  "redox_event",
  "redox_syscall 0.5.3",
  "spin",
@@ -627,11 +624,11 @@ name = "inputd"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "common",
  "libredox 0.1.3",
  "log",
  "orbclient",
  "redox-daemon",
- "redox-log",
  "redox_syscall 0.5.3",
  "spin",
 ]
@@ -789,7 +786,6 @@ dependencies = [
  "partitionlib",
  "pcid",
  "redox-daemon",
- "redox-log",
  "redox-scheme",
  "redox_event",
  "redox_syscall 0.5.3",
@@ -938,7 +934,6 @@ dependencies = [
  "pci_types",
  "plain",
  "redox-daemon",
- "redox-log",
  "redox_syscall 0.5.3",
  "serde",
  "serde_json",
@@ -1012,11 +1007,11 @@ name = "ps2d"
 version = "0.1.0"
 dependencies = [
  "bitflags 1.3.2",
+ "common",
  "libredox 0.1.3",
  "log",
  "orbclient",
  "redox-daemon",
- "redox-log",
  "redox_syscall 0.5.3",
 ]
 
@@ -1176,7 +1171,6 @@ dependencies = [
  "log",
  "pcid",
  "redox-daemon",
- "redox-log",
  "redox_event",
  "redox_syscall 0.5.3",
 ]
@@ -1192,7 +1186,6 @@ dependencies = [
  "log",
  "pcid",
  "redox-daemon",
- "redox-log",
  "redox_event",
  "redox_syscall 0.5.3",
 ]
@@ -1218,7 +1211,6 @@ dependencies = [
  "libredox 0.1.3",
  "log",
  "redox-daemon",
- "redox-log",
  "redox_event",
  "redox_syscall 0.5.3",
  "spin",
@@ -1544,9 +1536,9 @@ name = "usbhidd"
 version = "0.1.0"
 dependencies = [
  "bitflags 2.6.0",
+ "common",
  "log",
  "orbclient",
- "redox-log",
  "redox_syscall 0.5.3",
  "rehid",
  "xhcid",
@@ -1556,8 +1548,8 @@ dependencies = [
 name = "usbhubd"
 version = "0.1.0"
 dependencies = [
+ "common",
  "log",
- "redox-log",
  "redox_syscall 0.5.3",
  "xhcid",
 ]
@@ -1654,7 +1646,6 @@ dependencies = [
  "partitionlib",
  "pcid",
  "redox-daemon",
- "redox-log",
  "redox-scheme",
  "redox_syscall 0.5.3",
  "spin",
@@ -1674,7 +1665,6 @@ dependencies = [
  "libredox 0.1.3",
  "log",
  "pcid",
- "redox-log",
  "redox_event",
  "redox_syscall 0.5.3",
  "static_assertions",
@@ -1914,7 +1904,6 @@ dependencies = [
  "pcid",
  "plain",
  "redox-daemon",
- "redox-log",
  "redox_event",
  "redox_syscall 0.5.3",
  "serde",

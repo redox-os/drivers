@@ -427,45 +427,14 @@ fn daemon_runner(redox_daemon: redox_daemon::Daemon) -> ! {
     unreachable!();
 }
 
-#[cfg(target_os = "redox")]
-pub fn setup_logging(level: log::LevelFilter, name: &str) {
-    use redox_log::{OutputBuilder, RedoxLogger};
-
-    let mut logger = RedoxLogger::new().with_output(
-        OutputBuilder::stderr()
-            .with_filter(level)
-            .with_ansi_escape_codes()
-            .flush_on_newline(true)
-            .build(),
-    );
-
-    match OutputBuilder::in_redox_logging_scheme("disk", "pcie", format!("{name}.log")) {
-        Ok(builder) => {
-            logger = logger.with_output(builder.with_filter(level).flush_on_newline(true).build())
-        }
-        Err(err) => eprintln!("inputd: failed to create log: {}", err),
-    }
-
-    match OutputBuilder::in_redox_logging_scheme("disk", "pcie", format!("{name}.ansi.log")) {
-        Ok(builder) => {
-            logger = logger.with_output(
-                builder
-                    .with_filter(level)
-                    .with_ansi_escape_codes()
-                    .flush_on_newline(true)
-                    .build(),
-            )
-        }
-        Err(err) => eprintln!("inputd: failed to create ANSI log: {}", err),
-    }
-
-    logger.enable().unwrap();
-    log::info!("inputd: enabled logger");
-}
-
 pub fn main() {
-    #[cfg(target_os = "redox")]
-    setup_logging(log::LevelFilter::Trace, "inputd");
+    common::setup_logging(
+        "misc",
+        "inputd",
+        "inputd",
+        log::LevelFilter::Trace,
+        log::LevelFilter::Trace,
+    );
 
     let mut args = std::env::args().skip(1);
 

@@ -4,7 +4,6 @@ use std::fs::File;
 use std::io::{Read, Write};
 
 use orbclient::KeyEvent as OrbKeyEvent;
-use redox_log::{OutputBuilder, RedoxLogger};
 use rehid::{
     report_desc::{self, ReportTy, REPORT_DESC_TY},
     report_handler::ReportHandler,
@@ -14,53 +13,6 @@ use xhcid_interface::{ConfigureEndpointsReq, DevDesc, EndpDirection, EndpointTy,
 
 mod keymap;
 mod reqs;
-
-fn setup_logging() -> Option<&'static RedoxLogger> {
-    let mut logger = RedoxLogger::new().with_output(
-        OutputBuilder::stderr()
-            .with_filter(log::LevelFilter::Info) // limit global output to important info
-            .with_ansi_escape_codes()
-            .flush_on_newline(true)
-            .build(),
-    );
-
-    #[cfg(target_os = "redox")]
-    match OutputBuilder::in_redox_logging_scheme("usb", "device", "hid.log") {
-        Ok(b) => {
-            logger = logger.with_output(
-                // TODO: Add a configuration file for this
-                b.with_filter(log::LevelFilter::Info)
-                    .flush_on_newline(true)
-                    .build(),
-            )
-        }
-        Err(error) => eprintln!("Failed to create hid.log: {}", error),
-    }
-
-    #[cfg(target_os = "redox")]
-    match OutputBuilder::in_redox_logging_scheme("usb", "device", "hid.ansi.log") {
-        Ok(b) => {
-            logger = logger.with_output(
-                b.with_filter(log::LevelFilter::Info)
-                    .with_ansi_escape_codes()
-                    .flush_on_newline(true)
-                    .build(),
-            )
-        }
-        Err(error) => eprintln!("Failed to create hid.ansi.log: {}", error),
-    }
-
-    match logger.enable() {
-        Ok(logger_ref) => {
-            eprintln!("usbhidd: enabled logger");
-            Some(logger_ref)
-        }
-        Err(error) => {
-            eprintln!("usbhidd: failed to set default logger: {}", error);
-            None
-        }
-    }
-}
 
 fn send_key_event(
     display: &mut File,
@@ -214,7 +166,13 @@ fn send_key_event(
 }
 
 fn main() {
-    let _logger_ref = setup_logging();
+    common::setup_logging(
+        "usb",
+        "device",
+        "hid",
+        log::LevelFilter::Info,
+        log::LevelFilter::Info,
+    );
 
     let mut args = env::args().skip(1);
 

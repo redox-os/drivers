@@ -8,7 +8,6 @@ bitflags = "1.2"
 byteorder = "1.2"
 log = "0.4"
 redox-daemon = "0.1"
-redox-log = "0.1"
 redox_syscall = { version = "0.5", features = ["std"] }
 
 common = { path = "../../common" }

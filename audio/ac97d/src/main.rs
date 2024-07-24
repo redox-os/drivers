@@ -15,54 +15,9 @@ use std::usize;
 use event::{user_data, EventQueue};
 use libredox::flag;
 use pcid_interface::{PciBar, PciFunctionHandle};
-use redox_log::{OutputBuilder, RedoxLogger};
 use syscall::{EventFlags, Packet, SchemeBlockMut};
 
 pub mod device;
-
-fn setup_logging() -> Option<&'static RedoxLogger> {
-    let mut logger = RedoxLogger::new()
-        .with_output(
-            OutputBuilder::stderr()
-            .with_filter(log::LevelFilter::Info) // limit global output to important info
-            .with_ansi_escape_codes()
-            .flush_on_newline(true)
-            .build()
-        );
-
-    #[cfg(target_os = "redox")]
-    match OutputBuilder::in_redox_logging_scheme("audio", "pcie", "ac97.log") {
-        Ok(b) => logger = logger.with_output(
-            // TODO: Add a configuration file for this
-            b.with_filter(log::LevelFilter::Info)
-            .flush_on_newline(true)
-            .build()
-        ),
-        Err(error) => eprintln!("ac97d: failed to create ac97.log: {}", error),
-    }
-
-    #[cfg(target_os = "redox")]
-    match OutputBuilder::in_redox_logging_scheme("audio", "pcie", "ac97.ansi.log") {
-        Ok(b) => logger = logger.with_output(
-            b.with_filter(log::LevelFilter::Info)
-            .with_ansi_escape_codes()
-            .flush_on_newline(true)
-            .build()
-        ),
-        Err(error) => eprintln!("ac97d: failed to create ac97.ansi.log: {}", error),
-    }
-
-    match logger.enable() {
-        Ok(logger_ref) => {
-            eprintln!("ac97d: enabled logger");
-            Some(logger_ref)
-        }
-        Err(error) => {
-            eprintln!("ac97d: failed to set default logger: {}", error);
-            None
-        }
-    }
-}
 
 fn main() {
     let pcid_handle =
@@ -81,7 +36,13 @@ fn main() {
 
     // Daemonize
     redox_daemon::Daemon::new(move |daemon| {
-        let _logger_ref = setup_logging();
+        common::setup_logging(
+            "audio",
+            "pcie",
+            "ac97",
+            log::LevelFilter::Info,
+            log::LevelFilter::Info,
+        );
 
         common::acquire_port_io_rights().expect("ac97d: failed to set I/O privilege level to Ring 3");
 
