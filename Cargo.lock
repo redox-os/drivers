@@ -1088,9 +1088,9 @@ dependencies = [
 
 [[package]]
 name = "redox-log"
-version = "0.1.3"
+version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cacd9e83920c75b71b2ea740603d579179da055e8a8d72b25252874c28d513f0"
+checksum = "81460b1526438123d16f0c968dbe42ba7f61e99645109b70e57864a8b66710fb"
 dependencies = [
  "chrono",
  "log",
