@@ -44,7 +44,8 @@ pub enum MemoryType {
     /// released to the memory location in an unspecified order. Write-Combine memory does not
     /// guarantee that the order at which you write to it is the order at which those writes are
     /// committed to memory.
-    WriteCombining, /// Memory stored in an intermediate Write Combine Buffer and released later
+    WriteCombining,
+    /// Memory stored in an intermediate Write Combine Buffer and released later
     /// Memory-Mapped I/O. This is an aarch64-specific term.
     DeviceMemory,
 }
