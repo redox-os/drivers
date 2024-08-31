@@ -1,4 +1,7 @@
 target/
 
 # editor configs:
-.vscode
+.vscode/
+.idea/
+.vs/
+.devcontainer/
