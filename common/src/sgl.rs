@@ -8,21 +8,38 @@ use syscall::{MAP_FIXED, PAGE_SIZE};
 
 use crate::dma::phys_contiguous_fd;
 
+/// A Scatter-Gather List data structure
+///
+/// See: https://en.wikipedia.org/wiki/Gather/scatter_(vector_addressing)
 #[derive(Debug)]
 pub struct Sgl {
+    /// A raw pointer to the SGL in virtual memory
     virt: *mut u8,
+    /// The length of the allocated memory. This value is NOT guaranteed to be a multiple of [PAGE_SIZE]
     unaligned_length: NonZeroUsize,
+    /// The vector of chunks tracked by this [Sgl] object. This is the sparsely-populated vector in the SGL algorithm.
     chunks: Vec<Chunk>,
 }
+
+/// A structure representing a chunk of memory in the sparsely-populated vector of the SGL
 #[derive(Debug)]
 pub struct Chunk {
+    /// The offset of the chunk in the sparsely-populated vector.
     pub offset: usize,
+    /// The physical address of the chunk
     pub phys: usize,
+    /// A raw pointer to the chunk in virtual memory
     pub virt: *mut u8,
+    /// The length of the chunk in bytes.
     pub length: usize,
 }
 
 impl Sgl {
+    /// Constructor for the scatter/gather list.
+    ///
+    /// # Arguments
+    ///
+    /// 'unaligned_length: [usize]' - The length of the SGL, not aligned to the nearest page.
     pub fn new(unaligned_length: usize) -> Result<Self> {
         let unaligned_length = NonZeroUsize::new(unaligned_length).ok_or(Error::new(EINVAL))?;
 
@@ -77,12 +94,16 @@ impl Sgl {
             Ok(this)
         }
     }
+    /// Returns an immutable reference to the vector of chunks
     pub fn chunks(&self) -> &[Chunk] {
         &self.chunks
     }
+
+    /// Returns a raw pointer to the vector of chunks in virtual memory
     pub fn as_ptr(&self) -> *mut u8 {
         self.virt
     }
+    /// Returns the length of the scatter-gather list.
     pub fn len(&self) -> usize {
         self.unaligned_length.get()
     }
