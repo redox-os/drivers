@@ -10,7 +10,7 @@ use crate::dma::phys_contiguous_fd;
 
 /// A Scatter-Gather List data structure
 ///
-/// See: https://en.wikipedia.org/wiki/Gather/scatter_(vector_addressing)
+/// See: <https://en.wikipedia.org/wiki/Gather/scatter_(vector_addressing)>
 #[derive(Debug)]
 pub struct Sgl {
     /// A raw pointer to the SGL in virtual memory
