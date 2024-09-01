@@ -1,21 +1,52 @@
+//! This crate provides various abstractions for use by all drivers in the Redox drivers repo.
+//!
+//! This includes direct memory access via [dma], and Scatter-Gather List support via [sgl].  It also
+//! provides various memory management structures for use with drivers, and some logging support.
 #![feature(int_roundings)]
+#![warn(missing_docs)]
 
 use libredox::call::MmapArgs;
 use libredox::flag::{self, O_CLOEXEC, O_RDONLY, O_RDWR, O_WRONLY};
 use libredox::{errno::EINVAL, error::*, Fd};
 use syscall::PAGE_SIZE;
 
+/// The Direct Memory Access (DMA) API for drivers
 pub mod dma;
 mod logger;
+/// The Scatter Gather List (SGL) API for drivers.
 pub mod sgl;
 
 pub use logger::setup_logging;
 
+/// Specifies the write behavior for a specific region of memory
+///
+/// These types indicate to the driver how writes to a specific memory region are handled by the
+/// system. This usually refers to the caching behavior that the processor or I/O device responsible
+/// for that memory implements.
+///
+/// aarch64 and x86 have very different cache-coherency rules, so this API as written is likely
+/// not sufficient to describe the memory caching behavior in a cross-platform manner. As such,
+/// consider this API unstable.
 #[derive(Clone, Copy, Debug)]
 pub enum MemoryType {
+    /// A region of memory that implements Write-back caching.
+    ///
+    /// In write-back caching, the processor will first store data in its local cache, and then
+    /// flush it to the actual storage location at regular intervals, or as applications access
+    /// the data.
     Writeback,
+    /// A region of memory that does not implement caching. Writes to these regions are immediate.
     Uncacheable,
+    /// A region of memory that implements write combining.
+    ///
+    /// Write combining memory regions store all writes in a temporary buffer called a Write
+    /// Combine Buffer. Multiple writes to the location are stored in a single buffer, and then
+    /// released to the memory location in an unspecified order. Write-Combine memory does not
+    /// guarantee that the order at which you write to it is the order at which those writes are
+    /// committed to memory.
     WriteCombining,
+    /// Memory stored in an intermediate Write Combine Buffer and released later
+    /// Memory-Mapped I/O. This is an aarch64-specific term.
     DeviceMemory,
 }
 impl Default for MemoryType {
@@ -24,20 +55,34 @@ impl Default for MemoryType {
     }
 }
 
+/// Represents the protection level of an area of memory.
+///
+/// This structure shouldn't be used directly -- instead, use the [Prot::RO] (Read-Only),
+/// [Prot::WO] (Write-Only) and [Prot::RW] (Read-Write) constants to specify the memory's protection
+/// level.
 #[derive(Clone, Copy, Debug)]
 pub struct Prot {
+    /// The memory is readable
     pub read: bool,
+    /// The memory is writeable
     pub write: bool,
 }
+
+/// Implements the memory protection level constants
 impl Prot {
+    /// A constant representing Read-Only memory.
     pub const RO: Self = Self {
         read: true,
         write: false,
     };
+
+    /// A constant representing Write-Only memory
     pub const WO: Self = Self {
         read: false,
         write: true,
     };
+
+    /// A constant representing Read-Write memory
     pub const RW: Self = Self {
         read: true,
         write: true,
@@ -46,6 +91,34 @@ impl Prot {
 
 // TODO: Safe, as the kernel ensures it doesn't conflict with any other memory described in the
 // memory map for regular RAM.
+/// Maps physical memory to virtual memory
+///
+/// # Arguments
+///
+/// * 'base_phys: [usize]' - The base address of the physical memory to map.
+/// * 'len: [usize]'       - The length of the physical memory to map (Should be a multiple of [PAGE_SIZE]
+/// * '_: [Prot]'          - The memory protection level of the mapping.
+/// * 'type: [MemoryType]' - The caching behavior specification of the memory.
+///
+/// # Returns
+///
+/// A '[Result]<*mut ()>' which is:
+/// - '[Ok]'  containing a raw pointer to the mapped memory.
+/// - '[Err]' which contains an error on failure.
+///
+/// # Errors
+///
+/// This function will return an error if:
+/// - An invalid value is provided to 'read' or 'write'
+/// - The system could not open a file descriptor to the memory scheme for the specified [MemoryType].
+/// - The system failed to map the physical address to a virtual address. See [libredox::call::mmap]
+///
+///
+/// # Notes
+/// - This function is unsafe, and upon using it you will be responsible for freeing the memory with
+///   [libredox::call::munmap]. If you want a safe accessor, use [PhysBorrowed] instead.
+/// - The MemoryType specified is used to tell the function which memory scheme to access. (i.e
+///   /scheme/memory/physical@wb, /scheme/memory/physical@uc, etc).
 pub unsafe fn physmap(
     base_phys: usize,
     len: usize,
@@ -102,11 +175,28 @@ impl std::fmt::Display for MemoryType {
     }
 }
 
+/// A safe virtual mapping to physical memory that unmaps the memory when the structure goes out
+/// of scope.
+///
+/// This function provides a safe binding to [physmap]. It implements Drop to free the mapped memory
+/// when the structure goes out of scope.
 pub struct PhysBorrowed {
     mem: *mut (),
     len: usize,
 }
 impl PhysBorrowed {
+    /// Constructs a PhysBorrowed instance.
+    ///
+    /// # Arguments
+    /// See [physmap] for a description of the parameters.
+    ///
+    /// # Returns
+    /// A '[Result]' which contains the following:
+    /// - A '[PhysBorrowed]' which represents the newly mapped region.
+    /// - An 'Err' if a memory mapping error occurs.
+    ///
+    /// # Errors
+    /// See [physmap] for a description of the error cases.
     pub fn map(base_phys: usize, len: usize, prot: Prot, ty: MemoryType) -> Result<Self> {
         let mem = unsafe { physmap(base_phys, len, prot, ty)? };
         Ok(Self {
@@ -114,14 +204,31 @@ impl PhysBorrowed {
             len: len.next_multiple_of(PAGE_SIZE),
         })
     }
+
+    /// Gets a raw pointer to the borrowed region.
+    ///
+    /// # Returns
+    /// - self.mem - A pointer to the mapped region in virtual memory.
+    ///
+    /// # Notes
+    /// - The pointer may live beyond the lifetime of [PhysBorrowed], so dereferences to the pointer
+    ///   must be treated as unsafe.
+    ///
     pub fn as_ptr(&self) -> *mut () {
         self.mem
     }
+
+    /// Gets the length of the mapped region.
+    ///
+    /// # Returns
+    /// - self.len - The length of the mapped region. It should be a multiple of [PAGE_SIZE]
     pub fn mapped_len(&self) -> usize {
         self.len
     }
 }
+
 impl Drop for PhysBorrowed {
+    /// Frees the mapped memory region.
     fn drop(&mut self) {
         unsafe {
             let _ = libredox::call::munmap(self.mem, self.len);
@@ -129,6 +236,12 @@ impl Drop for PhysBorrowed {
     }
 }
 
+/// Uses the [syscall::iopl] system call to set the I/O privilege level of the current process
+/// to 3.
+///
+/// In Redox, x86 privilege ring 3 represents userspace. Most Redox drivers run in userspace to
+/// prevent system instability caused by a faulty driver. Processes with ring 3 IOPL have access to
+/// I/O ports.
 pub fn acquire_port_io_rights() -> Result<()> {
     unsafe {
         syscall::iopl(3)?;

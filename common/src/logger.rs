@@ -1,5 +1,6 @@
 use redox_log::{OutputBuilder, RedoxLogger};
 
+/// Configures logging for a single driver.
 #[cfg_attr(not(target_os = "redox"), allow(unused_variables, unused_mut))]
 pub fn setup_logging(
     category: &str,
