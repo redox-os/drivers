@@ -25,7 +25,8 @@ use syscall::flag::EventFlags;
 use syscall::scheme::Scheme;
 use syscall::io::Io;
 
-use crate::xhci::{InterruptMethod, Xhci};
+use crate::xhci::{start_device_enumerator, InterruptMethod, Xhci};
+use crate::xhci::InterruptMethod::Polling;
 
 // Declare as pub so that no warnings appear due to parts of the interface code not being used by
 // the driver. Since there's also a dedicated crate for the driver interface, those warnings don't
@@ -135,6 +136,7 @@ fn get_int_method(pcid_handle: &mut PciFunctionHandle, address: usize) -> (Optio
 }
 
 fn main() {
+    std::env::set_var("RUST_BACKTRACE", "full");
     redox_daemon::Daemon::new(daemon).expect("xhcid: failed to daemonize");
 }
 
@@ -150,8 +152,8 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         "usb",
         "host",
         &name,
-        log::LevelFilter::Info,
-        log::LevelFilter::Debug,
+        log::LevelFilter::Trace,
+        log::LevelFilter::Trace,
     );
 
     log::debug!("XHCI PCI CONFIG: {:?}", pci_config);
@@ -161,7 +163,9 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         .ptr
         .as_ptr() as usize;
 
-    let (irq_file, interrupt_method) = get_int_method(&mut pcid_handle, address);
+    //let (irq_file, interrupt_method) = get_int_method(&mut pcid_handle, address);
+
+    let (irq_file, interrupt_method) = (None, Polling);
 
     println!(" + XHCI {}", pci_config.func.display());
 
@@ -180,7 +184,9 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     let hci = Arc::new(Xhci::new(scheme_name, address, interrupt_method, pcid_handle).expect("xhcid: failed to allocate device"));
     xhci::start_irq_reactor(&hci, irq_file);
-    futures::executor::block_on(hci.probe()).expect("xhcid: failed to probe");
+    start_device_enumerator(&hci);
+
+    //futures::executor::block_on(hci.probe()).expect("xhcid: failed to probe");
 
     //let event_queue = RawEventQueue::new().expect("xhcid: failed to create event queue");
 

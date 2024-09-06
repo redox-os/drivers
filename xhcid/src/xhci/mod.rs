@@ -16,6 +16,7 @@ use syscall::io::Io;
 use chashmap::CHashMap;
 use common::dma::Dma;
 use crossbeam_channel::{Receiver, Sender};
+use futures::AsyncReadExt;
 use log::{debug, error, info, trace, warn};
 use serde::Deserialize;
 
@@ -36,6 +37,7 @@ mod ring;
 mod runtime;
 pub mod scheme;
 mod trb;
+mod device_enumerator;
 
 use self::capability::CapabilityRegs;
 use self::context::{DeviceContextList, InputContext, ScratchpadBufferArray, StreamContextArray};
@@ -207,6 +209,9 @@ pub struct Xhci {
     // not used, but still stored so that the thread, when created, can get the channel without the
     // channel being in a mutex.
     irq_reactor_receiver: Receiver<NewPendingTrb>,
+    device_enumerator: Mutex<Option<thread::JoinHandle<()>>>,
+    device_enumerator_sender: Sender<DeviceEnumerationRequest>,
+    device_enumerator_receiver: Receiver<DeviceEnumerationRequest>
 }
 
 unsafe impl Send for Xhci {}
@@ -320,6 +325,8 @@ impl Xhci {
 
         let (irq_reactor_sender, irq_reactor_receiver) = crossbeam_channel::unbounded();
 
+        let (device_enumerator_sender, device_enumerator_receiver) = crossbeam_channel::unbounded();
+
         let mut xhci = Self {
             base: address as *const u8,
 
@@ -349,6 +356,9 @@ impl Xhci {
             irq_reactor: Mutex::new(None),
             irq_reactor_sender,
             irq_reactor_receiver,
+            device_enumerator: Mutex::new(None),
+            device_enumerator_sender,
+            device_enumerator_receiver
         };
 
         xhci.init(max_slots)?;
@@ -511,6 +521,101 @@ impl Xhci {
         Self::alloc_dma_zeroed_unsized_raw(self.cap.ac64(), count)
     }
 
+    pub async fn attach_device(& self, port_number: u8) -> syscall::Result<()>
+    {
+        let i= port_number as usize;
+
+        let (data, state, speed, flags) = {
+            let port = &self.ports.lock().unwrap()[i];
+            (port.read(), port.state(), port.speed(), port.flags())
+        };
+        info!(
+                "XHCI Port {}: {:X}, State {}, Speed {}, Flags {:?}",
+                i, data, state, speed, flags
+            );
+
+        if flags.contains(port::PortFlags::PORT_CCS) {
+            let slot_ty = match self.supported_protocol(i as u8) {
+                Some(protocol) => protocol.proto_slot_ty(),
+                None => {
+                    warn!("Failed to find supported protocol information for port");
+                    0
+                }
+            };
+
+            debug!("Slot type: {}", slot_ty);
+            debug!("Enabling slot.");
+            let slot = match self.enable_port_slot(slot_ty).await {
+                Ok(ok) => ok,
+                Err(err) => {
+                    error!("Failed to enable slot for port {}: {}", i, err);
+                    return Err(err);
+                }
+            };
+
+            info!("Enabled port {}, which the xHC mapped to {}", i, slot);
+
+            let mut input = unsafe { self.alloc_dma_zeroed::<InputContext>()? };
+            let mut ring = match self.address_device(&mut input, i, slot_ty, slot, speed).await {
+                Ok(ok) => ok,
+                Err(err) => {
+                    error!("Failed to spawn driver for port {}: `{}`", i, err);
+                    return Err(err);
+                }
+            };
+            debug!("Addressed device");
+
+            // TODO: Should the descriptors be cached in PortState, or refetched?
+
+            let mut port_state = PortState {
+                slot,
+                input_context: Mutex::new(input),
+                dev_desc: None,
+                cfg_idx: None,
+                endpoint_states: std::iter::once((
+                    0,
+                    EndpointState {
+                        transfer: RingOrStreams::Ring(ring),
+                        driver_if_state: EndpIfState::Init,
+                    },
+                ))
+                    .collect::<BTreeMap<_, _>>(),
+            };
+            self.port_states.insert(i, port_state);
+
+            // Ensure correct packet size is used
+            let dev_desc_8_byte = self.fetch_dev_desc_8_byte(i, slot).await?;
+            {
+                let mut port_state = self.port_states.get_mut(&i).unwrap();
+
+                let mut input = port_state.input_context.lock().unwrap();
+
+                self.update_max_packet_size(&mut *input, slot, dev_desc_8_byte).await?;
+            }
+
+            let dev_desc = self.get_desc(i, slot).await?;
+            self.port_states.get_mut(&i).unwrap().dev_desc = Some(dev_desc);
+
+            {
+                let mut port_state = self.port_states.get_mut(&i).unwrap();
+
+                let mut input = port_state.input_context.lock().unwrap();
+                let dev_desc = port_state.dev_desc.as_ref().unwrap();
+
+                self.update_default_control_pipe(&mut *input, slot, dev_desc).await?;
+            }
+
+            match self.spawn_drivers(i) {
+                Ok(()) => (),
+                Err(err) => {error!("Failed to spawn driver for port {}: `{}`", i, err)},
+            }
+
+
+        }
+
+        Ok(())
+    }
+
     pub async fn probe(&self) -> Result<()> {
         debug!("XHCI capabilities: {:?}", self.capabilities_iter().collect::<Vec<_>>());
 
@@ -599,7 +704,7 @@ impl Xhci {
 
                 match self.spawn_drivers(i) {
                     Ok(()) => (),
-                    Err(err) => error!("Failed to spawn driver for port {}: `{}`", i, err),
+                    Err(err) => {error!("Failed to spawn driver for port {}: `{}`", i, err)},
                 }
             }
         }
@@ -981,14 +1086,24 @@ impl Xhci {
     }
 }
 pub fn start_irq_reactor(hci: &Arc<Xhci>, irq_file: Option<File>) {
-    let receiver = hci.irq_reactor_receiver.clone();
     let hci_clone = Arc::clone(&hci);
 
     debug!("About to start IRQ reactor");
 
     *hci.irq_reactor.lock().unwrap() = Some(thread::spawn(move || {
         debug!("Started IRQ reactor thread");
-        IrqReactor::new(hci_clone, receiver, irq_file).run()
+        IrqReactor::new(hci_clone, irq_file).run()
+    }));
+}
+
+pub fn start_device_enumerator(hci: &Arc<Xhci>){
+    let hci_clone = Arc::clone(&hci);
+
+    debug!("About to start Device Enumerator");
+
+    *hci.device_enumerator.lock().unwrap() = Some(thread::spawn(move || {
+        debug!("Started Device Enumerator");
+        DeviceEnumerator::new(hci_clone).run();
     }));
 }
 
@@ -1010,6 +1125,7 @@ struct DriversConfig {
 }
 
 use lazy_static::lazy_static;
+use crate::xhci::device_enumerator::{DeviceEnumerationRequest, DeviceEnumerator};
 
 lazy_static! {
     static ref DRIVERS_CONFIG: DriversConfig = {

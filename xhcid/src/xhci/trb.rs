@@ -1,7 +1,7 @@
 use crate::usb;
 use std::{fmt, mem};
 use syscall::io::{Io, Mmio};
-
+use crate::xhci::trb::TrbType::PortStatusChange;
 use super::context::StreamContextType;
 
 #[repr(u8)]
@@ -193,6 +193,21 @@ impl Trb {
         } else {
             None
         }
+    }
+
+    pub fn port_status_change_port_id(&self) -> Option<u8> {
+        debug_assert_eq!(self.trb_type(), TrbType::PortStatusChange as u8);
+
+        if self.has_completion_trb_pointer() {
+            let data = self.read_data();
+            Some(
+                ((data >> 24) & 0xFF) as u8
+            )
+        } else {
+            None
+        }
+
+
     }
 
     pub fn event_slot(&self) -> u8 {

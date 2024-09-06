@@ -15,8 +15,8 @@ use futures::Stream;
 use syscall::Io;
 
 use event::{Event, EventQueue, RawEventQueue};
-
-use super::Xhci;
+use crate::xhci::device_enumerator::DeviceEnumerationRequest;
+use super::{port, Xhci};
 use super::doorbell::Doorbell;
 use super::ring::Ring;
 use super::trb::{Trb, TrbCompletionCode, TrbType};
@@ -84,8 +84,8 @@ impl StateKind {
 pub struct IrqReactor {
     hci: Arc<Xhci>,
     irq_file: Option<File>,
-    receiver: Receiver<NewPendingTrb>,
-
+    irq_receiver: Receiver<NewPendingTrb>,
+    device_enumerator_sender: Sender<DeviceEnumerationRequest>,
     states: Vec<State>,
 
     // TODO: Since the IRQ reactor is the only part of this driver that gets event TRBs, perhaps
@@ -95,11 +95,15 @@ pub struct IrqReactor {
 pub type NewPendingTrb = State;
 
 impl IrqReactor {
-    pub fn new(hci: Arc<Xhci>, receiver: Receiver<NewPendingTrb>, irq_file: Option<File>) -> Self {
+    pub fn new(hci: Arc<Xhci>, irq_file: Option<File>) -> Self {
+        let device_enumerator_sender = hci.device_enumerator_sender.clone();
+        let irq_receiver = hci.irq_reactor_receiver.clone();
+
         Self {
             hci,
             irq_file,
-            receiver,
+            irq_receiver,
+            device_enumerator_sender,
             states: Vec::new(),
         }
     }
@@ -132,8 +136,19 @@ impl IrqReactor {
                 continue 'trb_loop;
             }
 
+            trace!("Handling requests");
             self.handle_requests();
-            self.acknowledge(event_trb.clone());
+            trace!("Requests handled");
+
+            match event_trb.trb_type() {
+                _ if event_trb.trb_type() == TrbType::PortStatusChange as u8 => {
+                    trace!("Received a port status change!");
+                    self.handle_port_status_change(event_trb.clone())
+                }, //TODO Handle the other unprompted events
+                _ => {
+                    self.acknowledge(event_trb.clone());
+                }
+            }
 
             event_trb.reserved(false);
 
@@ -190,9 +205,20 @@ impl IrqReactor {
                     hci_clone.event_handler_finished();
                     return;
                 }
-
+                trace!("Handling requests");
                 self.handle_requests();
-                self.acknowledge(event_trb.clone());
+                trace!("Requests handled");
+
+                match event_trb.trb_type() {
+                    _ if event_trb.trb_type() == TrbType::PortStatusChange as u8 => {
+                        trace!("Received a port status change!");
+                        self.handle_port_status_change(event_trb.clone())
+                    }, //TODO Handle the other unprompted events
+                    _ => {
+                        self.acknowledge(event_trb.clone());
+                    }
+                }
+
 
                 event_trb.reserved(false);
 
@@ -202,6 +228,42 @@ impl IrqReactor {
             }
         }
     }
+
+    /// Handles device attach/detach events as indicated by a PortStatusChange
+    fn handle_port_status_change(&mut self, trb: Trb)
+    {
+        let port_index_result = trb.port_status_change_port_id();
+
+        if let Some(port_index) = port_index_result {
+
+            let (num_ports, flags) = {
+                let ports = self.hci.ports.lock().unwrap();
+
+                (ports.len(), ports[port_index as usize].flags())
+            };
+
+            if port_index as usize >= num_ports{
+                warn!(
+                    "Received a PortStatusChange event with port index {}, there are only {} ports. Dropping the event",
+                    port_index - 1, //Ports are 1-indexed rather than 0-indexed
+                    num_ports
+                );
+                return;
+            }
+
+
+            let request = match flags.contains(port::PortFlags::PORT_CSC){
+                true => DeviceEnumerationRequest::Attach(port_index),
+                false => DeviceEnumerationRequest::Detach(port_index)
+            };
+
+            self.device_enumerator_sender.send(request).expect(
+                format!("Failed to transmit Device Enumeration Request for port {}", port_index).as_str()
+            );
+
+        }
+    }
+
     fn update_erdp(&self, event_ring: &EventRing) {
         let dequeue_pointer_and_dcs = event_ring.erdp();
         let dequeue_pointer = dequeue_pointer_and_dcs & 0xFFFF_FFFF_FFFF_FFFE;
@@ -213,7 +275,7 @@ impl IrqReactor {
         self.hci.run.lock().unwrap().ints[0].erdp_high.write((dequeue_pointer >> 32) as u32);
     }
     fn handle_requests(&mut self) {
-        self.states.extend(self.receiver.try_iter().inspect(|req| trace!("Received request: {:X?}", req)));
+        self.states.extend(self.irq_receiver.try_iter().inspect(|req| trace!("Received request: {:X?}", req)));
     }
     fn acknowledge(&mut self, trb: Trb) {
         //TODO: handle TRBs without an attached state
