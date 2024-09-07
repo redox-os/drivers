@@ -183,8 +183,8 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     xhci::start_irq_reactor(&hci, irq_file);
     xhci::start_device_enumerator(&hci);
 
+    hci.print_pls();
     hci.reset_ports();
-
 
     //let event_queue = RawEventQueue::new().expect("xhcid: failed to create event queue");
 

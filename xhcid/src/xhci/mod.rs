@@ -448,25 +448,85 @@ impl Xhci {
         Ok(())
     }
 
+    pub fn get_pls(&self, port_num: usize) -> u32{
+        let mut ports = self.ports.lock().unwrap();
+        let port =  ports.get_mut(port_num).unwrap();
+        let state = port.portsc.read();
+        (state >> 5) & 4
+    }
+
+    pub fn print_pls(&self) {
+        let len;
+        {
+            let mut ports = self.ports.lock().unwrap();
+            len = ports.len();
+        }
+
+
+        for port in 0..len{
+            let slot_type = match self.supported_protocol(port as u8){
+                None => {
+                    warn!("No detected supported protocol for port {}", port);
+                    0
+                }
+                Some(protocol) => {
+                    info!("Found protocol {:?} for port {}", protocol, port);
+                    protocol.proto_slot_ty()
+                }
+            };
+
+            debug!("Port {} with protocol type {} is in port link state {}",
+                port,
+                slot_type,
+                self.get_pls(port));
+        }
+    }
+    pub fn reset_port(&self, port_num: usize) {
+        debug!("XHCI Port {} reset", port_num);
+
+        //TODO handle the second unwrap
+        let mut ports = self.ports.lock().unwrap();
+        let port =  ports.get_mut(port_num).unwrap();
+        let instant = std::time::Instant::now();
+
+        let state = port.portsc.read();
+        let pls = (state >> 5) & 4;
+
+        trace!("Port Link State: {}", pls);
+
+        port.portsc.writef(port::PortFlags::PORT_PR.bits(), true);
+        while port.portsc.readf(port::PortFlags::PORT_PR.bits()) {
+            //while ! port.flags().contains(port::PortFlags::PORT_PRC) {
+            if instant.elapsed().as_secs() >= 1 {
+                warn!("timeout");
+                break;
+            }
+            std::thread::yield_now();
+        }
+
+    }
     pub fn reset_ports(& self){
         // Reset ports
         {
-            let mut ports = self.ports.lock().unwrap();
-            for (i, port) in ports.iter_mut().enumerate() {
-                //TODO: only reset if USB 2.0?
-                debug!("XHCI Port {} reset", i);
+            let num_ports;
 
-                let instant = std::time::Instant::now();
+            {
+                let mut ports = self.ports.lock().unwrap();
+                num_ports = ports.len();
+            }
 
-                port.portsc.writef(port::PortFlags::PORT_PR.bits(), true);
-                while port.portsc.readf(port::PortFlags::PORT_PR.bits()) {
-                    //while ! port.flags().contains(port::PortFlags::PORT_PRC) {
-                    if instant.elapsed().as_secs() >= 1 {
-                        warn!("timeout");
-                        break;
-                    }
-                    std::thread::yield_now();
-                }
+            for i in 0..num_ports {
+               match self.supported_protocol(i as u8)
+               {
+                   None => {
+                       warn!("No supported protocol detected for port {} with XHCI index {}", i, i + 1)
+                   }
+                   Some(protocol) => {
+                       if protocol.rev_major() <= 2{
+                           self.reset_port(i);
+                       }
+                   }
+               }
             }
         }
     }
@@ -566,6 +626,8 @@ impl Xhci {
                     0
                 }
             };
+
+
 
             debug!("Slot type: {}", slot_ty);
             debug!("Enabling slot.");
@@ -981,7 +1043,7 @@ impl Xhci {
     }
     pub fn supported_protocol(&self, port: u8) -> Option<&'static SupportedProtoCap> {
         self.supported_protocols_iter()
-            .find(|supp_proto| supp_proto.compat_port_range().contains(&port))
+            .find(|supp_proto| supp_proto.compat_port_range().contains(&(port+ 1))) //Increment by 1, because USB ports index themselves by 1.
     }
     pub fn supported_protocol_speeds(
         &self,
