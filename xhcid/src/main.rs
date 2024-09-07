@@ -161,8 +161,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         .ptr
         .as_ptr() as usize;
 
-    let (irq_file, interrupt_method) = (None, InterruptMethod::Polling);
-    // TODO: fix interrutps: get_int_method(&mut pcid_handle, address);
+    let (irq_file, interrupt_method) = get_int_method(&mut pcid_handle, address);
 
     println!(" + XHCI {}", pci_config.func.display());
 
@@ -181,11 +180,9 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     let hci = Arc::new(Xhci::new(scheme_name, address, interrupt_method, pcid_handle).expect("xhcid: failed to allocate device"));
     xhci::start_irq_reactor(&hci, irq_file);
-    futures::executor::block_on(hci.probe()).expect("xhcid: failed to probe");
-
+    xhci::start_device_enumerator(&hci);
     //let event_queue = RawEventQueue::new().expect("xhcid: failed to create event queue");
-
-    libredox::call::setrens(0, 0).expect("xhcid: failed to enter null namespace");
+    hci.reset_ports();
 
     let todo = Arc::new(Mutex::new(Vec::<Packet>::new()));
     //let todo_futures = Arc::new(Mutex::new(Vec::<Pin<Box<dyn Future<Output = usize> + Send + Sync + 'static>>>::new()));
