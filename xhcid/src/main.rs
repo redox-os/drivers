@@ -10,7 +10,7 @@ use std::pin::Pin;
 use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
 use std::env;
-use std::time::Duration;
+
 use libredox::flag;
 use pcid_interface::{MsiSetFeatureInfo, PciFunctionHandle, PciFeature, PciFeatureInfo, SetFeatureInfo};
 #[cfg(target_arch = "x86_64")]
@@ -25,8 +25,7 @@ use syscall::flag::EventFlags;
 use syscall::scheme::Scheme;
 use syscall::io::Io;
 
-use crate::xhci::{start_device_enumerator, InterruptMethod, Xhci};
-use crate::xhci::InterruptMethod::Polling;
+use crate::xhci::{InterruptMethod, Xhci};
 
 // Declare as pub so that no warnings appear due to parts of the interface code not being used by
 // the driver. Since there's also a dedicated crate for the driver interface, those warnings don't
@@ -136,7 +135,6 @@ fn get_int_method(pcid_handle: &mut PciFunctionHandle, address: usize) -> (Optio
 }
 
 fn main() {
-    std::env::set_var("RUST_BACKTRACE", "full");
     redox_daemon::Daemon::new(daemon).expect("xhcid: failed to daemonize");
 }
 
@@ -152,8 +150,8 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         "usb",
         "host",
         &name,
-        log::LevelFilter::Trace,
-        log::LevelFilter::Trace,
+        log::LevelFilter::Info,
+        log::LevelFilter::Debug,
     );
 
     log::debug!("XHCI PCI CONFIG: {:?}", pci_config);
@@ -163,7 +161,8 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         .ptr
         .as_ptr() as usize;
 
-    let (irq_file, interrupt_method) = (None, InterruptMethod::Polling); //get_int_method(&mut pcid_handle, address);
+    let (irq_file, interrupt_method) = (None, InterruptMethod::Polling);
+    // TODO: fix interrutps: get_int_method(&mut pcid_handle, address);
 
     println!(" + XHCI {}", pci_config.func.display());
 
@@ -182,18 +181,11 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     let hci = Arc::new(Xhci::new(scheme_name, address, interrupt_method, pcid_handle).expect("xhcid: failed to allocate device"));
     xhci::start_irq_reactor(&hci, irq_file);
-
-    // Probe devices that are already plugged in.
-    //futures::executor::block_on(hci.probe()).expect("xhcid: failed to probe");
+    futures::executor::block_on(hci.probe()).expect("xhcid: failed to probe");
 
     //let event_queue = RawEventQueue::new().expect("xhcid: failed to create event queue");
-    //libredox::call::setrens(0, 0).expect("xhcid: failed to enter null namespace");
 
-    // Start monitoring for device attach/detach requests.
-    start_device_enumerator(&hci);
-
-    hci.reset_ports();
-
+    libredox::call::setrens(0, 0).expect("xhcid: failed to enter null namespace");
 
     let todo = Arc::new(Mutex::new(Vec::<Packet>::new()));
     //let todo_futures = Arc::new(Mutex::new(Vec::<Pin<Box<dyn Future<Output = usize> + Send + Sync + 'static>>>::new()));
