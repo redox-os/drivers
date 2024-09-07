@@ -580,13 +580,6 @@ impl Xhci {
             info!("Enabled port {}, which the xHC mapped to {}", i, slot);
 
             let mut input = unsafe { self.alloc_dma_zeroed::<InputContext>()? };
-            let mut ring = match self.address_device(&mut input, i, slot_ty, slot, speed).await {
-                Ok(ok) => ok,
-                Err(err) => {
-                    error!("Failed to spawn driver for port {}: `{}`", i, err);
-                    return Err(err);
-                }
-            };
 
             let mut retry_count = 0;
 
