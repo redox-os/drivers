@@ -1,5 +1,6 @@
 use crate::usb;
 use std::{fmt, mem};
+use log::trace;
 use syscall::io::{Io, Mmio};
 use crate::xhci::trb::TrbType::PortStatusChange;
 use super::context::StreamContextType;
@@ -248,6 +249,7 @@ impl Trb {
     }
 
     pub fn enable_slot(&mut self, slot_type: u8, cycle: bool) {
+        trace!("Enabling slot with type {}", slot_type);
         self.set(
             0,
             0,

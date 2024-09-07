@@ -254,14 +254,11 @@ impl Xhci {
         &self,
         f: F,
     ) -> (Trb, Trb) {
-        {
-            // If ERDP EHB bit is set, clear it before sending command
-            //TODO: find out why this bit is set earlier!
-            let mut run = self.run.lock().unwrap();
-            let mut int = &mut run.ints[0];
-            if int.erdp_low.readf(1 << 3) {
-                int.erdp_low.writef(1 << 3, true);
-            }
+
+        //TODO: find out why this bit is set earlier!
+        if self.interrupt_is_pending(0){
+            warn!("The EHB bit is already set!");
+            self.force_clear_interrupt(0);
         }
 
         let next_event = {
@@ -281,6 +278,7 @@ impl Xhci {
                 EventDoorbell::new(self, 0, 0)
             )
         };
+
 
         let trbs = next_event.await;
         let event_trb = trbs.event_trb;

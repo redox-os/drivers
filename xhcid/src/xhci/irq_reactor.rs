@@ -165,8 +165,10 @@ impl IrqReactor {
         let irq_fd = self.irq_file.as_ref().unwrap().as_raw_fd();
         event_queue.subscribe(irq_fd as usize, 0, event::EventFlags::READ).unwrap();
 
-        let mut event_trb_index = { hci_clone.primary_event_ring.lock().unwrap().ring.next_index() };
+        trace!("IRQ Reactor has created its event queue.");
+        let mut event_trb_index = { 0 };
 
+        trace!("IRQ reactor has grabbed the next index in the event ring.");
         for _event in event_queue {
             trace!("IRQ event queue notified");
             let mut buffer = [0u8; 8];
@@ -190,11 +192,11 @@ impl IrqReactor {
             let mut count = 0;
 
             loop {
+                trace!("count: {}", count);
                 let event_trb = &mut event_ring.ring.trbs[event_trb_index];
 
                 if event_trb.completion_code() == TrbCompletionCode::Invalid as u8 {
                     if count == 0 { warn!("xhci: Received interrupt, but no event was found in the event ring. Ignoring interrupt.") }
-                    // no more events were found, continue the loop
                     return;
                 } else { count += 1 }
 
@@ -205,9 +207,7 @@ impl IrqReactor {
                     hci_clone.event_handler_finished();
                     return;
                 }
-                trace!("Handling requests");
                 self.handle_requests();
-                trace!("Requests handled");
 
                 match event_trb.trb_type() {
                     _ if event_trb.trb_type() == TrbType::PortStatusChange as u8 => {
@@ -215,10 +215,10 @@ impl IrqReactor {
                         self.handle_port_status_change(event_trb.clone())
                     }, //TODO Handle the other unprompted events
                     _ => {
+                        trace!("Received a non-status trb");
                         self.acknowledge(event_trb.clone());
                     }
                 }
-
 
                 event_trb.reserved(false);
 
@@ -226,7 +226,9 @@ impl IrqReactor {
 
                 event_trb_index = event_ring.ring.next_index();
             }
+            trace!("Exited event loop!");
         }
+        trace!("IRQ Reactor has finished handling the interrupt");
     }
 
     /// Handles device attach/detach events as indicated by a PortStatusChange
@@ -444,6 +446,7 @@ impl EventDoorbell {
     pub fn ring(self) {
         trace!("Ring doorbell {} with data {}", self.index, self.data);
         self.dbs.lock().unwrap()[self.index].write(self.data);
+        trace!("Doorbell was rung.");
     }
 }
 
@@ -457,7 +460,7 @@ impl Future for EventTrbFuture {
 
     fn poll(self: Pin<&mut Self>, context: &mut task::Context) -> task::Poll<Self::Output> {
         let this = self.get_mut();
-
+        trace!("Start poll!");
         let message = match this {
             &mut Self::Pending { ref state, ref sender, ref mut doorbell_opt } => match state.message.lock().unwrap().take() {
                 Some(message) => message,
@@ -476,12 +479,12 @@ impl Future for EventTrbFuture {
                     if let Some(doorbell) = doorbell_opt.take() {
                         doorbell.ring();
                     }
-
                     return task::Poll::Pending;
                 }
             }
             &mut Self::Finished => panic!("Polling finished EventTrbFuture again."),
         };
+        trace!("finished!");
         *this = Self::Finished;
         task::Poll::Ready(message)
     }
@@ -540,6 +543,7 @@ impl Xhci {
         }
     }
     pub fn next_command_completion_event_trb(&self, command_ring: &Ring, trb: &Trb, doorbell: EventDoorbell) -> impl Future<Output = NextEventTrb> + Send + Sync + 'static {
+        trace!("Sending command at phys_ptr {:X}", command_ring.trb_phys_ptr(self.cap.ac64(), trb));
         if ! trb.is_command_trb() {
             panic!("Invalid TRB type given to next_command_completion_event_trb(): {} (TRB {:?}. Expected command TRB.", trb.trb_type(), trb)
         }

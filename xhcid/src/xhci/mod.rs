@@ -445,6 +445,10 @@ impl Xhci {
 
         self.op.get_mut().unwrap().set_cie(self.cap.cic());
 
+        Ok(())
+    }
+
+    pub fn reset_ports(& self){
         // Reset ports
         {
             let mut ports = self.ports.lock().unwrap();
@@ -456,7 +460,7 @@ impl Xhci {
 
                 port.portsc.writef(port::PortFlags::PORT_PR.bits(), true);
                 while port.portsc.readf(port::PortFlags::PORT_PR.bits()) {
-                //while ! port.flags().contains(port::PortFlags::PORT_PRC) {
+                    //while ! port.flags().contains(port::PortFlags::PORT_PRC) {
                     if instant.elapsed().as_secs() >= 1 {
                         warn!("timeout");
                         break;
@@ -465,8 +469,6 @@ impl Xhci {
                 }
             }
         }
-
-        Ok(())
     }
 
     pub fn setup_scratchpads(&mut self) -> Result<()> {
@@ -483,12 +485,34 @@ impl Xhci {
         Ok(())
     }
 
+    pub fn force_clear_interrupt(& self, index: usize){
+        {
+            // If ERDP EHB bit is set, clear it before sending command
+            //TODO: find out why this bit is set earlier!
+            let mut run = self.run.lock().unwrap();
+            let mut int = &mut run.ints[index];
+            if int.erdp_low.readf(1 << 3) {
+                int.erdp_low.writef(1 << 3, true);
+            } else {
+                warn!("Attempted to clear the interrupt bit when no interrupt was pending");
+            }
+        }
+    }
+
+    pub fn interrupt_is_pending(&self, index: usize) -> bool
+    {
+        let mut run = self.run.lock().unwrap();
+        let mut int = &mut run.ints[index];
+        int.erdp_low.readf(1 << 3)
+    }
+
     pub async fn enable_port_slot(&self, slot_ty: u8) -> Result<u8> {
         assert_eq!(slot_ty & 0x1F, slot_ty);
 
         let (event_trb, command_trb) =
             self.execute_command(|cmd, cycle| cmd.enable_slot(slot_ty, cycle)).await;
 
+        trace!("Slot is enabled!");
         self::scheme::handle_event_trb("ENABLE_SLOT", &event_trb, &command_trb)?;
         self.event_handler_finished();
 
@@ -616,100 +640,17 @@ impl Xhci {
         Ok(())
     }
 
-    pub async fn probe(&self) -> Result<()> {
-        debug!("XHCI capabilities: {:?}", self.capabilities_iter().collect::<Vec<_>>());
+    pub async fn detach_device(&self, port_number: usize) -> Result<()> {
+        let port_state = self.port_states.get(&port_number);
 
-        let port_count = { self.ports.lock().unwrap().len() };
-
-        for i in 0..port_count {
-            let (data, state, speed, flags) = {
-                let port = &self.ports.lock().unwrap()[i];
-                (port.read(), port.state(), port.speed(), port.flags())
-            };
-            info!(
-                "XHCI Port {}: {:X}, State {}, Speed {}, Flags {:?}",
-                i, data, state, speed, flags
-            );
-
-            if flags.contains(port::PortFlags::PORT_CCS) {
-                let slot_ty = match self.supported_protocol(i as u8) {
-                    Some(protocol) => protocol.proto_slot_ty(),
-                    None => {
-                        warn!("Failed to find supported protocol information for port");
-                        0
-                    }
-                };
-
-                debug!("Slot type: {}", slot_ty);
-                debug!("Enabling slot.");
-                let slot = match self.enable_port_slot(slot_ty).await {
-                    Ok(ok) => ok,
-                    Err(err) => {
-                        error!("Failed to enable slot for port {}: {}", i, err);
-                        continue;
-                    }
-                };
-
-                info!("Enabled port {}, which the xHC mapped to {}", i, slot);
-
-                let mut input = unsafe { self.alloc_dma_zeroed::<InputContext>()? };
-                let mut ring = match self.address_device(&mut input, i, slot_ty, slot, speed).await {
-                    Ok(ok) => ok,
-                    Err(err) => {
-                        error!("Failed to address device for port {}: {}", i, err);
-                        continue;
-                    }
-                };
-                debug!("Addressed device");
-
-                // TODO: Should the descriptors be cached in PortState, or refetched?
-
-                let mut port_state = PortState {
-                    slot,
-                    input_context: Mutex::new(input),
-                    dev_desc: None,
-                    cfg_idx: None,
-                    endpoint_states: std::iter::once((
-                        0,
-                        EndpointState {
-                            transfer: RingOrStreams::Ring(ring),
-                            driver_if_state: EndpIfState::Init,
-                        },
-                    ))
-                    .collect::<BTreeMap<_, _>>(),
-                };
-                self.port_states.insert(i, port_state);
-
-                // Ensure correct packet size is used
-                let dev_desc_8_byte = self.fetch_dev_desc_8_byte(i, slot).await?;
-                {
-                    let mut port_state = self.port_states.get_mut(&i).unwrap();
-
-                    let mut input = port_state.input_context.lock().unwrap();
-
-                    self.update_max_packet_size(&mut *input, slot, dev_desc_8_byte).await?;
-                }
-
-                let dev_desc = self.get_desc(i, slot).await?;
-                self.port_states.get_mut(&i).unwrap().dev_desc = Some(dev_desc);
-
-                {
-                    let mut port_state = self.port_states.get_mut(&i).unwrap();
-
-                    let mut input = port_state.input_context.lock().unwrap();
-                    let dev_desc = port_state.dev_desc.as_ref().unwrap();
-
-                    self.update_default_control_pipe(&mut *input, slot, dev_desc).await?;
-                }
-
-                match self.spawn_drivers(i) {
-                    Ok(()) => (),
-                    Err(err) => {error!("Failed to spawn driver for port {}: `{}`", i, err)},
-                }
-            }
+        if let Some(state) = port_state  {
+            let result = self.disable_port_slot(state.slot).await;
+            self.port_states.remove(&port_number);
+            result
+        } else {
+            warn!("Attempted to detach from port {}, which wasn't previously attached.", port_number);
+            Ok(())
         }
-
-        Ok(())
     }
 
     pub async fn update_max_packet_size(
@@ -923,6 +864,7 @@ impl Xhci {
         // suitable here.
 
         let ps = self.port_states.get(&port).unwrap();
+        trace!("Spawning driver on port: {}", port + 1);
 
         //TODO: support choosing config?
         let config_desc = &ps
@@ -938,6 +880,7 @@ impl Xhci {
                 Error::new(EBADF)
             })?;
 
+        trace!("Got config and device descriptors on port {}", port + 1);
         let drivers_usercfg: &DriversConfig = &DRIVERS_CONFIG;
 
         //TODO: allow spawning on all interfaces (will require fixing port state)

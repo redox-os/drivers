@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 use crossbeam_channel;
 use crossbeam_channel::RecvError;
-use log::{error, info, warn};
+use log::{error, info, trace, warn};
 use crate::xhci::Xhci;
 
 pub enum DeviceEnumerationRequest{
@@ -26,6 +26,7 @@ impl DeviceEnumerator{
     pub fn run(&mut self) {
 
         loop {
+            trace!("Start Device Enumerator Loop");
             let request = match self.request_queue.recv(){
                 Ok(req) => req,
                 Err(err) => {
@@ -45,7 +46,14 @@ impl DeviceEnumerator{
                     }
                 }
                 DeviceEnumerationRequest::Detach(port_num) => {
-                    info!("Device Enumerator received Detach request on port {}", port_num)
+                    info!("Device Enumerator received Detach request on port {}", port_num);
+                    let result = futures::executor::block_on(self.hci.detach_device((port_num - 1) as usize));
+                    match result{
+                        Ok(_) => {},
+                        Err(err) => {
+                            warn!("processing of device detach request failed! Error: {}", err);
+                        }
+                    }
                 }
             }
         }
