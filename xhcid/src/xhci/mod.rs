@@ -642,10 +642,18 @@ impl Xhci {
 
     pub async fn detach_device(&self, port_number: usize) -> Result<()> {
         let port_state = self.port_states.get(&port_number);
+        let mut driver_process = self.drivers.get(&port_number);
 
         if let Some(state) = port_state  {
             let result = self.disable_port_slot(state.slot).await;
             self.port_states.remove(&port_number);
+
+            //TODO handle killing the child process properly. I'm not sure how
+            //to get a mutable reference that I can kill.
+
+            self.drivers.remove(&port_number);
+
+
             result
         } else {
             warn!("Attempted to detach from port {}, which wasn't previously attached.", port_number);
