@@ -587,6 +587,31 @@ impl Xhci {
                     return Err(err);
                 }
             };
+
+            let mut retry_count = 0;
+
+            let mut ring: Ring;
+
+            loop {
+                match self.address_device(&mut input, i, slot_ty, slot, speed).await{
+                    Ok(device_ring) => {
+                        ring = device_ring;
+                        break;
+                    },
+                    Err(err) => {
+                        warn!("Failed to address device for port {}: '{}'", i, err);
+                        if retry_count < 5{
+                            warn!("Retrying...");
+                            retry_count = retry_count + 1;
+                            continue;
+                        } else {
+                            error!("Failed to spawn driver for port {}: `{}`", i, err);
+                            return Err(err)
+                        }
+                    }
+                };
+
+            }
             debug!("Addressed device");
 
             // TODO: Should the descriptors be cached in PortState, or refetched?
