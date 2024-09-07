@@ -196,7 +196,7 @@ pub struct Xhci {
     next_handle: AtomicUsize,
     port_states: CHashMap<usize, PortState>,
 
-    drivers: CHashMap<usize, process::Child>,
+    drivers: CHashMap<usize, Mutex<process::Child>>,
     scheme_name: String,
 
     interrupt_method: InterruptMethod,
@@ -651,6 +651,20 @@ impl Xhci {
             //TODO handle killing the child process properly. I'm not sure how
             //to get a mutable reference that I can kill.
 
+            if let Some(mutex) = driver_process{
+                let mut child = mutex.lock().unwrap();
+
+                match child.kill(){
+                    Ok(_) => {
+                        info!("Killing {:?}", child)
+                    }
+                    Err(_) => {
+                        warn!("Failed to kill the child process!");
+                    }
+                }
+            }
+
+
             self.drivers.remove(&port_number);
 
 
@@ -908,7 +922,7 @@ impl Xhci {
                 } else {
                     "/usr/lib/drivers/".to_owned() + command
                 };
-                let process = process::Command::new(command)
+                let process = Mutex::new(process::Command::new(command)
                     .args(
                         args.into_iter()
                             .map(|arg| {
@@ -921,7 +935,7 @@ impl Xhci {
                     )
                     .stdin(process::Stdio::null())
                     .spawn()
-                    .or(Err(Error::new(ENOENT)))?;
+                    .or(Err(Error::new(ENOENT)))?);
                 self.drivers.insert(port, process);
             } else {
                 warn!("No driver for USB class {}.{}", ifdesc.class, ifdesc.sub_class);
