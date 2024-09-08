@@ -470,15 +470,10 @@ impl Xhci {
                     0
                 }
                 Some(protocol) => {
-                    info!("Found protocol {:?} for port {}", protocol, port);
+                    info!("Found protocol {:?} for port {}", protocol, port + 1);
                     protocol.proto_slot_ty()
                 }
             };
-
-            debug!("Port {} with protocol type {} is in port link state {}",
-                port,
-                slot_type,
-                self.get_pls(port));
         }
     }
     pub fn reset_port(&self, port_num: usize) {

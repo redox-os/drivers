@@ -34,9 +34,10 @@ impl DeviceEnumerator{
                 }
             };
 
+
             match request{
                 DeviceEnumerationRequest::Attach(port_num) => {
-                    info!("Device Enumerator received Attach request on port {}", port_num);
+                    info!("Device Enumerator received Attach request on port {} which is in state {}", port_num - 1, self.hci.get_pls((port_num - 1) as usize));
                     let result = futures::executor::block_on(self.hci.attach_device(port_num - 1));
                     match result{
                         Ok(_) => {}
@@ -46,7 +47,7 @@ impl DeviceEnumerator{
                     }
                 }
                 DeviceEnumerationRequest::Detach(port_num) => {
-                    info!("Device Enumerator received Detach request on port {}", port_num);
+                    info!("Device Enumerator received Detach request on port {} which is in state {}", port_num - 1, self.hci.get_pls((port_num - 1) as usize));
                     let result = futures::executor::block_on(self.hci.detach_device((port_num - 1) as usize));
                     match result{
                         Ok(_) => {},

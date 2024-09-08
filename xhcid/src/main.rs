@@ -150,8 +150,8 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         "usb",
         "host",
         &name,
-        log::LevelFilter::Trace,
-        log::LevelFilter::Trace,
+        log::LevelFilter::Info,
+        log::LevelFilter::Info,
     );
 
     log::debug!("XHCI PCI CONFIG: {:?}", pci_config);

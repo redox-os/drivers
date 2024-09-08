@@ -237,11 +237,11 @@ impl IrqReactor {
         let port_index_result = trb.port_status_change_port_id();
 
         if let Some(port_index) = port_index_result {
-
+            info!("Received a port status change event on port {} which is in state {}", port_index - 1, self.hci.get_pls((port_index - 1) as usize));
             let (num_ports, flags) = {
                 let ports = self.hci.ports.lock().unwrap();
 
-                (ports.len(), ports[port_index as usize].flags())
+                (ports.len(), ports[(port_index - 1) as usize].flags())
             };
 
             if port_index as usize >= num_ports{
