@@ -150,8 +150,8 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         "usb",
         "host",
         &name,
-        log::LevelFilter::Info,
-        log::LevelFilter::Info,
+        log::LevelFilter::Trace,
+        log::LevelFilter::Trace,
     );
 
     log::debug!("XHCI PCI CONFIG: {:?}", pci_config);
@@ -184,7 +184,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     xhci::start_device_enumerator(&hci);
 
     hci.print_pls();
-    hci.reset_ports();
+    //hci.reset_ports();
 
     //let event_queue = RawEventQueue::new().expect("xhcid: failed to create event queue");
 

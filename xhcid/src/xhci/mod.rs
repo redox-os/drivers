@@ -622,6 +622,23 @@ impl Xhci {
                 }
             };
 
+            match self.supported_protocol(i as u8) {
+                None => {
+                    warn!("Failed to find supported protocol information for port");
+                }
+                Some(protocol) => {
+                    if protocol.rev_major() <= 2{
+                        info!("Port {} was detected as a USB2 device. Resetting the port", i);
+                        self.reset_port(i);
+                        info!("Port {} was reset.", i);
+                    } else {
+                        info!("Port {} was detected as a USB3 or newer device. Proceeding with addressing", i);
+                    }
+                }
+            }
+
+
+
 
 
             debug!("Slot type: {}", slot_ty);
