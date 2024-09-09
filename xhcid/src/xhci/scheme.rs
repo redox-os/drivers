@@ -257,13 +257,15 @@ impl Xhci {
 
         //TODO: find out why this bit is set earlier!
         if self.interrupt_is_pending(0){
-            warn!("The EHB bit is already set!");
-            self.force_clear_interrupt(0);
+            //warn!("The EHB bit is already set!");
+            //self.force_clear_interrupt(0);
         }
 
         let next_event = {
             let mut command_ring = self.cmd.lock().unwrap();
             let (cmd_index, cycle) = (command_ring.next_index(), command_ring.cycle);
+
+            info!("Sending command with cycle bit {}", cycle as u8);
 
             {
                 let command_trb = &mut command_ring.trbs[cmd_index];

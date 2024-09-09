@@ -1,5 +1,5 @@
 use std::mem;
-
+use log::debug;
 use syscall::error::Result;
 
 use common::dma::Dma;
@@ -16,9 +16,12 @@ pub struct Ring {
 
 impl Ring {
     pub fn new(ac64: bool, length: usize, link: bool) -> Result<Ring> {
+
+        let trbs = unsafe { Xhci::alloc_dma_zeroed_unsized_raw(ac64, length)? };
+
         Ok(Ring {
             link,
-            trbs: unsafe { Xhci::alloc_dma_zeroed_unsized_raw(ac64, length)? },
+            trbs,
             i: 0,
             cycle: link,
         })
@@ -28,6 +31,10 @@ impl Ring {
         let base = self.trbs.physical() as *const Trb;
         let addr = unsafe { base.offset(self.i as isize) };
         addr as u64 | self.cycle as u64
+    }
+
+    pub fn cycle_bit(&self) -> bool{
+        self.cycle
     }
 
     pub fn next_index(&mut self) -> usize {
@@ -41,6 +48,7 @@ impl Ring {
                 if self.link {
                     let address = self.trbs.physical();
                     self.trbs[i].link(address, true, self.cycle);
+                    debug!("Toggling the cycle bit.");
                     self.cycle = !self.cycle;
                 } else {
                     break;
@@ -50,6 +58,10 @@ impl Ring {
             }
         }
         i
+    }
+
+    pub fn index(&self) -> usize{
+        self.i
     }
 
     pub fn next(&mut self) -> (&mut Trb, bool) {

@@ -166,7 +166,7 @@ impl IrqReactor {
         event_queue.subscribe(irq_fd as usize, 0, event::EventFlags::READ).unwrap();
 
         trace!("IRQ Reactor has created its event queue.");
-        let mut event_trb_index = { 0 };
+        let mut event_trb_index = { hci_clone.primary_event_ring.lock().unwrap().ring.next_index() };
 
         trace!("IRQ reactor has grabbed the next index in the event ring.");
         for _event in event_queue {
@@ -200,7 +200,7 @@ impl IrqReactor {
                     return;
                 } else { count += 1 }
 
-                trace!("Found event TRB type {}: {:?}", event_trb.trb_type(), event_trb);
+                trace!("Found event TRB at index {} with type {} and cycle bit {}: {:?}",event_trb_index, event_trb.trb_type(), event_trb.cycle() as u8, event_trb);
 
                 if self.check_event_ring_full(event_trb.clone()) {
                     info!("Had to resize event TRB, retrying...");
@@ -222,7 +222,16 @@ impl IrqReactor {
 
                 event_trb.reserved(false);
 
+                if self.hci.interrupt_is_pending(0){
+                    debug!("The interrupt bit is still pending.")
+                }
                 self.update_erdp(&*event_ring);
+
+                if self.hci.interrupt_is_pending(0){
+                    debug!("After incrementing the dequeue pointer, the interrupt bit is still pending.")
+                } else {
+                    debug!("The interrupt bit is no longer pending.");
+                }
 
                 event_trb_index = event_ring.ring.next_index();
             }
@@ -239,7 +248,9 @@ impl IrqReactor {
         if let Some(port_index) = port_index_result {
             info!("Received a port status change event on port {} which is in state {}", port_index - 1, self.hci.get_pls((port_index - 1) as usize));
             let (num_ports, flags) = {
+                debug!("Locking the ports to get the port info");
                 let ports = self.hci.ports.lock().unwrap();
+                debug!("The ports were unlocked");
 
                 (ports.len(), ports[(port_index - 1) as usize].flags())
             };
@@ -255,8 +266,14 @@ impl IrqReactor {
 
 
             let request = match flags.contains(port::PortFlags::PORT_CSC){
-                true => DeviceEnumerationRequest::Attach(port_index),
-                false => DeviceEnumerationRequest::Detach(port_index)
+                true => {
+                    info!("Generating a Device Attach request for the Device Enumerator");
+                    DeviceEnumerationRequest::Attach(port_index)
+                },
+                false => {
+                    info!("Generating a Device Detach request for the Device Enumerator");
+                    DeviceEnumerationRequest::Detach(port_index)
+                }
             };
 
             self.device_enumerator_sender.send(request).expect(

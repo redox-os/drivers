@@ -200,7 +200,7 @@ fn main(args: Args) {
         _ => log::LevelFilter::Trace,
     };
 
-    common::setup_logging("bus", "pci", "pcid", log_level, log::LevelFilter::Trace);
+    //common::setup_logging("bus", "pci", "pcid", log_level, log::LevelFilter::Trace);
 
     redox_daemon::Daemon::new(move |daemon| main_inner(config, daemon)).unwrap();
 }

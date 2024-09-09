@@ -45,4 +45,6 @@ impl EventRing {
     pub fn erstba(&self) -> u64 {
         self.ste.physical() as u64
     }
+
+    pub fn cycle(&self) -> bool {self.ring.cycle_bit()}
 }

@@ -399,6 +399,10 @@ impl Trb {
         );
     }
 
+    pub fn cycle(&self) -> bool {
+        self.control.readf(0x01)
+    }
+
     pub fn status(&mut self, interrupter: u16, input: bool, ioc: bool, ch: bool, ent: bool, cycle: bool) {
         self.set(
             0,

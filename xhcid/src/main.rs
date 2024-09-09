@@ -49,67 +49,67 @@ fn get_int_method(pcid_handle: &mut PciFunctionHandle, bar0_address: usize) -> (
     let has_msi = all_pci_features.iter().any(|feature| feature.is_msi());
     let has_msix = all_pci_features.iter().any(|feature| feature.is_msix());
 
-    if has_msi && !has_msix {
-        let mut capability = match pcid_handle.feature_info(PciFeature::Msi).expect("xhcid: failed to retrieve the MSI capability structure from pcid") {
-            PciFeatureInfo::Msi(s) => s,
-            PciFeatureInfo::MsiX(_) => panic!(),
-        };
-        // TODO: Allow allocation of up to 32 vectors.
-
-        // TODO: Find a way to abstract this away, potantially as a helper module for
-        // pcid_interface, so that this can be shared between nvmed, xhcid, ixgebd, etc..
-
-        let destination_id = read_bsp_apic_id().expect("xhcid: failed to read BSP apic id");
-        let (msg_addr_and_data, interrupt_handle) = allocate_single_interrupt_vector_for_msi(destination_id);
-
-        let set_feature_info = MsiSetFeatureInfo {
-            multi_message_enable: Some(0),
-            message_address_and_data: Some(msg_addr_and_data),
-            mask_bits: None,
-        };
-        pcid_handle.set_feature_info(SetFeatureInfo::Msi(set_feature_info)).expect("xhcid: failed to set feature info");
-
-        pcid_handle.enable_feature(PciFeature::Msi).expect("xhcid: failed to enable MSI");
-        log::debug!("Enabled MSI");
-
-        (Some(interrupt_handle), InterruptMethod::Msi)
-    } else if has_msix {
-        let msix_info = match pcid_handle.feature_info(PciFeature::MsiX).expect("xhcid: failed to retrieve the MSI-X capability structure from pcid") {
-            PciFeatureInfo::Msi(_) => panic!(),
-            PciFeatureInfo::MsiX(s) => s,
-        };
-        msix_info.validate(pci_config.func.bars);
-
-        assert_eq!(msix_info.table_bar, 0);
-        let virt_table_base = (bar0_address + msix_info.table_offset as usize) as *mut MsixTableEntry;
-
-        let mut info = xhci::MappedMsixRegs {
-            virt_table_base: NonNull::new(virt_table_base).unwrap(),
-            info: msix_info,
-        };
-
-        // Allocate one msi vector.
-
-        let method = {
-            // primary interrupter
-            let k = 0;
-
-            assert_eq!(std::mem::size_of::<MsixTableEntry>(), 16);
-            let table_entry_pointer = info.table_entry_pointer(k);
-
-            let destination_id = read_bsp_apic_id().expect("xhcid: failed to read BSP apic id");
-            let (msg_addr_and_data, interrupt_handle) = allocate_single_interrupt_vector_for_msi(destination_id);
-            table_entry_pointer.write_addr_and_data(msg_addr_and_data);
-            table_entry_pointer.unmask();
-
-            (Some(interrupt_handle), InterruptMethod::MsiX(Mutex::new(info)))
-        };
-
-        pcid_handle.enable_feature(PciFeature::MsiX).expect("xhcid: failed to enable MSI-X");
-        log::debug!("Enabled MSI-X");
-
-        method
-    } else if let Some(irq) = pci_config.func.legacy_interrupt_line {
+    //if has_msi && !has_msix {
+    //    let mut capability = match pcid_handle.feature_info(PciFeature::Msi).expect("xhcid: failed to retrieve the MSI capability structure from pcid") {
+    //        PciFeatureInfo::Msi(s) => s,
+    //        PciFeatureInfo::MsiX(_) => panic!(),
+    //    };
+    //    // TODO: Allow allocation of up to 32 vectors.
+//
+    //    // TODO: Find a way to abstract this away, potantially as a helper module for
+    //    // pcid_interface, so that this can be shared between nvmed, xhcid, ixgebd, etc..
+//
+    //    let destination_id = read_bsp_apic_id().expect("xhcid: failed to read BSP apic id");
+    //    let (msg_addr_and_data, interrupt_handle) = allocate_single_interrupt_vector_for_msi(destination_id);
+//
+    //    let set_feature_info = MsiSetFeatureInfo {
+    //        multi_message_enable: Some(0),
+    //        message_address_and_data: Some(msg_addr_and_data),
+    //        mask_bits: None,
+    //    };
+    //    pcid_handle.set_feature_info(SetFeatureInfo::Msi(set_feature_info)).expect("xhcid: failed to set feature info");
+//
+    //    pcid_handle.enable_feature(PciFeature::Msi).expect("xhcid: failed to enable MSI");
+    //    log::debug!("Enabled MSI");
+//
+    //    (Some(interrupt_handle), InterruptMethod::Msi)
+    //} else if has_msix {
+    //    let msix_info = match pcid_handle.feature_info(PciFeature::MsiX).expect("xhcid: failed to retrieve the MSI-X capability structure from pcid") {
+    //        PciFeatureInfo::Msi(_) => panic!(),
+    //        PciFeatureInfo::MsiX(s) => s,
+    //    };
+    //    msix_info.validate(pci_config.func.bars);
+//
+    //    assert_eq!(msix_info.table_bar, 0);
+    //    let virt_table_base = (bar0_address + msix_info.table_offset as usize) as *mut MsixTableEntry;
+//
+    //    let mut info = xhci::MappedMsixRegs {
+    //        virt_table_base: NonNull::new(virt_table_base).unwrap(),
+    //        info: msix_info,
+    //    };
+//
+    //    // Allocate one msi vector.
+//
+    //    let method = {
+    //        // primary interrupter
+    //        let k = 0;
+//
+    //        assert_eq!(std::mem::size_of::<MsixTableEntry>(), 16);
+    //        let table_entry_pointer = info.table_entry_pointer(k);
+//
+    //        let destination_id = read_bsp_apic_id().expect("xhcid: failed to read BSP apic id");
+    //        let (msg_addr_and_data, interrupt_handle) = allocate_single_interrupt_vector_for_msi(destination_id);
+    //        table_entry_pointer.write_addr_and_data(msg_addr_and_data);
+    //        table_entry_pointer.unmask();
+//
+    //        (Some(interrupt_handle), InterruptMethod::MsiX(Mutex::new(info)))
+    //    };
+//
+    //    pcid_handle.enable_feature(PciFeature::MsiX).expect("xhcid: failed to enable MSI-X");
+    //    log::debug!("Enabled MSI-X");
+//
+    //    method
+    if let Some(irq) = pci_config.func.legacy_interrupt_line {
         log::debug!("Legacy IRQ {}", irq);
 
         // legacy INTx# interrupt pins.
@@ -161,7 +161,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         .ptr
         .as_ptr() as usize;
 
-    let (irq_file, interrupt_method) = (None, InterruptMethod::Polling);//get_int_method(&mut pcid_handle, address);
+    let (irq_file, interrupt_method) = get_int_method(&mut pcid_handle, address);
     //TODO: Fix interrupts.
 
     println!(" + XHCI {}", pci_config.func.display());
@@ -180,11 +180,13 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     daemon.ready().expect("xhcid: failed to notify parent");
 
     let hci = Arc::new(Xhci::new(scheme_name, address, interrupt_method, pcid_handle).expect("xhcid: failed to allocate device"));
+
+    hci.print_port_capabilities();
+
     xhci::start_irq_reactor(&hci, irq_file);
     xhci::start_device_enumerator(&hci);
 
-    hci.print_pls();
-    //hci.reset_ports();
+    hci.reset_ports();
 
     //let event_queue = RawEventQueue::new().expect("xhcid: failed to create event queue");
 

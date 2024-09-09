@@ -321,7 +321,7 @@ impl Xhci {
         // Create the command ring with 4096 / 16 (TRB size) entries, so that it uses all of the
         // DMA allocation (which is at least a 4k page).
         let entries_per_page = PAGE_SIZE / mem::size_of::<Trb>();
-        let cmd = Ring::new(cap.ac64(), entries_per_page, true)?;
+        let cmd = Ring::new(cap.ac64(), entries_per_page, false)?;
 
         let (irq_reactor_sender, irq_reactor_receiver) = crossbeam_channel::unbounded();
 
@@ -439,7 +439,7 @@ impl Xhci {
 
         // Ring command doorbell
         debug!("Ringing command doorbell.");
-        self.dbs.lock().unwrap()[0].write(0);
+        //self.dbs.lock().unwrap()[0].write(0);
 
         info!("XHCI initialized.");
 
@@ -455,7 +455,7 @@ impl Xhci {
         (state >> 5) & 4
     }
 
-    pub fn print_pls(&self) {
+    pub fn print_port_capabilities(&self) {
         let len;
         {
             let mut ports = self.ports.lock().unwrap();
@@ -464,14 +464,12 @@ impl Xhci {
 
 
         for port in 0..len{
-            let slot_type = match self.supported_protocol(port as u8){
+            match self.supported_protocol(port as u8){
                 None => {
                     warn!("No detected supported protocol for port {}", port);
-                    0
                 }
                 Some(protocol) => {
-                    info!("Found protocol {:?} for port {}", protocol, port + 1);
-                    protocol.proto_slot_ty()
+                    info!("Port {} is a USB {}.{} port with slot type {}", port + 1, protocol.rev_major(), protocol.rev_minor(), protocol.proto_slot_ty());
                 }
             };
         }
@@ -540,12 +538,19 @@ impl Xhci {
         Ok(())
     }
 
+
+
     pub fn force_clear_interrupt(& self, index: usize){
         {
             // If ERDP EHB bit is set, clear it before sending command
             //TODO: find out why this bit is set earlier!
             let mut run = self.run.lock().unwrap();
             let mut int = &mut run.ints[index];
+
+            //If we clear the IP flag, we MUST clear EINT before we clear IP.
+            //Otherwise, a race condition can cause the transition to be lost.
+            //self.op.lock().unwrap().usb_sts.writef(1 << 3, true);
+
             if int.erdp_low.readf(1 << 3) {
                 int.erdp_low.writef(1 << 3, true);
             } else {
@@ -773,11 +778,12 @@ impl Xhci {
         slot_id: u8,
         dev_desc: usb::DeviceDescriptor8Byte
     ) -> Result<()> {
-        let new_max_packet_size = if dev_desc.major_usb_vers() == 2 {
-            u32::from(dev_desc.packet_size)
-        } else {
-            1u32 << dev_desc.packet_size
-        };
+        let new_max_packet_size = u32::from(dev_desc.packet_size);//if dev_desc.major_usb_vers() == 2 {
+            //u32::from(dev_desc.packet_size)
+        //} else {
+        //    info!("USB 2 device detected. Packet size is: {}", dev_desc.packet_size);
+        //    1u32 << dev_desc.packet_size
+        //};
         let endp_ctx = &mut input_context.device.endpoints[0];
         let mut b = endp_ctx.b.read();
         b &= 0x0000_FFFF;
@@ -803,11 +809,11 @@ impl Xhci {
         input_context.add_context.write(1 << 1);
         input_context.drop_context.write(0);
 
-        let new_max_packet_size = if dev_desc.major_version() == 2 {
-            u32::from(dev_desc.packet_size)
-        } else {
-            1u32 << dev_desc.packet_size
-        };
+        let new_max_packet_size = u32::from(dev_desc.packet_size); //if dev_desc.major_version() == 2 {
+        //    u32::from(dev_desc.packet_size)
+        //} else {
+        //    1u32 << dev_desc.packet_size
+        //};
         let endp_ctx = &mut input_context.device.endpoints[0];
         let mut b = endp_ctx.b.read();
         b &= 0x0000_FFFF;
