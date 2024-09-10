@@ -3,24 +3,24 @@ use std::fs::File;
 use std::future::Future;
 use std::io::prelude::*;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{self, AtomicUsize};
+use std::sync::{Arc, Mutex};
 use std::{io, mem, task, thread};
 
 use std::os::unix::io::AsRawFd;
 
-use crossbeam_channel::{Sender, Receiver};
-use log::{debug, error, info, warn, trace};
+use crossbeam_channel::{Receiver, Sender};
 use futures::Stream;
+use log::{debug, error, info, trace, warn};
 use syscall::Io;
 
 use event::{Event, EventQueue, RawEventQueue};
 
-use super::Xhci;
 use super::doorbell::Doorbell;
+use super::event::EventRing;
 use super::ring::Ring;
 use super::trb::{Trb, TrbCompletionCode, TrbType};
-use super::event::EventRing;
+use super::Xhci;
 
 /// Short-term states (as in, they are removed when the waker is consumed, but probably pushed back
 /// by the future unless it completed).
@@ -65,8 +65,14 @@ impl RingId {
 /// is lost.
 #[derive(Clone, Copy, Debug)]
 pub enum StateKind {
-    CommandCompletion { phys_ptr: u64 },
-    Transfer { first_phys_ptr: u64, last_phys_ptr: u64, ring_id: RingId },
+    CommandCompletion {
+        phys_ptr: u64,
+    },
+    Transfer {
+        first_phys_ptr: u64,
+        last_phys_ptr: u64,
+        ring_id: RingId,
+    },
     Other(TrbType),
 }
 
@@ -80,14 +86,12 @@ impl StateKind {
     }
 }
 
-
 pub struct IrqReactor {
     hci: Arc<Xhci>,
     irq_file: Option<File>,
     receiver: Receiver<NewPendingTrb>,
 
     states: Vec<State>,
-
     // TODO: Since the IRQ reactor is the only part of this driver that gets event TRBs, perhaps
     // the event ring should be owned here?
 }
@@ -111,7 +115,14 @@ impl IrqReactor {
         debug!("Running IRQ reactor in polling mode.");
         let hci_clone = Arc::clone(&self.hci);
 
-        let mut event_trb_index = { hci_clone.primary_event_ring.lock().unwrap().ring.next_index() };
+        let mut event_trb_index = {
+            hci_clone
+                .primary_event_ring
+                .lock()
+                .unwrap()
+                .ring
+                .next_index()
+        };
 
         'trb_loop: loop {
             self.pause();
@@ -146,17 +157,32 @@ impl IrqReactor {
         debug!("Running IRQ reactor with IRQ file and event queue");
 
         let hci_clone = Arc::clone(&self.hci);
-        let mut event_queue = RawEventQueue::new().expect("xhcid irq_reactor: failed to create IRQ event queue");
+        let mut event_queue =
+            RawEventQueue::new().expect("xhcid irq_reactor: failed to create IRQ event queue");
         let irq_fd = self.irq_file.as_ref().unwrap().as_raw_fd();
-        event_queue.subscribe(irq_fd as usize, 0, event::EventFlags::READ).unwrap();
+        event_queue
+            .subscribe(irq_fd as usize, 0, event::EventFlags::READ)
+            .unwrap();
 
-        let mut event_trb_index = { hci_clone.primary_event_ring.lock().unwrap().ring.next_index() };
+        let mut event_trb_index = {
+            hci_clone
+                .primary_event_ring
+                .lock()
+                .unwrap()
+                .ring
+                .next_index()
+        };
 
         for _event in event_queue {
             trace!("IRQ event queue notified");
             let mut buffer = [0u8; 8];
 
-            let _ = self.irq_file.as_mut().unwrap().read(&mut buffer).expect("Failed to read from irq scheme");
+            let _ = self
+                .irq_file
+                .as_mut()
+                .unwrap()
+                .read(&mut buffer)
+                .expect("Failed to read from irq scheme");
 
             if !self.hci.received_irq() {
                 // continue only when an IRQ to this device was received
@@ -178,12 +204,20 @@ impl IrqReactor {
                 let event_trb = &mut event_ring.ring.trbs[event_trb_index];
 
                 if event_trb.completion_code() == TrbCompletionCode::Invalid as u8 {
-                    if count == 0 { warn!("xhci: Received interrupt, but no event was found in the event ring. Ignoring interrupt.") }
+                    if count == 0 {
+                        warn!("xhci: Received interrupt, but no event was found in the event ring. Ignoring interrupt.")
+                    }
                     // no more events were found, continue the loop
                     return;
-                } else { count += 1 }
+                } else {
+                    count += 1
+                }
 
-                trace!("Found event TRB type {}: {:?}", event_trb.trb_type(), event_trb);
+                trace!(
+                    "Found event TRB type {}: {:?}",
+                    event_trb.trb_type(),
+                    event_trb
+                );
 
                 if self.check_event_ring_full(event_trb.clone()) {
                     info!("Had to resize event TRB, retrying...");
@@ -205,15 +239,27 @@ impl IrqReactor {
     fn update_erdp(&self, event_ring: &EventRing) {
         let dequeue_pointer_and_dcs = event_ring.erdp();
         let dequeue_pointer = dequeue_pointer_and_dcs & 0xFFFF_FFFF_FFFF_FFFE;
-        assert_eq!(dequeue_pointer & 0xFFFF_FFFF_FFFF_FFF0, dequeue_pointer, "unaligned ERDP received from primary event ring");
+        assert_eq!(
+            dequeue_pointer & 0xFFFF_FFFF_FFFF_FFF0,
+            dequeue_pointer,
+            "unaligned ERDP received from primary event ring"
+        );
 
         trace!("Updated ERDP to {:#0x}", dequeue_pointer);
 
-        self.hci.run.lock().unwrap().ints[0].erdp_low.write(dequeue_pointer as u32);
-        self.hci.run.lock().unwrap().ints[0].erdp_high.write((dequeue_pointer >> 32) as u32);
+        self.hci.run.lock().unwrap().ints[0]
+            .erdp_low
+            .write(dequeue_pointer as u32);
+        self.hci.run.lock().unwrap().ints[0]
+            .erdp_high
+            .write((dequeue_pointer >> 32) as u32);
     }
     fn handle_requests(&mut self) {
-        self.states.extend(self.receiver.try_iter().inspect(|req| trace!("Received request: {:X?}", req)));
+        self.states.extend(
+            self.receiver
+                .try_iter()
+                .inspect(|req| trace!("Received request: {:X?}", req)),
+        );
     }
     fn acknowledge(&mut self, trb: Trb) {
         //TODO: handle TRBs without an attached state
@@ -225,19 +271,27 @@ impl IrqReactor {
             trace!("ACK STATE {}: {:X?}", index, self.states[index].kind);
 
             match self.states[index].kind {
-                StateKind::CommandCompletion { phys_ptr } if trb.trb_type() == TrbType::CommandCompletion as u8 => {
+                StateKind::CommandCompletion { phys_ptr }
+                    if trb.trb_type() == TrbType::CommandCompletion as u8 =>
+                {
                     if trb.completion_trb_pointer() == Some(phys_ptr) {
                         trace!("Found matching command completion future");
                         let state = self.states.remove(index);
 
                         // Before waking, it's crucial that the command TRB that generated this event
                         // is fetched before removing this event TRB from the queue.
-                        let command_trb = match self.hci.cmd.lock().unwrap().phys_addr_to_entry_mut(self.hci.cap.ac64(), phys_ptr) {
+                        let command_trb = match self
+                            .hci
+                            .cmd
+                            .lock()
+                            .unwrap()
+                            .phys_addr_to_entry_mut(self.hci.cap.ac64(), phys_ptr)
+                        {
                             Some(command_trb) => {
                                 let t = command_trb.clone();
                                 command_trb.reserved(false);
                                 t
-                            },
+                            }
                             None => {
                                 warn!("The xHC supplied a pointer to a command TRB that was outside the known command ring bounds. Ignoring event TRB {:?}.", trb);
                                 continue;
@@ -259,8 +313,16 @@ impl IrqReactor {
                     }
                 }
 
-                StateKind::Transfer { first_phys_ptr, last_phys_ptr, ring_id } if trb.trb_type() == TrbType::Transfer as u8 => {
-                    if let Some(src_trb) = trb.transfer_event_trb_pointer().map(|ptr| self.hci.get_transfer_trb(ptr, ring_id)).flatten() {
+                StateKind::Transfer {
+                    first_phys_ptr,
+                    last_phys_ptr,
+                    ring_id,
+                } if trb.trb_type() == TrbType::Transfer as u8 => {
+                    if let Some(src_trb) = trb
+                        .transfer_event_trb_pointer()
+                        .map(|ptr| self.hci.get_transfer_trb(ptr, ring_id))
+                        .flatten()
+                    {
                         match trb.transfer_event_trb_pointer() {
                             Some(phys_ptr) => {
                                 let matches = if first_phys_ptr <= last_phys_ptr {
@@ -279,7 +341,7 @@ impl IrqReactor {
                                     state.waker.wake();
                                     return;
                                 }
-                            },
+                            }
                             None => {
                                 // Ring Overrun, Ring Underrun, or Virtual Function Event Ring Full.
                                 //
@@ -305,18 +367,23 @@ impl IrqReactor {
                     return;
                 }
 
-                _ => ()
+                _ => (),
             }
 
             index += 1;
         }
-        warn!("Lost event TRB type {}, completion code: {}: {:X?}", trb.trb_type(), trb.completion_code(), trb);
+        warn!(
+            "Lost event TRB type {}, completion code: {}: {:X?}",
+            trb.trb_type(),
+            trb.completion_code(),
+            trb
+        );
     }
     fn acknowledge_failed_transfer_trbs(&mut self, trb: Trb) {
         let mut index = 0;
 
         loop {
-            if ! self.states[index].is_isoch_or_vf {
+            if !self.states[index].is_isoch_or_vf {
                 index += 1;
                 if index >= self.states.len() {
                     break;
@@ -335,7 +402,8 @@ impl IrqReactor {
     /// Full. If so, it grows the event ring. The return value is whether the event ring was full,
     /// and then grown.
     fn check_event_ring_full(&mut self, event_trb: Trb) -> bool {
-        let had_event_ring_full_error =  event_trb.trb_type() == TrbType::HostController as u8 && event_trb.completion_code() == TrbCompletionCode::EventRingFull as u8;
+        let had_event_ring_full_error = event_trb.trb_type() == TrbType::HostController as u8
+            && event_trb.completion_code() == TrbCompletionCode::EventRingFull as u8;
 
         if had_event_ring_full_error {
             self.grow_event_ring();
@@ -386,7 +454,11 @@ impl EventDoorbell {
 }
 
 enum EventTrbFuture {
-    Pending { state: FutureState, sender: Sender<State>, doorbell_opt: Option<EventDoorbell> },
+    Pending {
+        state: FutureState,
+        sender: Sender<State>,
+        doorbell_opt: Option<EventDoorbell>,
+    },
     Finished,
 }
 
@@ -397,18 +469,24 @@ impl Future for EventTrbFuture {
         let this = self.get_mut();
 
         let message = match this {
-            &mut Self::Pending { ref state, ref sender, ref mut doorbell_opt } => match state.message.lock().unwrap().take() {
+            &mut Self::Pending {
+                ref state,
+                ref sender,
+                ref mut doorbell_opt,
+            } => match state.message.lock().unwrap().take() {
                 Some(message) => message,
 
                 None => {
                     // Register state with IRQ reactor
                     trace!("Send state {:X?}", state.state_kind);
-                    sender.send(State {
-                        message: Arc::clone(&state.message),
-                        is_isoch_or_vf: state.is_isoch_or_vf,
-                        kind: state.state_kind,
-                        waker: context.waker().clone(),
-                    }).expect("IRQ reactor thread unexpectedly stopped");
+                    sender
+                        .send(State {
+                            message: Arc::clone(&state.message),
+                            is_isoch_or_vf: state.is_isoch_or_vf,
+                            kind: state.state_kind,
+                            waker: context.waker().clone(),
+                        })
+                        .expect("IRQ reactor thread unexpectedly stopped");
 
                     // Doorbell must be rung after sending state
                     if let Some(doorbell) = doorbell_opt.take() {
@@ -417,7 +495,7 @@ impl Future for EventTrbFuture {
 
                     return task::Poll::Pending;
                 }
-            }
+            },
             &mut Self::Finished => panic!("Polling finished EventTrbFuture again."),
         };
         *this = Self::Finished;
@@ -427,7 +505,8 @@ impl Future for EventTrbFuture {
 
 impl Xhci {
     pub fn get_transfer_trb(&self, paddr: u64, id: RingId) -> Option<Trb> {
-        self.with_ring(id, |ring| ring.phys_addr_to_entry(self.cap.ac64(), paddr)).flatten()
+        self.with_ring(id, |ring| ring.phys_addr_to_entry(self.cap.ac64(), paddr))
+            .flatten()
     }
     pub fn with_ring<T, F: FnOnce(&Ring) -> T>(&self, id: RingId, function: F) -> Option<T> {
         use super::RingOrStreams;
@@ -442,7 +521,11 @@ impl Xhci {
 
         Some(function(ring_ref))
     }
-    pub fn with_ring_mut<T, F: FnOnce(&mut Ring) -> T>(&self, id: RingId, function: F) -> Option<T> {
+    pub fn with_ring_mut<T, F: FnOnce(&mut Ring) -> T>(
+        &self,
+        id: RingId,
+        function: F,
+    ) -> Option<T> {
         use super::RingOrStreams;
 
         let mut slot_state = self.port_states.get_mut(&(id.port as usize))?;
@@ -455,8 +538,15 @@ impl Xhci {
 
         Some(function(ring_ref))
     }
-    pub fn next_transfer_event_trb(&self, ring_id: RingId, ring: &Ring, first_trb: &Trb, last_trb: &Trb, doorbell: EventDoorbell) -> impl Future<Output = NextEventTrb> + Send + Sync + 'static {
-        if ! last_trb.is_transfer_trb() {
+    pub fn next_transfer_event_trb(
+        &self,
+        ring_id: RingId,
+        ring: &Ring,
+        first_trb: &Trb,
+        last_trb: &Trb,
+        doorbell: EventDoorbell,
+    ) -> impl Future<Output = NextEventTrb> + Send + Sync + 'static {
+        if !last_trb.is_transfer_trb() {
             panic!("Invalid TRB type given to next_transfer_event_trb(): {} (TRB {:?}. Expected transfer TRB.", last_trb.trb_type(), last_trb)
         }
 
@@ -477,8 +567,13 @@ impl Xhci {
             doorbell_opt: Some(doorbell),
         }
     }
-    pub fn next_command_completion_event_trb(&self, command_ring: &Ring, trb: &Trb, doorbell: EventDoorbell) -> impl Future<Output = NextEventTrb> + Send + Sync + 'static {
-        if ! trb.is_command_trb() {
+    pub fn next_command_completion_event_trb(
+        &self,
+        command_ring: &Ring,
+        trb: &Trb,
+        doorbell: EventDoorbell,
+    ) -> impl Future<Output = NextEventTrb> + Send + Sync + 'static {
+        if !trb.is_command_trb() {
             panic!("Invalid TRB type given to next_command_completion_event_trb(): {} (TRB {:?}. Expected command TRB.", trb.trb_type(), trb)
         }
         EventTrbFuture::Pending {
@@ -494,7 +589,10 @@ impl Xhci {
             doorbell_opt: Some(doorbell),
         }
     }
-    pub fn next_misc_event_trb(&self, trb_type: TrbType) -> impl Future<Output = NextEventTrb> + Send + Sync + 'static {
+    pub fn next_misc_event_trb(
+        &self,
+        trb_type: TrbType,
+    ) -> impl Future<Output = NextEventTrb> + Send + Sync + 'static {
         let valid_trb_types = [
             TrbType::PortStatusChange as u8,
             TrbType::BandwidthRequest as u8,
@@ -503,7 +601,7 @@ impl Xhci {
             TrbType::DeviceNotification as u8,
             TrbType::MfindexWrap as u8,
         ];
-        if ! valid_trb_types.contains(&(trb_type as u8)) {
+        if !valid_trb_types.contains(&(trb_type as u8)) {
             panic!("Invalid TRB type given to next_misc_event_trb(): {:?}. Only event TRB types that are neither transfer events or command completion events can be used.", trb_type)
         }
         EventTrbFuture::Pending {
@@ -516,5 +614,4 @@ impl Xhci {
             doorbell_opt: None,
         }
     }
-
 }

@@ -1,14 +1,14 @@
 use std::collections::BTreeMap;
 
 use log::debug;
-use syscall::PAGE_SIZE;
 use syscall::error::Result;
 use syscall::io::{Io, Mmio};
+use syscall::PAGE_SIZE;
 
 use common::dma::Dma;
 
-use super::Xhci;
 use super::ring::Ring;
+use super::Xhci;
 
 #[repr(packed)]
 pub struct SlotContext {
@@ -185,17 +185,19 @@ impl ScratchpadBufferArray {
     pub fn new(ac64: bool, entries: u16) -> Result<Self> {
         let mut entries = unsafe { Xhci::alloc_dma_zeroed_unsized_raw(ac64, entries as usize)? };
 
-        let pages = entries.iter_mut().map(|entry: &mut ScratchpadBufferEntry| -> Result<_, syscall::Error> {
-            let dma = unsafe { Dma::<[u8; PAGE_SIZE]>::zeroed()?.assume_init() };
-            assert_eq!(dma.physical() % PAGE_SIZE, 0);
-            entry.set_addr(dma.physical() as u64);
-            Ok(dma)
-        }).collect::<Result<Vec<_>, _>>()?;
+        let pages = entries
+            .iter_mut()
+            .map(
+                |entry: &mut ScratchpadBufferEntry| -> Result<_, syscall::Error> {
+                    let dma = unsafe { Dma::<[u8; PAGE_SIZE]>::zeroed()?.assume_init() };
+                    assert_eq!(dma.physical() % PAGE_SIZE, 0);
+                    entry.set_addr(dma.physical() as u64);
+                    Ok(dma)
+                },
+            )
+            .collect::<Result<Vec<_>, _>>()?;
 
-        Ok(Self {
-            entries,
-            pages,
-        })
+        Ok(Self { entries, pages })
     }
     pub fn register(&self) -> usize {
         self.entries.physical()
