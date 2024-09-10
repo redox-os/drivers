@@ -1,5 +1,6 @@
 use plain::Plain;
 
+///
 #[repr(packed)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct InterfaceDescriptor {

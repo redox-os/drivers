@@ -157,8 +157,7 @@ impl Trb {
     }
 
     pub fn read_data(&self) -> u64 {
-        (self.data_low.read() as u64) |
-        ((self.data_high.read() as u64) << 32)
+        (self.data_low.read() as u64) | ((self.data_high.read() as u64) << 32)
     }
 
     pub fn completion_code(&self) -> u8 {
@@ -168,7 +167,9 @@ impl Trb {
         self.status.read() & TRB_STATUS_COMPLETION_PARAM_MASK
     }
     fn has_completion_trb_pointer(&self) -> bool {
-        if self.completion_code() == TrbCompletionCode::RingUnderrun as u8 || self.completion_code() == TrbCompletionCode::RingOverrun as u8 {
+        if self.completion_code() == TrbCompletionCode::RingUnderrun as u8
+            || self.completion_code() == TrbCompletionCode::RingOverrun as u8
+        {
             false
         } else if self.completion_code() == TrbCompletionCode::VfEventRingFull as u8 {
             false
@@ -245,9 +246,7 @@ impl Trb {
         self.set(
             0,
             0,
-            (u32::from(slot) << 24)
-                | ((TrbType::DisableSlot as u32) << 10)
-                | u32::from(cycle)
+            (u32::from(slot) << 24) | ((TrbType::DisableSlot as u32) << 10) | u32::from(cycle),
         );
     }
 
@@ -382,7 +381,15 @@ impl Trb {
         );
     }
 
-    pub fn status(&mut self, interrupter: u16, input: bool, ioc: bool, ch: bool, ent: bool, cycle: bool) {
+    pub fn status(
+        &mut self,
+        interrupter: u16,
+        input: bool,
+        ioc: bool,
+        ch: bool,
+        ent: bool,
+        cycle: bool,
+    ) {
         self.set(
             0,
             u32::from(interrupter) << 22,

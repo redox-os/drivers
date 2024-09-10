@@ -3,9 +3,9 @@ use syscall::io::{Io, Mmio};
 
 use common::dma::Dma;
 
-use super::Xhci;
 use super::ring::Ring;
 use super::trb::Trb;
+use super::Xhci;
 
 #[repr(packed)]
 pub struct EventRingSte {
@@ -29,8 +29,12 @@ impl EventRing {
             ring: Ring::new(ac64, 256, false)?,
         };
 
-        ring.ste[0].address_low.write(ring.ring.trbs.physical() as u32);
-        ring.ste[0].address_high.write((ring.ring.trbs.physical() as u64 >> 32) as u32);
+        ring.ste[0]
+            .address_low
+            .write(ring.ring.trbs.physical() as u32);
+        ring.ste[0]
+            .address_high
+            .write((ring.ring.trbs.physical() as u64 >> 32) as u32);
         ring.ste[0].size.write(ring.ring.trbs.len() as u16);
 
         Ok(ring)
