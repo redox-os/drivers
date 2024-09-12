@@ -1,64 +1,71 @@
-use std::sync::{Arc, Mutex};
+use crate::xhci::Xhci;
 use crossbeam_channel;
 use crossbeam_channel::RecvError;
 use log::{error, info, trace, warn};
-use crate::xhci::Xhci;
+use std::sync::{Arc, Mutex};
 
-pub enum DeviceEnumerationRequest{
+pub enum DeviceEnumerationRequest {
     Attach(u8),
-    Detach(u8)
+    Detach(u8),
 }
 
-pub struct DeviceEnumerator{
+pub struct DeviceEnumerator {
     hci: Arc<Xhci>,
     request_queue: crossbeam_channel::Receiver<DeviceEnumerationRequest>,
 }
 
-impl DeviceEnumerator{
-    pub fn new(hci: Arc<Xhci>) -> Self{
+impl DeviceEnumerator {
+    pub fn new(hci: Arc<Xhci>) -> Self {
         let request_queue = hci.device_enumerator_receiver.clone();
-        DeviceEnumerator{
-            hci,
-            request_queue
-        }
+        DeviceEnumerator { hci, request_queue }
     }
 
     pub fn run(&mut self) {
-
         loop {
             trace!("Start Device Enumerator Loop");
-            let request = match self.request_queue.recv(){
+            let request = match self.request_queue.recv() {
                 Ok(req) => req,
                 Err(err) => {
                     panic!("Failed to received an enumeration request! error: {}", err)
                 }
             };
 
-            match request{
+            match request {
                 DeviceEnumerationRequest::Attach(port_num) => {
-                    info!("Device Enumerator received Attach request on port {} which is in state {}", port_num - 1, self.hci.get_pls((port_num - 1) as usize));
+                    info!(
+                        "Device Enumerator received Attach request on port {} which is in state {}",
+                        port_num - 1,
+                        self.hci.get_pls((port_num - 1) as usize)
+                    );
                     let result = futures::executor::block_on(self.hci.attach_device(port_num - 1));
-                    match result{
-                        Ok(_) => {info!("Device on port {} was attached", port_num-1);}
+                    match result {
+                        Ok(_) => {
+                            info!("Device on port {} was attached", port_num - 1);
+                        }
                         Err(err) => {
                             warn!("processing of device attach request failed! Error: {}", err);
                         }
                     }
                 }
                 DeviceEnumerationRequest::Detach(port_num) => {
-                    info!("Device Enumerator received Detach request on port {} which is in state {}", port_num - 1, self.hci.get_pls((port_num - 1) as usize));
-                    let result = futures::executor::block_on(self.hci.detach_device((port_num - 1) as usize));
-                    match result{
-                        Ok(_) => {info!("Device on port {} was detached", port_num-1);},
+                    info!(
+                        "Device Enumerator received Detach request on port {} which is in state {}",
+                        port_num - 1,
+                        self.hci.get_pls((port_num - 1) as usize)
+                    );
+                    let result = futures::executor::block_on(
+                        self.hci.detach_device((port_num - 1) as usize),
+                    );
+                    match result {
+                        Ok(_) => {
+                            info!("Device on port {} was detached", port_num - 1);
+                        }
                         Err(err) => {
                             warn!("processing of device detach request failed! Error: {}", err);
                         }
                     }
-
                 }
             }
         }
     }
-
-
 }

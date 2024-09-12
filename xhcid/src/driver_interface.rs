@@ -188,7 +188,8 @@ impl EndpDesc {
                 } else {
                     None
                 }
-            }).flatten()
+            })
+            .flatten()
     }
     pub fn isoch_mult(&self, lec: bool) -> u8 {
         if !lec && self.is_isoch() {
@@ -439,11 +440,17 @@ impl XhciClientHandle {
         Ok(string.parse()?)
     }
     pub fn open_endpoint_ctl(&self, num: u8) -> result::Result<File, XhciClientHandleError> {
-        let path = format!("/scheme/{}/port{}/endpoints/{}/ctl", self.scheme, self.port, num);
+        let path = format!(
+            "/scheme/{}/port{}/endpoints/{}/ctl",
+            self.scheme, self.port, num
+        );
         Ok(File::open(path)?)
     }
     pub fn open_endpoint_data(&self, num: u8) -> result::Result<File, XhciClientHandleError> {
-        let path = format!("/scheme/{}/port{}/endpoints/{}/data", self.scheme, self.port, num);
+        let path = format!(
+            "/scheme/{}/port{}/endpoints/{}/data",
+            self.scheme, self.port, num
+        );
         Ok(File::open(path)?)
     }
     pub fn open_endpoint(&self, num: u8) -> result::Result<XhciEndpHandle, XhciClientHandleError> {
@@ -653,9 +660,10 @@ impl XhciEndpHandle {
         let res = self.ctl_res()?;
 
         match res {
-            XhciEndpCtlRes::TransferResult(PortTransferStatus { kind: PortTransferStatusKind::Success, .. })
-                if bytes_read != expected_len as usize =>
-            {
+            XhciEndpCtlRes::TransferResult(PortTransferStatus {
+                kind: PortTransferStatusKind::Success,
+                ..
+            }) if bytes_read != expected_len as usize => {
                 Err(Invalid("no short packet, but fewer bytes were read/written").into())
             }
             XhciEndpCtlRes::TransferResult(r) => Ok(r),

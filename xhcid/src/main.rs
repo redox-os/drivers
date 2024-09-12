@@ -2,6 +2,7 @@
 extern crate bitflags;
 
 use std::convert::{TryFrom, TryInto};
+use std::env;
 use std::fs::{self, File};
 use std::future::Future;
 use std::io::{self, Read, Write};
@@ -9,21 +10,22 @@ use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::pin::Pin;
 use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
-use std::env;
 
 use libredox::flag;
-use pcid_interface::{MsiSetFeatureInfo, PciFunctionHandle, PciFeature, PciFeatureInfo, SetFeatureInfo};
 #[cfg(target_arch = "x86_64")]
 use pcid_interface::irq_helpers::allocate_single_interrupt_vector_for_msi;
 use pcid_interface::irq_helpers::read_bsp_apic_id;
 use pcid_interface::msi::MsixTableEntry;
+use pcid_interface::{
+    MsiSetFeatureInfo, PciFeature, PciFeatureInfo, PciFunctionHandle, SetFeatureInfo,
+};
 
 use event::{Event, RawEventQueue};
 use syscall::data::Packet;
 use syscall::error::EWOULDBLOCK;
 use syscall::flag::EventFlags;
-use syscall::scheme::Scheme;
 use syscall::io::Io;
+use syscall::scheme::Scheme;
 
 use crate::xhci::{InterruptMethod, Xhci};
 
@@ -40,10 +42,15 @@ async fn handle_packet(hci: Arc<Xhci>, packet: Packet) -> Packet {
 }
 
 #[cfg(target_arch = "x86_64")]
-fn get_int_method(pcid_handle: &mut PciFunctionHandle, bar0_address: usize) -> (Option<File>, InterruptMethod) {
+fn get_int_method(
+    pcid_handle: &mut PciFunctionHandle,
+    bar0_address: usize,
+) -> (Option<File>, InterruptMethod) {
     let pci_config = pcid_handle.config();
 
-    let all_pci_features = pcid_handle.fetch_all_features().expect("xhcid: failed to fetch pci features");
+    let all_pci_features = pcid_handle
+        .fetch_all_features()
+        .expect("xhcid: failed to fetch pci features");
     log::debug!("XHCI PCI FEATURES: {:?}", all_pci_features);
 
     let has_msi = all_pci_features.iter().any(|feature| feature.is_msi());
@@ -55,23 +62,23 @@ fn get_int_method(pcid_handle: &mut PciFunctionHandle, bar0_address: usize) -> (
     //        PciFeatureInfo::MsiX(_) => panic!(),
     //    };
     //    // TODO: Allow allocation of up to 32 vectors.
-//
+    //
     //    // TODO: Find a way to abstract this away, potantially as a helper module for
     //    // pcid_interface, so that this can be shared between nvmed, xhcid, ixgebd, etc..
-//
+    //
     //    let destination_id = read_bsp_apic_id().expect("xhcid: failed to read BSP apic id");
     //    let (msg_addr_and_data, interrupt_handle) = allocate_single_interrupt_vector_for_msi(destination_id);
-//
+    //
     //    let set_feature_info = MsiSetFeatureInfo {
     //        multi_message_enable: Some(0),
     //        message_address_and_data: Some(msg_addr_and_data),
     //        mask_bits: None,
     //    };
     //    pcid_handle.set_feature_info(SetFeatureInfo::Msi(set_feature_info)).expect("xhcid: failed to set feature info");
-//
+    //
     //    pcid_handle.enable_feature(PciFeature::Msi).expect("xhcid: failed to enable MSI");
     //    log::debug!("Enabled MSI");
-//
+    //
     //    (Some(interrupt_handle), InterruptMethod::Msi)
     //} else if has_msix {
     //    let msix_info = match pcid_handle.feature_info(PciFeature::MsiX).expect("xhcid: failed to retrieve the MSI-X capability structure from pcid") {
@@ -79,35 +86,35 @@ fn get_int_method(pcid_handle: &mut PciFunctionHandle, bar0_address: usize) -> (
     //        PciFeatureInfo::MsiX(s) => s,
     //    };
     //    msix_info.validate(pci_config.func.bars);
-//
+    //
     //    assert_eq!(msix_info.table_bar, 0);
     //    let virt_table_base = (bar0_address + msix_info.table_offset as usize) as *mut MsixTableEntry;
-//
+    //
     //    let mut info = xhci::MappedMsixRegs {
     //        virt_table_base: NonNull::new(virt_table_base).unwrap(),
     //        info: msix_info,
     //    };
-//
+    //
     //    // Allocate one msi vector.
-//
+    //
     //    let method = {
     //        // primary interrupter
     //        let k = 0;
-//
+    //
     //        assert_eq!(std::mem::size_of::<MsixTableEntry>(), 16);
     //        let table_entry_pointer = info.table_entry_pointer(k);
-//
+    //
     //        let destination_id = read_bsp_apic_id().expect("xhcid: failed to read BSP apic id");
     //        let (msg_addr_and_data, interrupt_handle) = allocate_single_interrupt_vector_for_msi(destination_id);
     //        table_entry_pointer.write_addr_and_data(msg_addr_and_data);
     //        table_entry_pointer.unmask();
-//
+    //
     //        (Some(interrupt_handle), InterruptMethod::MsiX(Mutex::new(info)))
     //    };
-//
+    //
     //    pcid_handle.enable_feature(PciFeature::MsiX).expect("xhcid: failed to enable MSI-X");
     //    log::debug!("Enabled MSI-X");
-//
+    //
     //    method
     if let Some(irq) = pci_config.func.legacy_interrupt_line {
         log::debug!("Legacy IRQ {}", irq);
@@ -122,7 +129,10 @@ fn get_int_method(pcid_handle: &mut PciFunctionHandle, bar0_address: usize) -> (
 
 //TODO: MSI on non-x86_64?
 #[cfg(not(target_arch = "x86_64"))]
-fn get_int_method(pcid_handle: &mut PciFunctionHandle, address: usize) -> (Option<File>, InterruptMethod) {
+fn get_int_method(
+    pcid_handle: &mut PciFunctionHandle,
+    address: usize,
+) -> (Option<File>, InterruptMethod) {
     let pci_config = pcid_handle.config();
 
     if let Some(irq) = pci_config.func.legacy_interrupt_line {
@@ -167,19 +177,17 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     println!(" + XHCI {}", pci_config.func.display());
 
     let scheme_name = format!("usb.{}", name);
-    let socket_fd = libredox::call::open(
-        format!(":{}", scheme_name),
-        flag::O_RDWR | flag::O_CREAT,
-        0,
-    )
-    .expect("xhcid: failed to create usb scheme");
-    let socket = Arc::new(Mutex::new(unsafe {
-        File::from_raw_fd(socket_fd as RawFd)
-    }));
+    let socket_fd =
+        libredox::call::open(format!(":{}", scheme_name), flag::O_RDWR | flag::O_CREAT, 0)
+            .expect("xhcid: failed to create usb scheme");
+    let socket = Arc::new(Mutex::new(unsafe { File::from_raw_fd(socket_fd as RawFd) }));
 
     daemon.ready().expect("xhcid: failed to notify parent");
 
-    let hci = Arc::new(Xhci::new(scheme_name, address, interrupt_method, pcid_handle).expect("xhcid: failed to allocate device"));
+    let hci = Arc::new(
+        Xhci::new(scheme_name, address, interrupt_method, pcid_handle)
+            .expect("xhcid: failed to allocate device"),
+    );
 
     hci.print_port_capabilities();
 
@@ -215,7 +223,9 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
             packet.a = a;
             todo.push(packet);
         } else {
-            socket.write(&packet).expect("xhcid failed to write to socket");
+            socket
+                .write(&packet)
+                .expect("xhcid failed to write to socket");
         }
     }
 

@@ -6,7 +6,7 @@ use std::{cmp, fmt, io, mem, path, str};
 
 use common::dma::Dma;
 use futures::executor::block_on;
-use log::{debug, error, info, warn, trace};
+use log::{debug, error, info, trace, warn};
 use serde::{Deserialize, Serialize};
 use smallvec::{smallvec, SmallVec};
 
@@ -115,14 +115,24 @@ impl fmt::Debug for PortReqState {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Self::Init => f.debug_struct("PortReqState::Init").finish(),
-            Self::WaitingForDeviceBytes(ref dma, setup) => f.debug_tuple("PortReqState::WaitingForDeviceBytes").field(&DmaSliceDbg(dma)).field(&setup).finish(),
-            Self::WaitingForHostBytes(ref dma, setup) => f.debug_tuple("PortReqState::WaitingForHostBytes").field(&DmaSliceDbg(dma)).field(&setup).finish(),
-            Self::TmpSetup(setup) => f.debug_tuple("PortReqState::TmpSetup").field(&setup).finish(),
+            Self::WaitingForDeviceBytes(ref dma, setup) => f
+                .debug_tuple("PortReqState::WaitingForDeviceBytes")
+                .field(&DmaSliceDbg(dma))
+                .field(&setup)
+                .finish(),
+            Self::WaitingForHostBytes(ref dma, setup) => f
+                .debug_tuple("PortReqState::WaitingForHostBytes")
+                .field(&DmaSliceDbg(dma))
+                .field(&setup)
+                .finish(),
+            Self::TmpSetup(setup) => f
+                .debug_tuple("PortReqState::TmpSetup")
+                .field(&setup)
+                .finish(),
             Self::Tmp => f.debug_struct("PortReqState::Init").finish(),
         }
     }
 }
-
 
 // TODO: Even though the driver interface descriptors are originally intended for JSON, they should suffice... for
 // now.
@@ -233,7 +243,10 @@ impl Xhci {
             alternate_setting: desc.alternate_setting,
             class: desc.class,
             interface_str: if desc.interface_str > 0 {
-                Some(self.fetch_string_desc(port_id, slot, desc.interface_str).await?)
+                Some(
+                    self.fetch_string_desc(port_id, slot, desc.interface_str)
+                        .await?,
+                )
             } else {
                 None
             },
@@ -250,13 +263,9 @@ impl Xhci {
     ///
     /// # Locking
     /// This function will lock `Xhci::cmd` and `Xhci::dbs`.
-    pub async fn execute_command<F: FnOnce(&mut Trb, bool)>(
-        &self,
-        f: F,
-    ) -> (Trb, Trb) {
-
+    pub async fn execute_command<F: FnOnce(&mut Trb, bool)>(&self, f: F) -> (Trb, Trb) {
         //TODO: find out why this bit is set earlier!
-        if self.interrupt_is_pending(0){
+        if self.interrupt_is_pending(0) {
             //warn!("The EHB bit is already set!");
             //self.force_clear_interrupt(0);
         }
@@ -277,16 +286,19 @@ impl Xhci {
             self.next_command_completion_event_trb(
                 &*command_ring,
                 command_trb,
-                EventDoorbell::new(self, 0, 0)
+                EventDoorbell::new(self, 0, 0),
             )
         };
-
 
         let trbs = next_event.await;
         let event_trb = trbs.event_trb;
         let command_trb = trbs.src_trb.expect("Command completion event TRBs shall always have a valid pointer to a valid source command TRB");
 
-        assert_eq!(event_trb.trb_type(), TrbType::CommandCompletion as u8, "The IRQ reactor (or the xHC) gave an invalid event TRB");
+        assert_eq!(
+            event_trb.trb_type(),
+            TrbType::CommandCompletion as u8,
+            "The IRQ reactor (or the xHC) gave an invalid event TRB"
+        );
 
         (event_trb, command_trb)
     }
@@ -307,11 +319,10 @@ impl Xhci {
 
             let mut endpoint_state = port_state
                 .endpoint_states
-                .get_mut(&0).ok_or(Error::new(EIO))?;
-
-            let ring = endpoint_state
-                .ring()
+                .get_mut(&0)
                 .ok_or(Error::new(EIO))?;
+
+            let ring = endpoint_state.ring().ok_or(Error::new(EIO))?;
 
             let first_index = ring.next_index();
             let (cmd, cycle) = (&mut ring.trbs[first_index], ring.cycle);
@@ -343,7 +354,7 @@ impl Xhci {
                 ring,
                 &ring.trbs[first_index],
                 &ring.trbs[last_index],
-                EventDoorbell::new(self, usize::from(slot), Self::def_control_endp_doorbell())
+                EventDoorbell::new(self, usize::from(slot), Self::def_control_endp_doorbell()),
             )
         };
 
@@ -378,20 +389,14 @@ impl Xhci {
         let slot = port_state.slot;
 
         let (doorbell_data_stream, doorbell_data_no_stream) = {
-            let endp_desc = port_state.get_endp_desc(endp_idx).ok_or(Error::new(EBADFD))?;
+            let endp_desc = port_state
+                .get_endp_desc(endp_idx)
+                .ok_or(Error::new(EBADFD))?;
 
             //TODO: clean this up
             (
-                Self::endp_doorbell(
-                    endp_num,
-                    endp_desc,
-                    stream_id,
-                ),
-                Self::endp_doorbell(
-                    endp_num,
-                    endp_desc,
-                    0,
-                ),
+                Self::endp_doorbell(endp_num, endp_desc, stream_id),
+                Self::endp_doorbell(endp_num, endp_desc, 0),
             )
         };
 
@@ -408,10 +413,13 @@ impl Xhci {
             EndpointState {
                 transfer: super::RingOrStreams::Streams(stream_ctx_array),
                 ..
-            } => (true, stream_ctx_array
-                .rings
-                .get_mut(&1)
-                .ok_or(Error::new(EBADF))?),
+            } => (
+                true,
+                stream_ctx_array
+                    .rings
+                    .get_mut(&1)
+                    .ok_or(Error::new(EBADF))?,
+            ),
         };
 
         let future = loop {
@@ -421,16 +429,24 @@ impl Xhci {
             match d(trb, cycle) {
                 ControlFlow::Break => {
                     break self.next_transfer_event_trb(
-                        super::irq_reactor::RingId { port: port_num as u8, endpoint_num: endp_num, stream_id },
+                        super::irq_reactor::RingId {
+                            port: port_num as u8,
+                            endpoint_num: endp_num,
+                            stream_id,
+                        },
                         ring,
                         //TODO: find first TRB
                         &ring.trbs[last_index],
                         &ring.trbs[last_index],
-                        EventDoorbell::new(self, usize::from(slot), if has_streams {
-                            doorbell_data_stream
-                        } else {
-                            doorbell_data_no_stream
-                        }),
+                        EventDoorbell::new(
+                            self,
+                            usize::from(slot),
+                            if has_streams {
+                                doorbell_data_stream
+                            } else {
+                                doorbell_data_no_stream
+                            },
+                        ),
                     );
                 }
                 ControlFlow::Continue => continue,
@@ -449,9 +465,7 @@ impl Xhci {
         if event_trb.completion_code() != TrbCompletionCode::ShortPacket as u8
             && event_trb.transfer_length() != 0
         {
-            error!(
-                "Event trb didn't yield a short packet, but some bytes were not transferred"
-            );
+            error!("Event trb didn't yield a short packet, but some bytes were not transferred");
             return Err(Error::new(EIO));
         }
 
@@ -469,13 +483,15 @@ impl Xhci {
             TransferKind::NoData,
             "DEVICE_REQ_NO_DATA",
             |_, _| ControlFlow::Break,
-        ).await?;
+        )
+        .await?;
         Ok(())
     }
 
     async fn set_configuration(&self, port: usize, config: u8) -> Result<()> {
         debug!("Setting configuration value {} to port {}", config, port);
-        self.device_req_no_data(port, usb::Setup::set_configuration(config)).await
+        self.device_req_no_data(port, usb::Setup::set_configuration(config))
+            .await
     }
 
     async fn set_interface(
@@ -484,18 +500,24 @@ impl Xhci {
         interface_num: u8,
         alternate_setting: u8,
     ) -> Result<()> {
-        debug!("Setting interface value {} (alternate setting {}) to port {}", interface_num, alternate_setting, port);
+        debug!(
+            "Setting interface value {} (alternate setting {}) to port {}",
+            interface_num, alternate_setting, port
+        );
         self.device_req_no_data(
             port,
             usb::Setup::set_interface(interface_num, alternate_setting),
-        ).await
+        )
+        .await
     }
 
     async fn reset_endpoint(&self, port_num: usize, endp_num: u8, tsp: bool) -> Result<()> {
         let endp_idx = endp_num.checked_sub(1).ok_or(Error::new(EIO))?;
         let port_state = self.port_states.get(&port_num).ok_or(Error::new(EBADFD))?;
 
-        let endp_desc = port_state.get_endp_desc(endp_idx).ok_or(Error::new(EBADFD))?;
+        let endp_desc = port_state
+            .get_endp_desc(endp_idx)
+            .ok_or(Error::new(EBADFD))?;
         let endp_num_xhc = Self::endp_num_to_dci(endp_num, endp_desc);
 
         let slot = self
@@ -504,9 +526,11 @@ impl Xhci {
             .ok_or(Error::new(EBADF))?
             .slot;
 
-        let (event_trb, command_trb) = self.execute_command(|trb, cycle| {
-            trb.reset_endpoint(slot, endp_num_xhc, tsp, cycle);
-        }).await;
+        let (event_trb, command_trb) = self
+            .execute_command(|trb, cycle| {
+                trb.reset_endpoint(slot, endp_num_xhc, tsp, cycle);
+            })
+            .await;
         self.event_handler_finished();
 
         handle_event_trb("RESET_ENDPOINT", &event_trb, &command_trb)
@@ -589,14 +613,20 @@ impl Xhci {
     fn port_state(&self, port: usize) -> Result<chashmap::ReadGuard<'_, usize, super::PortState>> {
         self.port_states.get(&port).ok_or(Error::new(EBADF))
     }
-    fn port_state_mut(&self, port: usize) -> Result<chashmap::WriteGuard<'_, usize, super::PortState>> {
+    fn port_state_mut(
+        &self,
+        port: usize,
+    ) -> Result<chashmap::WriteGuard<'_, usize, super::PortState>> {
         self.port_states.get_mut(&port).ok_or(Error::new(EBADF))
     }
     async fn configure_endpoints(&self, port: usize, json_buf: &[u8]) -> Result<()> {
         let mut req: ConfigureEndpointsReq =
             serde_json::from_slice(json_buf).or(Err(Error::new(EBADMSG)))?;
 
-        info!("Running configure endpoints command, at port {}, request: {:?}", port, req);
+        info!(
+            "Running configure endpoints command, at port {}, request: {:?}",
+            port, req
+        );
 
         if req.interface_desc.is_some() != req.alternate_setting.is_some() {
             return Err(Error::new(EBADMSG));
@@ -607,7 +637,13 @@ impl Xhci {
 
             port_state.cfg_idx = Some(req.config_desc);
 
-            let config_desc = port_state.dev_desc.as_ref().unwrap().config_descs.get(usize::from(req.config_desc)).ok_or(Error::new(EBADFD))?;
+            let config_desc = port_state
+                .dev_desc
+                .as_ref()
+                .unwrap()
+                .config_descs
+                .get(usize::from(req.config_desc))
+                .ok_or(Error::new(EBADFD))?;
 
             //TODO: USE ENDPOINTS FROM ALL INTERFACES
             let mut endp_desc_count = 0;
@@ -638,9 +674,8 @@ impl Xhci {
         let log_max_psa_size = self.cap.max_psa_size();
 
         let port_speed_id = self.ports.lock().unwrap()[port].speed();
-        let speed_id: &ProtocolSpeed = self
-            .lookup_psiv(port as u8, port_speed_id)
-            .ok_or_else(|| {
+        let speed_id: &ProtocolSpeed =
+            self.lookup_psiv(port as u8, port_speed_id).ok_or_else(|| {
                 warn!("no speed_id");
                 Error::new(EIO)
             })?;
@@ -732,8 +767,8 @@ impl Xhci {
                     warn!("trying to use control endpoint");
                     return Err(Error::new(EIO)); // only endpoint zero is of type control, and is configured separately with the address device command.
                 }
-                EndpointTy::Bulk | EndpointTy::Isoch => 3072,    // 3 KiB
-                EndpointTy::Interrupt => 1024,                   // 1 KiB
+                EndpointTy::Bulk | EndpointTy::Isoch => 3072, // 3 KiB
+                EndpointTy::Interrupt => 1024,                // 1 KiB
             };
 
             assert_eq!(ep_ty & 0x7, ep_ty);
@@ -742,7 +777,8 @@ impl Xhci {
             assert_ne!(ep_ty, 0); // 0 means invalid.
 
             let ring_ptr = if usb_log_max_streams.is_some() {
-                let mut array = StreamContextArray::new(self.cap.ac64(), 1 << (primary_streams + 1))?;
+                let mut array =
+                    StreamContextArray::new(self.cap.ac64(), 1 << (primary_streams + 1))?;
 
                 // TODO: Use as many stream rings as needed.
                 array.add_ring(self.cap.ac64(), 1, true)?;
@@ -785,10 +821,14 @@ impl Xhci {
             let mut input_context = port_state.input_context.lock().unwrap();
             input_context.add_context.writef(1 << endp_num_xhc, true);
 
-            let endp_ctx = input_context.device.endpoints.get_mut(endp_num_xhc as usize - 1).ok_or_else(|| {
-                warn!("failed to find endpoint {}", endp_num_xhc - 1);
-                Error::new(EIO)
-            })?;
+            let endp_ctx = input_context
+                .device
+                .endpoints
+                .get_mut(endp_num_xhc as usize - 1)
+                .ok_or_else(|| {
+                    warn!("failed to find endpoint {}", endp_num_xhc - 1);
+                    Error::new(EIO)
+                })?;
 
             endp_ctx.a.write(
                 u32::from(mult) << 8
@@ -818,9 +858,11 @@ impl Xhci {
             let slot = port_state.slot;
             let input_context_physical = port_state.input_context.lock().unwrap().physical();
 
-            let (event_trb, command_trb) = self.execute_command(|trb, cycle| {
-                trb.configure_endpoint(slot, input_context_physical, cycle)
-            }).await;
+            let (event_trb, command_trb) = self
+                .execute_command(|trb, cycle| {
+                    trb.configure_endpoint(slot, input_context_physical, cycle)
+                })
+                .await;
 
             self.event_handler_finished();
 
@@ -832,7 +874,8 @@ impl Xhci {
 
         if let Some(interface_num) = req.interface_desc {
             if let Some(alternate_setting) = req.alternate_setting {
-                self.set_interface(port, interface_num, alternate_setting).await?;
+                self.set_interface(port, interface_num, alternate_setting)
+                    .await?;
             }
         }
 
@@ -849,31 +892,47 @@ impl Xhci {
         }
         let dma_buffer = unsafe { self.alloc_dma_zeroed_unsized(buf.len())? };
 
-        let (completion_code, bytes_transferred, dma_buffer) = self.transfer(
-            port_num,
-            endp_idx,
-            Some(dma_buffer),
-            PortReqDirection::DeviceToHost,
-        ).await?;
+        let (completion_code, bytes_transferred, dma_buffer) = self
+            .transfer(
+                port_num,
+                endp_idx,
+                Some(dma_buffer),
+                PortReqDirection::DeviceToHost,
+            )
+            .await?;
 
         buf.copy_from_slice(&*dma_buffer.as_ref().unwrap());
         Ok((completion_code, bytes_transferred))
     }
-    async fn transfer_write(&self, port_num: usize, endp_idx: u8, sbuf: &[u8]) -> Result<(u8, u32)> {
+    async fn transfer_write(
+        &self,
+        port_num: usize,
+        endp_idx: u8,
+        sbuf: &[u8],
+    ) -> Result<(u8, u32)> {
         if sbuf.is_empty() {
             return Err(Error::new(EINVAL));
         }
         let mut dma_buffer = unsafe { self.alloc_dma_zeroed_unsized(sbuf.len()) }?;
         dma_buffer.copy_from_slice(sbuf);
 
-        trace!("TRANSFER_WRITE port {} ep {}, buffer at {:p}, size {}, dma buffer {:?}", port_num, endp_idx + 1, sbuf.as_ptr(), sbuf.len(), DmaSliceDbg(&dma_buffer));
-
-        let (completion_code, bytes_transferred, _) = self.transfer(
+        trace!(
+            "TRANSFER_WRITE port {} ep {}, buffer at {:p}, size {}, dma buffer {:?}",
             port_num,
-            endp_idx,
-            Some(dma_buffer),
-            PortReqDirection::HostToDevice,
-        ).await?;
+            endp_idx + 1,
+            sbuf.as_ptr(),
+            sbuf.len(),
+            DmaSliceDbg(&dma_buffer)
+        );
+
+        let (completion_code, bytes_transferred, _) = self
+            .transfer(
+                port_num,
+                endp_idx,
+                Some(dma_buffer),
+                PortReqDirection::HostToDevice,
+            )
+            .await?;
         Ok((completion_code, bytes_transferred))
     }
     pub const fn def_control_endp_doorbell() -> u32 {
@@ -916,7 +975,9 @@ impl Xhci {
             .get_mut(&port_num)
             .ok_or(Error::new(EBADFD))?;
 
-        let endp_desc: &EndpDesc = port_state.get_endp_desc(endp_idx).ok_or(Error::new(EBADFD))?;
+        let endp_desc: &EndpDesc = port_state
+            .get_endp_desc(endp_idx)
+            .ok_or(Error::new(EBADFD))?;
 
         let direction = endp_desc.direction();
 
@@ -932,23 +993,30 @@ impl Xhci {
         let max_transfer_size = 65536u32;
 
         let (buffer, idt, estimated_td_size) = {
-            let (buffer, idt) =
-                if dma_buf.as_ref().map(|buf| buf.len()).unwrap_or(0) <= 8 && max_packet_size >= 8 && direction != EndpDirection::In {
-                    dma_buf.as_ref().map(|sbuf| {
+            let (buffer, idt) = if dma_buf.as_ref().map(|buf| buf.len()).unwrap_or(0) <= 8
+                && max_packet_size >= 8
+                && direction != EndpDirection::In
+            {
+                dma_buf
+                    .as_ref()
+                    .map(|sbuf| {
                         let mut bytes = [0u8; 8];
                         bytes[..sbuf.len()].copy_from_slice(&sbuf);
                         (u64::from_le_bytes(bytes), true)
                     })
                     .unwrap_or((0, false))
-                } else {
-                    (
-                        dma_buf.as_ref().map(|dma| dma.physical()).unwrap_or(0) as u64,
-                        false,
-                    )
-                };
+            } else {
+                (
+                    dma_buf.as_ref().map(|dma| dma.physical()).unwrap_or(0) as u64,
+                    false,
+                )
+            };
             let estimated_td_size = cmp::min(
                 u8::try_from(
-                    div_round_up(dma_buf.as_ref().map(|buf| buf.len()).unwrap_or(0), max_transfer_size as usize) * mem::size_of::<Trb>(),
+                    div_round_up(
+                        dma_buf.as_ref().map(|buf| buf.len()).unwrap_or(0),
+                        max_transfer_size as usize,
+                    ) * mem::size_of::<Trb>(),
                 )
                 .ok()
                 .unwrap_or(0x1F),
@@ -963,56 +1031,57 @@ impl Xhci {
 
         drop(port_state);
 
-        let event = self.execute_transfer(
-            port_num,
-            endp_num,
-            stream_id,
-            "CUSTOM_TRANSFER",
-            |trb, cycle| {
-                let len = cmp::min(bytes_left, max_transfer_size as usize) as u32;
+        let event = self
+            .execute_transfer(
+                port_num,
+                endp_num,
+                stream_id,
+                "CUSTOM_TRANSFER",
+                |trb, cycle| {
+                    let len = cmp::min(bytes_left, max_transfer_size as usize) as u32;
 
-                // set the interrupt on completion (IOC) flag for the last trb.
-                let ioc = bytes_left <= max_transfer_size as usize;
-                let chain = !ioc;
+                    // set the interrupt on completion (IOC) flag for the last trb.
+                    let ioc = bytes_left <= max_transfer_size as usize;
+                    let chain = !ioc;
 
-                let interrupter = 0;
-                let ent = false;
-                let isp = true;
-                let bei = false;
-                trb.normal(
-                    buffer,
-                    len,
-                    cycle,
-                    estimated_td_size,
-                    interrupter,
-                    ent,
-                    isp,
-                    chain,
-                    ioc,
-                    idt,
-                    bei,
-                );
+                    let interrupter = 0;
+                    let ent = false;
+                    let isp = true;
+                    let bei = false;
+                    trb.normal(
+                        buffer,
+                        len,
+                        cycle,
+                        estimated_td_size,
+                        interrupter,
+                        ent,
+                        isp,
+                        chain,
+                        ioc,
+                        idt,
+                        bei,
+                    );
 
-                bytes_left -= len as usize;
+                    bytes_left -= len as usize;
 
-                if bytes_left != 0 {
-                    ControlFlow::Continue
-                } else {
-                    ControlFlow::Break
-                }
-            },
-        ).await?;
+                    if bytes_left != 0 {
+                        ControlFlow::Continue
+                    } else {
+                        ControlFlow::Break
+                    }
+                },
+            )
+            .await?;
         self.event_handler_finished();
 
-        let bytes_transferred = dma_buf.as_ref().map(|buf| buf.len() as u32 - event.transfer_length()).unwrap_or(0);
+        let bytes_transferred = dma_buf
+            .as_ref()
+            .map(|buf| buf.len() as u32 - event.transfer_length())
+            .unwrap_or(0);
 
         Ok((event.completion_code(), bytes_transferred, dma_buf))
     }
-    pub async fn get_desc(
-        &self,
-        port_id: usize,
-        slot: u8,
-    ) -> Result<DevDesc> {
+    pub async fn get_desc(&self, port_id: usize, slot: u8) -> Result<DevDesc> {
         let ports = self.ports.lock().unwrap();
         let port = ports.get(port_id).ok_or(Error::new(ENOENT))?;
         if !port.flags().contains(port::PortFlags::PORT_CCS) {
@@ -1024,35 +1093,55 @@ impl Xhci {
 
         let (manufacturer_str, product_str, serial_str) = (
             if raw_dd.manufacturer_str > 0 {
-                Some(self.fetch_string_desc(port_id, slot, raw_dd.manufacturer_str).await?)
+                Some(
+                    self.fetch_string_desc(port_id, slot, raw_dd.manufacturer_str)
+                        .await?,
+                )
             } else {
                 None
             },
             if raw_dd.product_str > 0 {
-                Some(self.fetch_string_desc(port_id, slot, raw_dd.product_str).await?)
+                Some(
+                    self.fetch_string_desc(port_id, slot, raw_dd.product_str)
+                        .await?,
+                )
             } else {
                 None
             },
             if raw_dd.serial_str > 0 {
-                Some(self.fetch_string_desc(port_id, slot, raw_dd.serial_str).await?)
+                Some(
+                    self.fetch_string_desc(port_id, slot, raw_dd.serial_str)
+                        .await?,
+                )
             } else {
                 None
             },
         );
-        log::debug!("manufacturer {:?} product {:?} serial {:?}", manufacturer_str, product_str, serial_str);
+        log::debug!(
+            "manufacturer {:?} product {:?} serial {:?}",
+            manufacturer_str,
+            product_str,
+            serial_str
+        );
 
         //TODO let (bos_desc, bos_data) = self.fetch_bos_desc(port_id, slot).await?;
 
         let supports_superspeed = false;
-            //TODO usb::bos_capability_descs(bos_desc, &bos_data).any(|desc| desc.is_superspeed());
+        //TODO usb::bos_capability_descs(bos_desc, &bos_data).any(|desc| desc.is_superspeed());
         let supports_superspeedplus = false;
-            //TODO usb::bos_capability_descs(bos_desc, &bos_data).any(|desc| desc.is_superspeedplus());
+        //TODO usb::bos_capability_descs(bos_desc, &bos_data).any(|desc| desc.is_superspeedplus());
 
         let mut config_descs = SmallVec::new();
 
         for index in 0..raw_dd.configurations {
             let (desc, data) = self.fetch_config_desc(port_id, slot, index).await?;
-            log::debug!("port {} slot {} config {} desc {:X?}", port_id, slot, index, desc);
+            log::debug!(
+                "port {} slot {} config {} desc {:X?}",
+                port_id,
+                slot,
+                index,
+                desc
+            );
 
             let extra_length = desc.total_length as usize - mem::size_of_val(&desc);
             let data = &data[..extra_length];
@@ -1083,7 +1172,7 @@ impl Xhci {
                             Some(unexpected) => {
                                 log::warn!("expected endpoint, got {:X?}", unexpected);
                                 break;
-                            },
+                            }
                             None => break,
                         };
                         let mut endp = EndpDesc::from(next);
@@ -1106,7 +1195,10 @@ impl Xhci {
                         endpoints.push(endp);
                     }
 
-                    interface_descs.push(self.new_if_desc(port_id, slot, idesc, endpoints, hid_descs).await?);
+                    interface_descs.push(
+                        self.new_if_desc(port_id, slot, idesc, endpoints, hid_descs)
+                            .await?,
+                    );
                 } else {
                     log::warn!("expected interface, got {:?}", item);
                     // TODO
@@ -1117,7 +1209,10 @@ impl Xhci {
             config_descs.push(ConfDesc {
                 kind: desc.kind,
                 configuration: if desc.configuration_str > 0 {
-                    Some(self.fetch_string_desc(port_id, slot, desc.configuration_str).await?)
+                    Some(
+                        self.fetch_string_desc(port_id, slot, desc.configuration_str)
+                            .await?,
+                    )
                 } else {
                     None
                 },
@@ -1126,7 +1221,7 @@ impl Xhci {
                 max_power: desc.max_power,
                 interface_descs,
             });
-        };
+        }
 
         Ok(DevDesc {
             kind: raw_dd.kind,
@@ -1182,7 +1277,8 @@ impl Xhci {
                 );
                 ControlFlow::Break
             },
-        ).await?;
+        )
+        .await?;
         Ok(())
     }
     fn port_req_init_st(&self, port_num: usize, req: &PortReq) -> Result<PortReqState> {
@@ -1219,8 +1315,13 @@ impl Xhci {
         };
 
         Ok(match transfer_kind {
-            TransferKind::In => PortReqState::WaitingForDeviceBytes(data_buffer_opt.ok_or(Error::new(EINVAL))?, setup),
-            TransferKind::Out => PortReqState::WaitingForHostBytes(data_buffer_opt.ok_or(Error::new(EINVAL))?, setup),
+            TransferKind::In => PortReqState::WaitingForDeviceBytes(
+                data_buffer_opt.ok_or(Error::new(EINVAL))?,
+                setup,
+            ),
+            TransferKind::Out => {
+                PortReqState::WaitingForHostBytes(data_buffer_opt.ok_or(Error::new(EINVAL))?, setup)
+            }
             TransferKind::NoData => PortReqState::TmpSetup(setup),
             _ => unreachable!(),
         })
@@ -1242,7 +1343,8 @@ impl Xhci {
 
                 if let PortReqState::TmpSetup(setup) = st {
                     // No need for any additional reads or writes, before completing.
-                    self.port_req_transfer(port_num, None, setup, TransferKind::NoData).await?;
+                    self.port_req_transfer(port_num, None, setup, TransferKind::NoData)
+                        .await?;
                     st = PortReqState::Init;
                 }
 
@@ -1254,7 +1356,8 @@ impl Xhci {
                 }
                 dma_buffer.copy_from_slice(buf);
 
-                self.port_req_transfer(port_num, Some(&mut dma_buffer), setup, TransferKind::Out).await?;
+                self.port_req_transfer(port_num, Some(&mut dma_buffer), setup, TransferKind::Out)
+                    .await?;
                 st = PortReqState::Init;
 
                 buf.len()
@@ -1281,7 +1384,8 @@ impl Xhci {
                 if buf.len() != dma_buffer.len() {
                     return Err(Error::new(EINVAL));
                 }
-                self.port_req_transfer(port_num, Some(&mut dma_buffer), setup, TransferKind::In).await?;
+                self.port_req_transfer(port_num, Some(&mut dma_buffer), setup, TransferKind::In)
+                    .await?;
                 buf.copy_from_slice(&dma_buffer);
 
                 st = PortReqState::Init;
@@ -1309,8 +1413,7 @@ impl Scheme for Xhci {
             return Err(Error::new(EACCES));
         }
 
-        let path_str = path_str
-            .trim_start_matches('/');
+        let path_str = path_str.trim_start_matches('/');
 
         let components = path::Path::new(path_str)
             .components()
@@ -1554,7 +1657,13 @@ impl Scheme for Xhci {
     fn seek(&self, fd: usize, pos: isize, whence: usize) -> Result<isize> {
         let mut guard = self.handles.get_mut(&fd).ok_or(Error::new(EBADF))?;
 
-        trace!("SEEK fd={}, handle={:?}, pos {}, whence {}", fd, guard, pos, whence);
+        trace!(
+            "SEEK fd={}, handle={:?}, pos {}, whence {}",
+            fd,
+            guard,
+            pos,
+            whence
+        );
 
         match &mut *guard {
             // Directories, or fixed files
@@ -1591,7 +1700,13 @@ impl Scheme for Xhci {
 
     fn read(&self, fd: usize, buf: &mut [u8]) -> Result<usize> {
         let mut guard = self.handles.get_mut(&fd).ok_or(Error::new(EBADF))?;
-        trace!("READ fd={}, handle={:?}, buf=(addr {:p}, length {})", fd, guard, buf.as_ptr(), buf.len());
+        trace!(
+            "READ fd={}, handle={:?}, buf=(addr {:p}, length {})",
+            fd,
+            guard,
+            buf.as_ptr(),
+            buf.len()
+        );
         match &mut *guard {
             Handle::TopLevel(ref mut offset, ref src_buf)
             | Handle::Port(_, ref mut offset, ref src_buf)
@@ -1646,7 +1761,13 @@ impl Scheme for Xhci {
     }
     fn write(&self, fd: usize, buf: &[u8]) -> Result<usize> {
         let mut guard = self.handles.get_mut(&fd).ok_or(Error::new(EBADF))?;
-        trace!("WRITE fd={}, handle={:?}, buf=(addr {:p}, length {})", fd, guard, buf.as_ptr(), buf.len());
+        trace!(
+            "WRITE fd={}, handle={:?}, buf=(addr {:p}, length {})",
+            fd,
+            guard,
+            buf.as_ptr(),
+            buf.len()
+        );
 
         match &mut *guard {
             &mut Handle::ConfigureEndpoints(port_num) => {
@@ -1655,7 +1776,9 @@ impl Scheme for Xhci {
             }
             &mut Handle::Endpoint(port_num, endp_num, ref ep_file_ty) => match ep_file_ty {
                 EndpointHandleTy::Ctl => block_on(self.on_write_endp_ctl(port_num, endp_num, buf)),
-                EndpointHandleTy::Data => block_on(self.on_write_endp_data(port_num, endp_num, buf)),
+                EndpointHandleTy::Data => {
+                    block_on(self.on_write_endp_data(port_num, endp_num, buf))
+                }
                 EndpointHandleTy::Root(_, _) => return Err(Error::new(EBADF)),
             },
             &mut Handle::PortReq(port_num, ref mut st) => {
@@ -1677,16 +1800,14 @@ impl Scheme for Xhci {
 }
 impl Xhci {
     pub fn get_endp_status(&self, port_num: usize, endp_num: u8) -> Result<EndpointStatus> {
-        let port_state = self
-            .port_states
-            .get(&port_num)
-            .ok_or(Error::new(EBADFD))?;
+        let port_state = self.port_states.get(&port_num).ok_or(Error::new(EBADFD))?;
 
         let slot = port_state.slot;
 
         let endp_desc = port_state
             .dev_desc
-            .as_ref().unwrap()
+            .as_ref()
+            .unwrap()
             .config_descs
             .get(0)
             .ok_or(Error::new(EIO))?
@@ -1748,7 +1869,8 @@ impl Xhci {
                     index: 0,          // TODO: interface num
                     length: 0,
                 },
-            ).await?;
+            )
+            .await?;
         }
         Ok(())
     }
@@ -1778,7 +1900,8 @@ impl Xhci {
 
         let endp_desc = port_state
             .dev_desc
-            .as_ref().unwrap()
+            .as_ref()
+            .unwrap()
             .config_descs
             .get(0)
             .ok_or(Error::new(EIO))?
@@ -1792,18 +1915,15 @@ impl Xhci {
         let doorbell = if endp_num != 0 {
             let stream_id = 1u16;
 
-            Self::endp_doorbell(
-                endp_num,
-                endp_desc,
-                if has_streams { stream_id } else { 0 },
-            )
+            Self::endp_doorbell(endp_num, endp_desc, if has_streams { stream_id } else { 0 })
         } else {
             Self::def_control_endp_doorbell()
         };
 
         self.dbs.lock().unwrap()[slot as usize].write(doorbell);
 
-        self.set_tr_deque_ptr(port_num, endp_num, deque_ptr_and_cycle).await?;
+        self.set_tr_deque_ptr(port_num, endp_num, deque_ptr_and_cycle)
+            .await?;
 
         Ok(())
     }
@@ -1813,7 +1933,8 @@ impl Xhci {
             .get(&port_num)
             .ok_or(Error::new(EIO))?
             .dev_desc
-            .as_ref().unwrap()
+            .as_ref()
+            .unwrap()
             .config_descs
             .first()
             .ok_or(Error::new(EIO))?
@@ -1838,19 +1959,23 @@ impl Xhci {
         let port_state = self.port_states.get(&port_num).ok_or(Error::new(EBADFD))?;
         let slot = port_state.slot;
 
-        let endp_desc = port_state.get_endp_desc(endp_idx).ok_or(Error::new(EBADFD))?;
+        let endp_desc = port_state
+            .get_endp_desc(endp_idx)
+            .ok_or(Error::new(EBADFD))?;
         let endp_num_xhc = Self::endp_num_to_dci(endp_num, endp_desc);
 
-        let (event_trb, command_trb) = self.execute_command(|trb, cycle| {
-            trb.set_tr_deque_ptr(
-                deque_ptr_and_cycle,
-                cycle,
-                StreamContextType::PrimaryRing,
-                1,
-                endp_num_xhc,
-                slot,
-            )
-        }).await;
+        let (event_trb, command_trb) = self
+            .execute_command(|trb, cycle| {
+                trb.set_tr_deque_ptr(
+                    deque_ptr_and_cycle,
+                    cycle,
+                    StreamContextType::PrimaryRing,
+                    1,
+                    endp_num_xhc,
+                    slot,
+                )
+            })
+            .await;
         self.event_handler_finished();
 
         handle_event_trb("SET_TR_DEQUEUE_PTR", &event_trb, &command_trb)
@@ -1881,7 +2006,10 @@ impl Xhci {
                 }
             },
             XhciEndpCtlReq::Reset { no_clear_feature } => match ep_if_state {
-                EndpIfState::Init => self.on_req_reset_device(port_num, endp_num, !no_clear_feature).await?,
+                EndpIfState::Init => {
+                    self.on_req_reset_device(port_num, endp_num, !no_clear_feature)
+                        .await?
+                }
                 other => {
                     return Err(Error::new(EBADF));
                 }
@@ -1891,8 +2019,9 @@ impl Xhci {
                     if direction == XhciEndpCtlDirection::NoData {
                         // Yield the result directly because no bytes have to be sent or received
                         // beforehand.
-                        let (completion_code, bytes_transferred, _) =
-                            self.transfer(port_num, endp_num - 1, None, PortReqDirection::DeviceToHost).await?;
+                        let (completion_code, bytes_transferred, _) = self
+                            .transfer(port_num, endp_num - 1, None, PortReqDirection::DeviceToHost)
+                            .await?;
                         if bytes_transferred > 0 {
                             return Err(Error::new(EIO));
                         }
@@ -1947,8 +2076,14 @@ impl Xhci {
         endp_num: u8,
         buf: &[u8],
     ) -> Result<usize> {
-        let mut port_state = self.port_states.get_mut(&port_num).ok_or(Error::new(EBADFD))?;
-        let mut endpoint_state = port_state.endpoint_states.get_mut(&endp_num).ok_or(Error::new(EBADFD))?;
+        let mut port_state = self
+            .port_states
+            .get_mut(&port_num)
+            .ok_or(Error::new(EBADFD))?;
+        let mut endpoint_state = port_state
+            .endpoint_states
+            .get_mut(&endp_num)
+            .ok_or(Error::new(EBADFD))?;
 
         let ep_if_state = &mut endpoint_state.driver_if_state;
 
@@ -1970,8 +2105,14 @@ impl Xhci {
                 // invoking further data transfer calls if any single transfer returns fewer bytes
                 // than requested.
 
-                let mut port_state = self.port_states.get_mut(&port_num).ok_or(Error::new(EBADFD))?;
-                let mut endpoint_state = port_state.endpoint_states.get_mut(&endp_num).ok_or(Error::new(EBADFD))?;
+                let mut port_state = self
+                    .port_states
+                    .get_mut(&port_num)
+                    .ok_or(Error::new(EBADFD))?;
+                let mut endpoint_state = port_state
+                    .endpoint_states
+                    .get_mut(&endp_num)
+                    .ok_or(Error::new(EBADFD))?;
                 let ep_if_state = &mut endpoint_state.driver_if_state;
 
                 if let &mut EndpIfState::WaitingForDataPipe {
@@ -1980,7 +2121,9 @@ impl Xhci {
                     ref mut bytes_transferred,
                 } = ep_if_state
                 {
-                    if *bytes_transferred + some_bytes_transferred == bytes_to_transfer || completion_code != TrbCompletionCode::Success as u8 {
+                    if *bytes_transferred + some_bytes_transferred == bytes_to_transfer
+                        || completion_code != TrbCompletionCode::Success as u8
+                    {
                         *ep_if_state = EndpIfState::WaitingForTransferResult(result);
                     } else {
                         *bytes_transferred += some_bytes_transferred;
@@ -1993,12 +2136,7 @@ impl Xhci {
             _ => return Err(Error::new(EBADF)),
         }
     }
-    pub fn on_read_endp_ctl(
-        &self,
-        port_num: usize,
-        endp_num: u8,
-        buf: &mut [u8],
-    ) -> Result<usize> {
+    pub fn on_read_endp_ctl(&self, port_num: usize, endp_num: u8, buf: &mut [u8]) -> Result<usize> {
         let port_state = &mut self
             .port_states
             .get_mut(&port_num)
@@ -2082,7 +2220,9 @@ impl Xhci {
                     ref mut bytes_transferred,
                 } = ep_if_state
                 {
-                    if *bytes_transferred + some_bytes_transferred == bytes_to_transfer || completion_code != TrbCompletionCode::Success as u8 {
+                    if *bytes_transferred + some_bytes_transferred == bytes_to_transfer
+                        || completion_code != TrbCompletionCode::Success as u8
+                    {
                         *ep_if_state = EndpIfState::WaitingForTransferResult(result);
                     } else {
                         *bytes_transferred += some_bytes_transferred;
@@ -2103,22 +2243,32 @@ impl Xhci {
     pub fn event_handler_finished(&self) {
         trace!("Event handler finished");
         // write 1 to EHB to clear it
-        self.run.lock().unwrap().ints[0].erdp_low.writef(1 << 3, true);
+        self.run.lock().unwrap().ints[0]
+            .erdp_low
+            .writef(1 << 3, true);
     }
 }
 pub fn handle_event_trb(name: &str, event_trb: &Trb, command_trb: &Trb) -> Result<()> {
     if event_trb.completion_code() == TrbCompletionCode::Success as u8 {
         Ok(())
     } else {
-        error!("{} command (TRB {:?}) failed with event trb {:?}", name, command_trb, event_trb);
+        error!(
+            "{} command (TRB {:?}) failed with event trb {:?}",
+            name, command_trb, event_trb
+        );
         Err(Error::new(EIO))
     }
 }
 pub fn handle_transfer_event_trb(name: &str, event_trb: &Trb, transfer_trb: &Trb) -> Result<()> {
-    if event_trb.completion_code() == TrbCompletionCode::Success as u8 || event_trb.completion_code() == TrbCompletionCode::ShortPacket as u8 {
+    if event_trb.completion_code() == TrbCompletionCode::Success as u8
+        || event_trb.completion_code() == TrbCompletionCode::ShortPacket as u8
+    {
         Ok(())
     } else {
-        error!("{} transfer {:?} failed with event {:?}", name, transfer_trb, event_trb);
+        error!(
+            "{} transfer {:?} failed with event {:?}",
+            name, transfer_trb, event_trb
+        );
         Err(Error::new(EIO))
     }
 }
