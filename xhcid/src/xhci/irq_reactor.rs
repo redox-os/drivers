@@ -14,13 +14,13 @@ use futures::Stream;
 use log::{debug, error, info, trace, warn};
 use syscall::Io;
 
+use event::{Event, EventQueue, RawEventQueue};
 use super::doorbell::Doorbell;
 use super::event::EventRing;
 use super::ring::Ring;
 use super::trb::{Trb, TrbCompletionCode, TrbType};
 use super::{port, Xhci};
 use crate::xhci::device_enumerator::DeviceEnumerationRequest;
-use event::{Event, EventQueue, RawEventQueue};
 
 /// Short-term states (as in, they are removed when the waker is consumed, but probably pushed back
 /// by the future unless it completed).

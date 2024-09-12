@@ -1,5 +1,16 @@
 use plain::Plain;
 
+/// The descriptor for a USB Endpoint.
+///
+/// Each endpoint for a particular interface has its own descriptor. The information in this
+/// structure is used by the host to determine the bandwidth requirements of the endpoint.
+///
+/// This is returned automatically when you send a request for a ConfigurationDescriptor,
+/// and cannot be requested individually.
+///
+/// See USB32 9.6.6
+///
+/// The offsets for the fields in the packet are described in USB32 Table 9-26
 #[repr(packed)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct EndpointDescriptor {
@@ -11,6 +22,7 @@ pub struct EndpointDescriptor {
     pub interval: u8,
 }
 
+/// Mask that is ANDed to the [EndpointDescriptor].attributes buffer to get the endpoint type.
 pub const ENDP_ATTR_TY_MASK: u8 = 0x3;
 
 #[repr(u8)]

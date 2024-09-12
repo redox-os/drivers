@@ -1,3 +1,14 @@
+//! The eXtensible Host Controller Interface (XHCI) Module
+//!
+//! This module implements the XHCI functionality of Redox's USB driver daemon.
+//!
+//! XHCI is a standard for the USB Host Controller interface specified by Intel that provides a
+//! common register interface for systems to use to interact with the Universal Serial Bus (USB)
+//! subsystem.
+//!
+//! The standard can be found [here](https://www.intel.com/content/dam/www/public/us/en/documents/technical-specifications/extensible-host-controler-interface-usb-xhci.pdf).
+//! The standard is referenced frequently throughout this documentation. The acronyms used for specific
+//! documents are specified in the crate-level documentation.
 use std::collections::BTreeMap;
 use std::convert::TryFrom;
 use std::fs::File;
@@ -55,6 +66,8 @@ use self::scheme::EndpIfState;
 
 use crate::driver_interface::*;
 
+/// Specifies the configurable interrupt mechanism used by the xhci subsystem for registering
+/// device state change notifications.
 pub enum InterruptMethod {
     /// No interrupts whatsoever; the driver will instead rely on polling event rings.
     Polling,
@@ -220,16 +233,26 @@ impl Xhci {
     }
 }
 
+/// The eXtensible Host Controller Interface (XHCI) data structure
 pub struct Xhci {
     // immutable
+    /// The Host Controller Interface Capability Registers. These read-only registers specify the
+    /// limits and capabilities of the host controller implementation (See XHCI section 5.3)
     cap: &'static CapabilityRegs,
     //page_size: usize,
 
     // XXX: It would be really useful to be able to mutably access individual elements of a slice,
     // without having to wrap every element in a lock (which wouldn't work since they're packed).
+    /// The Host Controller Interface Operational Registers. These registers provide the software
+    /// interface to configure and monitor the state of the XHCI (See XHCI section 5.4)
     op: Mutex<&'static mut OperationalRegs>,
     ports: Mutex<&'static mut [Port]>,
+    /// The Host Controller Interface Doorbell Registers. There is one register per device slot,
+    /// and these registers are used by system software to notify the XHC that it has work to perform
+    /// for a specific device slot. (See XHCI sections 4.7 and 5.6)
     dbs: Arc<Mutex<&'static mut [Doorbell]>>,
+    /// The Host Controller Interface Runtime Registers. These handle interrupt and event processing,
+    /// and provide time-sensitive information such as the current microframe. (See XHCI section 5.5)
     run: Mutex<&'static mut RuntimeRegs>,
     cmd: Mutex<Ring>,
     primary_event_ring: Mutex<EventRing>,
@@ -317,15 +340,18 @@ impl Xhci {
         interrupt_method: InterruptMethod,
         pcid_handle: PciFunctionHandle,
     ) -> Result<Xhci> {
+        //Locate the capability registers from the mapped PCI Bar
         let cap = unsafe { &mut *(address as *mut CapabilityRegs) };
         debug!("CAP REGS BASE {:X}", address);
 
         //let page_size = ...
 
+        //The operational registers appear immediately after the capability registers.
         let op_base = address + cap.len.read() as usize;
         let op = unsafe { &mut *(op_base as *mut OperationalRegs) };
         debug!("OP REGS BASE {:X}", op_base);
 
+        //Reset the XHCI device
         let (max_slots, max_ports) = {
             debug!("Waiting for xHC becoming ready.");
             // Wait until controller is ready
@@ -358,11 +384,13 @@ impl Xhci {
             (max_slots, max_ports)
         };
 
+        //Get the address of the port register table
         let port_base = op_base + 0x400;
         let ports =
             unsafe { slice::from_raw_parts_mut(port_base as *mut Port, max_ports as usize) };
         debug!("PORT BASE {:X}", port_base);
 
+        //Get the address of the dorbell register table
         let db_base = address + cap.db_offset.read() as usize;
         let dbs = unsafe { slice::from_raw_parts_mut(db_base as *mut Doorbell, 256) };
         debug!("DOORBELL REGS BASE {:X}", db_base);

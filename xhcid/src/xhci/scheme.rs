@@ -1,3 +1,21 @@
+//! Provides the File Descriptor Scheme Interface to the XHCI.
+//!
+//! This file implements the basic unix file operations that are used to interface with the XHCI
+//! driver. While an external program could interact with the driver using this interface, a
+//! higher-level abstraction can be found in driver_interface.rs. It is recommended that you use
+//! the functions in that module to interact with the driver.
+//!
+//! The XHCI driver has the following set of schemes:
+//!
+//! port<n>
+//! port<n>/configure
+//! port<n>/request
+//! port<n>/endpoints
+//! port<n>/descriptors
+//! port<n>/state
+//! port<n>/endpoints/<n>
+//! port<n>/endpoints/<n>/ctl
+//! port<n>/endpoints/<n>/data
 use std::convert::TryFrom;
 use std::io::prelude::*;
 use std::ops::Deref;
@@ -36,6 +54,28 @@ use super::trb::{TransferKind, Trb, TrbCompletionCode, TrbType};
 use super::usb::endpoint::{EndpointTy, ENDP_ATTR_TY_MASK};
 
 use crate::driver_interface::*;
+use regex::Regex;
+
+lazy_static! {
+    static ref REGEX_PORT_CONFIGURE: Regex = Regex::new(r"^port(\d{1,3})/configure$")
+        .expect("Failed to create the regex for the port<n>/configure scheme.");
+    static ref REGEX_PORT_DESCRIPTORS: Regex = Regex::new(r"^port(\d{1,3})/descriptors$")
+        .expect("Failed to create the regex for the port<n>/descriptors");
+    static ref REGEX_PORT_STATE: Regex = Regex::new(r"^port(\d{1,3})/state$")
+        .expect("Failed to create the regex for the port<n>/state scheme");
+    static ref REGEX_PORT_REQUEST: Regex = Regex::new(r"^port(\d{1,3})/request$")
+        .expect("Failed to create the regex for the port<n>/request scheme");
+    static ref REGEX_PORT_ENDPOINTS: Regex = Regex::new(r"^port(\d{1,3})/endpoints$")
+        .expect("Failed to create the regex for the port<n>/endpoints scheme");
+    static ref REGEX_PORT_SPECIFIC_ENDPOINT: Regex = Regex::new(r"^port(\d{1,3})/endpoints/(\d{1,3})$")
+        .expect("Failed to create the regex for the port<n>/endpoints/<n> scheme");
+    static ref REGEX_PORT_SUB_ENDPOINT: Regex = Regex::new(
+        r"port(\d{1,3})/endpoints/(\d{1,3})/(ctl|data)$"
+    )
+    .expect("Failed to create the regex for the port<n>/endpoints/<n>/<sub_endpoint> scheme");
+    static ref REGEX_TOP_LEVEL: Regex =
+        Regex::new(r"^$").expect("Failed to create the regex for the top-level scheme");
+}
 
 pub enum ControlFlow {
     Continue,
@@ -84,6 +124,9 @@ pub enum PortReqState {
     Tmp,
 }
 
+/// The Handle to a specific scheme that is returned by an open() operation.
+///
+/// Contains some information about the data requested via the handle.
 #[derive(Debug)]
 pub enum Handle {
     TopLevel(usize, Vec<u8>),              // offset, contents (ports)
@@ -94,6 +137,259 @@ pub enum Handle {
     Endpoints(usize, usize, Vec<u8>),      // port, offset, contents
     Endpoint(usize, u8, EndpointHandleTy), // port, endpoint, offset, state
     ConfigureEndpoints(usize),             // port
+}
+
+/// The type of handle.
+///
+/// This is used by fstat() to determine whether to return a:
+///     - MODE_DIR
+///     - MODE_FILE
+///     - MODE_CHR
+pub(crate) enum HandleType {
+    Directory,
+    File,
+    Character,
+}
+
+/// Parameters to a handle that were extracted from a scheme.
+///
+/// This structure is used to easily convert a scheme filesystem path to
+/// the parameters that we care about when constructing a handle.
+#[derive(Debug)]
+enum SchemeParameters {
+    /// The scheme references the top-level XHCI driver endpoint
+    TopLevel,
+    /// /port<n>
+    Port(usize), // port number
+    /// /port<n>/descriptors
+    PortDesc(usize), // port number
+    /// /port<n>/state
+    PortState(usize), // port number
+    /// /port<n>/request
+    PortReq(usize), // port number
+    /// /port<n>/endpoints
+    Endpoints(usize), // port number
+    /// /port<n>/endpoints/<n>/(data|ctl)
+    ///
+    /// This can also represent
+    /// /port<n>/endpoints/<n>
+    Endpoint(usize, u8, String), // port number, endpoint number, handle type
+    /// /port<n>/configure
+    ConfigureEndpoints(usize), // port number
+}
+
+impl Handle {
+    /// Converts a handle back into the scheme that generated it.
+    ///
+    /// This is useful for implementing fpath, as the input parameters for our existing schemes
+    /// are generally static for the lifetime of the driver and can easily be retrieved.
+    ///
+    /// # Returns
+    /// - A [String] containing the scheme path that the handle is associated with.
+    pub(crate) fn to_scheme(&self) -> String {
+        match self {
+            Handle::TopLevel(_, _) => String::from(""),
+            Handle::Port(port_num, _, _) => {
+                format!("port{}", port_num)
+            }
+            Handle::PortDesc(port_num, _, _) => {
+                format!("port{}/descriptors", port_num)
+            }
+            Handle::PortState(port_num, _) => {
+                format!("port{}/state", port_num)
+            }
+            Handle::PortReq(port_num, _) => {
+                format!("port{}/request", port_num)
+            }
+            Handle::Endpoints(port_num, _, _) => {
+                format!("port{}/endpoints", port_num)
+            }
+            Handle::Endpoint(port_num, endpoint_num, handle_type) => match handle_type {
+                EndpointHandleTy::Data => {
+                    format!("port{}/endpoints/{}/data", port_num, endpoint_num)
+                }
+                EndpointHandleTy::Ctl => {
+                    format!("port{}/endpoints/{}/ctl", port_num, endpoint_num)
+                }
+                EndpointHandleTy::Root(_, _) => {
+                    format!("port{}/endpoints/{}", port_num, endpoint_num)
+                }
+            },
+            Handle::ConfigureEndpoints(port_num) => {
+                format!("port{}/configure", port_num)
+            }
+        }
+    }
+
+    /// Gets the access mode for this handle
+    ///
+    /// Handles can be a file, a directory, or a character interface. The mode that we use is
+    /// entirely dependent upon the functionality of the scheme endpoint, so this returns the value
+    /// that should be associated with that endpoint.
+    ///
+    /// # Returns
+    /// - [HandleType] - The access mode associated with the handle.
+    pub(crate) fn get_handle_type(&self) -> HandleType {
+        match self {
+            &Handle::TopLevel(_, _) => HandleType::Directory,
+            &Handle::Port(_, _, _) => HandleType::Directory,
+            &Handle::Endpoints(_, _, _) => HandleType::Directory,
+            &Handle::PortDesc(_, _, _) => HandleType::File,
+            &Handle::PortReq(_, PortReqState::WaitingForDeviceBytes(_, _)) => HandleType::Character,
+            &Handle::PortReq(_, PortReqState::WaitingForHostBytes(_, _)) => HandleType::Character,
+            &Handle::PortReq(_, PortReqState::Tmp) => unreachable!(),
+            &Handle::PortReq(_, PortReqState::TmpSetup(_)) => unreachable!(),
+            &Handle::PortState(_, _) => HandleType::Character,
+            &Handle::PortReq(_, _) => HandleType::Character,
+            &Handle::ConfigureEndpoints(_) => HandleType::Character,
+            &Handle::Endpoint(_, _, ref st) => match st {
+                EndpointHandleTy::Data => HandleType::Character,
+                EndpointHandleTy::Ctl => HandleType::Character,
+                EndpointHandleTy::Root(_, _) => HandleType::Directory,
+            },
+        }
+    }
+
+    /// Gets the length of the file buffer as returned by fstat in Stat.st_size
+    ///
+    /// As some of these endpoints did not return a length in the origin code, this
+    /// provides an Option<usize>
+    ///
+    /// # Returns
+    /// Either the size of the buffer, or [Option::None] if the buffer does not exist.
+    pub(crate) fn get_buf_len(&self) -> Option<usize> {
+        match self {
+            &Handle::TopLevel(_, ref buf) => Some(buf.len()),
+            &Handle::Port(_, _, ref buf) => Some(buf.len()),
+            &Handle::Endpoints(_, _, ref buf) => Some(buf.len()),
+            &Handle::PortDesc(_, _, ref buf) => Some(buf.len()),
+            &Handle::PortReq(_, PortReqState::WaitingForDeviceBytes(ref buf, _)) => Some(buf.len()),
+            &Handle::PortReq(_, PortReqState::WaitingForHostBytes(ref buf, _)) => Some(buf.len()),
+            &Handle::PortReq(_, PortReqState::Tmp) => None,
+            &Handle::PortReq(_, PortReqState::TmpSetup(_)) => None,
+            &Handle::PortState(_, _) => None,
+            &Handle::PortReq(_, _) => None,
+            &Handle::ConfigureEndpoints(_) => None,
+            &Handle::Endpoint(_, _, ref st) => match st {
+                EndpointHandleTy::Data => None,
+                EndpointHandleTy::Ctl => None,
+                EndpointHandleTy::Root(_, ref buf) => Some(buf.len()),
+            },
+        }
+    }
+}
+
+impl SchemeParameters {
+    /// This function gets a partially populated handle from a scheme string.
+    ///
+    /// This function is intended to be used by the driver's 'open' filesystem
+    /// hook to determine if the given string value represents a valid scheme
+    ///
+    /// # Arguments
+    /// 'scheme: &[str]' - A scheme in string format.
+    ///
+    /// # Returns
+    /// A [Result] containing:
+    /// - A [SchemeParameters] object representing the scheme that was passed, populated with the input parameters
+    /// - [ENOENT] if the passed scheme path is not valid for this driver.
+    ///
+    /// # Notes
+    /// ENOENT is returned so that it can easily be forwarded to the caller of open(). It cleans
+    /// up the function considerably to be able to use the ? syntax.
+    pub fn from_scheme(scheme: &str) -> Result<Self> {
+        fn get_string_from_regex(
+            rgx: &Regex,
+            scheme: &str,
+            capture_idx: usize,
+        ) -> syscall::Result<String> {
+            if let Some(capture_list) = rgx.captures(scheme) {
+                if let Some(value) = capture_list.get(capture_idx + 1) {
+                    return Ok(value.as_str().to_string());
+                }
+            }
+
+            Err(Error::new(ENOENT))
+        };
+
+        fn get_usize_from_regex(
+            rgx: &Regex,
+            scheme: &str,
+            capture_idx: usize,
+        ) -> syscall::Result<usize> {
+            if let Some(capture_list) = rgx.captures(scheme) {
+                if let Some(value) = capture_list.get(capture_idx + 1) {
+                    if let Ok(integer) = value.as_str().parse::<usize>() {
+                        return Ok(integer);
+                    }
+                }
+            }
+
+            Err(Error::new(ENOENT))
+        };
+
+        fn get_u8_from_regex(rgx: &Regex, scheme: &str, capture_idx: usize) -> syscall::Result<u8> {
+            if let Some(capture_list) = rgx.captures(scheme) {
+                if let Some(value) = capture_list.get(capture_idx + 1) {
+                    if let Ok(integer) = value.as_str().parse::<u8>() {
+                        return Ok(integer);
+                    }
+                }
+            }
+
+            Err(Error::new(ENOENT))
+        };
+
+        //We don't implement From::<&path::Path> because we don't want to make this a part of
+        //the public interface. This function does not guarantee that the handle is VALID, only
+        //that the scheme is valid. open() will validate the contents of the enumeration instance,
+        //and store it if it's valid.
+
+        //Generate the regular expressions for all of our valid schemes.
+
+        //Check if we have a match and either return a partially initialized scheme, OR ENOENT
+        if REGEX_PORT_CONFIGURE.is_match(scheme) {
+            let port_num = get_usize_from_regex(&REGEX_PORT_CONFIGURE, scheme, 0)?;
+
+            Ok(Self::ConfigureEndpoints(port_num))
+        } else if REGEX_PORT_DESCRIPTORS.is_match(scheme) {
+
+            let port_num = get_usize_from_regex(&REGEX_PORT_DESCRIPTORS, scheme, 0)?;
+
+            Ok(Self::PortDesc(port_num))
+        } else if REGEX_PORT_STATE.is_match(scheme) {
+
+            let port_num = get_usize_from_regex(&REGEX_PORT_STATE, scheme, 0)?;
+
+            Ok(Self::PortState(port_num))
+        } else if REGEX_PORT_REQUEST.is_match(scheme) {
+
+            let port_num = get_usize_from_regex(&REGEX_PORT_REQUEST, scheme, 0)?;
+
+            Ok(Self::PortReq(port_num))
+        } else if REGEX_PORT_ENDPOINTS.is_match(scheme) {
+
+            let port_num = get_usize_from_regex(&REGEX_PORT_ENDPOINTS, scheme, 0)?;
+
+            Ok(Self::Endpoints(port_num))
+        } else if REGEX_PORT_SPECIFIC_ENDPOINT.is_match(scheme) {
+
+            let port_num = get_usize_from_regex(&REGEX_PORT_SPECIFIC_ENDPOINT, scheme, 0)?;
+            let endpoint_num = get_u8_from_regex(&REGEX_PORT_SPECIFIC_ENDPOINT, scheme, 1)?;
+
+            Ok(Self::Endpoint(port_num, endpoint_num, String::from("root")))
+        } else if REGEX_PORT_SUB_ENDPOINT.is_match(scheme) {
+
+            let port_num = get_usize_from_regex(&REGEX_PORT_SUB_ENDPOINT, scheme, 0)?;
+            let endpoint_num = get_u8_from_regex(&REGEX_PORT_SUB_ENDPOINT, scheme, 1)?;
+            let handle_type = get_string_from_regex(&REGEX_PORT_SUB_ENDPOINT, scheme, 2)?;
+
+            Ok(Self::Endpoint(port_num, endpoint_num, handle_type))
+        } else if REGEX_TOP_LEVEL.is_match(scheme) {
+            Ok(Self::TopLevel)
+        } else {
+            Err(Error::new(ENOENT))
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1405,132 +1701,211 @@ impl Xhci {
         }
         Ok(bytes_read)
     }
-}
 
-impl Scheme for Xhci {
-    fn open(&self, path_str: &str, flags: usize, uid: u32, _gid: u32) -> Result<usize> {
-        if uid != 0 {
-            return Err(Error::new(EACCES));
+    /// Implements open() for the root level scheme
+    ///
+    /// # Arguments
+    /// - 'flags: [usize]' - The flags parameter passed to open()
+    ///
+    /// # Returns
+    /// This function returns a [Result] containing either
+    ///
+    /// - Handle::TopLevel - The file was opened.
+    /// - EISDIR           - This is a directory endpoint, but neither O_DIRECTORY nor O_STAT were passed.
+    ///
+    fn open_handle_top_level(&self, flags: usize) -> Result<Handle> {
+        if flags & O_DIRECTORY != 0 || flags & O_STAT != 0 {
+            let mut contents = Vec::new();
+
+            let ports_guard = self.ports.lock().unwrap();
+
+            for (index, _) in ports_guard
+                .iter()
+                .enumerate()
+                .filter(|(_, port)| port.flags().contains(port::PortFlags::PORT_CCS))
+            {
+                write!(contents, "port{}\n", index).unwrap();
+            }
+
+            Ok(Handle::TopLevel(0, contents))
+        } else {
+            Err(Error::new(EISDIR))
+        }
+    }
+
+    /// implements open() for /port<n>/descriptors
+    ///
+    /// # Arguments
+    /// - 'port_num: [usize]' - The port number specified in the scheme path
+    /// - 'flags: [usize]'    - The flags parameter passed to open()
+    ///
+    /// # Returns
+    /// This function returns a [Result] containing either:
+    ///
+    /// - [Handle::PortDesc] - The handle was opened successfully
+    /// - [ENOTDIR]          - Directory-specific flags were passed to open(), but this endpoint is not a directory.
+    fn open_handle_port_descriptors(&self, port_num: usize, flags: usize) -> Result<Handle> {
+        if flags & O_DIRECTORY != 0 && flags & O_STAT == 0 {
+            return Err(Error::new(ENOTDIR));
         }
 
-        let path_str = path_str.trim_start_matches('/');
+        let contents = self.port_desc_json(port_num)?;
+        Ok(Handle::PortDesc(port_num, 0, contents))
+    }
 
-        let components = path::Path::new(path_str)
-            .components()
-            .map(|component| -> Option<_> {
-                match component {
-                    path::Component::Normal(n) => Some(n.to_str()?),
-                    _ => None,
-                }
-            })
-            .collect::<Option<SmallVec<[&str; 4]>>>()
+    /// implements open() for /port<n>
+    ///
+    /// # Arguments
+    /// - 'port_num: [usize]' - The port number specified in the scheme path
+    /// - 'flags: [usize]'    - The flags parameter passed to open()
+    ///
+    /// # Returns
+    /// This function returns a [Result] containing either:
+    ///
+    /// - [Handle::Port]     - The handle was opened successfully
+    /// - [ENOENT]           - The scheme is valid, but there is no port associated with the given port_num
+    /// - [EISDIR]           - open() was called on this scheme endpoint, but no directory-specific flags were passed to open
+    fn open_handle_port(&self, port_num: usize, flags: usize) -> Result<Handle> {
+        // The != here is unintuitive. You would assume that you could do
+        // flags & O_DIRECTORY || flags & O_STAT, but rust doesn't allow
+        // you to cast integers to booleans.
+        if (flags & O_DIRECTORY != 0) || (flags & O_STAT != 0) {
+            let mut contents = Vec::new();
+
+            write!(contents, "descriptors\nendpoints\n").unwrap();
+
+            if self.slot_state(
+                self.port_states
+                    .get(&port_num)
+                    .ok_or(Error::new(ENOENT))?
+                    .slot as usize,
+            ) != SlotState::Configured as u8
+            {
+                write!(contents, "configure\n").unwrap();
+            }
+
+            Ok(Handle::Port(port_num, 0, contents))
+        } else {
+            Err(Error::new(EISDIR))
+        }
+    }
+
+    /// implements open() for /port<n>/state
+    ///
+    /// # Arguments
+    /// - 'port_num: [usize]' - The port number specified in the scheme path
+    /// - 'flags: [usize]'    - The flags parameter passed to open()
+    ///
+    /// # Returns
+    /// This function returns a [Result] containing either:
+    ///
+    /// - [Handle::Port]     - The handle was opened successfully
+    /// - [ENOTDIR]          - open() was called on this scheme endpoint, but directory-specific flags were passed to open
+    fn open_handle_port_state(&self, port_num: usize, flags: usize) -> Result<Handle> {
+        if flags & O_DIRECTORY != 0 && flags & O_STAT == 0 {
+            return Err(Error::new(ENOTDIR));
+        }
+
+        Ok(Handle::PortState(port_num, 0))
+    }
+
+    /// implements open() for /port<n>/endpoints
+    ///
+    /// # Arguments
+    /// - 'port_num: [usize]' - The port number specified in the scheme path
+    /// - 'flags: [usize]'    - The flags parameter passed to open()
+    ///
+    /// # Returns
+    /// This function returns a [Result] containing either:
+    ///
+    /// - [Handle::Port]     - The handle was opened successfully
+    /// - [EISDIR]          - open() was called on this scheme endpoint, but no directory-specific flags were passed to open
+    fn open_handle_port_endpoints(&self, port_num: usize, flags: usize) -> Result<Handle> {
+        if flags & O_DIRECTORY == 0 && flags & O_STAT == 0 {
+            return Err(Error::new(EISDIR));
+        };
+        let mut contents = Vec::new();
+        let ps = self.port_states.get(&port_num).ok_or(Error::new(ENOENT))?;
+
+        /*for (ep_num, _) in self.dev_ctx.contexts[ps.slot as usize].endpoints.iter().enumerate().filter(|(_, ep)| ep.a.read() & 0b111 == 1) {
+            write!(contents, "{}\n", ep_num).unwrap();
+        }*/
+
+        for ep_num in ps.endpoint_states.keys() {
+            write!(contents, "{}\n", ep_num).unwrap();
+        }
+
+        Ok(Handle::Endpoints(port_num, 0, contents))
+    }
+
+    /// implements open() for /port<n>/endpoints/<n>
+    ///
+    /// # Arguments
+    /// - 'port_num: [usize]' - The port number specified in the scheme path
+    /// - 'endpoint_num: [u8]' - The endpoint number to access
+    /// - 'flags: [usize]'    - The flags parameter passed to open()
+    ///
+    /// # Returns
+    /// This function returns a [Result] containing either:
+    ///
+    /// - [Handle::Port]     - The handle was opened successfully
+    /// - [EISDIR]          - open() was called on this scheme endpoint, but no directory-specific flags were passed to open
+    /// - [ENOENT]           - The scheme is valid, but there is no port associated with the given port_num
+    fn open_handle_endpoint_root(
+        &self,
+        port_num: usize,
+        endpoint_num: u8,
+        flags: usize,
+    ) -> Result<Handle> {
+        if flags & O_DIRECTORY == 0 && flags & O_STAT == 0 {
+            return Err(Error::new(EISDIR));
+        }
+
+        let port_state = self
+            .port_states
+            .get_mut(&port_num)
             .ok_or(Error::new(ENOENT))?;
 
-        let handle = match &components[..] {
-            &[] => {
-                if flags & O_DIRECTORY != 0 || flags & O_STAT != 0 {
-                    let mut contents = Vec::new();
+        /*if self.dev_ctx.contexts[port_state.slot as usize].endpoints.get(endpoint_num as usize).ok_or(Error::new(ENOENT))?.a.read() & 0b111 != 1 {
+            return Err(Error::new(ENXIO)); // TODO: Find a proper error code for "endpoint not initialized".
+        }*/
 
-                    let ports_guard = self.ports.lock().unwrap();
+        if !port_state.endpoint_states.contains_key(&endpoint_num) {
+            return Err(Error::new(ENOENT));
+        }
+        let contents = "ctl\ndata\n".as_bytes().to_owned();
 
-                    for (index, _) in ports_guard
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, port)| port.flags().contains(port::PortFlags::PORT_CCS))
-                    {
-                        write!(contents, "port{}\n", index).unwrap();
-                    }
+        Ok(Handle::Endpoint(
+            port_num,
+            endpoint_num,
+            EndpointHandleTy::Root(0, contents),
+        ))
+    }
 
-                    Handle::TopLevel(0, contents)
-                } else {
-                    return Err(Error::new(EISDIR));
-                }
-            }
-            &[port, port_tl] if port.starts_with("port") => {
-                let port_num = port[4..].parse::<usize>().or(Err(Error::new(ENOENT)))?;
-                if !self.port_states.contains_key(&port_num) {
-                    return Err(Error::new(ENOENT));
-                }
-
-                match port_tl {
-                    "descriptors" => {
-                        if flags & O_DIRECTORY != 0 && flags & O_STAT == 0 {
-                            return Err(Error::new(ENOTDIR));
-                        }
-
-                        let contents = self.port_desc_json(port_num)?;
-                        Handle::PortDesc(port_num, 0, contents)
-                    }
-                    "configure" => {
-                        if flags & O_DIRECTORY != 0 && flags & O_STAT == 0 {
-                            return Err(Error::new(ENOTDIR));
-                        }
-                        if flags & O_RDWR != O_WRONLY && flags & O_STAT == 0 {
-                            return Err(Error::new(EACCES));
-                        }
-
-                        Handle::ConfigureEndpoints(port_num)
-                    }
-                    "state" => {
-                        if flags & O_DIRECTORY != 0 && flags & O_STAT == 0 {
-                            return Err(Error::new(ENOTDIR));
-                        }
-
-                        Handle::PortState(port_num, 0)
-                    }
-                    "request" => {
-                        if flags & O_DIRECTORY != 0 && flags & O_STAT == 0 {
-                            return Err(Error::new(ENOTDIR));
-                        }
-                        Handle::PortReq(port_num, PortReqState::Init)
-                    }
-                    "endpoints" => {
-                        if flags & O_DIRECTORY == 0 && flags & O_STAT == 0 {
-                            return Err(Error::new(EISDIR));
-                        };
-                        let mut contents = Vec::new();
-                        let ps = self.port_states.get(&port_num).ok_or(Error::new(ENOENT))?;
-
-                        /*for (ep_num, _) in self.dev_ctx.contexts[ps.slot as usize].endpoints.iter().enumerate().filter(|(_, ep)| ep.a.read() & 0b111 == 1) {
-                            write!(contents, "{}\n", ep_num).unwrap();
-                        }*/
-
-                        for ep_num in ps.endpoint_states.keys() {
-                            write!(contents, "{}\n", ep_num).unwrap();
-                        }
-
-                        Handle::Endpoints(port_num, 0, contents)
-                    }
-                    _ => return Err(Error::new(ENOENT)),
-                }
-            }
-            &[port, "endpoints", endpoint_num_str] if port.starts_with("port") => {
-                let port_num = port[4..].parse::<usize>().or(Err(Error::new(ENOENT)))?;
-                let endpoint_num = endpoint_num_str.parse::<u8>().or(Err(Error::new(ENOENT)))?;
-
-                if flags & O_DIRECTORY == 0 && flags & O_STAT == 0 {
-                    return Err(Error::new(EISDIR));
-                }
-
-                let port_state = self
-                    .port_states
-                    .get_mut(&port_num)
-                    .ok_or(Error::new(ENOENT))?;
-
-                /*if self.dev_ctx.contexts[port_state.slot as usize].endpoints.get(endpoint_num as usize).ok_or(Error::new(ENOENT))?.a.read() & 0b111 != 1 {
-                    return Err(Error::new(ENXIO)); // TODO: Find a proper error code for "endpoint not initialized".
-                }*/
-                if !port_state.endpoint_states.contains_key(&endpoint_num) {
-                    return Err(Error::new(ENOENT));
-                }
-                let contents = "ctl\ndata\n".as_bytes().to_owned();
-
-                Handle::Endpoint(port_num, endpoint_num, EndpointHandleTy::Root(0, contents))
-            }
-            &[port, "endpoints", endpoint_num_str, sub] if port.starts_with("port") => {
-                let port_num = port[4..].parse::<usize>().or(Err(Error::new(ENOENT)))?;
-                let endpoint_num = endpoint_num_str.parse::<u8>().or(Err(Error::new(ENOENT)))?;
-
+    /// implements open() for /port<n>/endpoints/<n>/data and /port<n>/endpoints/<n>/ctl
+    ///
+    /// # Arguments
+    /// - 'port_num: [usize]' - The port number specified in the scheme path
+    /// - 'endpoint_num: [u8]' - The endpoint number to access
+    /// - 'handle_type: [String]' - The type of the handle
+    /// - 'flags: [usize]'    - The flags parameter passed to open()
+    ///
+    /// # Returns
+    /// This function returns a [Result] containing either:
+    ///
+    /// - [Handle::Port]     - The handle was opened successfully
+    /// - [EISDIR]          - open() was called on this scheme endpoint, but no directory-specific flags were passed to open
+    /// - [ENOENT]           - The scheme is valid, but there is no port associated with the given port_num, or no endpoint with the given endpoint_num
+    fn open_handle_single_endpoint(
+        &self,
+        port_num: usize,
+        endpoint_num: u8,
+        handle_type: String,
+        flags: usize,
+    ) -> Result<Handle> {
+        match handle_type.as_str() {
+            "root" => self.open_handle_endpoint_root(port_num, endpoint_num, flags),
+            "ctl" | "data" => {
                 if flags & O_DIRECTORY != 0 && flags & O_STAT == 0 {
                     return Err(Error::new(EISDIR));
                 }
@@ -1541,36 +1916,99 @@ impl Scheme for Xhci {
                     return Err(Error::new(ENOENT));
                 }
 
-                let st = match sub {
+                let st = match handle_type.as_str() {
                     "ctl" => EndpointHandleTy::Ctl,
                     "data" => EndpointHandleTy::Data,
                     _ => return Err(Error::new(ENOENT)),
                 };
-                Handle::Endpoint(port_num, endpoint_num, st)
+                Ok(Handle::Endpoint(port_num, endpoint_num, st))
             }
-            &[port] if port.starts_with("port") => {
-                if flags & O_DIRECTORY != 0 || flags & O_STAT != 0 {
-                    let port_num = port[4..].parse::<usize>().or(Err(Error::new(ENOENT)))?;
-                    let mut contents = Vec::new();
+            _ => panic!(
+                "Scheme parser returned an invalid string '{}' for the endpoint handle type",
+                handle_type
+            ),
+        }
+    }
 
-                    write!(contents, "descriptors\nendpoints\n").unwrap();
+    /// implements open() for /port<n>/configure
+    ///
+    /// # Arguments
+    /// - 'port_num: [usize]' - The port number specified in the scheme path
+    /// - 'endpoint_num: [u8]' - The endpoint number to access
+    /// - 'flags: [usize]'    - The flags parameter passed to open()
+    ///
+    /// # Returns
+    /// This function returns a [Result] containing either:
+    ///
+    /// - [Handle::Port]     - The handle was opened successfully
+    /// - [EISDIR]          - open() was called on this scheme endpoint, but no directory-specific flags were passed to open
+    /// - [ENOENT]           - The scheme is valid, but there is no port associated with the given port_num, or no endpoint with the given endpoint_num
+    fn open_handle_configure_endpoints(&self, port_num: usize, flags: usize) -> Result<Handle> {
+        if flags & O_DIRECTORY != 0 && flags & O_STAT == 0 {
+            return Err(Error::new(ENOTDIR));
+        }
 
-                    if self.slot_state(
-                        self.port_states
-                            .get(&port_num)
-                            .ok_or(Error::new(ENOENT))?
-                            .slot as usize,
-                    ) != SlotState::Configured as u8
-                    {
-                        write!(contents, "configure\n").unwrap();
-                    }
+        if flags & O_RDWR != O_WRONLY && flags & O_STAT == 0 {
+            return Err(Error::new(EACCES));
+        }
 
-                    Handle::Port(port_num, 0, contents)
-                } else {
-                    return Err(Error::new(EISDIR));
-                }
+        Ok(Handle::ConfigureEndpoints(port_num))
+    }
+
+    /// implements open() for /port<n>/request
+    ///
+    /// # Arguments
+    /// - 'port_num: [usize]' - The port number specified in the scheme path
+    /// - 'flags: [usize]'    - The flags parameter passed to open()
+    ///
+    /// # Returns
+    /// This function returns a [Result] containing either:
+    ///
+    /// - [Handle::Port]     - The handle was opened successfully
+    /// - [ENOTDIR]          - open() was called on this scheme endpoint, but directory-specific flags were passed to open
+    fn open_handle_port_request(&self, port_num: usize, flags: usize) -> Result<Handle> {
+        if flags & O_DIRECTORY != 0 && flags & O_STAT == 0 {
+            return Err(Error::new(ENOTDIR));
+        }
+
+        Ok(Handle::PortReq(port_num, PortReqState::Init))
+    }
+}
+
+impl Scheme for Xhci {
+    fn open(&self, path_str: &str, flags: usize, uid: u32, _gid: u32) -> Result<usize> {
+        if uid != 0 {
+            return Err(Error::new(EACCES));
+        }
+
+        //Parse the scheme, determine if it's in the valid format, return an error if not.
+        //This doesn't guarantee that the parameters themselves are valid (i.e. bounded correctly)
+        //only that the scheme itself was parseable.
+        let scheme_parameters = SchemeParameters::from_scheme(path_str)?;
+
+        //Once we have our scheme parsed into parameters, we can match on those parameters to
+        //find the correct routine to open a handle
+        let handle = match scheme_parameters {
+            SchemeParameters::TopLevel => self.open_handle_top_level(flags)?,
+            SchemeParameters::Port(port_number) => self.open_handle_port(port_number, flags)?,
+            SchemeParameters::PortDesc(port_number) => {
+                self.open_handle_port_descriptors(port_number, flags)?
             }
-            _ => return Err(Error::new(ENOENT)),
+            SchemeParameters::PortState(port_number) => {
+                self.open_handle_port_state(port_number, flags)?
+            }
+            SchemeParameters::PortReq(port_number) => {
+                self.open_handle_port_request(port_number, flags)?
+            }
+            SchemeParameters::Endpoints(port_number) => {
+                self.open_handle_port_endpoints(port_number, flags)?
+            }
+            SchemeParameters::Endpoint(port_number, endpoint_number, handle_type) => {
+                self.open_handle_single_endpoint(port_number, endpoint_number, handle_type, flags)?
+            }
+            SchemeParameters::ConfigureEndpoints(port_number) => {
+                self.open_handle_configure_endpoints(port_number, flags)?
+            }
         };
 
         let fd = self.next_handle.fetch_add(1, atomic::Ordering::Relaxed);
@@ -1585,37 +2023,22 @@ impl Scheme for Xhci {
     fn fstat(&self, id: usize, stat: &mut Stat) -> Result<usize> {
         let mut guard = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
-        match &*guard {
-            &Handle::TopLevel(_, ref buf)
-            | &Handle::Port(_, _, ref buf)
-            | &Handle::Endpoints(_, _, ref buf) => {
-                stat.st_mode = MODE_DIR;
-                stat.st_size = buf.len() as u64;
-            }
-            &Handle::PortDesc(_, _, ref buf) => {
-                stat.st_mode = MODE_FILE;
-                stat.st_size = buf.len() as u64;
-            }
-            &Handle::PortReq(_, PortReqState::WaitingForDeviceBytes(ref buf, _))
-            | &Handle::PortReq(_, PortReqState::WaitingForHostBytes(ref buf, _)) => {
-                stat.st_mode = MODE_CHR;
-                stat.st_size = buf.len() as u64;
-            }
-            &Handle::PortReq(_, PortReqState::Tmp)
-            | &Handle::PortReq(_, PortReqState::TmpSetup(_)) => unreachable!(),
+        stat.st_mode = match (&*guard).get_handle_type() {
+            HandleType::Directory => MODE_DIR,
+            HandleType::File => MODE_FILE,
+            HandleType::Character => MODE_CHR,
+        };
 
-            &Handle::PortState(_, _) | &Handle::PortReq(_, _) => stat.st_mode = MODE_CHR,
-            &Handle::Endpoint(_, _, ref st) => match st {
-                &EndpointHandleTy::Ctl | &EndpointHandleTy::Data => stat.st_mode = MODE_CHR,
-                &EndpointHandleTy::Root(_, ref buf) => {
-                    stat.st_mode = MODE_DIR;
-                    stat.st_size = buf.len() as u64;
-                }
-            },
-            &Handle::ConfigureEndpoints(_) => {
-                stat.st_mode = MODE_CHR | 0o200; // write only
-            }
+        stat.st_size = match (&*guard).get_buf_len() {
+            None => stat.st_size,
+            Some(size) => size as u64,
+        };
+
+        //If we have a handle to the configure scheme, we need to mark it as write only.
+        if let &Handle::ConfigureEndpoints(_) = (&*guard) {
+            stat.st_mode = stat.st_mode | 0o200;
         }
+
         Ok(0)
     }
 
@@ -1623,33 +2046,16 @@ impl Scheme for Xhci {
         let mut cursor = io::Cursor::new(buffer);
 
         let guard = self.handles.get(&fd).ok_or(Error::new(EBADF))?;
-        match &*guard {
-            &Handle::TopLevel(_, _) => write!(cursor, "/").unwrap(),
-            &Handle::Port(port_num, _, _) => write!(cursor, "/port{}/", port_num).unwrap(),
-            &Handle::PortDesc(port_num, _, _) => {
-                write!(cursor, "/port{}/descriptors", port_num).unwrap()
-            }
-            &Handle::PortState(port_num, _) => write!(cursor, "/port{}/state", port_num).unwrap(),
-            &Handle::PortReq(port_num, _) => write!(cursor, "/port{}/request", port_num).unwrap(),
-            &Handle::Endpoints(port_num, _, _) => {
-                write!(cursor, "/port{}/endpoints/", port_num).unwrap()
-            }
-            &Handle::Endpoint(port_num, endp_num, ref st) => write!(
-                cursor,
-                "/port{}/endpoints/{}/{}",
-                port_num,
-                endp_num,
-                match st {
-                    &EndpointHandleTy::Root(_, _) => "",
-                    &EndpointHandleTy::Ctl => "ctl",
-                    &EndpointHandleTy::Data => "data",
-                }
+        let scheme = (&*guard).to_scheme();
+
+        write!(cursor, "{}", scheme.as_str()).expect(
+            format!(
+                "Failed to convert the file descriptor with value {} to the associated file path",
+                fd
             )
-            .unwrap(),
-            &Handle::ConfigureEndpoints(port_num) => {
-                write!(cursor, "/port{}/configure", port_num).unwrap()
-            }
-        }
+            .as_str(),
+        );
+
         let src_len = usize::try_from(cursor.seek(io::SeekFrom::End(0)).unwrap()).unwrap();
         Ok(src_len)
     }
@@ -1693,7 +2099,7 @@ impl Scheme for Xhci {
             }
             // Write-once configure or transfer
             Handle::Endpoint(_, _, _) | Handle::ConfigureEndpoints(_) | Handle::PortReq(_, _) => {
-                return Err(Error::new(ESPIPE))
+                Err(Error::new(ESPIPE))
             }
         }
     }
@@ -1721,12 +2127,12 @@ impl Scheme for Xhci {
 
                 Ok(bytes_to_read)
             }
-            Handle::ConfigureEndpoints(_) => return Err(Error::new(EBADF)),
+            Handle::ConfigureEndpoints(_) => Err(Error::new(EBADF)),
 
             &mut Handle::Endpoint(port_num, endp_num, ref mut st) => match st {
                 EndpointHandleTy::Ctl => self.on_read_endp_ctl(port_num, endp_num, buf),
                 EndpointHandleTy::Data => block_on(self.on_read_endp_data(port_num, endp_num, buf)),
-                EndpointHandleTy::Root(_, _) => return Err(Error::new(EBADF)),
+                EndpointHandleTy::Root(_, _) => Err(Error::new(EBADF)),
             },
             &mut Handle::PortState(port_num, ref mut offset) => {
                 let ps = self.port_states.get(&port_num).ok_or(Error::new(EBADF))?;
@@ -1788,7 +2194,7 @@ impl Scheme for Xhci {
             }
             // TODO: Introduce PortReqState::Waiting, which this write call changes to
             // PortReqState::ReadyToWrite when all bytes are written.
-            _ => return Err(Error::new(EBADF)),
+            _ => Err(Error::new(EBADF)),
         }
     }
     fn close(&self, fd: usize) -> Result<usize> {
@@ -2272,7 +2678,10 @@ pub fn handle_transfer_event_trb(name: &str, event_trb: &Trb, transfer_trb: &Trb
         Err(Error::new(EIO))
     }
 }
+use lazy_static::lazy_static;
 use std::ops::{Add, Div, Rem};
+use std::path::Path;
+
 pub fn div_round_up<T>(a: T, b: T) -> T
 where
     T: Add<Output = T> + Div<Output = T> + Rem<Output = T> + PartialEq + From<u8> + Copy,
