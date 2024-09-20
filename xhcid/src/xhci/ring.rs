@@ -1,11 +1,11 @@
-use log::debug;
 use std::mem;
+
 use syscall::error::Result;
 
 use common::dma::Dma;
 
-use super::trb::Trb;
 use super::Xhci;
+use super::trb::Trb;
 
 pub struct Ring {
     pub link: bool,
@@ -16,11 +16,9 @@ pub struct Ring {
 
 impl Ring {
     pub fn new(ac64: bool, length: usize, link: bool) -> Result<Ring> {
-        let trbs = unsafe { Xhci::alloc_dma_zeroed_unsized_raw(ac64, length)? };
-
         Ok(Ring {
             link,
-            trbs,
+            trbs: unsafe { Xhci::alloc_dma_zeroed_unsized_raw(ac64, length)? },
             i: 0,
             cycle: link,
         })
@@ -30,10 +28,6 @@ impl Ring {
         let base = self.trbs.physical() as *const Trb;
         let addr = unsafe { base.offset(self.i as isize) };
         addr as u64 | self.cycle as u64
-    }
-
-    pub fn cycle_bit(&self) -> bool {
-        self.cycle
     }
 
     pub fn next_index(&mut self) -> usize {
@@ -47,7 +41,6 @@ impl Ring {
                 if self.link {
                     let address = self.trbs.physical();
                     self.trbs[i].link(address, true, self.cycle);
-                    debug!("Toggling the cycle bit.");
                     self.cycle = !self.cycle;
                 } else {
                     break;
@@ -59,10 +52,6 @@ impl Ring {
         i
     }
 
-    pub fn index(&self) -> usize {
-        self.i
-    }
-
     pub fn next(&mut self) -> (&mut Trb, bool) {
         let i = self.next_index();
         (&mut self.trbs[i], self.cycle)
@@ -70,10 +59,7 @@ impl Ring {
     /// Endless iterator that iterates through the ring items, over and over again. The iterator
     /// doesn't enqueue or dequeue anything.
     pub fn iter(&self) -> impl Iterator<Item = &Trb> + '_ {
-        Iter {
-            ring: self,
-            i: self.i,
-        }
+        Iter { ring: self, i: self.i }
     }
     /// Takes a physical address and returns the index into this ring, that the index represents.
     /// Returns `None` if the address is outside the bounds of this ring.
@@ -81,19 +67,10 @@ impl Ring {
     /// # Panics
     /// Panics if paddr is not a multiple of 16 bytes, i.e. the size of a TRB.
     pub fn phys_addr_to_index(&self, ac64: bool, paddr: u64) -> Option<usize> {
-        let base = (self.trbs.physical() as u64)
-            & if ac64 {
-                0xFFFF_FFFF_FFFF_FFFF
-            } else {
-                0xFFFF_FFFF
-            };
+        let base = (self.trbs.physical() as u64) & if ac64 { 0xFFFF_FFFF_FFFF_FFFF } else { 0xFFFF_FFFF };
         let offset = paddr.checked_sub(base)? as usize;
 
-        assert_eq!(
-            offset % mem::size_of::<Trb>(),
-            0,
-            "unaligned TRB physical address"
-        );
+        assert_eq!(offset % mem::size_of::<Trb>(), 0, "unaligned TRB physical address");
 
         let index = offset / mem::size_of::<Trb>();
 
@@ -123,20 +100,12 @@ impl Ring {
         let trb_virt_pointer = trb as *const Trb;
         let trbs_base_virt_pointer = self.trbs.as_ptr();
 
-        if (trb_virt_pointer as usize) < (trbs_base_virt_pointer as usize)
-            || (trb_virt_pointer as usize)
-                > (trbs_base_virt_pointer as usize) + self.trbs.len() * mem::size_of::<Trb>()
-        {
+        if (trb_virt_pointer as usize) < (trbs_base_virt_pointer as usize) || (trb_virt_pointer as usize) > (trbs_base_virt_pointer as usize) + self.trbs.len() * mem::size_of::<Trb>() {
             panic!("Gave a TRB outside of the ring, when retrieving its physical address in that ring. TRB: {:?} (at address {:p})", trb, trb);
         }
         let trb_offset_from_base = trb_virt_pointer as u64 - trbs_base_virt_pointer as u64;
 
-        let trbs_base_phys_ptr = (self.trbs.physical() as u64)
-            & if ac64 {
-                0xFFFF_FFFF_FFFF_FFFF
-            } else {
-                0xFFFF_FFFF
-            };
+        let trbs_base_phys_ptr = (self.trbs.physical() as u64) & if ac64 { 0xFFFF_FFFF_FFFF_FFFF } else { 0xFFFF_FFFF };
         let trb_phys_ptr = trbs_base_phys_ptr + trb_offset_from_base;
         trb_phys_ptr
     }
@@ -150,6 +119,7 @@ impl Ring {
 struct Iter<'ring> {
     ring: &'ring Ring,
     i: usize,
+
 }
 impl<'ring> Iterator for Iter<'ring> {
     type Item = &'ring Trb;

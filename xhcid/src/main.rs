@@ -46,6 +46,7 @@ use pcid_interface::{
 };
 
 use event::{Event, RawEventQueue};
+use log::info;
 use syscall::data::Packet;
 use syscall::error::EWOULDBLOCK;
 use syscall::flag::EventFlags;
@@ -207,6 +208,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         log::LevelFilter::Trace,
     );
 
+
     log::debug!("XHCI PCI CONFIG: {:?}", pci_config);
 
     let address = unsafe { pcid_handle.map_bar(0) }
@@ -214,7 +216,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         .ptr
         .as_ptr() as usize;
 
-    let (irq_file, interrupt_method) = get_int_method(&mut pcid_handle, address);
+    let (irq_file, interrupt_method) = (None, InterruptMethod::Polling);//get_int_method(&mut pcid_handle, address);
     //TODO: Fix interrupts.
 
     println!(" + XHCI {}", pci_config.func.display());
@@ -227,22 +229,22 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     daemon.ready().expect("xhcid: failed to notify parent");
 
-    let hci = Arc::new(
+    let mut hci = Arc::new(
         Xhci::new(scheme_name, address, interrupt_method, pcid_handle)
             .expect("xhcid: failed to allocate device"),
     );
 
-    hci.print_port_capabilities();
-
     xhci::start_irq_reactor(&hci, irq_file);
     xhci::start_device_enumerator(&hci);
 
-    hci.reset_ports();
+
+    hci.poll();
 
     //let event_queue = RawEventQueue::new().expect("xhcid: failed to create event queue");
 
     let todo = Arc::new(Mutex::new(Vec::<Packet>::new()));
     //let todo_futures = Arc::new(Mutex::new(Vec::<Pin<Box<dyn Future<Output = usize> + Send + Sync + 'static>>>::new()));
+
 
     //let socket_fd = socket.lock().unwrap().as_raw_fd();
     //event_queue.subscribe(socket_fd as usize, 0, event::EventFlags::READ).unwrap();

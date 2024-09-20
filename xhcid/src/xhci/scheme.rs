@@ -562,7 +562,7 @@ impl Xhci {
     pub async fn execute_command<F: FnOnce(&mut Trb, bool)>(&self, f: F) -> (Trb, Trb) {
         //TODO: find out why this bit is set earlier!
         if self.interrupt_is_pending(0) {
-            //warn!("The EHB bit is already set!");
+            warn!("The EHB bit is already set!");
             //self.force_clear_interrupt(0);
         }
 
@@ -660,7 +660,7 @@ impl Xhci {
 
         handle_transfer_event_trb("CONTROL_TRANSFER", &event_trb, &status_trb)?;
 
-        self.event_handler_finished();
+        //self.event_handler_finished();
 
         Ok(event_trb)
     }
@@ -827,7 +827,7 @@ impl Xhci {
                 trb.reset_endpoint(slot, endp_num_xhc, tsp, cycle);
             })
             .await;
-        self.event_handler_finished();
+        //self.event_handler_finished();
 
         handle_event_trb("RESET_ENDPOINT", &event_trb, &command_trb)
     }
@@ -1160,7 +1160,7 @@ impl Xhci {
                 })
                 .await;
 
-            self.event_handler_finished();
+            //self.event_handler_finished();
 
             handle_event_trb("CONFIGURE_ENDPOINT", &event_trb, &command_trb)?;
         }
@@ -1368,7 +1368,7 @@ impl Xhci {
                 },
             )
             .await?;
-        self.event_handler_finished();
+        //self.event_handler_finished();
 
         let bytes_transferred = dma_buf
             .as_ref()
@@ -1430,6 +1430,7 @@ impl Xhci {
         let mut config_descs = SmallVec::new();
 
         for index in 0..raw_dd.configurations {
+            debug!("Fetching the config descriptor at index {}", index);
             let (desc, data) = self.fetch_config_desc(port_id, slot, index).await?;
             log::debug!(
                 "port {} slot {} config {} desc {:X?}",
@@ -2382,7 +2383,7 @@ impl Xhci {
                 )
             })
             .await;
-        self.event_handler_finished();
+        //self.event_handler_finished();
 
         handle_event_trb("SET_TR_DEQUEUE_PTR", &event_trb, &command_trb)
     }

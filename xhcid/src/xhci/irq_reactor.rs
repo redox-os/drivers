@@ -21,6 +21,8 @@ use super::ring::Ring;
 use super::trb::{Trb, TrbCompletionCode, TrbType};
 use super::{port, Xhci};
 use crate::xhci::device_enumerator::DeviceEnumerationRequest;
+use crate::xhci::port::PortFlags;
+use crate::xhci::scheme::AnyDescriptor::Device;
 
 /// Short-term states (as in, they are removed when the waker is consumed, but probably pushed back
 /// by the future unless it completed).
@@ -139,11 +141,17 @@ impl IrqReactor {
                 continue 'trb_loop;
             }
 
-            trace!("Found event TRB: {:?}", event_trb);
+            trace!(
+                    "Found event TRB at index {} with type {} and cycle bit {}: {:?}",
+                    event_trb_index,
+                    event_trb.trb_type(),
+                    event_trb.cycle() as u8,
+                    event_trb
+                );
+
 
             if self.check_event_ring_full(event_trb.clone()) {
                 info!("Had to resize event TRB, retrying...");
-                hci_clone.event_handler_finished();
                 continue 'trb_loop;
             }
 
@@ -164,10 +172,35 @@ impl IrqReactor {
             event_trb.reserved(false);
 
             self.update_erdp(&*event_ring);
+            hci_clone.event_handler_finished();
 
             event_trb_index = event_ring.ring.next_index();
         }
     }
+
+    fn mask_interrupts(&mut self){
+            let mut run = self.hci.run.lock().unwrap();
+
+            debug!("Masking interrupts!");
+
+            if !run.ints[0].iman.readf(1 << 1){
+                warn!("Attempted to mask interrupts when they were already disabled!")
+            }
+
+            run.ints[0].iman.writef(1 << 1, false);
+    }
+
+    fn unmask_interrupts(&mut self){
+            let mut run = self.hci.run.lock().unwrap();
+
+        debug!("unmasking interrupts!");
+        if run.ints[0].iman.readf(1 << 1){
+            warn!("Attempted to unmask interrupts when they were already enabled!")
+        }
+
+            run.ints[0].iman.writef(1 << 1, true);
+    }
+
     fn run_with_irq_file(mut self) {
         debug!("Running IRQ reactor with IRQ file and event queue");
 
@@ -207,6 +240,8 @@ impl IrqReactor {
                 break;
             }
 
+            self.mask_interrupts();
+
             trace!("IRQ reactor received an IRQ");
 
             let _ = self.irq_file.as_mut().unwrap().write(&buffer);
@@ -225,12 +260,14 @@ impl IrqReactor {
                     if count == 0 {
                         warn!("xhci: Received interrupt, but no event was found in the event ring. Ignoring interrupt.")
                     }
+                    //hci_clone.event_handler_finished();
+                    self.unmask_interrupts();
                     return;
                 } else {
                     count += 1
                 }
 
-                trace!(
+                info!(
                     "Found event TRB at index {} with type {} and cycle bit {}: {:?}",
                     event_trb_index,
                     event_trb.trb_type(),
@@ -240,7 +277,13 @@ impl IrqReactor {
 
                 if self.check_event_ring_full(event_trb.clone()) {
                     info!("Had to resize event TRB, retrying...");
-                    hci_clone.event_handler_finished();
+                    //hci_clone.event_handler_finished();
+                    if self.hci.interrupt_is_pending(0) {
+                        warn!("After incrementing the dequeue pointer, the interrupt bit is still pending.")
+                    } else {
+                        debug!("The interrupt bit is no longer pending.");
+                    }
+                    self.unmask_interrupts();
                     return;
                 }
                 self.handle_requests();
@@ -258,70 +301,41 @@ impl IrqReactor {
 
                 event_trb.reserved(false);
 
-                if self.hci.interrupt_is_pending(0) {
-                    debug!("The interrupt bit is still pending.")
-                }
                 self.update_erdp(&*event_ring);
-
-                if self.hci.interrupt_is_pending(0) {
-                    debug!("After incrementing the dequeue pointer, the interrupt bit is still pending.")
-                } else {
-                    debug!("The interrupt bit is no longer pending.");
-                }
+                self.hci.event_handler_finished();
 
                 event_trb_index = event_ring.ring.next_index();
             }
             trace!("Exited event loop!");
+
+
         }
         trace!("IRQ Reactor has finished handling the interrupt");
     }
 
     /// Handles device attach/detach events as indicated by a PortStatusChange
     fn handle_port_status_change(&mut self, trb: Trb) {
-        let port_index_result = trb.port_status_change_port_id();
 
-        if let Some(port_index) = port_index_result {
-            info!(
-                "Received a port status change event on port {} which is in state {}",
-                port_index - 1,
-                self.hci.get_pls((port_index - 1) as usize)
+
+        if let Some(port_num) = trb.port_status_change_port_id(){
+            trace!("Received Port Status Change Request on port {}", port_num);
+            self.device_enumerator_sender.send(
+                DeviceEnumerationRequest{
+                    port_number: port_num
+                }
+            ).expect(
+                format!("Failed to transmit device numeration request on port {}", port_num).as_str()
             );
-            let (num_ports, flags) = {
-                debug!("Locking the ports to get the port info");
-                let ports = self.hci.ports.lock().unwrap();
-                debug!("The ports were unlocked");
-
-                (ports.len(), ports[(port_index - 1) as usize].flags())
-            };
-
-            if port_index as usize >= num_ports {
-                warn!(
-                    "Received a PortStatusChange event with port index {}, there are only {} ports. Dropping the event",
-                    port_index - 1, //Ports are 1-indexed rather than 0-indexed
-                    num_ports
-                );
-                return;
+            {
+                let mut ports = self.hci.ports.lock().unwrap();
+                let port = &mut ports[(port_num - 1) as usize];
+                port.portsc.writef(PortFlags::PORT_CSC.bits(), true);
             }
-
-            let request = match flags.contains(port::PortFlags::PORT_CSC) {
-                true => {
-                    info!("Generating a Device Attach request for the Device Enumerator");
-                    DeviceEnumerationRequest::Attach(port_index)
-                }
-                false => {
-                    info!("Generating a Device Detach request for the Device Enumerator");
-                    DeviceEnumerationRequest::Detach(port_index)
-                }
-            };
-
-            self.device_enumerator_sender.send(request).expect(
-                format!(
-                    "Failed to transmit Device Enumeration Request for port {}",
-                    port_index
-                )
-                .as_str(),
-            );
+        } else {
+            warn!("Received a TRB of type {}, which was unexpected", trb.trb_type())
         }
+
+
     }
 
     fn update_erdp(&self, event_ring: &EventRing) {

@@ -19,10 +19,10 @@ use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
 use std::{mem, process, slice, sync::atomic, task, thread};
-
+use std::time::Duration;
 use syscall::error::{Error, Result, EBADF, EBADMSG, EIO, ENOENT};
 use syscall::io::Io;
-use syscall::PAGE_SIZE;
+use syscall::{EAGAIN, PAGE_SIZE};
 
 use chashmap::CHashMap;
 use common::dma::Dma;
@@ -106,6 +106,10 @@ impl Xhci {
         index: u8,
         desc: &mut Dma<T>,
     ) -> Result<()> {
+        if self.interrupt_is_pending(0){
+            warn!("EHB is already set!");
+            self.force_clear_interrupt(0);
+        }
         let len = mem::size_of::<T>();
         log::debug!(
             "get_desc_raw port {} slot {} kind {:?} index {} len {}",
@@ -156,13 +160,14 @@ impl Xhci {
             )
         };
 
+        debug!("Waiting for the next transfer event TRB...");
         let trbs = future.await;
         let event_trb = trbs.event_trb;
         let status_trb = trbs.src_trb.unwrap();
-
+        trace!("Handling the transfer event TRB!");
         self::scheme::handle_transfer_event_trb("GET_DESC", &event_trb, &status_trb)?;
 
-        self.event_handler_finished();
+        //self.event_handler_finished();
         Ok(())
     }
 
@@ -267,7 +272,6 @@ pub struct Xhci {
     handles: CHashMap<usize, scheme::Handle>,
     next_handle: AtomicUsize,
     port_states: CHashMap<usize, PortState>,
-
     drivers: CHashMap<usize, Mutex<process::Child>>,
     scheme_name: String,
 
@@ -402,7 +406,7 @@ impl Xhci {
         // Create the command ring with 4096 / 16 (TRB size) entries, so that it uses all of the
         // DMA allocation (which is at least a 4k page).
         let entries_per_page = PAGE_SIZE / mem::size_of::<Trb>();
-        let cmd = Ring::new(cap.ac64(), entries_per_page, false)?;
+        let cmd = Ring::new(cap.ac64(), entries_per_page, true)?;
 
         let (irq_reactor_sender, irq_reactor_receiver) = crossbeam_channel::unbounded();
 
@@ -426,7 +430,6 @@ impl Xhci {
             handles: CHashMap::new(),
             next_handle: AtomicUsize::new(0),
             port_states: CHashMap::new(),
-
             drivers: CHashMap::new(),
             scheme_name,
 
@@ -532,11 +535,13 @@ impl Xhci {
 
         // Ring command doorbell
         debug!("Ringing command doorbell.");
-        //self.dbs.lock().unwrap()[0].write(0);
+        self.dbs.lock().unwrap()[0].write(0);
 
         info!("XHCI initialized.");
 
         self.op.get_mut().unwrap().set_cie(self.cap.cic());
+
+        self.print_port_capabilities();
 
         Ok(())
     }
@@ -548,6 +553,39 @@ impl Xhci {
         (state >> 5) & 4
     }
 
+    pub fn poll(&self) {
+        debug!("Polling Initial Devices!");
+
+        let len = self.ports.lock().unwrap().len();
+
+        for index in 0..len{
+
+            //Get the CCS and CSC flags
+            let (ccs, csc, flags) = {
+                let mut ports = self.ports.lock().unwrap();
+                let port = &mut ports[index];
+                let ccs = port.portsc.readf(PortFlags::PORT_CCS.bits());
+                let csc = port.portsc.readf(PortFlags::PORT_CSC.bits());
+
+                (ccs, csc, port.flags())
+            };
+
+            debug!("Port {} has flags {:?}", index + 1, flags);
+
+            match (ccs, csc){
+                (false, false) => { // Nothing is connected, and there was no port status change
+                    //Do nothing
+                },
+                _ => { //Either something is connected, or nothing is connected and a port status change was asserted.
+                    self.device_enumerator_sender.send(DeviceEnumerationRequest{
+                        port_number: (index + 1) as u8
+                    }).expect("Failed to generate the port enumeration request!");
+                }
+            }
+
+        }
+    }
+
     pub fn print_port_capabilities(&self) {
         let len;
         {
@@ -556,17 +594,28 @@ impl Xhci {
         }
 
         for port in 0..len {
+            let state = self.get_pls(port);
+            let mut flags;
+            {
+                let mut ports = self.ports.lock().unwrap();
+
+                flags = ports[port].flags();
+
+            }
+
             match self.supported_protocol(port as u8) {
                 None => {
                     warn!("No detected supported protocol for port {}", port);
                 }
                 Some(protocol) => {
                     info!(
-                        "Port {} is a USB {}.{} port with slot type {}",
+                        "Port {} is a USB {}.{} port with slot type {} and in current state {}: {:?}",
                         port + 1,
                         protocol.rev_major(),
                         protocol.rev_minor(),
-                        protocol.proto_slot_ty()
+                        protocol.proto_slot_ty(),
+                        state,
+                        flags
                     );
                 }
             };
@@ -583,44 +632,17 @@ impl Xhci {
         let state = port.portsc.read();
         let pls = (state >> 5) & 4;
 
-        trace!("Port Link State: {}", pls);
+        debug!("Port Link State: {}", pls);
 
         port.portsc.writef(port::PortFlags::PORT_PR.bits(), true);
-        while port.portsc.readf(port::PortFlags::PORT_PR.bits()) {
-            //while ! port.flags().contains(port::PortFlags::PORT_PRC) {
+        debug!("Flags after setting port reset: {:?}", port.flags());
+        while !port.portsc.readf(port::PortFlags::PORT_PRC.bits()) {
+            debug!("Ran at least once!");
             if instant.elapsed().as_secs() >= 1 {
                 warn!("timeout");
                 break;
             }
-            std::thread::yield_now();
-        }
-    }
-    pub fn reset_ports(&self) {
-        // Reset ports
-        {
-            let num_ports;
-
-            {
-                let mut ports = self.ports.lock().unwrap();
-                num_ports = ports.len();
-            }
-
-            for i in 0..num_ports {
-                match self.supported_protocol(i as u8) {
-                    None => {
-                        warn!(
-                            "No supported protocol detected for port {} with XHCI index {}",
-                            i,
-                            i + 1
-                        )
-                    }
-                    Some(protocol) => {
-                        if protocol.rev_major() <= 2 {
-                            self.reset_port(i);
-                        }
-                    }
-                }
-            }
+            //std::thread::yield_now();
         }
     }
 
@@ -649,10 +671,6 @@ impl Xhci {
             let mut run = self.run.lock().unwrap();
             let mut int = &mut run.ints[index];
 
-            //If we clear the IP flag, we MUST clear EINT before we clear IP.
-            //Otherwise, a race condition can cause the transition to be lost.
-            //self.op.lock().unwrap().usb_sts.writef(1 << 3, true);
-
             if int.erdp_low.readf(1 << 3) {
                 int.erdp_low.writef(1 << 3, true);
             } else {
@@ -676,7 +694,7 @@ impl Xhci {
 
         trace!("Slot is enabled!");
         self::scheme::handle_event_trb("ENABLE_SLOT", &event_trb, &command_trb)?;
-        self.event_handler_finished();
+        //self.event_handler_finished();
 
         Ok(event_trb.event_slot())
     }
@@ -686,7 +704,7 @@ impl Xhci {
             .await;
 
         self::scheme::handle_event_trb("DISABLE_SLOT", &event_trb, &command_trb)?;
-        self.event_handler_finished();
+        //self.event_handler_finished();
 
         Ok(())
     }
@@ -712,10 +730,15 @@ impl Xhci {
     pub async fn attach_device(&self, port_number: u8) -> syscall::Result<()> {
         let i = port_number as usize;
 
+        if self.port_states.contains_key(&i){
+            return Err(syscall::Error::new(EAGAIN));
+        }
+
         let (data, state, speed, flags) = {
             let port = &self.ports.lock().unwrap()[i];
             (port.read(), port.state(), port.speed(), port.flags())
         };
+
         info!(
             "XHCI Port {}: {:X}, State {}, Speed {}, Flags {:?}",
             i, data, state, speed, flags
@@ -729,24 +752,6 @@ impl Xhci {
                     0
                 }
             };
-
-            match self.supported_protocol(i as u8) {
-                None => {
-                    warn!("Failed to find supported protocol information for port");
-                }
-                Some(protocol) => {
-                    if protocol.rev_major() <= 2 {
-                        info!(
-                            "Port {} was detected as a USB2 device. Resetting the port",
-                            i
-                        );
-                        self.reset_port(i);
-                        info!("Port {} was reset.", i);
-                    } else {
-                        info!("Port {} was detected as a USB3 or newer device. Proceeding with addressing", i);
-                    }
-                }
-            }
 
             debug!("Slot type: {}", slot_ty);
             debug!("Enabling slot.");
@@ -762,32 +767,20 @@ impl Xhci {
 
             let mut input = unsafe { self.alloc_dma_zeroed::<InputContext>()? };
 
-            let mut retry_count = 0;
-
-            let mut ring: Ring;
-
-            loop {
-                match self
+            info!("Attempting to address the device");
+                let mut ring = match self
                     .address_device(&mut input, i, slot_ty, slot, speed)
                     .await
                 {
                     Ok(device_ring) => {
-                        ring = device_ring;
-                        break;
+                        device_ring
                     }
                     Err(err) => {
-                        warn!("Failed to address device for port {}: '{}'", i, err);
-                        if retry_count < 5 {
-                            warn!("Retrying...");
-                            retry_count = retry_count + 1;
-                            continue;
-                        } else {
-                            error!("Failed to spawn driver for port {}: `{}`", i, err);
-                            return Err(err);
-                        }
+                        error!("Failed to spawn driver for port {}: `{}`", i, err);
+                        return Err(err);
                     }
                 };
-            }
+
             debug!("Addressed device");
 
             // TODO: Should the descriptors be cached in PortState, or refetched?
@@ -807,6 +800,7 @@ impl Xhci {
                 .collect::<BTreeMap<_, _>>(),
             };
             self.port_states.insert(i, port_state);
+            debug!("Got port states!");
 
             // Ensure correct packet size is used
             let dev_desc_8_byte = self.fetch_dev_desc_8_byte(i, slot).await?;
@@ -819,18 +813,26 @@ impl Xhci {
                     .await?;
             }
 
+            debug!("Got the 8 byte dev descriptor");
+
             let dev_desc = self.get_desc(i, slot).await?;
+            debug!("Got the full device descriptor!");
             self.port_states.get_mut(&i).unwrap().dev_desc = Some(dev_desc);
 
+            debug!("Got the port states again!");
             {
                 let mut port_state = self.port_states.get_mut(&i).unwrap();
 
                 let mut input = port_state.input_context.lock().unwrap();
+                debug!("Got the input context!");
                 let dev_desc = port_state.dev_desc.as_ref().unwrap();
 
                 self.update_default_control_pipe(&mut *input, slot, dev_desc)
                     .await?;
             }
+
+            debug!("Updated the default control pipe");
+
 
             match self.spawn_drivers(i) {
                 Ok(()) => (),
@@ -838,6 +840,8 @@ impl Xhci {
                     error!("Failed to spawn driver for port {}: `{}`", i, err)
                 }
             }
+        } else {
+            warn!("Attempted to attach a device that didnt have CCS=1");
         }
 
         Ok(())
@@ -846,7 +850,7 @@ impl Xhci {
     pub async fn detach_device(&self, port_number: usize) -> Result<()> {
         let port_state = self.port_states.get(&port_number);
         let mut driver_process = self.drivers.get(&port_number);
-
+        
         if let Some(state) = port_state {
             let result = self.disable_port_slot(state.slot).await;
             self.port_states.remove(&port_number);
@@ -877,6 +881,7 @@ impl Xhci {
             );
             Ok(())
         }
+
     }
 
     pub async fn update_max_packet_size(
@@ -904,7 +909,7 @@ impl Xhci {
             .await;
 
         self::scheme::handle_event_trb("EVALUATE_CONTEXT", &event_trb, &command_trb)?;
-        self.event_handler_finished();
+        //self.event_handler_finished();
 
         Ok(())
     }
@@ -915,6 +920,7 @@ impl Xhci {
         slot_id: u8,
         dev_desc: &DevDesc,
     ) -> Result<()> {
+        debug!("Updating default control pipe!");
         input_context.add_context.write(1 << 1);
         input_context.drop_context.write(0);
 
@@ -934,9 +940,10 @@ impl Xhci {
                 trb.evaluate_context(slot_id, input_context.physical(), false, cycle)
             })
             .await;
+        debug!("Completed the command to update the default control pipe");
 
         self::scheme::handle_event_trb("EVALUATE_CONTEXT", &event_trb, &command_trb)?;
-        self.event_handler_finished();
+        //self.event_handler_finished();
 
         Ok(())
     }
@@ -1043,10 +1050,10 @@ impl Xhci {
                 i,
                 event_trb.completion_code()
             );
-            self.event_handler_finished();
+            //self.event_handler_finished();
             return Err(Error::new(EIO));
         }
-        self.event_handler_finished();
+        //self.event_handler_finished();
 
         Ok(ring)
     }
@@ -1334,6 +1341,7 @@ struct DriversConfig {
 
 use crate::xhci::device_enumerator::{DeviceEnumerationRequest, DeviceEnumerator};
 use lazy_static::lazy_static;
+use crate::xhci::port::PortFlags;
 
 lazy_static! {
     static ref DRIVERS_CONFIG: DriversConfig = {
