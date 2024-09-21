@@ -126,6 +126,12 @@ pub unsafe fn physmap(
     ty: MemoryType,
 ) -> Result<*mut ()> {
     // TODO: arraystring?
+
+    //Return an error rather than potentially crash the kernel.
+    if(base_phys == 0) {
+        return Err(Error::new(EINVAL));
+    }
+
     let path = format!(
         "/scheme/memory/physical@{}",
         match ty {

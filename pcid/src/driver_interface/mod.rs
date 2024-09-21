@@ -374,8 +374,6 @@ impl PciFunctionHandle {
         } else {
             let (bar, bar_size) = self.config.func.bars[bir as usize].expect_mem();
 
-            assert!(bar > 0); //Panic, rather than potentially crash the kernel if the bar isnt initialized.
-
             let ptr = unsafe {
                 common::physmap(
                     bar,
