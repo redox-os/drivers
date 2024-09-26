@@ -1,15 +1,19 @@
+use core::str;
+use parking_lot::RwLockReadGuard;
+use redox_scheme::{CallerCtx, OpenResult, SchemeMut};
 use std::collections::BTreeMap;
 use std::convert::{TryFrom, TryInto};
-use parking_lot::RwLockReadGuard;
+use syscall::dirent::{DirEntry, DirentBuf, DirentKind};
+use syscall::schemev2::NewFdFlags;
 
 use syscall::data::Stat;
-use syscall::error::{EIO, EBADF, EBADFD, EINVAL, EISDIR, ENOENT, ENOTDIR, EOVERFLOW};
 use syscall::error::{Error, Result};
+use syscall::error::{EBADF, EBADFD, EINVAL, EIO, EISDIR, ENOENT, ENOTDIR};
+use syscall::flag::{MODE_DIR, MODE_FILE};
 use syscall::flag::{O_ACCMODE, O_DIRECTORY, O_RDONLY, O_STAT, O_SYMLINK};
-use syscall::flag::{MODE_FILE, MODE_DIR, SEEK_CUR, SEEK_END, SEEK_SET};
-use syscall::scheme::SchemeMut;
+use syscall::EOPNOTSUPP;
 
-use crate::acpi::{AcpiContext, SdtSignature, AmlSymbols};
+use crate::acpi::{AcpiContext, AmlSymbols, SdtSignature};
 
 pub struct AcpiScheme<'acpi> {
     ctx: &'acpi AcpiContext,
@@ -18,7 +22,6 @@ pub struct AcpiScheme<'acpi> {
 }
 
 struct Handle<'a> {
-    offset: usize,
     kind: HandleKind<'a>,
     stat: bool,
 }
@@ -42,11 +45,14 @@ impl HandleKind<'_> {
     }
     fn len(&self, acpi_ctx: &AcpiContext) -> Result<usize> {
         Ok(match self {
-            Self::TopLevel => TOPLEVEL_CONTENTS.len(),
-            Self::Tables => acpi_ctx.tables().len().checked_mul(TABLE_DENTRY_LENGTH).unwrap_or(usize::max_value()),
-            Self::Table(signature) => acpi_ctx.sdt_from_signature(signature).ok_or(Error::new(EBADFD))?.length(),
-            Self::Symbols(aml_symbols) => aml_symbols.symbols_str().len(),
+            // Files
+            Self::Table(signature) => acpi_ctx
+                .sdt_from_signature(signature)
+                .ok_or(Error::new(EBADFD))?
+                .length(),
             Self::Symbol(description) => description.len(),
+            // Directories
+            Self::TopLevel | Self::Symbols(_) | Self::Tables => 0,
         })
     }
 }
@@ -61,10 +67,6 @@ impl<'acpi> AcpiScheme<'acpi> {
     }
 }
 
-const TOPLEVEL_CONTENTS: &[u8] = b"tables\nsymbols\n";
-
-const TABLE_DENTRY_LENGTH: usize = 35;
-
 fn parse_hex_digit(hex: u8) -> Option<u8> {
     let hex = hex.to_ascii_lowercase();
 
@@ -78,7 +80,8 @@ fn parse_hex_digit(hex: u8) -> Option<u8> {
 }
 
 fn parse_hex_2digit(hex: &[u8]) -> Option<u8> {
-    parse_hex_digit(hex[0]).and_then(|most_significant| Some((most_significant << 4) | parse_hex_digit(hex[1])?))
+    parse_hex_digit(hex[0])
+        .and_then(|most_significant| Some((most_significant << 4) | parse_hex_digit(hex[1])?))
 }
 
 fn parse_oem_id(hex: [u8; 12]) -> Option<[u8; 6]> {
@@ -123,27 +126,38 @@ fn parse_table(table: &[u8]) -> Option<SdtSignature> {
     }
 
     Some(SdtSignature {
-        signature: <[u8; 4]>::try_from(signature_part).expect("expected 4-byte slice to be convertible into [u8; 4]"),
+        signature: <[u8; 4]>::try_from(signature_part)
+            .expect("expected 4-byte slice to be convertible into [u8; 4]"),
         oem_id: {
-            let hex = <[u8; 12]>::try_from(oem_id_part).expect("expected 12-byte slice to be convertible into [u8; 12]");
+            let hex = <[u8; 12]>::try_from(oem_id_part)
+                .expect("expected 12-byte slice to be convertible into [u8; 12]");
             parse_oem_id(hex)?
         },
         oem_table_id: {
-            let hex = <[u8; 16]>::try_from(oem_table_part).expect("expected 16-byte slice to be convertible into [u8; 16]");
+            let hex = <[u8; 16]>::try_from(oem_table_part)
+                .expect("expected 16-byte slice to be convertible into [u8; 16]");
             parse_oem_table_id(hex)?
         },
     })
 }
 
 impl SchemeMut for AcpiScheme<'_> {
-    fn open(&mut self, path: &str, flags: usize, _uid: u32, _gid: u32) -> Result<usize> {
+    fn xopen(&mut self, path: &str, flags: usize, _ctx: &CallerCtx) -> Result<OpenResult> {
         let path = path.trim_start_matches('/');
 
         let flag_stat = flags & O_STAT == O_STAT;
         let flag_dir = flags & O_DIRECTORY == O_DIRECTORY;
 
         // TODO: arrayvec
-        let components = path.split('/').collect::<Vec<_>>();
+        let components = {
+            let mut v = arrayvec::ArrayVec::<&str, 3>::new();
+            let it = path.split('/');
+            for component in it.take(3) {
+                v.push(component);
+            }
+
+            v
+        };
 
         let kind = match &*components {
             [""] => HandleKind::TopLevel,
@@ -154,11 +168,13 @@ impl SchemeMut for AcpiScheme<'_> {
                 HandleKind::Table(signature)
             }
 
-            ["symbols"] => if let Ok(aml_symbols) = self.ctx.aml_symbols() {
-                HandleKind::Symbols(aml_symbols)
-            } else {
-                return Err(Error::new(EIO))
-            },
+            ["symbols"] => {
+                if let Ok(aml_symbols) = self.ctx.aml_symbols() {
+                    HandleKind::Symbols(aml_symbols)
+                } else {
+                    return Err(Error::new(EIO));
+                }
+            }
 
             ["symbols", symbol] => {
                 if let Some(description) = self.ctx.aml_lookup(symbol) {
@@ -188,18 +204,28 @@ impl SchemeMut for AcpiScheme<'_> {
         let fd = self.next_fd;
         self.next_fd += 1;
 
-        self.handles.insert(fd, Handle {
-            offset: 0,
-            stat: flag_stat,
-            kind,
-        });
+        self.handles.insert(
+            fd,
+            Handle {
+                stat: flag_stat,
+                kind,
+            },
+        );
 
-        Ok(fd)
+        Ok(OpenResult::ThisScheme {
+            number: fd,
+            flags: NewFdFlags::POSITIONED,
+        })
     }
+
     fn fstat(&mut self, id: usize, stat: &mut Stat) -> Result<usize> {
         let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
-        
-        stat.st_size = handle.kind.len(self.ctx)?.try_into().unwrap_or(u64::max_value());
+
+        stat.st_size = handle
+            .kind
+            .len(self.ctx)?
+            .try_into()
+            .unwrap_or(u64::max_value());
 
         if handle.kind.is_dir() {
             stat.st_mode = MODE_DIR;
@@ -209,35 +235,10 @@ impl SchemeMut for AcpiScheme<'_> {
 
         Ok(0)
     }
-    fn seek(&mut self, id: usize, pos: isize, whence: usize) -> Result<isize> {
-        let handle = self.handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
-        if handle.stat {
-            return Err(Error::new(EBADF));
-        }
+    fn read(&mut self, id: usize, buf: &mut [u8], offset: u64, _fcntl: u32) -> Result<usize> {
+        let offset: usize = offset.try_into().map_err(|_| Error::new(EINVAL))?;
 
-        let file_len = handle.kind.len(self.ctx)?;
-
-        let new_offset = match whence {
-            SEEK_SET => pos as usize,
-            SEEK_CUR => if pos < 0 {
-                handle.offset.checked_sub((-pos) as usize).ok_or(Error::new(EINVAL))?
-            } else {
-                handle.offset.saturating_add(pos as usize)
-            },
-            SEEK_END => if pos < 0 {
-                file_len.checked_sub((-pos) as usize).ok_or(Error::new(EINVAL))?
-            } else {
-                file_len
-            }
-
-            _ => return Err(Error::new(EINVAL)),
-        };
-
-        handle.offset = new_offset;
-        Ok(new_offset as isize)
-    }
-    fn read(&mut self, id: usize, buf: &mut [u8]) -> Result<usize> {
         let handle = self.handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
         if handle.stat {
@@ -245,77 +246,104 @@ impl SchemeMut for AcpiScheme<'_> {
         }
 
         let src_buf = match &handle.kind {
-            HandleKind::TopLevel => TOPLEVEL_CONTENTS,
-            HandleKind::Table(ref signature) => self.ctx.sdt_from_signature(signature).ok_or(Error::new(EBADFD))?.as_slice(),
-
-            HandleKind::Tables => {
-                use std::io::prelude::*;
-
-                let tables_to_skip = handle.offset / TABLE_DENTRY_LENGTH;
-                let max_tables_to_fill = (buf.len() + TABLE_DENTRY_LENGTH - 1) / TABLE_DENTRY_LENGTH;
-
-                let mut bytes_to_skip = handle.offset % TABLE_DENTRY_LENGTH;
-
-                let mut src_buf = [0_u8; TABLE_DENTRY_LENGTH];
-                let mut bytes_written = 0;
-
-                for table in self.ctx.tables().iter().skip(tables_to_skip).take(max_tables_to_fill) {
-                    let mut cursor = std::io::Cursor::new(&mut src_buf[..]);
-                    cursor.write_all(&table.signature).unwrap();
-                    cursor.write_all(&[b'-']).unwrap();
-                    // TODO: Treat these IDs as strings?
-                    for byte in table.oem_id.iter() {
-                        write!(cursor, "{:>02X}", byte).unwrap();
-                    }
-                    cursor.write_all(&[b'-']).unwrap();
-                    for byte in table.oem_table_id.iter() {
-                        write!(cursor, "{:>02X}", byte).unwrap();
-                    }
-                    cursor.write_all(&[b'\n']).unwrap();
-
-                    let src_buf = &src_buf[bytes_to_skip..];
-                    let dst_buf = &mut buf[bytes_written..];
-                    let to_copy = std::cmp::min(src_buf.len(), dst_buf.len());
-                    dst_buf[..to_copy].copy_from_slice(&src_buf[..to_copy]);
-                    bytes_written += to_copy;
-                    bytes_to_skip = 0;
-                }
-
-                handle.offset = handle.offset.checked_add(bytes_written).ok_or(Error::new(EOVERFLOW))?;
-
-                return Ok(bytes_written);
-            }
-
-            HandleKind::Symbols(aml_symbols) => {
-                let symbols = aml_symbols.symbols_str();
-                let offset = std::cmp::min(symbols.len(), handle.offset);
-                let src_buf = &symbols.as_bytes()[offset..];
-
-                let to_copy = std::cmp::min(src_buf.len(), buf.len());
-                buf[..to_copy].copy_from_slice(&src_buf[..to_copy]);
-
-                handle.offset = handle.offset.checked_add(to_copy).ok_or(Error::new(EOVERFLOW))?;
-
-                return Ok(to_copy);
-            }
-
+            HandleKind::Table(ref signature) => self
+                .ctx
+                .sdt_from_signature(signature)
+                .ok_or(Error::new(EBADFD))?
+                .as_slice(),
             HandleKind::Symbol(description) => description.as_bytes(),
-
+            _ => return Err(Error::new(EINVAL)),
         };
 
-        let offset = std::cmp::min(src_buf.len(), handle.offset);
+        let offset = std::cmp::min(src_buf.len(), offset);
         let src_buf = &src_buf[offset..];
 
         let to_copy = std::cmp::min(src_buf.len(), buf.len());
-        buf[..to_copy].copy_from_slice(&src_buf[..to_copy]);
 
-        handle.offset = handle.offset.checked_add(to_copy).ok_or(Error::new(EOVERFLOW))?;
+        buf[..to_copy].copy_from_slice(&src_buf[..to_copy]);
 
         Ok(to_copy)
     }
-    fn write(&mut self, _id: usize, _buf: &[u8]) -> Result<usize> {
+
+    fn getdents<'buf>(
+        &mut self,
+        id: usize,
+        mut buf: DirentBuf<&'buf mut [u8]>,
+        opaque_offset: u64,
+    ) -> Result<DirentBuf<&'buf mut [u8]>> {
+        let handle = self.handles.get_mut(&id).ok_or(Error::new(EOPNOTSUPP))?;
+
+        match &handle.kind {
+            HandleKind::TopLevel => {
+                const TOPLEVEL_ENTRIES: &[&str] = &["tables", "symbols"];
+
+                for (idx, name) in TOPLEVEL_ENTRIES
+                    .iter()
+                    .enumerate()
+                    .skip(opaque_offset as usize)
+                {
+                    buf.entry(DirEntry {
+                        inode: 0,
+                        next_opaque_id: idx as u64 + 1,
+                        name,
+                        kind: DirentKind::Directory,
+                    })?;
+                }
+            }
+            HandleKind::Symbols(aml_symbols) => {
+                for (idx, (symbol_name, _value)) in aml_symbols
+                    .symbols_cache()
+                    .iter()
+                    .enumerate()
+                    .skip(opaque_offset as usize)
+                {
+                    buf.entry(DirEntry {
+                        inode: 0,
+                        next_opaque_id: idx as u64 + 1,
+                        name: symbol_name.as_str(),
+                        kind: DirentKind::Regular,
+                    })?;
+                }
+            }
+            HandleKind::Tables => {
+                for (idx, table) in self
+                    .ctx
+                    .tables()
+                    .iter()
+                    .enumerate()
+                    .skip(opaque_offset as usize)
+                {
+                    let utf8_or_eio = |bytes| str::from_utf8(bytes).map_err(|_| Error::new(EIO));
+
+                    let mut name = String::new();
+                    name.push_str(utf8_or_eio(&table.signature[..])?);
+                    name.push('-');
+                    for byte in table.oem_id.iter() {
+                        std::fmt::write(&mut name, format_args!("{:>02X}", byte)).unwrap();
+                    }
+                    name.push('-');
+                    for byte in table.oem_table_id.iter() {
+                        std::fmt::write(&mut name, format_args!("{:>02X}", byte)).unwrap();
+                    }
+
+                    buf.entry(DirEntry {
+                        inode: 0,
+                        next_opaque_id: idx as u64 + 1,
+                        name: &name,
+                        kind: DirentKind::Regular,
+                    })?;
+                }
+            }
+            _ => return Err(Error::new(EIO)),
+        }
+
+        Ok(buf)
+    }
+
+    fn write(&mut self, _id: usize, _buf: &[u8], _offset: u64, _fcntl: u32) -> Result<usize> {
         Err(Error::new(EBADF))
     }
+
     fn close(&mut self, id: usize) -> Result<usize> {
         if self.handles.remove(&id).is_none() {
             return Err(Error::new(EBADF));
