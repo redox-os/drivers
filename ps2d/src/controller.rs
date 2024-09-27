@@ -1,5 +1,5 @@
 use log::{debug, error, info, trace};
-use syscall::io::{Io, Pio, ReadOnly, WriteOnly};
+use common::io::{Io, Pio, ReadOnly, WriteOnly};
 
 use std::fmt;
 

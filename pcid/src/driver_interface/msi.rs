@@ -3,7 +3,7 @@ use std::fmt;
 use crate::driver_interface::PciBar;
 
 use serde::{Deserialize, Serialize};
-use syscall::{Io, Mmio};
+use common::io::{Io, Mmio};
 
 /// The address and data to use for MSI and MSI-X.
 ///

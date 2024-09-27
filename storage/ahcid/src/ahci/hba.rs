@@ -3,7 +3,7 @@ use std::mem::size_of;
 use std::ops::DerefMut;
 use std::{ptr, u32};
 
-use syscall::io::{Io, Mmio};
+use common::io::{Io, Mmio};
 use syscall::error::{Error, Result, EIO};
 
 use super::fis::{FisType, FisRegH2D};

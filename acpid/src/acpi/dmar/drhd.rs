@@ -1,6 +1,6 @@
 use std::ops::{Deref, DerefMut};
 
-use syscall::io::Mmio;
+use common::io::Mmio;
 
 // TODO: Only wrap with Mmio where there are hardware-registers. (Some of these structs seem to be
 // ring buffer entries, which are not to be treated the same way).

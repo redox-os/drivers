@@ -3,7 +3,7 @@ use std::convert::TryInto;
 
 use driver_network::NetworkAdapter;
 use syscall::error::{Error, Result, EMSGSIZE};
-use syscall::io::{Mmio, Io, ReadOnly};
+use common::io::{Mmio, Io, ReadOnly};
 
 use common::dma::Dma;
 

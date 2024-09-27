@@ -6,12 +6,10 @@ use std::{
 };
 
 use driver_block::Disk;
-use syscall::{
-    error::{Error, Result, EIO},
-    io::{Io, Pio, ReadOnly, WriteOnly},
-};
+use syscall::error::{Error, Result, EIO};
 
 use common::dma::Dma;
+use common::io::{Io, Pio, ReadOnly, WriteOnly};
 
 static TIMEOUT: Duration = Duration::new(1, 0);
 

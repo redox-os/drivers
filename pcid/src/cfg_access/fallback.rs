@@ -3,7 +3,7 @@ use std::convert::TryFrom;
 use std::sync::Mutex;
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-use syscall::io::{Io as _, Pio};
+use common::io::{Io as _, Pio};
 
 use log::info;
 use pci_types::{ConfigRegionAccess, PciAddress};

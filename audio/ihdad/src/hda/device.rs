@@ -8,9 +8,9 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use common::dma::Dma;
+use common::io::{Mmio, Io};
 use syscall::error::{Error, EACCES, EBADF, Result, EINVAL};
 use syscall::flag::{SEEK_SET, SEEK_CUR, SEEK_END};
-use syscall::io::{Mmio, Io};
 use syscall::scheme::SchemeBlockMut;
 
 use spin::Mutex;

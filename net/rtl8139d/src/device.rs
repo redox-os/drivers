@@ -3,8 +3,8 @@ use std::convert::TryInto;
 
 use driver_network::NetworkAdapter;
 use syscall::error::{Error, EIO, EMSGSIZE, Result};
-use syscall::io::{Mmio, Io, ReadOnly};
 
+use common::io::{Mmio, Io, ReadOnly};
 use common::dma::Dma;
 
 const RX_BUFFER_SIZE: usize = 64 * 1024;

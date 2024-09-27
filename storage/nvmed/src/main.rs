@@ -13,7 +13,7 @@ use libredox::flag;
 use pcid_interface::{PciFeature, PciFeatureInfo, PciFunction, PciFunctionHandle};
 use redox_scheme::{CallRequest, RequestKind, SignalBehavior, Socket, V2};
 use syscall::{
-    Event, Mmio, Packet, Result, SchemeBlockMut,
+    Event, Packet, Result, SchemeBlockMut,
     PAGE_SIZE,
 };
 

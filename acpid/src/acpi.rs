@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::{fmt, mem};
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-use syscall::io::{Io, Pio};
+use common::io::{Io, Pio};
 
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use thiserror::Error;

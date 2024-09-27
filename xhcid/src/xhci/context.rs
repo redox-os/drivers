@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use log::debug;
 use syscall::error::Result;
-use syscall::io::{Io, Mmio};
+use common::io::{Io, Mmio};
 use syscall::PAGE_SIZE;
 
 use common::dma::Dma;

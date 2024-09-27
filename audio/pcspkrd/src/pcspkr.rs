@@ -1,4 +1,4 @@
-use syscall::io::{Io, Pio};
+use common::io::{Io, Pio};
 
 pub struct Pcspkr {
     command: Pio<u8>,

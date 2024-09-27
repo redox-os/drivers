@@ -28,7 +28,7 @@ use log::{debug, error, info, trace, warn};
 use serde::{Deserialize, Serialize};
 use smallvec::{smallvec, SmallVec};
 
-use syscall::io::Io;
+use common::io::Io;
 use syscall::scheme::Scheme;
 use syscall::{
     Error, Result, Stat, EACCES, EBADF, EBADFD, EBADMSG, EEXIST, EINVAL, EIO, EISDIR, ENOENT,

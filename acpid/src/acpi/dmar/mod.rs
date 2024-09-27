@@ -10,7 +10,7 @@ use std::convert::TryFrom;
 use std::ops::Deref;
 use std::{fmt, mem};
 
-use syscall::io::Io as _;
+use common::io::Io as _;
 
 use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
