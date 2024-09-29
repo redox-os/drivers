@@ -1,8 +1,12 @@
 use std::{fs::File, io::{Read, Write}, process};
 
 use driver_block::Disk;
+use event::{EventFlags, RawEventQueue};
 use fdt::{Fdt, node::FdtNode};
-use syscall::{Packet, SchemeBlockMut};
+use redox_scheme::{RequestKind, Response, SignalBehavior, Socket, V2};
+use syscall::{
+    data::{Event, Packet}, error::{Error, ENODEV}, flag::EVENT_READ, io::Io, scheme::SchemeBlockMut, EAGAIN, EINTR, EWOULDBLOCK
+};
 
 use crate::scheme::DiskScheme;
 
@@ -77,38 +81,63 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     }
 
 
-    let scheme_name = ":disk.mmc";
-    let mut socket = File::create(scheme_name).expect("mmc: failed to create disk scheme");
-    libredox::call::setrens(0, 0).expect("mmc: failed to enter null namespace");
+    let scheme_name = "disk.mmc";
+    let socket_fd = Socket::<V2>::create(&scheme_name).expect("mmcd: failed to create disk scheme");
 
-    daemon.ready().expect("mmc: failed to notify parent");
+    let mut event_queue = RawEventQueue::new().expect("mmcd: failed to open event file");
+    event_queue.subscribe(socket_fd.inner().raw(), 0, EventFlags::READ).expect("mmcd: failed to event disk scheme");
+
+    libredox::call::setrens(0, 0).expect("mmcd: failed to enter null namespace");
+    daemon.ready().expect("mmcd: failed to notify parent");
 
     let mut todo = Vec::new();
     let mut disks = Vec::new();
 
     disks.push(Box::new(sdhci) as Box<dyn Disk>);
     let mut scheme = DiskScheme::new(scheme_name.to_string(), disks);
-    loop {
-        let mut packet = Packet::default();
-        if socket.read(&mut packet).expect("mmc: failed to read event") == 0 {
-            println!("zero, break");
+
+    'outer: loop {
+        let Some(event) = event_queue.next().transpose().expect("mmcd: failed to read event file") else {
             break;
-        }
-        if let Some(a) = scheme.handle(&packet) {
-            packet.a = a;
-            socket.write(&packet).expect("mmcd: failed to write disk scheme");
+        };
+        if event.fd == socket_fd.inner().raw() {
+            loop {
+                let req = match socket_fd.next_request(SignalBehavior::Interrupt) {
+                    Ok(None) => break 'outer,
+                    Ok(Some(r)) => if let RequestKind::Call(c) = r.kind() {
+                        c
+                    } else {
+                        continue;
+                    },
+                    Err(err) => if matches!(err.errno, EAGAIN | EWOULDBLOCK | EINTR) {
+                        break;
+                    } else {
+                        panic!("mmcd: failed to read disk scheme: {}", err);
+                    }
+                };
+                if let Some(resp) = req.handle_scheme_block_mut(&mut scheme) {
+                    socket_fd.write_response(resp, SignalBehavior::Restart).expect("mmcd: failed to write disk scheme");
+                } else {
+                    todo.push(req);
+                }
+            }
         } else {
-            todo.push(packet);
+            println!("Unknown event {}", event.fd);
         }
+
+        // Handle todos to start new packets if possible
         let mut i = 0;
         while i < todo.len() {
-            if let Some(a) = scheme.handle(&todo[i]) {
-                let mut packet = todo.remove(i);
-                packet.a = a;
-                socket.write(&packet).expect("mmcd: failed to write disk scheme");
+            if let Some(resp) = todo[i].handle_scheme_block_mut(&mut scheme) {
+                socket_fd.write_response(resp, SignalBehavior::Restart).expect("mmcd: failed to write disk scheme");
             } else {
                 i += 1;
             }
+        }
+
+        for req in todo.drain(..) {
+            socket_fd.write_response(Response::new(&req, Err(Error::new(ENODEV))), SignalBehavior::Restart)
+                .expect("mmcd: failed to write disk scheme");
         }
     }
     process::exit(0);
