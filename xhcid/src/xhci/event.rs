@@ -49,4 +49,5 @@ impl EventRing {
     pub fn erstba(&self) -> u64 {
         self.ste.physical() as u64
     }
+
 }

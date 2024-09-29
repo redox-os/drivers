@@ -194,11 +194,7 @@ fn main(args: Args) {
         }
     }
 
-    let log_level = match args.verbose {
-        0 => log::LevelFilter::Info,
-        1 => log::LevelFilter::Debug,
-        _ => log::LevelFilter::Trace,
-    };
+    let log_level = log::LevelFilter::Trace;
 
     common::setup_logging("bus", "pci", "pcid", log_level, log::LevelFilter::Trace);
 

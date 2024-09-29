@@ -92,7 +92,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         "audio",
         "pcie",
         "ihda",
-        log::LevelFilter::Debug,
+        log::LevelFilter::Info,
         log::LevelFilter::Info,
     );
 

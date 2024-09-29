@@ -560,19 +560,17 @@ impl Xhci {
     /// # Locking
     /// This function will lock `Xhci::cmd` and `Xhci::dbs`.
     pub async fn execute_command<F: FnOnce(&mut Trb, bool)>(&self, f: F) -> (Trb, Trb) {
-        {
-            // If ERDP EHB bit is set, clear it before sending command
-            //TODO: find out why this bit is set earlier!
-            let mut run = self.run.lock().unwrap();
-            let mut int = &mut run.ints[0];
-            if int.erdp_low.readf(1 << 3) {
-                int.erdp_low.writef(1 << 3, true);
-            }
+        //TODO: find out why this bit is set earlier!
+        if self.interrupt_is_pending(0) {
+            warn!("The EHB bit is already set!");
+            //self.force_clear_interrupt(0);
         }
 
         let next_event = {
             let mut command_ring = self.cmd.lock().unwrap();
             let (cmd_index, cycle) = (command_ring.next_index(), command_ring.cycle);
+
+            info!("Sending command with cycle bit {}", cycle as u8);
 
             {
                 let command_trb = &mut command_ring.trbs[cmd_index];
@@ -662,7 +660,7 @@ impl Xhci {
 
         handle_transfer_event_trb("CONTROL_TRANSFER", &event_trb, &status_trb)?;
 
-        self.event_handler_finished();
+        //self.event_handler_finished();
 
         Ok(event_trb)
     }
@@ -829,7 +827,7 @@ impl Xhci {
                 trb.reset_endpoint(slot, endp_num_xhc, tsp, cycle);
             })
             .await;
-        self.event_handler_finished();
+        //self.event_handler_finished();
 
         handle_event_trb("RESET_ENDPOINT", &event_trb, &command_trb)
     }
@@ -1162,7 +1160,7 @@ impl Xhci {
                 })
                 .await;
 
-            self.event_handler_finished();
+            //self.event_handler_finished();
 
             handle_event_trb("CONFIGURE_ENDPOINT", &event_trb, &command_trb)?;
         }
@@ -1370,7 +1368,7 @@ impl Xhci {
                 },
             )
             .await?;
-        self.event_handler_finished();
+        //self.event_handler_finished();
 
         let bytes_transferred = dma_buf
             .as_ref()
@@ -1432,6 +1430,7 @@ impl Xhci {
         let mut config_descs = SmallVec::new();
 
         for index in 0..raw_dd.configurations {
+            debug!("Fetching the config descriptor at index {}", index);
             let (desc, data) = self.fetch_config_desc(port_id, slot, index).await?;
             log::debug!(
                 "port {} slot {} config {} desc {:X?}",
@@ -2187,7 +2186,7 @@ impl Scheme for Xhci {
                 EndpointHandleTy::Data => {
                     block_on(self.on_write_endp_data(port_num, endp_num, buf))
                 }
-                EndpointHandleTy::Root(_, _) => Err(Error::new(EBADF)),
+                EndpointHandleTy::Root(_, _) => return Err(Error::new(EBADF)),
             },
             &mut Handle::PortReq(port_num, ref mut st) => {
                 let state = std::mem::replace(st, PortReqState::Tmp);
@@ -2384,7 +2383,7 @@ impl Xhci {
                 )
             })
             .await;
-        self.event_handler_finished();
+        //self.event_handler_finished();
 
         handle_event_trb("SET_TR_DEQUEUE_PTR", &event_trb, &command_trb)
     }
