@@ -5,10 +5,10 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use syscall::error::{Error, EACCES, EBADF, Result, EINVAL, ENOENT};
-use syscall::io::{Mmio, Pio, Io};
+use common::io::Pio;
 use syscall::scheme::SchemeBlockMut;
 
-use common::dma::Dma;
+use common::{dma::Dma, io::{Io, Mmio}};
 use spin::Mutex;
 
 const NUM_SUB_BUFFS: usize = 32;

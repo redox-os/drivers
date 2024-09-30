@@ -1,6 +1,6 @@
 use crate::usb;
 use std::{fmt, mem};
-use syscall::io::{Io, Mmio};
+use common::io::{Io, Mmio};
 
 use super::context::StreamContextType;
 
@@ -118,10 +118,10 @@ pub struct Trb {
 impl Clone for Trb {
     fn clone(&self) -> Self {
         Self {
-            data_low: Mmio::from(self.data_low.read()),
-            data_high: Mmio::from(self.data_high.read()),
-            status: Mmio::from(self.status.read()),
-            control: Mmio::from(self.control.read()),
+            data_low: Mmio::new(self.data_low.read()),
+            data_high: Mmio::new(self.data_high.read()),
+            status: Mmio::new(self.status.read()),
+            control: Mmio::new(self.control.read()),
         }
     }
 }

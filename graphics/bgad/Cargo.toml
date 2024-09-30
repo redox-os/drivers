@@ -8,5 +8,6 @@ orbclient = "0.3.47"
 redox-daemon = "0.1"
 redox_syscall = "0.5"
 
+common = { path = "../../common" }
 pcid = { path = "../../pcid" }
 libredox = "0.1.3"

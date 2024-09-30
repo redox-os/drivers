@@ -10,7 +10,7 @@ use crossbeam_channel::Sender;
 use smallvec::{smallvec, SmallVec};
 
 use syscall::error::{Error, Result, EINVAL, EIO};
-use syscall::io::{Io, Mmio};
+use common::io::{Io, Mmio};
 
 use common::dma::Dma;
 

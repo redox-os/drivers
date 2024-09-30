@@ -1,7 +1,7 @@
 use std::ops::Range;
 use std::ptr::NonNull;
 use std::{fmt, mem, ptr, slice};
-use syscall::{Io, Mmio};
+use common::io::{Io, Mmio};
 
 pub struct ExtendedCapabilitiesIter {
     base: *const u8,
@@ -111,7 +111,7 @@ pub enum Lp {
 
 impl ProtocolSpeed {
     pub const fn from_raw(raw: u32) -> Self {
-        Self { a: Mmio::from(raw) }
+        Self { a: Mmio::new(raw) }
     }
     pub fn is_lowspeed(&self) -> bool {
         self.psim() == 1500 && self.psie() == Psie::Kbps && !self.pfd()

@@ -1,4 +1,4 @@
-use syscall::io::{Io, Mmio};
+use common::io::{Io, Mmio};
 
 bitflags! {
     pub struct PortFlags: u32 {

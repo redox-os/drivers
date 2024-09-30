@@ -1,4 +1,4 @@
-use syscall::io::{Io, Pio};
+use common::io::{Io, Pio};
 
 const BGA_INDEX_XRES: u16 = 1;
 const BGA_INDEX_YRES: u16 = 2;

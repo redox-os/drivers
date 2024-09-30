@@ -3,7 +3,8 @@ use rustc_hash::FxHashMap;
 use std::fmt::LowerHex;
 use std::mem::size_of;
 use std::sync::{Arc, Mutex};
-use syscall::{Io, Pio, PAGE_SIZE};
+use syscall::PAGE_SIZE;
+use common::io::{Io, Pio};
 
 const PAGE_MASK: usize = !(PAGE_SIZE - 1);
 const OFFSET_MASK: usize = PAGE_SIZE - 1;

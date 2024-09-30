@@ -1,4 +1,4 @@
-use syscall::io::{Io, Mmio};
+use common::io::{Io, Mmio};
 
 #[repr(packed)]
 pub struct Doorbell(Mmio<u32>);

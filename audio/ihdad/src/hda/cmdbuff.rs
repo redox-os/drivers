@@ -1,5 +1,5 @@
 use common::dma::Dma;
-use syscall::io::{Io, Mmio};
+use common::io::{Io, Mmio};
 
 use super::common::*;
 

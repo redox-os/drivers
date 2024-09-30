@@ -1,6 +1,6 @@
 use driver_block::Disk;
 use log::{error, info};
-use syscall::io::Io;
+use common::io::Io;
 
 use self::disk_ata::DiskATA;
 use self::disk_atapi::DiskATAPI;

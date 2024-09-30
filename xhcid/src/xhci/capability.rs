@@ -1,4 +1,4 @@
-use syscall::io::{Io, Mmio};
+use common::io::{Io, Mmio};
 
 /// Represents the memory-mapped Capability Registers of the XHCI
 ///

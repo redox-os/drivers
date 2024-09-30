@@ -49,7 +49,7 @@ use event::{Event, RawEventQueue};
 use syscall::data::Packet;
 use syscall::error::EWOULDBLOCK;
 use syscall::flag::EventFlags;
-use syscall::io::Io;
+use common::io::Io;
 use syscall::scheme::Scheme;
 
 use crate::xhci::{InterruptMethod, Xhci};

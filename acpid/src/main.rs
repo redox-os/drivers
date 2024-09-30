@@ -1,34 +1,18 @@
 #![feature(if_let_guard, int_roundings)]
 
 use std::convert::TryFrom;
-use std::io::{self, prelude::*};
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::mem;
-use std::os::unix::fs::OpenOptionsExt;
-use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
+use std::os::unix::io::AsRawFd;
 use std::sync::Arc;
 
-use syscall::scheme::SchemeMut;
-
-use syscall::data::{Event, Packet};
-use syscall::flag::{EventFlags, O_NONBLOCK};
+use event::{EventFlags, RawEventQueue};
+use redox_scheme::{RequestKind, SignalBehavior, Socket, V2};
+use syscall::{EAGAIN, EWOULDBLOCK};
 
 mod acpi;
-mod scheme;
 mod aml_physmem;
-
-fn monotonic() -> (u64, u64) {
-    use syscall::call::clock_gettime;
-    use syscall::data::TimeSpec;
-    use syscall::flag::CLOCK_MONOTONIC;
-
-    let mut timespec = TimeSpec::default();
-
-    clock_gettime(CLOCK_MONOTONIC, &mut timespec)
-        .expect("failed to fetch monotonic time");
-
-    (timespec.tv_sec as u64, timespec.tv_nsec as u64)
-}
+mod scheme;
 
 fn daemon(daemon: redox_daemon::Daemon) -> ! {
     common::setup_logging(
@@ -43,15 +27,16 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         .expect("acpid: failed to read `/scheme/kernel.acpi/rxsdt`")
         .into();
 
-    let sdt = self::acpi::Sdt::new(rxsdt_raw_data)
-        .expect("acpid: failed to parse [RX]SDT");
+    let sdt = self::acpi::Sdt::new(rxsdt_raw_data).expect("acpid: failed to parse [RX]SDT");
 
     let mut thirty_two_bit;
     let mut sixty_four_bit;
 
     let physaddrs_iter = match &sdt.signature {
         b"RSDT" => {
-            thirty_two_bit = sdt.data().chunks(mem::size_of::<u32>())
+            thirty_two_bit = sdt
+                .data()
+                .chunks(mem::size_of::<u32>())
                 // TODO: With const generics, the compiler has some way of doing this for static sizes.
                 .map(|chunk| <[u8; mem::size_of::<u32>()]>::try_from(chunk).unwrap())
                 .map(|chunk| u32::from_le_bytes(chunk))
@@ -60,12 +45,14 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
             &mut thirty_two_bit as &mut dyn Iterator<Item = u64>
         }
         b"XSDT" => {
-            sixty_four_bit = sdt.data().chunks(mem::size_of::<u64>())
+            sixty_four_bit = sdt
+                .data()
+                .chunks(mem::size_of::<u64>())
                 .map(|chunk| <[u8; mem::size_of::<u64>()]>::try_from(chunk).unwrap())
                 .map(|chunk| u64::from_le_bytes(chunk));
 
             &mut sixty_four_bit as &mut dyn Iterator<Item = u64>
-        },
+        }
         _ => panic!("acpid: expected [RX]SDT from kernel to be either of those"),
     };
 
@@ -77,95 +64,66 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let shutdown_pipe = File::open("/scheme/kernel.acpi/kstop")
         .expect("acpid: failed to open `/scheme/kernel.acpi/kstop`");
 
-    let mut event_queue = OpenOptions::new()
-        .write(true)
-        .read(true)
-        .create(false)
-        .open("/scheme/event")
-        .expect("acpid: failed to open event queue");
-
-    let mut scheme_socket = OpenOptions::new()
-        .write(true)
-        .read(true)
-        .create(true)
-        .custom_flags(O_NONBLOCK as i32)
-        .open(":acpi")
-        .expect("acpid: failed to open scheme socket");
+    let mut event_queue = RawEventQueue::new().expect("acpid: failed to create event queue");
+    let socket = Socket::<V2>::nonblock("acpi").expect("acpid: failed to create disk scheme");
 
     daemon.ready().expect("acpid: failed to notify parent");
 
     libredox::call::setrens(0, 0).expect("acpid: failed to enter null namespace");
 
-    let _ = event_queue.write(&Event {
-        id: shutdown_pipe.as_raw_fd() as usize,
-        flags: EventFlags::EVENT_READ,
-        data: 0,
-    }).expect("acpid: failed to register shutdown pipe for event queue");
-
-    let _ = event_queue.write(&Event {
-        id: scheme_socket.as_raw_fd() as usize,
-        flags: EventFlags::EVENT_READ,
-        data: 1,
-    }).expect("acpid: failed to register scheme socket for event queue");
+    event_queue
+        .subscribe(shutdown_pipe.as_raw_fd() as usize, 0, EventFlags::READ)
+        .expect("acpid: failed to register shutdown pipe for event queue");
+    event_queue
+        .subscribe(socket.inner().raw(), 1, EventFlags::READ)
+        .expect("acpid: failed to register scheme socket for event queue");
 
     let mut scheme = self::scheme::AcpiScheme::new(&acpi_context);
 
-    let mut event = Event::default();
-    let mut packet = Packet::default();
+    let mut mounted = true;
+    while mounted {
+        let Some(event) = event_queue
+            .next()
+            .transpose()
+            .expect("acpid: failed to read event file")
+        else {
+            break;
+        };
 
-    'events: loop {
-        'packets: loop {
-            let bytes_read = 'eintr1: loop {
-                match scheme_socket.read(&mut packet) {
-                    Ok(0) => {
-                        log::info!("Terminating acpid driver, without shutting down the main system.");
-                        break 'events;
+        if event.fd == socket.inner().raw() {
+            loop {
+                let sqe = match socket.next_request(SignalBehavior::Interrupt) {
+                    Ok(None) => {
+                        mounted = false;
+                        break;
                     }
-                    Ok(n) => break 'eintr1 n,
-                    Err(error) if error.kind() == io::ErrorKind::Interrupted => continue 'eintr1,
-                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => break 'packets,
-                    Err(other) => {
-                        log::error!("failed to read from scheme socket: {}", other);
-                        break 'events;
+                    Ok(Some(s)) => {
+                        if let RequestKind::Call(call) = s.kind() {
+                            call
+                        } else {
+                            continue;
+                        }
                     }
-                }
-            };
+                    Err(err) => {
+                        if err.errno == EWOULDBLOCK || err.errno == EAGAIN {
+                            break;
+                        } else {
+                            panic!("acpid: failed to read next request: {}", err);
+                        }
+                    }
+                };
 
-            if bytes_read < mem::size_of::<Packet>() {
-                log::error!("Scheme socket read less than a single packet.");
+                let response = sqe.handle_scheme_mut(&mut scheme);
+                socket
+                    .write_response(response, SignalBehavior::Restart)
+                    .expect("acpid: failed to write response");
             }
-
-            scheme.handle(&mut packet);
-
-            let bytes_written = 'eintr2: loop {
-                match scheme_socket.write(&packet) {
-                    Ok(0) => {
-                        log::info!("Terminating acpid driver, without shutting down the main system.");
-                        break 'events;
-                    }
-                    Ok(n) => break 'eintr2 n,
-                    Err(error) if error.kind() == io::ErrorKind::Interrupted => continue 'eintr2,
-                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => break 'packets,
-                    Err(other) => {
-                        log::error!("failed to read from scheme socket: {}", other);
-                        break 'events;
-                    }
-                }
-            };
-
-            if bytes_written < mem::size_of::<Packet>() {
-                log::error!("Scheme socket read less than a single packet.");
-            }
-        }
-
-        let _ = event_queue.read(&mut event).expect("acpid: failed to read from event queue");
-
-        if event.flags.contains(EventFlags::EVENT_READ) && event.id == shutdown_pipe.as_raw_fd() as usize {
+        } else if event.fd == shutdown_pipe.as_raw_fd() as usize {
             log::info!("Received shutdown request from kernel.");
-            break 'events;
-        }
-        if !event.flags.contains(EventFlags::EVENT_READ) || event.id != scheme_socket.as_raw_fd() as usize {
-            continue 'events;
+            mounted = false;
+        } else {
+            log::debug!("Received request to unknown fd: {}", event.fd);
+            continue;
         }
     }
 

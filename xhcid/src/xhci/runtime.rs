@@ -1,4 +1,4 @@
-use syscall::io::Mmio;
+use common::io::Mmio;
 
 #[repr(packed)]
 pub struct Interrupter {
