@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::{fmt, mem};
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-use syscall::io::{Io, Pio};
+use common::io::{Io, Pio};
 
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use thiserror::Error;
@@ -16,7 +16,6 @@ use amlserde::aml_serde_name::aml_to_symbol;
 use amlserde::{AmlHandleLookup, AmlSerde};
 
 pub mod dmar;
-use self::dmar::Dmar;
 use crate::aml_physmem::{AmlPageCache, AmlPhysMemHandler};
 
 #[cfg(target_arch = "aarch64")]
@@ -245,7 +244,6 @@ pub struct AmlSymbols {
     // k = name, v = description
     symbol_cache: FxHashMap<String, String>,
     page_cache: Arc<Mutex<AmlPageCache>>,
-    list: String,
 }
 
 impl AmlSymbols {
@@ -258,16 +256,11 @@ impl AmlSymbols {
             ),
             symbol_cache: FxHashMap::default(),
             page_cache,
-            list: "".to_string(),
         }
     }
 
     pub fn mut_aml_context(&mut self) -> &mut AmlContext {
         &mut self.aml_context
-    }
-
-    pub fn symbols_str(&self) -> &String {
-        &self.list
     }
 
     pub fn symbols_cache(&self) -> &FxHashMap<String, String> {
@@ -315,15 +308,11 @@ impl AmlSymbols {
             return;
         }
 
-        let mut symbols_str = String::with_capacity(symbol_list.len() * 10);
         let mut handle_lookup = AmlHandleLookup::new();
 
         for (aml_name, name, handle) in &symbol_list {
-            let _ = writeln!(symbols_str, "{}", &name);
             handle_lookup.insert(handle.to_owned(), aml_name.to_owned());
         }
-
-        symbols_str.shrink_to_fit();
 
         let mut symbol_cache: FxHashMap<String, String> = FxHashMap::default();
 
@@ -337,7 +326,7 @@ impl AmlSymbols {
                 aml_name,
                 handle,
             ) {
-                if let Ok(ser_string) = serde_json::to_string_pretty(&ser_value) {
+                if let Ok(ser_string) = ron::ser::to_string_pretty(&ser_value, Default::default()) {
                     // replace the empty entry
                     symbol_cache.insert(name.to_owned(), ser_string);
                 }
@@ -347,7 +336,6 @@ impl AmlSymbols {
         // Cache the new list
         log::trace!("Updating symbols list");
 
-        self.list = symbols_str;
         self.symbol_cache = symbol_cache;
     }
 }
@@ -533,7 +521,6 @@ impl AcpiContext {
     pub fn aml_symbols_reset(&self) {
         let mut aml_symbols = self.aml_symbols.write();
         aml_symbols.symbol_cache = FxHashMap::default();
-        aml_symbols.list = "".to_string();
     }
 
     /// Set Power State

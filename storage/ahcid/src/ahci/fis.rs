@@ -1,4 +1,4 @@
-use syscall::io::Mmio;
+use common::io::Mmio;
 
 #[repr(u8)]
 pub enum FisType {

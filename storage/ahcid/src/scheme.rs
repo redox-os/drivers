@@ -5,9 +5,10 @@ use std::fmt::Write;
 use driver_block::{Disk, DiskWrapper};
 use syscall::schemev2::NewFdFlags;
 use syscall::{
-    Error, EACCES, EBADF, EINVAL, EISDIR, ENOENT, ENOLCK, EOVERFLOW, Result, Io, Stat, MODE_DIR,
+    Error, EACCES, EBADF, EINVAL, EISDIR, ENOENT, ENOLCK, EOVERFLOW, Result, Stat, MODE_DIR,
     MODE_FILE, O_DIRECTORY, O_STAT,
 };
+use common::io::Io as _;
 use redox_scheme::{CallerCtx, OpenResult, SchemeBlockMut};
 
 use crate::ahci::hba::HbaMem;

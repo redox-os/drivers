@@ -1,5 +1,5 @@
 use syscall::error::Result;
-use syscall::io::{Io, Mmio};
+use common::io::{Io, Mmio};
 
 use common::dma::Dma;
 

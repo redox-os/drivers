@@ -4,8 +4,9 @@ use std::{thread, time};
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use common::io::{Pio, Io, ReadOnly, WriteOnly};
+
 use syscall::error::{Error, EACCES, EBADF, Result, ENODEV};
-use syscall::io::{Pio, Io, ReadOnly, WriteOnly};
 use syscall::scheme::SchemeBlockMut;
 
 use spin::Mutex;

@@ -1,6 +1,6 @@
 use std::ops::{Deref, DerefMut};
 
-use syscall::io::Mmio;
+use common::io::Mmio;
 
 // TODO: Only wrap with Mmio where there are hardware-registers. (Some of these structs seem to be
 // ring buffer entries, which are not to be treated the same way).
@@ -10,11 +10,20 @@ pub struct DrhdPage {
 }
 impl DrhdPage {
     pub fn map(base_phys: usize) -> syscall::Result<Self> {
-        assert_eq!(base_phys % crate::acpi::PAGE_SIZE, 0, "DRHD registers must be page-aligned");
+        assert_eq!(
+            base_phys % crate::acpi::PAGE_SIZE,
+            0,
+            "DRHD registers must be page-aligned"
+        );
 
         // TODO: Uncachable? Can reads have side-effects?
         let virt = unsafe {
-            common::physmap(base_phys, crate::acpi::PAGE_SIZE, common::Prot::RO, common::MemoryType::default())?
+            common::physmap(
+                base_phys,
+                crate::acpi::PAGE_SIZE,
+                common::Prot::RO,
+                common::MemoryType::default(),
+            )?
         } as *mut Drhd;
 
         Ok(Self { virt })

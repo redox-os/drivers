@@ -8,7 +8,7 @@ use std::io::{Result, Read, Write};
 
 use pcid_interface::{PciBar, PciFunctionHandle};
 use syscall::flag::EventFlags;
-use syscall::io::{Io, Mmio, Pio};
+use common::io::{Io, Mmio, Pio};
 
 use common::dma::Dma;
 

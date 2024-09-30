@@ -12,8 +12,9 @@ use std::{
     thread::{self, sleep},
     time::Duration,
 };
+use common::io::Io as _;
 use syscall::{
-    data::{Event, Packet}, error::{Error, ENODEV}, flag::EVENT_READ, io::Io, scheme::SchemeBlockMut, EAGAIN, EINTR, EWOULDBLOCK
+    data::{Event, Packet}, error::{Error, ENODEV}, flag::EVENT_READ, scheme::SchemeBlockMut, EAGAIN, EINTR, EWOULDBLOCK
 };
 
 use crate::{

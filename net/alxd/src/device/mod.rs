@@ -3,7 +3,7 @@ use std::convert::TryInto;
 
 use syscall::error::{Error, EACCES, EINVAL, EIO, EWOULDBLOCK, Result};
 use syscall::flag::{EventFlags, O_NONBLOCK};
-use syscall::io::{Io, Mmio};
+use common::io::{Io, Mmio};
 use syscall::scheme;
 
 use common::dma::Dma;

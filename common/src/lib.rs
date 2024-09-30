@@ -12,6 +12,8 @@ use syscall::PAGE_SIZE;
 
 /// The Direct Memory Access (DMA) API for drivers
 pub mod dma;
+/// MMIO utilities
+pub mod io;
 mod logger;
 /// The Scatter Gather List (SGL) API for drivers.
 pub mod sgl;
@@ -128,7 +130,7 @@ pub unsafe fn physmap(
     // TODO: arraystring?
 
     //Return an error rather than potentially crash the kernel.
-    if(base_phys == 0) {
+    if base_phys == 0 {
         return Err(Error::new(EINVAL));
     }
 
