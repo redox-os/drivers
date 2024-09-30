@@ -26,7 +26,6 @@ pub struct DmarStruct {
     pub host_addr_width: u8,
     pub flags: u8,
     pub _rsvd: [u8; 10],
-
     // This header is followed by N remapping structures.
 }
 unsafe impl plain::Plain for DmarStruct {}
@@ -84,16 +83,23 @@ impl Dmar {
                     log::debug!("GCMD: {:X}", drhd.gl_cmd.read());
                     log::debug!("GSTS: {:X}", drhd.gl_sts.read());
                     log::debug!("RT: {:X}", drhd.root_table.read());
-                },
-                _ => ()
+                }
+                _ => (),
             }
         }
     }
 
     fn new(sdt: Sdt) -> Option<Dmar> {
-        assert_eq!(sdt.signature, *b"DMAR", "signature already checked against `DMAR`");
+        assert_eq!(
+            sdt.signature, *b"DMAR",
+            "signature already checked against `DMAR`"
+        );
         if sdt.length() < mem::size_of::<DmarStruct>() {
-            log::error!("The DMAR table was too small ({} B < {} B).", sdt.length(), mem::size_of::<Dmar>());
+            log::error!(
+                "The DMAR table was too small ({} B < {} B).",
+                sdt.length(),
+                mem::size_of::<Dmar>()
+            );
             return None;
         }
         // No need to check alignment for #[repr(packed)] structs.
@@ -102,7 +108,9 @@ impl Dmar {
     }
 
     pub fn iter(&self) -> DmarIter<'_> {
-        DmarIter(DmarRawIter { bytes: self.remmapping_structs_area() })
+        DmarIter(DmarRawIter {
+            bytes: self.remmapping_structs_area(),
+        })
     }
 }
 
@@ -128,7 +136,6 @@ pub struct DeviceScopeHeader {
     pub _rsvd: u16,
     pub enumeration_id: u8,
     pub start_bus_num: u8,
-
     // The variable-sized path comes after.
 }
 unsafe impl plain::Plain for DeviceScopeHeader {}
@@ -196,8 +203,7 @@ impl DmarDrhd {
     pub fn map(&self) -> DrhdPage {
         let base = usize::try_from(self.base).expect("expected u64 to fit within usize");
 
-        DrhdPage::map(base)
-            .expect("failed to map DRHD registers")
+        DrhdPage::map(base).expect("failed to map DRHD registers")
     }
 }
 impl Deref for DmarDrhd {
@@ -227,7 +233,6 @@ pub struct DmarRmrrHeader {
     pub segment: u16,
     pub base: u64,
     pub limit: u64,
-
     // The device scopes come after.
 }
 unsafe impl plain::Plain for DmarRmrrHeader {}
@@ -269,7 +274,6 @@ pub struct DmarAtsrHeader {
     flags: u8,
     _rsv: u8,
     segment: u16,
-
     // The device scopes come after.
 }
 unsafe impl plain::Plain for DmarAtsrHeader {}
@@ -334,7 +338,6 @@ pub struct DmarAnddHeader {
 
     pub _rsv: [u8; 3],
     pub acpi_dev: u8,
-
     // The device scopes come after.
 }
 unsafe impl plain::Plain for DmarAnddHeader {}
@@ -377,7 +380,6 @@ pub struct DmarSatcHeader {
     pub flags: u8,
     pub _rsvd: u8,
     pub seg_num: u16,
-
     // The device scopes come after.
 }
 unsafe impl plain::Plain for DmarSatcHeader {}
@@ -467,8 +469,10 @@ impl<'sdt> Iterator for DmarRawIter<'sdt> {
         };
         let remainder = &self.bytes[4..];
 
-        let type_bytes = <[u8; 2]>::try_from(type_bytes).expect("expected a 2-byte slice to be convertible to [u8; 2]");
-        let len_bytes = <[u8; 2]>::try_from(type_bytes).expect("expected a 2-byte slice to be convertible to [u8; 2]");
+        let type_bytes = <[u8; 2]>::try_from(type_bytes)
+            .expect("expected a 2-byte slice to be convertible to [u8; 2]");
+        let len_bytes = <[u8; 2]>::try_from(type_bytes)
+            .expect("expected a 2-byte slice to be convertible to [u8; 2]");
 
         let ty = u16::from_ne_bytes(type_bytes);
         let len = u16::from_ne_bytes(len_bytes);
@@ -500,7 +504,11 @@ impl Iterator for DmarIter<'_> {
         let entry_type = match EntryType::from_u16(raw_type) {
             Some(ty) => ty,
             None => {
-                log::warn!("Encountered invalid entry type {} (length {})", raw_type, raw.len());
+                log::warn!(
+                    "Encountered invalid entry type {} (length {})",
+                    raw_type,
+                    raw.len()
+                );
                 return Some(DmarEntry::Unknown(raw_type));
             }
         };

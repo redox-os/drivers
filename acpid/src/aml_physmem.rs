@@ -1,10 +1,10 @@
+use common::io::{Io, Pio};
 use num_traits::PrimInt;
 use rustc_hash::FxHashMap;
 use std::fmt::LowerHex;
 use std::mem::size_of;
 use std::sync::{Arc, Mutex};
 use syscall::PAGE_SIZE;
-use common::io::{Io, Pio};
 
 const PAGE_MASK: usize = !(PAGE_SIZE - 1);
 const OFFSET_MASK: usize = PAGE_SIZE - 1;
@@ -17,8 +17,13 @@ struct MappedPage {
 impl MappedPage {
     fn new(phys_page: usize) -> std::io::Result<Self> {
         let virt_page = unsafe {
-            common::physmap(phys_page, PAGE_SIZE, common::Prot::RO, common::MemoryType::default())
-                .map_err(|error| std::io::Error::from_raw_os_error(error.errno()))?
+            common::physmap(
+                phys_page,
+                PAGE_SIZE,
+                common::Prot::RO,
+                common::MemoryType::default(),
+            )
+            .map_err(|error| std::io::Error::from_raw_os_error(error.errno()))?
         } as usize;
         Ok(Self {
             phys_page,

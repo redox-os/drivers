@@ -3,8 +3,8 @@ use std::slice;
 
 use xhcid_interface::{
     ConfDesc, DeviceReqData, EndpBinaryDirection, EndpDirection, EndpointStatus, IfDesc, Invalid,
-    PortReqRecipient, PortReqTy, PortTransferStatus, PortTransferStatusKind, XhciClientHandle, XhciClientHandleError,
-    XhciEndpHandle,
+    PortReqRecipient, PortReqTy, PortTransferStatus, PortTransferStatusKind, XhciClientHandle,
+    XhciClientHandleError, XhciEndpHandle,
 };
 
 use super::{Protocol, ProtocolError, SendCommandStatus, SendCommandStatusKind};
@@ -162,9 +162,16 @@ impl<'a> BulkOnlyTransport<'a> {
         }
         Ok(())
     }
-    fn read_csw_raw(&mut self, csw_buffer: &mut [u8; 13], already: bool) -> Result<(), ProtocolError> {
+    fn read_csw_raw(
+        &mut self,
+        csw_buffer: &mut [u8; 13],
+        already: bool,
+    ) -> Result<(), ProtocolError> {
         match self.bulk_in.transfer_read(&mut csw_buffer[..])? {
-            PortTransferStatus { kind: PortTransferStatusKind::Stalled, .. } => {
+            PortTransferStatus {
+                kind: PortTransferStatusKind::Stalled,
+                ..
+            } => {
                 if already {
                     self.reset_recovery()?;
                 }
@@ -172,8 +179,14 @@ impl<'a> BulkOnlyTransport<'a> {
                 self.clear_stall_in()?;
                 self.read_csw_raw(csw_buffer, true)?;
             }
-            PortTransferStatus { kind: PortTransferStatusKind::ShortPacket, bytes_transferred } if bytes_transferred != 13 => {
-                panic!("received a short packet when reading CSW ({} != 13)", bytes_transferred)
+            PortTransferStatus {
+                kind: PortTransferStatusKind::ShortPacket,
+                bytes_transferred,
+            } if bytes_transferred != 13 => {
+                panic!(
+                    "received a short packet when reading CSW ({} != 13)",
+                    bytes_transferred
+                )
             }
             _ => (),
         }
@@ -199,24 +212,38 @@ impl<'a> Protocol for BulkOnlyTransport<'a> {
         let cbw = *cbw;
 
         match self.bulk_out.transfer_write(&cbw_bytes)? {
-            PortTransferStatus { kind: PortTransferStatusKind::Stalled, .. } => {
+            PortTransferStatus {
+                kind: PortTransferStatusKind::Stalled,
+                ..
+            } => {
                 // TODO: Error handling
                 panic!("bulk out endpoint stalled when sending CBW {:?}", cbw);
                 //self.clear_stall_out()?;
                 //dbg!(self.bulk_in.status()?, self.bulk_out.status()?);
             }
-            PortTransferStatus { bytes_transferred, .. } if bytes_transferred != 31 => {
-                panic!("received short packet when sending CBW ({} != 31)", bytes_transferred);
+            PortTransferStatus {
+                bytes_transferred, ..
+            } if bytes_transferred != 31 => {
+                panic!(
+                    "received short packet when sending CBW ({} != 31)",
+                    bytes_transferred
+                );
             }
             _ => (),
         }
 
         let early_residue: Option<NonZeroU32> = match data {
             DeviceReqData::In(buffer) => match self.bulk_in.transfer_read(buffer)? {
-                PortTransferStatus { kind, bytes_transferred } => match kind {
+                PortTransferStatus {
+                    kind,
+                    bytes_transferred,
+                } => match kind {
                     PortTransferStatusKind::Success => None,
                     PortTransferStatusKind::ShortPacket => {
-                        println!("received short packet (len {}) when transferring data", bytes_transferred);
+                        println!(
+                            "received short packet (len {}) when transferring data",
+                            bytes_transferred
+                        );
                         NonZeroU32::new(bytes_transferred)
                     }
                     PortTransferStatusKind::Stalled => {
@@ -230,13 +257,19 @@ impl<'a> Protocol for BulkOnlyTransport<'a> {
                             )),
                         ));
                     }
-                }
-            }
+                },
+            },
             DeviceReqData::Out(buffer) => match self.bulk_out.transfer_write(buffer)? {
-                PortTransferStatus { kind, bytes_transferred } => match kind {
+                PortTransferStatus {
+                    kind,
+                    bytes_transferred,
+                } => match kind {
                     PortTransferStatusKind::Success => None,
                     PortTransferStatusKind::ShortPacket => {
-                        println!("received short packet (len {}) when transferring data", bytes_transferred);
+                        println!(
+                            "received short packet (len {}) when transferring data",
+                            bytes_transferred
+                        );
                         NonZeroU32::new(bytes_transferred)
                     }
                     PortTransferStatusKind::Stalled => {
@@ -245,10 +278,12 @@ impl<'a> Protocol for BulkOnlyTransport<'a> {
                     }
                     PortTransferStatusKind::Unknown => {
                         return Err(ProtocolError::XhciError(
-                            XhciClientHandleError::InvalidResponse(Invalid("unknown transfer status")),
+                            XhciClientHandleError::InvalidResponse(Invalid(
+                                "unknown transfer status",
+                            )),
                         ));
                     }
-                }
+                },
             },
             DeviceReqData::NoData => None,
         };
@@ -266,10 +301,16 @@ impl<'a> Protocol for BulkOnlyTransport<'a> {
         if !csw.is_valid() || csw.tag != cbw.tag {
             println!("Invald CSW {:?} (for CBW {:?})", csw, cbw);
             self.reset_recovery()?;
-            if self.bulk_in.status()? == EndpointStatus::Halted || self.bulk_out.status()? == EndpointStatus::Halted {
-                return Err(ProtocolError::ProtocolError("Reset Recovery didn't reset endpoints"));
+            if self.bulk_in.status()? == EndpointStatus::Halted
+                || self.bulk_out.status()? == EndpointStatus::Halted
+            {
+                return Err(ProtocolError::ProtocolError(
+                    "Reset Recovery didn't reset endpoints",
+                ));
             }
-            return Err(ProtocolError::ProtocolError("CSW invalid, but a recover was successful"));
+            return Err(ProtocolError::ProtocolError(
+                "CSW invalid, but a recover was successful",
+            ));
         }
 
         /*if self.bulk_in.status()? == EndpointStatus::Halted

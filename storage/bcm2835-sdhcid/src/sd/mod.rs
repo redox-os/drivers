@@ -26,7 +26,6 @@ pub(crate) unsafe fn wait_msec(mut n: usize) {
     asm!("mrs {0}, cntfrq_el0", out(reg) f);
     asm!("mrs {0}, cntpct_el0", out(reg) t);
 
-
     t += ((f / 1000) * n) / 1000;
 
     loop {
@@ -34,7 +33,7 @@ pub(crate) unsafe fn wait_msec(mut n: usize) {
         if r >= t {
             break;
         }
-    };
+    }
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -60,15 +59,13 @@ const CMD_STOP_TRANS: u32 = 0x0c03_0000;
 const CMD_READ_SINGLE: u32 = 0x1122_0010;
 const CMD_READ_MULTI: u32 = 0x1222_0032;
 const CMD_SET_BLOCKCNT: u32 = 0x1702_0000;
-const CMD_WRITE_SINGLE:u32 = 0x1822_0000;
-const CMD_WRITE_MULTI:u32 = 0x1922_0022;
+const CMD_WRITE_SINGLE: u32 = 0x1822_0000;
+const CMD_WRITE_MULTI: u32 = 0x1922_0022;
 
 const CMD_APP_CMD: u32 = 0x3700_0000;
-const CMD_SET_BUS_WIDTH: u32 = 0x0602_0000|CMD_NEED_APP;
-const CMD_SEND_OP_COND: u32 = 0x2902_0000|CMD_NEED_APP;
-const CMD_SEND_SCR: u32 = 0x3322_0010|CMD_NEED_APP;
-
-
+const CMD_SET_BUS_WIDTH: u32 = 0x0602_0000 | CMD_NEED_APP;
+const CMD_SEND_OP_COND: u32 = 0x2902_0000 | CMD_NEED_APP;
+const CMD_SEND_SCR: u32 = 0x3322_0010 | CMD_NEED_APP;
 
 //STATUS register settings
 const SR_READ_AVAILABLE: u32 = 0x0000_0800;
@@ -92,7 +89,6 @@ const C1_CLK_GENSEL: u32 = 0x0000_0020;
 const C1_CLK_EN: u32 = 0x0000_0004;
 const C1_CLK_STABLE: u32 = 0x0000_0002;
 const C1_CLK_INTLEN: u32 = 0x0000_0001;
-
 
 //INTERRUPT register settings
 const INT_DATA_TIMEOUT: u32 = 0x0010_0000;
@@ -168,7 +164,7 @@ pub struct SdHostCtrlRegs {
     _rsvd: [Mmio<u32>; 47],
 
     //Slot Interrupt Status and Version
-    slotisr_ver: Mmio<u32>
+    slotisr_ver: Mmio<u32>,
 }
 
 //TODO: refactor, sd/sdhci/bcmh2835-sdhci three different modules.
@@ -180,13 +176,13 @@ pub struct SdHostCtrl {
     rca: u32, //relative card address
     scr: [u32; 2],
     ocr: u32,
-    size: u64
+    size: u64,
 }
 
 impl SdHostCtrl {
     pub fn new(address: usize) -> Self {
         SdHostCtrl {
-            regs: RwLock::new(unsafe { &mut *(address as *mut SdHostCtrlRegs)}),
+            regs: RwLock::new(unsafe { &mut *(address as *mut SdHostCtrlRegs) }),
             host_spec_ver: 0,
             cid: [0; 4],
             csd: [0; 4],
@@ -207,15 +203,14 @@ impl SdHostCtrl {
         reg_val = regs.control1.read();
         regs.control1.write(reg_val | C1_SRST_HC);
         let mut cnt = 1000;
-        while (cnt >= 0) &&
-              ((regs.control1.read() & C1_SRST_HC) == C1_SRST_HC) {
+        while (cnt >= 0) && ((regs.control1.read() & C1_SRST_HC) == C1_SRST_HC) {
             cnt -= 1;
             wait_msec(10);
         }
 
         if cnt < 0 {
             println!("ERROR: failed to reset EMMC");
-            return ;
+            return;
         }
         println!("EMMC: reset OK");
         reg_val = regs.control1.read();
@@ -226,7 +221,7 @@ impl SdHostCtrl {
         {
             if let Err(_) = self.set_clock(40_0000) {
                 println!("ERROR: failed to set clock {}", 40_0000);
-                return ;
+                return;
             }
         }
 
@@ -236,12 +231,12 @@ impl SdHostCtrl {
 
         if let Err(_) = self.sd_cmd(CMD_GO_IDLE, 0) {
             println!("failed to go idle");
-            return ;
+            return;
         }
 
         if let Err(_) = self.sd_cmd(CMD_SEND_IF_COND, 0x0000_01aa) {
             println!("failed to send if cond");
-            return ;
+            return;
         }
 
         cnt = 6;
@@ -268,21 +263,25 @@ impl SdHostCtrl {
                 print!("\n");
             } else {
                 println!("ERROR: EMMC ACMD41 returned error");
-                return ;
+                return;
             }
         }
 
         if (reg_val & ACMD41_CMD_COMPLETE) == 0 || cnt <= 0 {
             println!("ACMD41 TIMEOUT");
-            return ;
+            return;
         }
 
         if (reg_val & ACMD41_VOLTAGE) == 0 {
             println!("ACMD41 VOLTAGE NOT FOUND!");
-            return ;
+            return;
         }
 
-        let ccs = if (reg_val & ACMD41_CMD_CCS) != 0 { SCR_SUPP_CCS } else { 0 };
+        let ccs = if (reg_val & ACMD41_CMD_CCS) != 0 {
+            SCR_SUPP_CCS
+        } else {
+            0
+        };
 
         if let Err(_) = self.sd_cmd(CMD_ALL_SEND_CID, 0) {
             println!("CMD_ALL_SEND_CID ERROR, IGNORE!");
@@ -294,7 +293,7 @@ impl SdHostCtrl {
 
         if let Err(_) = self.sd_cmd(CMD_SEND_CSD, sd_rca) {
             println!("failed to get csd");
-            return ;
+            return;
         }
 
         let (csize, cmult) = if (self.ocr & ACMD41_CMD_CCS) != 0 {
@@ -309,20 +308,19 @@ impl SdHostCtrl {
         self.size = ((csize + 1) << (cmult + 2)) * 512;
         println!("mmc size = 0x{:08x}", self.size);
 
-
         if let Err(_) = self.set_clock(2500_0000) {
             println!("failed to set clock 2500_0000 Hz");
-            return ;
+            return;
         }
 
         if let Err(_) = self.sd_cmd(CMD_CARD_SELECT, sd_rca) {
             println!("failed to CMD_CARD_SELECT 0x{:08x}", sd_rca);
-            return ;
+            return;
         }
 
         if let Err(_) = self.sd_status(SR_DAT_INHIBIT) {
             println!("SR_DAT_INHIBIT return");
-            return ;
+            return;
         }
 
         let regs = self.regs.get_mut().unwrap();
@@ -330,12 +328,12 @@ impl SdHostCtrl {
 
         if let Err(_) = self.sd_cmd(CMD_SEND_SCR, 0) {
             println!("failed to CMD_SEND_SCR");
-            return ;
+            return;
         }
 
         if let Err(_) = self.sd_int(INT_READ_RDY) {
             println!("failed to INT_READ_RDY");
-            return ;
+            return;
         }
 
         cnt = 10000;
@@ -354,13 +352,13 @@ impl SdHostCtrl {
         }
         if i != 2 {
             println!("SD TIMEOUT FOR SCR[; 2]");
-            return ;
+            return;
         }
 
         if (self.scr[0] & SCR_SD_BUS_WIDTH_4) != 0 {
             if let Err(_) = self.sd_cmd(CMD_SET_BUS_WIDTH, sd_rca | 2) {
                 println!("failed to set bus width, {}", sd_rca | 2);
-                return ;
+                return;
             }
             let regs = self.regs.get_mut().unwrap();
             regs.control0.write(C0_HCTL_DWITDH);
@@ -411,13 +409,32 @@ impl SdHostCtrl {
         if x == 0 {
             s = 0;
         } else {
-            if (x & 0xffff_0000) == 0 { x <<= 16; s -= 16; }
-            if (x & 0xff00_0000) == 0 { x <<= 8; s -= 8; }
-            if (x & 0xf000_0000) == 0 { x <<= 4; s -= 4; }
-            if (x & 0xc000_0000) == 0 { x <<= 2; s -= 2; }
-            if (x & 0x8000_0000) == 0 { x <<= 1; s -= 1; }
-            if s > 0 { s -= 1; }
-            if s > 7 { s = 7; }
+            if (x & 0xffff_0000) == 0 {
+                x <<= 16;
+                s -= 16;
+            }
+            if (x & 0xff00_0000) == 0 {
+                x <<= 8;
+                s -= 8;
+            }
+            if (x & 0xf000_0000) == 0 {
+                x <<= 4;
+                s -= 4;
+            }
+            if (x & 0xc000_0000) == 0 {
+                x <<= 2;
+                s -= 2;
+            }
+            if (x & 0x8000_0000) == 0 {
+                x <<= 1;
+                s -= 1;
+            }
+            if s > 0 {
+                s -= 1;
+            }
+            if s > 7 {
+                s = 7;
+            }
         }
         let mut d = 0;
         if self.host_spec_ver > HOST_SPEC_V2 {
@@ -437,7 +454,7 @@ impl SdHostCtrl {
             h = (d & 0x300) >> 2;
         }
 
-        d = ( ((d & 0xff) << 8)| h);
+        d = (((d & 0xff) << 8) | h);
         reg_val = regs.control1.read() & 0xffff_003f;
         regs.control1.write(reg_val | d);
         wait_msec(10);
@@ -550,7 +567,6 @@ impl SdHostCtrl {
         } else {
             return Ok(reg_val & CMD_ERRORS_MASK);
         }
-
     }
 
     pub unsafe fn sd_status(&mut self, mask: u32) -> Result<()> {
@@ -647,7 +663,8 @@ impl SdHostCtrl {
             cnt += 1;
         }
 
-        if num > 1 && (self.scr[0] & SCR_SUPP_SET_BLKCNT) == 0 && (self.scr[0] & SCR_SUPP_CCS) != 0 {
+        if num > 1 && (self.scr[0] & SCR_SUPP_SET_BLKCNT) == 0 && (self.scr[0] & SCR_SUPP_CCS) != 0
+        {
             self.sd_cmd(CMD_STOP_TRANS, 0).unwrap();
         }
         Ok((num * 512) as usize)
@@ -707,7 +724,8 @@ impl SdHostCtrl {
             return Err(Error::new(EINVAL));
         }
 
-        if num > 1 && (self.scr[0] & SCR_SUPP_SET_BLKCNT) == 0 && (self.scr[0] & SCR_SUPP_CCS) != 0 {
+        if num > 1 && (self.scr[0] & SCR_SUPP_SET_BLKCNT) == 0 && (self.scr[0] & SCR_SUPP_CCS) != 0
+        {
             self.sd_cmd(CMD_STOP_TRANS, 0).unwrap();
         }
         Ok((num * 512) as usize)
@@ -724,10 +742,9 @@ impl Disk for SdHostCtrl {
         self.size
     }
 
-    fn read(&mut self, block:u64, buffer: &mut [u8]) -> Result<Option<usize>> {
+    fn read(&mut self, block: u64, buffer: &mut [u8]) -> Result<Option<usize>> {
         if (buffer.len() % 512) != 0 {
-            println!("buffer.len {} should be aligned to {}",
-                     buffer.len(), 512);
+            println!("buffer.len {} should be aligned to {}", buffer.len(), 512);
             return Err(Error::new(EINVAL));
         }
         let u32_len = buffer.len() / core::mem::size_of::<u32>();
@@ -739,14 +756,13 @@ impl Disk for SdHostCtrl {
         };
         match ret {
             Ok(cnt) => Ok(Some(cnt)),
-            Err(err) => Err(err)
+            Err(err) => Err(err),
         }
     }
 
-    fn write(&mut self, block:u64, buffer: &[u8]) -> Result<Option<usize>> {
+    fn write(&mut self, block: u64, buffer: &[u8]) -> Result<Option<usize>> {
         if (buffer.len() % 512) != 0 {
-            println!("buffer.len {} should be aligned to {}",
-                     buffer.len(), 512);
+            println!("buffer.len {} should be aligned to {}", buffer.len(), 512);
             return Err(Error::new(EINVAL));
         }
         let u32_len = buffer.len() / core::mem::size_of::<u32>();
@@ -758,12 +774,11 @@ impl Disk for SdHostCtrl {
         };
         match ret {
             Ok(cnt) => Ok(Some(cnt)),
-            Err(err) => Err(err)
+            Err(err) => Err(err),
         }
     }
 
     fn block_length(&mut self) -> Result<u32> {
         Ok(512)
     }
-
 }

@@ -14,8 +14,8 @@ use partitionlib::PartitionTable;
 use redox_scheme::CallerCtx;
 use redox_scheme::OpenResult;
 use redox_scheme::SchemeBlockMut;
-use syscall::flag::*;
 use syscall::error::*;
+use syscall::flag::*;
 use syscall::schemev2::NewFdFlags;
 use virtio_core::spec::{Buffer, ChainBuilder, DescriptorFlags};
 use virtio_core::transport::Queue;
@@ -40,7 +40,11 @@ impl BlkExtension for Queue<'_> {
         })
         .unwrap();
 
-        let result = unsafe { Dma::<[u8]>::zeroed_slice(target.len()).unwrap().assume_init() };
+        let result = unsafe {
+            Dma::<[u8]>::zeroed_slice(target.len())
+                .unwrap()
+                .assume_init()
+        };
         let status = Dma::new(u8::MAX).unwrap();
 
         let chain = ChainBuilder::new()
@@ -65,7 +69,11 @@ impl BlkExtension for Queue<'_> {
         })
         .unwrap();
 
-        let mut result = unsafe { Dma::<[u8]>::zeroed_slice(target.len()).unwrap().assume_init() };
+        let mut result = unsafe {
+            Dma::<[u8]>::zeroed_slice(target.len())
+                .unwrap()
+                .assume_init()
+        };
         result.copy_from_slice(target.as_ref());
 
         let status = Dma::new(u8::MAX).unwrap();
@@ -122,30 +130,31 @@ impl<'a> DiskScheme<'a> {
 
         impl<'a, 'b> Read for VirtioShim<'a, 'b> {
             fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
-                let read_block = |block: u64, block_bytes: &mut [u8]| -> Result<(), std::io::Error> {
-                    let req = Dma::new(BlockVirtRequest {
-                        ty: BlockRequestTy::In,
-                        reserved: 0,
-                        sector: block,
-                    })
-                    .unwrap();
+                let read_block =
+                    |block: u64, block_bytes: &mut [u8]| -> Result<(), std::io::Error> {
+                        let req = Dma::new(BlockVirtRequest {
+                            ty: BlockRequestTy::In,
+                            reserved: 0,
+                            sector: block,
+                        })
+                        .unwrap();
 
-                    let result = Dma::new([0u8; 512]).unwrap();
-                    let status = Dma::new(u8::MAX).unwrap();
+                        let result = Dma::new([0u8; 512]).unwrap();
+                        let status = Dma::new(u8::MAX).unwrap();
 
-                    let chain = ChainBuilder::new()
-                        .chain(Buffer::new(&req))
-                        .chain(Buffer::new(&result).flags(DescriptorFlags::WRITE_ONLY))
-                        .chain(Buffer::new(&status).flags(DescriptorFlags::WRITE_ONLY))
-                        .build();
+                        let chain = ChainBuilder::new()
+                            .chain(Buffer::new(&req))
+                            .chain(Buffer::new(&result).flags(DescriptorFlags::WRITE_ONLY))
+                            .chain(Buffer::new(&status).flags(DescriptorFlags::WRITE_ONLY))
+                            .build();
 
-                    futures::executor::block_on(self.scheme.queue.send(chain));
-                    assert_eq!(*status, 0);
+                        futures::executor::block_on(self.scheme.queue.send(chain));
+                        assert_eq!(*status, 0);
 
-                    let size = core::cmp::min(block_bytes.len(), result.len());
-                    block_bytes[..size].copy_from_slice(&result.as_slice()[..size]);
-                    Ok(())
-                };
+                        let size = core::cmp::min(block_bytes.len(), result.len());
+                        block_bytes[..size].copy_from_slice(&result.as_slice()[..size]);
+                        Ok(())
+                    };
 
                 let bytes_read =
                     driver_block::block_read(self.offset, 512, buf, self.block_bytes, read_block)
@@ -224,7 +233,10 @@ impl<'a> SchemeBlockMut for DiskScheme<'a> {
                     },
                 );
 
-                Ok(Some(OpenResult::ThisScheme { number: id, flags: NewFdFlags::POSITIONED }))
+                Ok(Some(OpenResult::ThisScheme {
+                    number: id,
+                    flags: NewFdFlags::POSITIONED,
+                }))
             } else {
                 return Err(syscall::Error::new(EISDIR));
             }
@@ -242,14 +254,13 @@ impl<'a> SchemeBlockMut for DiskScheme<'a> {
 
             let id = self.next_id;
             self.next_id += 1;
-            self.handles.insert(
-                id,
-                Handle::Partition {
-                    number: part_num,
-                },
-            );
+            self.handles
+                .insert(id, Handle::Partition { number: part_num });
 
-            Ok(Some(OpenResult::ThisScheme { number: id, flags: NewFdFlags::POSITIONED }))
+            Ok(Some(OpenResult::ThisScheme {
+                number: id,
+                flags: NewFdFlags::POSITIONED,
+            }))
         } else {
             let nsid = path_str.parse::<u32>().unwrap();
             assert_eq!(nsid, 0);
@@ -257,94 +268,110 @@ impl<'a> SchemeBlockMut for DiskScheme<'a> {
             let id = self.next_id;
             self.next_id += 1;
             self.handles.insert(id, Handle::Disk);
-            Ok(Some(OpenResult::ThisScheme { number: id, flags: NewFdFlags::POSITIONED }))
+            Ok(Some(OpenResult::ThisScheme {
+                number: id,
+                flags: NewFdFlags::POSITIONED,
+            }))
         }
     }
 
-    fn read(&mut self, id: usize, buf: &mut [u8], offset: u64, _fcntl_flags: u32) -> syscall::Result<Option<usize>> {
-        Ok(Some(match *self.handles.get_mut(&id).ok_or(Error::new(EBADF))? {
-            Handle::List {
-                ref mut entries,
-            } => {
-                let src = usize::try_from(offset).ok().and_then(|o| entries.get(o..)).unwrap_or(&[]);
-                let count = core::cmp::min(src.len(), buf.len());
-                buf[..count].copy_from_slice(&src[..count]);
-                count
-            }
+    fn read(
+        &mut self,
+        id: usize,
+        buf: &mut [u8],
+        offset: u64,
+        _fcntl_flags: u32,
+    ) -> syscall::Result<Option<usize>> {
+        Ok(Some(
+            match *self.handles.get_mut(&id).ok_or(Error::new(EBADF))? {
+                Handle::List { ref mut entries } => {
+                    let src = usize::try_from(offset)
+                        .ok()
+                        .and_then(|o| entries.get(o..))
+                        .unwrap_or(&[]);
+                    let count = core::cmp::min(src.len(), buf.len());
+                    buf[..count].copy_from_slice(&src[..count]);
+                    count
+                }
 
-            Handle::Partition {
-                number,
-            } => {
-                let part_table = self.part_table.as_ref().unwrap();
-                let part = part_table
-                    .partitions
-                    .get(number as usize)
-                    .ok_or(Error::new(EBADF))?;
+                Handle::Partition { number } => {
+                    let part_table = self.part_table.as_ref().unwrap();
+                    let part = part_table
+                        .partitions
+                        .get(number as usize)
+                        .ok_or(Error::new(EBADF))?;
 
-                // Get the offset in sectors.
-                let rel_block = offset / BLK_SIZE;
-                // if rel_block >= part.size {
-                //     return Err(Error::new(EOVERFLOW));
-                // }
+                    // Get the offset in sectors.
+                    let rel_block = offset / BLK_SIZE;
+                    // if rel_block >= part.size {
+                    //     return Err(Error::new(EOVERFLOW));
+                    // }
 
-                let abs_block = part.start_lba + rel_block;
+                    let abs_block = part.start_lba + rel_block;
 
-                futures::executor::block_on(self.queue.read(abs_block, buf))
-            }
+                    futures::executor::block_on(self.queue.read(abs_block, buf))
+                }
 
-            Handle::Disk => {
-                let block_size = self.cfg.block_size();
+                Handle::Disk => {
+                    let block_size = self.cfg.block_size();
 
-                futures::executor::block_on(
-                    self.queue.read(offset / u64::from(block_size), buf),
-                )
-            }
-        }))
+                    futures::executor::block_on(
+                        self.queue.read(offset / u64::from(block_size), buf),
+                    )
+                }
+            },
+        ))
     }
 
-    fn write(&mut self, id: usize, buf: &[u8], offset: u64, _fcntl_flags: u32) -> syscall::Result<Option<usize>> {
-        Ok(Some(match *self.handles.get_mut(&id).ok_or(Error::new(EBADF))? {
-            Handle::Disk => {
-                let block_size = self.cfg.block_size();
-                futures::executor::block_on(
-                    self.queue.write(offset / u64::from(block_size), buf),
-                )
-            }
+    fn write(
+        &mut self,
+        id: usize,
+        buf: &[u8],
+        offset: u64,
+        _fcntl_flags: u32,
+    ) -> syscall::Result<Option<usize>> {
+        Ok(Some(
+            match *self.handles.get_mut(&id).ok_or(Error::new(EBADF))? {
+                Handle::Disk => {
+                    let block_size = self.cfg.block_size();
+                    futures::executor::block_on(
+                        self.queue.write(offset / u64::from(block_size), buf),
+                    )
+                }
 
-            _ => todo!(),
-        }))
+                _ => todo!(),
+            },
+        ))
     }
 
     fn fsize(&mut self, id: usize) -> syscall::Result<Option<u64>> {
-        Ok(Some(match *self.handles.get_mut(&id).ok_or(Error::new(EBADF))? {
-            Handle::List {
-                ref entries,
-            } => {
-                let len = entries.len() as u64;
-                log::debug!("list: part_len={len:?}");
+        Ok(Some(
+            match *self.handles.get_mut(&id).ok_or(Error::new(EBADF))? {
+                Handle::List { ref entries } => {
+                    let len = entries.len() as u64;
+                    log::debug!("list: part_len={len:?}");
 
-                len
-            }
+                    len
+                }
 
-            Handle::Partition {
-                number,
-            } => {
-                let part_table = self.part_table.as_ref().unwrap();
-                let part = part_table
-                    .partitions
-                    .get(number as usize)
-                    .ok_or(Error::new(EBADF))?;
+                Handle::Partition { number } => {
+                    let part_table = self.part_table.as_ref().unwrap();
+                    let part = part_table
+                        .partitions
+                        .get(number as usize)
+                        .ok_or(Error::new(EBADF))?;
 
-                // Partition size in bytes.
-                let len = part.size * BLK_SIZE;
+                    // Partition size in bytes.
+                    let len = part.size * BLK_SIZE;
 
-                log::debug!("part: part_len={len:?}");
+                    log::debug!("part: part_len={len:?}");
 
-                len
-            }
+                    len
+                }
 
-            Handle::Disk => self.cfg.capacity() * u64::from(self.cfg.block_size()),
-        }))
+                Handle::Disk => self.cfg.capacity() * u64::from(self.cfg.block_size()),
+            },
+        ))
     }
 
     fn fpath(&mut self, _id: usize, _buf: &mut [u8]) -> syscall::Result<Option<usize>> {

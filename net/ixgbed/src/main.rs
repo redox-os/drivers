@@ -47,9 +47,22 @@ fn main() {
             }
         }
 
-        let mut event_queue = EventQueue::<Source>::new().expect("ixgbed: Could not create event queue.");
-        event_queue.subscribe(irq_file.as_raw_fd() as usize, Source::Irq, event::EventFlags::READ).unwrap();
-        event_queue.subscribe(scheme.event_handle() as usize, Source::Scheme, event::EventFlags::READ).unwrap();
+        let mut event_queue =
+            EventQueue::<Source>::new().expect("ixgbed: Could not create event queue.");
+        event_queue
+            .subscribe(
+                irq_file.as_raw_fd() as usize,
+                Source::Irq,
+                event::EventFlags::READ,
+            )
+            .unwrap();
+        event_queue
+            .subscribe(
+                scheme.event_handle() as usize,
+                Source::Scheme,
+                event::EventFlags::READ,
+            )
+            .unwrap();
 
         libredox::call::setrens(0, 0).expect("ixgbed: failed to enter null namespace");
 

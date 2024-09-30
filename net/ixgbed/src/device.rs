@@ -55,8 +55,8 @@ impl NetworkAdapter for Intel8259x {
             let i = cmp::min(buf.len(), data.len());
             buf[..i].copy_from_slice(&data[..i]);
 
-                desc.read.pkt_addr = self.receive_buffer[self.receive_index].physical() as u64;
-                desc.read.hdr_addr = 0;
+            desc.read.pkt_addr = self.receive_buffer[self.receive_index].physical() as u64;
+            desc.read.hdr_addr = 0;
 
             self.write_reg(IXGBE_RDT(0), self.receive_index as u32);
             self.receive_index = wrap_ring(self.receive_index, self.receive_ring.len());
@@ -103,14 +103,14 @@ impl NetworkAdapter for Intel8259x {
         let i = cmp::min(buf.len(), data.len());
         data[..i].copy_from_slice(&buf[..i]);
 
-            desc.read.cmd_type_len = IXGBE_ADVTXD_DCMD_EOP
-                | IXGBE_ADVTXD_DCMD_RS
-                | IXGBE_ADVTXD_DCMD_IFCS
-                | IXGBE_ADVTXD_DCMD_DEXT
-                | IXGBE_ADVTXD_DTYP_DATA
-                | buf.len() as u32;
+        desc.read.cmd_type_len = IXGBE_ADVTXD_DCMD_EOP
+            | IXGBE_ADVTXD_DCMD_RS
+            | IXGBE_ADVTXD_DCMD_IFCS
+            | IXGBE_ADVTXD_DCMD_DEXT
+            | IXGBE_ADVTXD_DTYP_DATA
+            | buf.len() as u32;
 
-            desc.read.olinfo_status = (buf.len() as u32) << IXGBE_ADVTXD_PAYLEN_SHIFT;
+        desc.read.olinfo_status = (buf.len() as u32) << IXGBE_ADVTXD_PAYLEN_SHIFT;
 
         self.transmit_index = wrap_ring(self.transmit_index, self.transmit_ring.len());
         self.transmit_ring_free -= 1;
@@ -290,7 +290,10 @@ impl Intel8259x {
         self.wait_write_reg(IXGBE_EEC, IXGBE_EEC_ARD);
 
         // section 4.6.3 - wait for dma initialization done
-        self.wait_write_reg(IXGBE_RDRXCTL, IXGBE_RDRXCTL_DMAIDONE | IXGBE_RDRXCTL_RESERVED_BITS);
+        self.wait_write_reg(
+            IXGBE_RDRXCTL,
+            IXGBE_RDRXCTL_DMAIDONE | IXGBE_RDRXCTL_RESERVED_BITS,
+        );
 
         // section 4.6.4 - initialize link (auto negotiation)
         self.init_link();
@@ -361,7 +364,10 @@ impl Intel8259x {
 
         self.write_reg(IXGBE_RDBAL(i), self.receive_ring.physical() as u32);
 
-        self.write_reg(IXGBE_RDBAH(i), ((self.receive_ring.physical() as u64) >> 32) as u32);
+        self.write_reg(
+            IXGBE_RDBAH(i),
+            ((self.receive_ring.physical() as u64) >> 32) as u32,
+        );
         self.write_reg(
             IXGBE_RDLEN(i),
             (self.receive_ring.len() * mem::size_of::<ixgbe_adv_rx_desc>()) as u32,
@@ -407,7 +413,10 @@ impl Intel8259x {
         // section 7.1.9 - setup descriptor ring
 
         self.write_reg(IXGBE_TDBAL(i), self.transmit_ring.physical() as u32);
-        self.write_reg(IXGBE_TDBAH(i), ((self.transmit_ring.physical() as u64) >> 32) as u32);
+        self.write_reg(
+            IXGBE_TDBAH(i),
+            ((self.transmit_ring.physical() as u64) >> 32) as u32,
+        );
         self.write_reg(
             IXGBE_TDLEN(i),
             (self.transmit_ring.len() * mem::size_of::<ixgbe_adv_tx_desc>()) as u32,
