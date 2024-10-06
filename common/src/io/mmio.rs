@@ -35,7 +35,7 @@ impl<T> Mmio<T> {
 #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
 impl<T> Io for Mmio<T>
 where
-    T: Copy + PartialEq + BitAnd<Output = T> + BitOr<Output = T> + Not<Output = T>,
+    T: Copy + PartialEq + core::ops::BitAnd<Output = T> + core::ops::BitOr<Output = T> + core::ops::Not<Output = T>,
 {
     type Value = T;
 

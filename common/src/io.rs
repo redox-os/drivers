@@ -4,9 +4,11 @@ use core::{
 };
 
 mod mmio;
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 mod pio;
 
 pub use mmio::*;
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 pub use pio::*;
 
 /// IO abstraction
