@@ -47,8 +47,7 @@ impl SchemeMut for ScsiScheme<'_> {
         if flags & O_DIRECTORY != 0 && flags & O_STAT == 0 {
             return Err(Error::new(EACCES));
         }
-        let path_str = path_str
-            .trim_start_matches('/');
+        let path_str = path_str.trim_start_matches('/');
         let handle = if path_str.is_empty() {
             // List
             Handle::List
@@ -60,7 +59,10 @@ impl SchemeMut for ScsiScheme<'_> {
         };
         self.next_fd += 1;
         self.handles.insert(self.next_fd, handle);
-        Ok(OpenResult::ThisScheme { number: self.next_fd, flags: NewFdFlags::POSITIONED })
+        Ok(OpenResult::ThisScheme {
+            number: self.next_fd,
+            flags: NewFdFlags::POSITIONED,
+        })
     }
     fn fstat(&mut self, fd: usize, stat: &mut syscall::Stat) -> Result<usize> {
         match self.handles.get(&fd).ok_or(Error::new(EBADF))? {
@@ -111,7 +113,10 @@ impl SchemeMut for ScsiScheme<'_> {
                 }
             }
             Handle::List => {
-                let src = usize::try_from(offset).ok().and_then(|o| LIST_CONTENTS.get(o..)).unwrap_or(&[]);
+                let src = usize::try_from(offset)
+                    .ok()
+                    .and_then(|o| LIST_CONTENTS.get(o..))
+                    .unwrap_or(&[]);
                 let min = core::cmp::min(src.len(), buf.len());
                 buf[..min].copy_from_slice(&src[..min]);
 

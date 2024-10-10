@@ -56,7 +56,7 @@ impl Scsi {
         let max_inquiry_len = this.get_inquiry_alloc_len(protocol)?;
         // Get the Standard Inquiry Data.
         this.get_standard_inquiry_data(protocol, max_inquiry_len)?;
-        
+
         let version = this.res_standard_inquiry_data().version();
         println!("Inquiry version: {}", version);
 
@@ -89,50 +89,52 @@ impl Scsi {
         let standard_inquiry_data = self.res_standard_inquiry_data();
         Ok(4 + u16::from(standard_inquiry_data.additional_len))
     }
-    pub fn get_standard_inquiry_data(&mut self, protocol: &mut dyn Protocol, max_inquiry_len: u16) -> Result<()> {
+    pub fn get_standard_inquiry_data(
+        &mut self,
+        protocol: &mut dyn Protocol,
+        max_inquiry_len: u16,
+    ) -> Result<()> {
         let inquiry = self.cmd_inquiry();
         *inquiry = cmds::Inquiry::new(false, 0, max_inquiry_len, 0);
 
-        protocol
-            .send_command(
-                &self.command_buffer[..INQUIRY_CMD_LEN as usize],
-                DeviceReqData::In(&mut self.inquiry_buffer[..max_inquiry_len as usize]),
-            )?;
+        protocol.send_command(
+            &self.command_buffer[..INQUIRY_CMD_LEN as usize],
+            DeviceReqData::In(&mut self.inquiry_buffer[..max_inquiry_len as usize]),
+        )?;
         Ok(())
     }
     pub fn get_ff_sense(&mut self, protocol: &mut dyn Protocol, alloc_len: u8) -> Result<()> {
         let request_sense = self.cmd_request_sense();
         *request_sense = cmds::RequestSense::new(false, alloc_len, 0);
         self.data_buffer.resize(alloc_len.into(), 0);
-        protocol
-            .send_command(
-                &self.command_buffer[..REQUEST_SENSE_CMD_LEN as usize],
-                DeviceReqData::In(&mut self.data_buffer[..alloc_len as usize]),
-            )?;
+        protocol.send_command(
+            &self.command_buffer[..REQUEST_SENSE_CMD_LEN as usize],
+            DeviceReqData::In(&mut self.data_buffer[..alloc_len as usize]),
+        )?;
         Ok(())
     }
-    pub fn read_capacity(&mut self, protocol: &mut dyn Protocol) -> Result<&cmds::ReadCapacity10ParamData> {
+    pub fn read_capacity(
+        &mut self,
+        protocol: &mut dyn Protocol,
+    ) -> Result<&cmds::ReadCapacity10ParamData> {
         // The spec explicitly states that the allocation length is 8 bytes.
         let read_capacity10 = self.cmd_read_capacity10();
         *read_capacity10 = cmds::ReadCapacity10::new(0);
         self.data_buffer.resize(10usize, 0u8);
-        protocol
-            .send_command(
-                &self.command_buffer[..10],
-                DeviceReqData::In(&mut self.data_buffer[..8]),
-            )?;
+        protocol.send_command(
+            &self.command_buffer[..10],
+            DeviceReqData::In(&mut self.data_buffer[..8]),
+        )?;
         Ok(self.res_read_capacity10())
     }
     pub fn get_mode_sense10(
         &mut self,
         protocol: &mut dyn Protocol,
-    ) -> Result<
-        (
-            &cmds::ModeParamHeader10,
-            BlkDescSlice,
-            impl Iterator<Item = cmds::AnyModePage>,
-        )
-    > {
+    ) -> Result<(
+        &cmds::ModeParamHeader10,
+        BlkDescSlice,
+        impl Iterator<Item = cmds::AnyModePage>,
+    )> {
         let initial_alloc_len = mem::size_of::<cmds::ModeParamHeader10>() as u16; // covers both mode_data_len and blk_desc_len.
         let mode_sense10 = self.cmd_mode_sense10();
         *mode_sense10 = cmds::ModeSense10::get_block_desc(initial_alloc_len, 0);
@@ -149,9 +151,7 @@ impl Scsi {
             panic!("{:?}", self.res_ff_sense_data());
         }
 
-        let optimal_alloc_len = 
-            self.res_mode_param_header10().mode_data_len()
-            + 2; // the length of the mode data field itself
+        let optimal_alloc_len = self.res_mode_param_header10().mode_data_len() + 2; // the length of the mode data field itself
 
         let mode_sense10 = self.cmd_mode_sense10();
         *mode_sense10 = cmds::ModeSense10::get_block_desc(optimal_alloc_len, 0);
@@ -278,12 +278,7 @@ impl Scsi {
         buffer[..bytes_to_read].copy_from_slice(&self.data_buffer[..bytes_to_read]);
         Ok(status.bytes_transferred(bytes_to_read as u32))
     }
-    pub fn write(
-        &mut self,
-        protocol: &mut dyn Protocol,
-        lba: u64,
-        buffer: &[u8],
-    ) -> Result<u32> {
+    pub fn write(&mut self, protocol: &mut dyn Protocol, lba: u64, buffer: &[u8]) -> Result<u32> {
         let blocks_to_write = buffer.len() as u64 / u64::from(self.block_size);
         let bytes_to_write = blocks_to_write as usize * self.block_size as usize;
         let transfer_len = u32::try_from(blocks_to_write).or(Err(ScsiError::Overflow(

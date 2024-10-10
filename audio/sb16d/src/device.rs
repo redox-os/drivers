@@ -1,12 +1,12 @@
 #![allow(dead_code)]
 
-use std::{thread, time};
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::{thread, time};
 
-use common::io::{Pio, Io, ReadOnly, WriteOnly};
+use common::io::{Io, Pio, ReadOnly, WriteOnly};
 
-use syscall::error::{Error, EACCES, EBADF, Result, ENODEV};
+use syscall::error::{Error, Result, EACCES, EBADF, ENODEV};
 use syscall::scheme::SchemeBlockMut;
 
 use spin::Mutex;
@@ -68,7 +68,7 @@ impl Sb16 {
 
     fn dsp_read(&mut self) -> Result<u8> {
         // Bit 7 must be 1 before data can be sent
-        while ! self.dsp_read_status.readf(1 << 7) {
+        while !self.dsp_read_status.readf(1 << 7) {
             //TODO: timeout!
             std::thread::yield_now();
         }
@@ -212,6 +212,9 @@ impl SchemeBlockMut for Sb16 {
 
     fn close(&mut self, id: usize) -> Result<Option<usize>> {
         let mut handles = self.handles.lock();
-        handles.remove(&id).ok_or(Error::new(EBADF)).and(Ok(Some(0)))
+        handles
+            .remove(&id)
+            .ok_or(Error::new(EBADF))
+            .and(Ok(Some(0)))
     }
 }

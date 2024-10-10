@@ -67,8 +67,9 @@ lazy_static! {
         .expect("Failed to create the regex for the port<n>/request scheme");
     static ref REGEX_PORT_ENDPOINTS: Regex = Regex::new(r"^port(\d{1,3})/endpoints$")
         .expect("Failed to create the regex for the port<n>/endpoints scheme");
-    static ref REGEX_PORT_SPECIFIC_ENDPOINT: Regex = Regex::new(r"^port(\d{1,3})/endpoints/(\d{1,3})$")
-        .expect("Failed to create the regex for the port<n>/endpoints/<n> scheme");
+    static ref REGEX_PORT_SPECIFIC_ENDPOINT: Regex =
+        Regex::new(r"^port(\d{1,3})/endpoints/(\d{1,3})$")
+            .expect("Failed to create the regex for the port<n>/endpoints/<n> scheme");
     static ref REGEX_PORT_SUB_ENDPOINT: Regex = Regex::new(
         r"port(\d{1,3})/endpoints/(\d{1,3})/(ctl|data)$"
     )
@@ -352,33 +353,27 @@ impl SchemeParameters {
 
             Ok(Self::ConfigureEndpoints(port_num))
         } else if REGEX_PORT_DESCRIPTORS.is_match(scheme) {
-
             let port_num = get_usize_from_regex(&REGEX_PORT_DESCRIPTORS, scheme, 0)?;
 
             Ok(Self::PortDesc(port_num))
         } else if REGEX_PORT_STATE.is_match(scheme) {
-
             let port_num = get_usize_from_regex(&REGEX_PORT_STATE, scheme, 0)?;
 
             Ok(Self::PortState(port_num))
         } else if REGEX_PORT_REQUEST.is_match(scheme) {
-
             let port_num = get_usize_from_regex(&REGEX_PORT_REQUEST, scheme, 0)?;
 
             Ok(Self::PortReq(port_num))
         } else if REGEX_PORT_ENDPOINTS.is_match(scheme) {
-
             let port_num = get_usize_from_regex(&REGEX_PORT_ENDPOINTS, scheme, 0)?;
 
             Ok(Self::Endpoints(port_num))
         } else if REGEX_PORT_SPECIFIC_ENDPOINT.is_match(scheme) {
-
             let port_num = get_usize_from_regex(&REGEX_PORT_SPECIFIC_ENDPOINT, scheme, 0)?;
             let endpoint_num = get_u8_from_regex(&REGEX_PORT_SPECIFIC_ENDPOINT, scheme, 1)?;
 
             Ok(Self::Endpoint(port_num, endpoint_num, String::from("root")))
         } else if REGEX_PORT_SUB_ENDPOINT.is_match(scheme) {
-
             let port_num = get_usize_from_regex(&REGEX_PORT_SUB_ENDPOINT, scheme, 0)?;
             let endpoint_num = get_u8_from_regex(&REGEX_PORT_SUB_ENDPOINT, scheme, 1)?;
             let handle_type = get_string_from_regex(&REGEX_PORT_SUB_ENDPOINT, scheme, 2)?;

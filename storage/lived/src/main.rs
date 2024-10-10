@@ -12,12 +12,12 @@ use libredox::flag;
 use redox_scheme::{CallerCtx, OpenResult, RequestKind, SchemeMut, SignalBehavior, Socket, V2};
 
 use syscall::data::Stat;
-use syscall::schemev2::NewFdFlags;
 use syscall::error::*;
 use syscall::flag::{MODE_DIR, MODE_FILE};
+use syscall::schemev2::NewFdFlags;
 use syscall::PAGE_SIZE;
 
-use anyhow::{anyhow, Context, bail};
+use anyhow::{anyhow, bail, Context};
 
 const LIST: [u8; 2] = *b"0\n";
 
@@ -46,7 +46,10 @@ impl DiskScheme {
         let mut size = 0;
 
         // TODO: handle error
-        for line in std::fs::read_to_string("/scheme/sys/env").context("failed to read env")?.lines() {
+        for line in std::fs::read_to_string("/scheme/sys/env")
+            .context("failed to read env")?
+            .lines()
+        {
             let mut parts = line.splitn(2, '=');
             let name = parts.next().unwrap_or("");
             let value = parts.next().unwrap_or("");
@@ -61,11 +64,18 @@ impl DiskScheme {
         }
 
         if phys == 0 || size == 0 {
-            bail!("either livedisk phys ({}) or size ({}) was zero", phys, size);
+            bail!(
+                "either livedisk phys ({}) or size ({}) was zero",
+                phys,
+                size
+            );
         }
 
         let start = phys.div_floor(PAGE_SIZE) * PAGE_SIZE;
-        let end = phys.checked_add(size).context("phys + size overflow")?.next_multiple_of(PAGE_SIZE);
+        let end = phys
+            .checked_add(size)
+            .context("phys + size overflow")?
+            .next_multiple_of(PAGE_SIZE);
         let size = end - start;
 
         let the_data = unsafe {
@@ -77,23 +87,24 @@ impl DiskScheme {
                 length: size,
                 prot: flag::PROT_READ | flag::PROT_WRITE,
                 flags: flag::MAP_SHARED,
-            }).map_err(|err| anyhow!("failed to mmap livedisk: {}", err))?;
+            })
+            .map_err(|err| anyhow!("failed to mmap livedisk: {}", err))?;
 
             std::slice::from_raw_parts_mut(base as *mut u8, size)
         };
 
-        Ok(DiskScheme {
-            the_data,
-        })
+        Ok(DiskScheme { the_data })
     }
 }
 
 impl SchemeMut for DiskScheme {
     fn fsize(&mut self, id: usize) -> Result<u64> {
-        Ok(match HandleType::try_from_raw(id).ok_or(Error::new(EBADF))? {
-            HandleType::TopLevel => LIST.len() as u64,
-            HandleType::TheData => self.the_data.len() as u64,
-        })
+        Ok(
+            match HandleType::try_from_raw(id).ok_or(Error::new(EBADF))? {
+                HandleType::TopLevel => LIST.len() as u64,
+                HandleType::TheData => self.the_data.len() as u64,
+            },
+        )
     }
 
     fn fcntl(&mut self, _id: usize, _cmd: usize, _arg: usize) -> Result<usize> {
@@ -116,12 +127,8 @@ impl SchemeMut for DiskScheme {
 
         Ok(OpenResult::ThisScheme {
             number: match path_trimmed {
-                "" => {
-                    HandleType::TopLevel as usize
-                },
-                "0" => {
-                    HandleType::TheData as usize
-                }
+                "" => HandleType::TopLevel as usize,
+                "0" => HandleType::TheData as usize,
                 _ => return Err(Error::new(ENOENT)),
             },
             flags: NewFdFlags::POSITIONED,
@@ -133,7 +140,10 @@ impl SchemeMut for DiskScheme {
             HandleType::TopLevel => &LIST,
         };
 
-        let src = usize::try_from(offset).ok().and_then(|o| data.get(o..)).unwrap_or(&[]);
+        let src = usize::try_from(offset)
+            .ok()
+            .and_then(|o| data.get(o..))
+            .unwrap_or(&[]);
         let byte_count = std::cmp::min(src.len(), buf.len());
         buf[..byte_count].copy_from_slice(&src[..byte_count]);
         Ok(byte_count)
@@ -144,7 +154,10 @@ impl SchemeMut for DiskScheme {
             HandleType::TopLevel => return Err(Error::new(EBADF)),
         };
 
-        let dst = usize::try_from(offset).ok().and_then(|o| data.get_mut(o..)).unwrap_or(&mut []);
+        let dst = usize::try_from(offset)
+            .ok()
+            .and_then(|o| data.get_mut(o..))
+            .unwrap_or(&mut []);
         let byte_count = std::cmp::min(dst.len(), buf.len());
         dst[..byte_count].copy_from_slice(&buf[..byte_count]);
         Ok(byte_count)
@@ -190,18 +203,26 @@ fn main() -> anyhow::Result<()> {
         daemon.ready().expect("failed to signal readiness");
 
         loop {
-            let req = match socket_fd.next_request(SignalBehavior::Restart).expect("failed to get next request") {
-                Some(r) => if let RequestKind::Call(c) = r.kind() {
-                    c
-                } else {
-                    continue;
-                },
+            let req = match socket_fd
+                .next_request(SignalBehavior::Restart)
+                .expect("failed to get next request")
+            {
+                Some(r) => {
+                    if let RequestKind::Call(c) = r.kind() {
+                        c
+                    } else {
+                        continue;
+                    }
+                }
                 None => break,
             };
             let resp = req.handle_scheme_mut(&mut scheme);
-            socket_fd.write_response(resp, SignalBehavior::Restart).expect("failed to write packet");
+            socket_fd
+                .write_response(resp, SignalBehavior::Restart)
+                .expect("failed to write packet");
         }
 
         std::process::exit(0);
-    }).map_err(|err| anyhow!("failed to start daemon: {}", err))?;
+    })
+    .map_err(|err| anyhow!("failed to start daemon: {}", err))?;
 }

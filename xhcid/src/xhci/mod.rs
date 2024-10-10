@@ -20,8 +20,8 @@ use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
 use std::{mem, process, slice, sync::atomic, task, thread};
 
-use syscall::error::{Error, Result, EBADF, EBADMSG, EIO, ENOENT};
 use common::io::Io;
+use syscall::error::{Error, Result, EBADF, EBADMSG, EIO, ENOENT};
 use syscall::PAGE_SIZE;
 
 use chashmap::CHashMap;

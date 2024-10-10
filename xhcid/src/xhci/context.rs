@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
+use common::io::{Io, Mmio};
 use log::debug;
 use syscall::error::Result;
-use common::io::{Io, Mmio};
 use syscall::PAGE_SIZE;
 
 use common::dma::Dma;
