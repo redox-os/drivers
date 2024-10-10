@@ -1,3 +1,5 @@
+# Community Hardware
+
 This document covers the devices from the community that needs a driver.
 
 Unfortunately we can't know the most sold device models of the world to measure our device porting priority, thus we will use our community data to measure our device priorities, if you find a "device model users" survey (similar to [Debian Popularity Contest](https://popcon.debian.org/) and [Steam Hardware/Software Survey](https://store.steampowered.com/hwsurvey/Steam-Hardware-Software-Survey-Welcome-to-Steam)), please comment.
@@ -9,6 +11,14 @@ If you want to contribute to this table, install [pciutils](https://mj.ucw.cz/sw
 - Kernel modules
 
 If you are unsure of what to do, you can talk with us on the [chat](https://doc.redox-os.org/book/chat.html).
+
+## Template
+
+You will use this template to insert your devices on the table.
+
+```
+|  |  |  | No |
+```
 
 | **Device model** | **Kernel driver** | **Kernel module** | **There's a Redox driver?** |
 |------------------|-------------------|-------------------|-----------------------------|
