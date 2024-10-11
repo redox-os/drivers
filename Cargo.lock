@@ -23,7 +23,7 @@ version = "0.1.0"
 dependencies = [
  "aml",
  "amlserde",
- "arrayvec 0.7.6",
+ "arrayvec",
  "common",
  "libredox 0.1.3",
  "log",
@@ -129,12 +129,6 @@ name = "anyhow"
 version = "1.0.86"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b3d1d046238990b9cf5bcde22a3fb3584ee5cf65fb2765f454ed428c7a0063da"
-
-[[package]]
-name = "arrayvec"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23b62fc65de8e4e7f52534fb52b0f3ed04746ae267519eef2a83941e8085068b"
 
 [[package]]
 name = "arrayvec"
@@ -410,6 +404,15 @@ name = "equivalent"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5443807d6dff69373d433ab9ef5378ad8df50ca6298caf15de6e52e24aaf54d5"
+
+[[package]]
+name = "executor"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "redox_event",
+ "slab",
+]
 
 [[package]]
 name = "fbcond"
@@ -805,18 +808,18 @@ checksum = "b8f8bdf33df195859076e54ab11ee78a1b208382d3a26ec40d142ffc1ecc49ef"
 name = "nvmed"
 version = "0.1.0"
 dependencies = [
- "arrayvec 0.5.2",
- "bitflags 1.3.2",
+ "arrayvec",
+ "bitflags 2.6.0",
  "common",
- "crossbeam-channel",
  "driver-block",
- "futures",
+ "executor",
  "libredox 0.1.3",
  "log",
+ "parking_lot 0.12.3",
  "partitionlib",
  "pcid",
  "redox-daemon",
- "redox-scheme 0.2.1",
+ "redox-scheme 0.2.0",
  "redox_event",
  "redox_syscall 0.5.6",
  "smallvec 1.13.2",
@@ -870,6 +873,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "parking_lot"
+version = "0.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1bf18183cf54e8d6059647fc3063646a1801cf30896933ec2311622cc4b9a27"
+dependencies = [
+ "lock_api",
+ "parking_lot_core 0.9.10",
+]
+
+[[package]]
 name = "parking_lot_core"
 version = "0.2.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -893,6 +906,19 @@ dependencies = [
  "redox_syscall 0.2.16",
  "smallvec 1.13.2",
  "winapi",
+]
+
+[[package]]
+name = "parking_lot_core"
+version = "0.9.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e401f977ab385c9e4e3ab30627d6f26d00e2c73eef317493c4ec6d468726cf8"
+dependencies = [
+ "cfg-if 1.0.0",
+ "libc",
+ "redox_syscall 0.5.6",
+ "smallvec 1.13.2",
+ "windows-targets",
 ]
 
 [[package]]
@@ -1127,6 +1153,15 @@ dependencies = [
  "log",
  "smallvec 1.13.2",
  "termion",
+]
+
+[[package]]
+name = "redox-scheme"
+version = "0.2.0"
+source = "git+https://gitlab.redox-os.org/redox-os/redox-scheme.git?branch=asyncv2#779f99a21f3a662c79c108434febd53a6e1a265b"
+dependencies = [
+ "libredox 0.1.3",
+ "redox_syscall 0.5.6",
 ]
 
 [[package]]
