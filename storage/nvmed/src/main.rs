@@ -12,10 +12,7 @@ use std::{slice, usize};
 use libredox::flag;
 use pcid_interface::{PciFeature, PciFeatureInfo, PciFunction, PciFunctionHandle};
 use redox_scheme::{CallRequest, RequestKind, SignalBehavior, Socket, V2};
-use syscall::{
-    Event, Packet, Result, SchemeBlockMut,
-    PAGE_SIZE,
-};
+use syscall::{Event, Packet, Result, SchemeBlockMut, PAGE_SIZE};
 
 use self::nvme::{InterruptMethod, InterruptSources, Nvme};
 use self::scheme::DiskScheme;
@@ -53,10 +50,8 @@ fn get_int_method(
         fn bar_base(pcid_handle: &mut PciFunctionHandle, bir: u8) -> Result<NonNull<u8>> {
             Ok(unsafe { pcid_handle.map_bar(bir) }.expect("nvmed").ptr)
         }
-        let table_bar_base: *mut u8 =
-            bar_base(pcid_handle, msix_info.table_bar)?.as_ptr();
-        let table_base =
-            unsafe { table_bar_base.offset(msix_info.table_offset as isize) };
+        let table_bar_base: *mut u8 = bar_base(pcid_handle, msix_info.table_bar)?.as_ptr();
+        let table_base = unsafe { table_bar_base.offset(msix_info.table_offset as isize) };
 
         let vector_count = msix_info.table_size;
         let table_entries: &'static mut [MsixTableEntry] = unsafe {
@@ -107,11 +102,13 @@ fn get_int_method(
             let (msg_addr_and_data, irq_handle) =
                 irq_helpers::allocate_single_interrupt_vector_for_msi(bsp_cpu_id);
 
-            pcid_handle.set_feature_info(SetFeatureInfo::Msi(MsiSetFeatureInfo {
-                message_address_and_data: Some(msg_addr_and_data),
-                multi_message_enable: Some(0), // enable 2^0=1 vectors
-                mask_bits: None,
-            })).unwrap();
+            pcid_handle
+                .set_feature_info(SetFeatureInfo::Msi(MsiSetFeatureInfo {
+                    message_address_and_data: Some(msg_addr_and_data),
+                    multi_message_enable: Some(0), // enable 2^0=1 vectors
+                    mask_bits: None,
+                }))
+                .unwrap();
 
             (0, irq_handle)
         };
@@ -177,9 +174,8 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     daemon.ready().expect("nvmed: failed to signal readiness");
 
     let (reactor_sender, reactor_receiver) = crossbeam_channel::unbounded();
-    let (interrupt_method, interrupt_sources) =
-        get_int_method(&mut pcid_handle, &pci_config.func)
-            .expect("nvmed: failed to find a suitable interrupt method");
+    let (interrupt_method, interrupt_sources) = get_int_method(&mut pcid_handle, &pci_config.func)
+        .expect("nvmed: failed to find a suitable interrupt method");
     let mut nvme = Nvme::new(
         address.as_ptr() as usize,
         interrupt_method,
@@ -191,7 +187,11 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     log::debug!("Finished base initialization");
     let nvme = Arc::new(nvme);
     #[cfg(feature = "async")]
-    let reactor_thread = nvme::cq_reactor::start_cq_reactor_thread(Arc::clone(&nvme), interrupt_sources, reactor_receiver);
+    let reactor_thread = nvme::cq_reactor::start_cq_reactor_thread(
+        Arc::clone(&nvme),
+        interrupt_sources,
+        reactor_receiver,
+    );
     let namespaces = nvme.init_with_queues();
 
     libredox::call::setrens(0, 0).expect("nvmed: failed to enter null namespace");
@@ -200,15 +200,20 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let mut todo = Vec::new();
     loop {
         // TODO: Use a proper event queue once interrupt support is back.
-        match socket.next_request(SignalBehavior::Restart).expect("nvmed: failed to read disk scheme") {
+        match socket
+            .next_request(SignalBehavior::Restart)
+            .expect("nvmed: failed to read disk scheme")
+        {
             None => {
                 break;
-            },
-            Some(req) => if let RequestKind::Call(c) = req.kind() {
-                todo.push(c);
-            } else {
-                // TODO: cancellation
-                continue;
+            }
+            Some(req) => {
+                if let RequestKind::Call(c) = req.kind() {
+                    todo.push(c);
+                } else {
+                    // TODO: cancellation
+                    continue;
+                }
             }
         }
 
@@ -216,7 +221,8 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         while i < todo.len() {
             if let Some(resp) = todo[i].handle_scheme_block_mut(&mut scheme) {
                 let _req = todo.remove(i);
-                socket.write_response(resp, SignalBehavior::Restart)
+                socket
+                    .write_response(resp, SignalBehavior::Restart)
                     .expect("nvmed: failed to write disk scheme");
             } else {
                 i += 1;
@@ -226,7 +232,9 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     //TODO: destroy NVMe stuff
     #[cfg(feature = "async")]
-    reactor_thread.join().expect("nvmed: failed to join reactor thread");
+    reactor_thread
+        .join()
+        .expect("nvmed: failed to join reactor thread");
 
     std::process::exit(0);
 }

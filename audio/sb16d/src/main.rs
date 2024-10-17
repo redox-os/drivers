@@ -1,8 +1,8 @@
 //#![deny(warnings)]
 
-use std::{env, usize};
 use libredox::errno::{EAGAIN, EWOULDBLOCK};
 use libredox::{flag, Fd};
+use std::{env, usize};
 use syscall::{Packet, SchemeBlockMut};
 
 use event::{user_data, EventQueue};
@@ -29,12 +29,19 @@ fn main() {
 
         common::acquire_port_io_rights().expect("sb16d: failed to acquire port IO rights");
 
-        let mut device = unsafe { device::Sb16::new(addr).expect("sb16d: failed to allocate device") };
-        let socket = Fd::open(":audiohw", flag::O_RDWR | flag::O_CREAT | flag::O_NONBLOCK, 0).expect("sb16d: failed to create hda scheme");
+        let mut device =
+            unsafe { device::Sb16::new(addr).expect("sb16d: failed to allocate device") };
+        let socket = Fd::open(
+            ":audiohw",
+            flag::O_RDWR | flag::O_CREAT | flag::O_NONBLOCK,
+            0,
+        )
+        .expect("sb16d: failed to create hda scheme");
 
         //TODO: error on multiple IRQs?
         let irq_file = match device.irqs.first() {
-            Some(irq) => Fd::open(&format!("/scheme/irq/{}", irq), flag::O_RDWR, 0).expect("sb16d: failed to open IRQ file"),
+            Some(irq) => Fd::open(&format!("/scheme/irq/{}", irq), flag::O_RDWR, 0)
+                .expect("sb16d: failed to open IRQ file"),
             None => panic!("sb16d: no IRQs found"),
         };
         user_data! {
@@ -44,9 +51,14 @@ fn main() {
             }
         }
 
-        let event_queue = EventQueue::<Source>::new().expect("sb16d: Could not create event queue.");
-        event_queue.subscribe(irq_file.raw(), Source::Irq, event::EventFlags::READ).unwrap();
-        event_queue.subscribe(socket.raw(), Source::Scheme, event::EventFlags::READ).unwrap();
+        let event_queue =
+            EventQueue::<Source>::new().expect("sb16d: Could not create event queue.");
+        event_queue
+            .subscribe(irq_file.raw(), Source::Irq, event::EventFlags::READ)
+            .unwrap();
+        event_queue
+            .subscribe(socket.raw(), Source::Scheme, event::EventFlags::READ)
+            .unwrap();
 
         daemon.ready().expect("sb16d: failed to signal readiness");
 
@@ -56,7 +68,10 @@ fn main() {
 
         let all = [Source::Irq, Source::Scheme];
 
-        'events: for event in all.into_iter().chain(event_queue.map(|e| e.expect("sb16d: failed to get next event").user_data)) {
+        'events: for event in all
+            .into_iter()
+            .chain(event_queue.map(|e| e.expect("sb16d: failed to get next event").user_data))
+        {
             match event {
                 Source::Irq => {
                     let mut irq = [0; 8];
@@ -70,7 +85,9 @@ fn main() {
                             if let Some(a) = device.handle(&mut todo[i]) {
                                 let mut packet = todo.remove(i);
                                 packet.a = a;
-                                socket.write(&packet).expect("sb16d: failed to write to socket");
+                                socket
+                                    .write(&packet)
+                                    .expect("sb16d: failed to write to socket");
                             } else {
                                 i += 1;
                             }
@@ -84,30 +101,33 @@ fn main() {
                         */
                     }
                 }
-                Source::Scheme => {
-                    loop {
-                        let mut packet = Packet::default();
-                        match socket.read(&mut packet) {
-                            Ok(0) => break 'events,
-                            Ok(_) => (),
-                            Err(err) => if err.errno() == EWOULDBLOCK || err.errno() == EAGAIN {
+                Source::Scheme => loop {
+                    let mut packet = Packet::default();
+                    match socket.read(&mut packet) {
+                        Ok(0) => break 'events,
+                        Ok(_) => (),
+                        Err(err) => {
+                            if err.errno() == EWOULDBLOCK || err.errno() == EAGAIN {
                                 break;
                             } else {
                                 panic!("sb16d: failed to read from scheme socket");
                             }
                         }
-
-                        if let Some(a) = device.handle(&mut packet) {
-                            packet.a = a;
-                            socket.write(&packet).expect("sb16d: failed to write to scheme socket");
-                        } else {
-                            todo.push(packet);
-                        }
                     }
-                }
+
+                    if let Some(a) = device.handle(&mut packet) {
+                        packet.a = a;
+                        socket
+                            .write(&packet)
+                            .expect("sb16d: failed to write to scheme socket");
+                    } else {
+                        todo.push(packet);
+                    }
+                },
             }
         }
 
         std::process::exit(0);
-    }).expect("sb16d: failed to daemonize");
+    })
+    .expect("sb16d: failed to daemonize");
 }

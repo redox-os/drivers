@@ -1,7 +1,7 @@
+use common::io::{Io, Mmio};
 use std::ops::Range;
 use std::ptr::NonNull;
 use std::{fmt, mem, ptr, slice};
-use common::io::{Io, Mmio};
 
 pub struct ExtendedCapabilitiesIter {
     base: *const u8,

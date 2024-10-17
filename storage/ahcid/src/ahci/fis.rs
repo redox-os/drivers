@@ -17,7 +17,7 @@ pub enum FisType {
     /// PIO setup FIS - device to host
     PioSetup = 0x5F,
     /// Set device bits FIS - device to host
-    DevBits = 0xA1
+    DevBits = 0xA1,
 }
 
 #[repr(packed)]
@@ -27,25 +27,25 @@ pub struct FisRegH2D {
 
     pub pm: Mmio<u8>, // Port multiplier, 1: Command, 0: Control
 
-    pub command: Mmio<u8>, // Command register
+    pub command: Mmio<u8>,  // Command register
     pub featurel: Mmio<u8>, // Feature register, 7:0
 
     // DWORD 1
-    pub lba0: Mmio<u8>, // LBA low register, 7:0
-    pub lba1: Mmio<u8>, // LBA mid register, 15:8
-    pub lba2: Mmio<u8>, // LBA high register, 23:16
+    pub lba0: Mmio<u8>,   // LBA low register, 7:0
+    pub lba1: Mmio<u8>,   // LBA mid register, 15:8
+    pub lba2: Mmio<u8>,   // LBA high register, 23:16
     pub device: Mmio<u8>, // Device register
 
     // DWORD 2
-    pub lba3: Mmio<u8>, // LBA register, 31:24
-    pub lba4: Mmio<u8>, // LBA register, 39:32
-    pub lba5: Mmio<u8>, // LBA register, 47:40
+    pub lba3: Mmio<u8>,     // LBA register, 31:24
+    pub lba4: Mmio<u8>,     // LBA register, 39:32
+    pub lba5: Mmio<u8>,     // LBA register, 47:40
     pub featureh: Mmio<u8>, // Feature register, 15:8
 
     // DWORD 3
-    pub countl: Mmio<u8>, // Count register, 7:0
-    pub counth: Mmio<u8>, // Count register, 15:8
-    pub icc: Mmio<u8>, // Isochronous command completion
+    pub countl: Mmio<u8>,  // Count register, 7:0
+    pub counth: Mmio<u8>,  // Count register, 15:8
+    pub icc: Mmio<u8>,     // Isochronous command completion
     pub control: Mmio<u8>, // Control register
 
     // DWORD 4
@@ -60,12 +60,12 @@ pub struct FisRegD2H {
     pub pm: Mmio<u8>, // Port multiplier, Interrupt bit: 2
 
     pub status: Mmio<u8>, // Status register
-    pub error: Mmio<u8>, // Error register
+    pub error: Mmio<u8>,  // Error register
 
     // DWORD 1
-    pub lba0: Mmio<u8>, // LBA low register, 7:0
-    pub lba1: Mmio<u8>, // LBA mid register, 15:8
-    pub lba2: Mmio<u8>, // LBA high register, 23:16
+    pub lba0: Mmio<u8>,   // LBA low register, 7:0
+    pub lba1: Mmio<u8>,   // LBA mid register, 15:8
+    pub lba2: Mmio<u8>,   // LBA high register, 23:16
     pub device: Mmio<u8>, // Device register
 
     // DWORD 2
@@ -75,8 +75,8 @@ pub struct FisRegD2H {
     pub rsv2: Mmio<u8>, // Reserved
 
     // DWORD 3
-    pub countl: Mmio<u8>, // Count register, 7:0
-    pub counth: Mmio<u8>, // Count register, 15:8
+    pub countl: Mmio<u8>,    // Count register, 7:0
+    pub counth: Mmio<u8>,    // Count register, 15:8
     pub rsv3: [Mmio<u8>; 2], // Reserved
 
     // DWORD 4
@@ -104,12 +104,12 @@ pub struct FisPioSetup {
     pub pm: Mmio<u8>, // Port multiplier, direction: 4 - device to host, interrupt: 2
 
     pub status: Mmio<u8>, // Status register
-    pub error: Mmio<u8>, // Error register
+    pub error: Mmio<u8>,  // Error register
 
     // DWORD 1
-    pub lba0: Mmio<u8>, // LBA low register, 7:0
-    pub lba1: Mmio<u8>, // LBA mid register, 15:8
-    pub lba2: Mmio<u8>, // LBA high register, 23:16
+    pub lba0: Mmio<u8>,   // LBA low register, 7:0
+    pub lba1: Mmio<u8>,   // LBA mid register, 15:8
+    pub lba2: Mmio<u8>,   // LBA high register, 23:16
     pub device: Mmio<u8>, // Device register
 
     // DWORD 2
@@ -119,13 +119,13 @@ pub struct FisPioSetup {
     pub rsv2: Mmio<u8>, // Reserved
 
     // DWORD 3
-    pub countl: Mmio<u8>, // Count register, 7:0
-    pub counth: Mmio<u8>, // Count register, 15:8
-    pub rsv3: Mmio<u8>, // Reserved
+    pub countl: Mmio<u8>,   // Count register, 7:0
+    pub counth: Mmio<u8>,   // Count register, 15:8
+    pub rsv3: Mmio<u8>,     // Reserved
     pub e_status: Mmio<u8>, // New value of status register
 
     // DWORD 4
-    pub tc: Mmio<u16>, // Transfer count
+    pub tc: Mmio<u16>,       // Transfer count
     pub rsv4: [Mmio<u8>; 2], // Reserved
 }
 

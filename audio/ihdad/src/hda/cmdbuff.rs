@@ -177,8 +177,7 @@ impl Corb {
     fn send_command(&mut self, cmd: u32) {
         // wait for the commands to finish
         while (self.regs.corbwp.read() & 0xff) != (self.regs.corbrp.read() & 0xff) {}
-        let write_pos: usize =
-            ((self.regs.corbwp.read() as usize & 0xFF) + 1) % self.corb_count;
+        let write_pos: usize = ((self.regs.corbwp.read() as usize & 0xFF) + 1) % self.corb_count;
         unsafe {
             *self.corb_base.offset(write_pos as isize) = cmd;
         }
@@ -348,15 +347,20 @@ pub struct CommandBuffer {
 }
 
 impl CommandBuffer {
-    pub fn new(
-        regs_addr: usize,
-        mut cmd_buff: Dma<[u8; 0x1000]>,
-    ) -> CommandBuffer {
-        let corb = Corb::new(regs_addr + CORB_OFFSET, cmd_buff.physical(), cmd_buff.as_mut_ptr().cast());
+    pub fn new(regs_addr: usize, mut cmd_buff: Dma<[u8; 0x1000]>) -> CommandBuffer {
+        let corb = Corb::new(
+            regs_addr + CORB_OFFSET,
+            cmd_buff.physical(),
+            cmd_buff.as_mut_ptr().cast(),
+        );
         let rirb = Rirb::new(
             regs_addr + RIRB_OFFSET,
             cmd_buff.physical() + CORB_BUFF_MAX_SIZE,
-            cmd_buff.as_mut_ptr().cast::<u8>().wrapping_add(CORB_BUFF_MAX_SIZE).cast(),
+            cmd_buff
+                .as_mut_ptr()
+                .cast::<u8>()
+                .wrapping_add(CORB_BUFF_MAX_SIZE)
+                .cast(),
         );
 
         let icmd = ImmediateCommand::new(regs_addr + ICMD_OFFSET);

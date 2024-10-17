@@ -1,6 +1,6 @@
+use common::io::{Io, Mmio};
 use std::num::NonZeroU8;
 use std::slice;
-use common::io::{Io, Mmio};
 
 use super::CapabilityRegs;
 

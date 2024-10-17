@@ -9,7 +9,9 @@ use rehid::{
     report_handler::ReportHandler,
     usage_tables::{GenericDesktopUsage, UsagePage},
 };
-use xhcid_interface::{ConfigureEndpointsReq, DevDesc, EndpDirection, EndpointTy, PortReqRecipient, XhciClientHandle};
+use xhcid_interface::{
+    ConfigureEndpointsReq, DevDesc, EndpDirection, EndpointTy, PortReqRecipient, XhciClientHandle,
+};
 
 mod keymap;
 mod reqs;
@@ -203,36 +205,36 @@ fn main() {
         .expect("Failed to get standard descriptors");
     log::info!("{:X?}", desc);
 
-    let (conf_desc, conf_num, (if_desc, endpoint_num_opt, hid_desc)) = desc
-        .config_descs
-        .iter()
-        .enumerate()
-        .find_map(|(conf_num, conf_desc)| {
-            let if_desc = conf_desc.interface_descs.iter().find_map(|if_desc| {
-                if if_desc.number == interface_num {
-                    let endpoint_num_opt = if_desc.endpoints.iter().enumerate().find_map(|(endpoint_i, endpoint)| {
-                        if endpoint.ty() == EndpointTy::Interrupt && endpoint.direction() == EndpDirection::In {
-                            Some(endpoint_i + 1)
-                        } else {
-                            None
-                        }
-                    });
-                    let hid_desc = if_desc.hid_descs.iter().find_map(|hid_desc| {
-                        //TODO: should we do any filtering?
-                        Some(hid_desc)
-                    })?;
-                    Some((if_desc.clone(), endpoint_num_opt, hid_desc))
-                } else {
-                    None
-                }
-            })?;
-            Some((
-                conf_desc.clone(),
-                conf_num,
-                if_desc,
-            ))
-        })
-        .expect("Failed to find suitable configuration");
+    let (conf_desc, conf_num, (if_desc, endpoint_num_opt, hid_desc)) =
+        desc.config_descs
+            .iter()
+            .enumerate()
+            .find_map(|(conf_num, conf_desc)| {
+                let if_desc = conf_desc.interface_descs.iter().find_map(|if_desc| {
+                    if if_desc.number == interface_num {
+                        let endpoint_num_opt = if_desc.endpoints.iter().enumerate().find_map(
+                            |(endpoint_i, endpoint)| {
+                                if endpoint.ty() == EndpointTy::Interrupt
+                                    && endpoint.direction() == EndpDirection::In
+                                {
+                                    Some(endpoint_i + 1)
+                                } else {
+                                    None
+                                }
+                            },
+                        );
+                        let hid_desc = if_desc.hid_descs.iter().find_map(|hid_desc| {
+                            //TODO: should we do any filtering?
+                            Some(hid_desc)
+                        })?;
+                        Some((if_desc.clone(), endpoint_num_opt, hid_desc))
+                    } else {
+                        None
+                    }
+                })?;
+                Some((conf_desc.clone(), conf_num, if_desc))
+            })
+            .expect("Failed to find suitable configuration");
 
     handle
         .configure_endpoints(&ConfigureEndpointsReq {
@@ -292,7 +294,9 @@ fn main() {
 
         if let Some(endpoint) = &mut endpoint_opt {
             // interrupt transfer
-            endpoint.transfer_read(&mut report_buffer).expect("failed to get report");
+            endpoint
+                .transfer_read(&mut report_buffer)
+                .expect("failed to get report");
         } else {
             // control transfer
             reqs::get_report(
@@ -419,10 +423,7 @@ fn main() {
         }
 
         if scroll_y != 0 {
-            let scroll_event = orbclient::event::ScrollEvent {
-                x: 0,
-                y: scroll_y,
-            };
+            let scroll_event = orbclient::event::ScrollEvent { x: 0, y: scroll_y };
 
             match display.write(&scroll_event.to_event()) {
                 Ok(_) => (),

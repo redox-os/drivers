@@ -45,11 +45,11 @@ use pcid_interface::{
     MsiSetFeatureInfo, PciFeature, PciFeatureInfo, PciFunctionHandle, SetFeatureInfo,
 };
 
+use common::io::Io;
 use event::{Event, RawEventQueue};
 use syscall::data::Packet;
 use syscall::error::EWOULDBLOCK;
 use syscall::flag::EventFlags;
-use common::io::Io;
 use syscall::scheme::Scheme;
 
 use crate::xhci::{InterruptMethod, Xhci};

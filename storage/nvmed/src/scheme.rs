@@ -6,12 +6,12 @@ use std::io::prelude::*;
 use std::sync::Arc;
 use std::{cmp, str};
 
+use redox_scheme::{CallerCtx, OpenResult, SchemeBlockMut};
 use syscall::schemev2::NewFdFlags;
 use syscall::{
     Error, Result, Stat, EACCES, EBADF, EINVAL, EISDIR, ENOENT, ENOLCK, EOVERFLOW, MODE_DIR,
     MODE_FILE, O_DIRECTORY, O_STAT, SEEK_CUR, SEEK_END, SEEK_SET,
 };
-use redox_scheme::{CallerCtx, OpenResult, SchemeBlockMut};
 
 use crate::nvme::{Nvme, NvmeNamespace};
 
@@ -84,8 +84,10 @@ impl DiskWrapper {
                         return Err(io::Error::from_raw_os_error(syscall::EOVERFLOW));
                     }
                     loop {
-                        match nvme.namespace_read(disk, disk.id, block, block_bytes)
-                            .map_err(|err| io::Error::from_raw_os_error(err.errno))? {
+                        match nvme
+                            .namespace_read(disk, disk.id, block, block_bytes)
+                            .map_err(|err| io::Error::from_raw_os_error(err.errno))?
+                        {
                             Some(bytes) => {
                                 assert_eq!(bytes, block_bytes.len());
                                 assert_eq!(bytes, blksize as usize);
@@ -164,19 +166,25 @@ impl DiskScheme {
     fn check_locks(&self, disk_i: u32, part_i_opt: Option<u32>) -> Result<()> {
         for (_, handle) in self.handles.iter() {
             match handle {
-                Handle::Disk(i) => if disk_i == *i {
-                    return Err(Error::new(ENOLCK));
-                },
-                Handle::Partition(i, p) => if disk_i == *i {
-                    match part_i_opt {
-                        Some(part_i) => if part_i == *p {
-                            return Err(Error::new(ENOLCK));
-                        },
-                        None => {
-                            return Err(Error::new(ENOLCK));
+                Handle::Disk(i) => {
+                    if disk_i == *i {
+                        return Err(Error::new(ENOLCK));
+                    }
+                }
+                Handle::Partition(i, p) => {
+                    if disk_i == *i {
+                        match part_i_opt {
+                            Some(part_i) => {
+                                if part_i == *p {
+                                    return Err(Error::new(ENOLCK));
+                                }
+                            }
+                            None => {
+                                return Err(Error::new(ENOLCK));
+                            }
                         }
                     }
-                },
+                }
                 _ => (),
             }
         }
@@ -185,12 +193,16 @@ impl DiskScheme {
 }
 
 impl SchemeBlockMut for DiskScheme {
-    fn xopen(&mut self, path_str: &str, flags: usize, ctx: &CallerCtx) -> Result<Option<OpenResult>> {
+    fn xopen(
+        &mut self,
+        path_str: &str,
+        flags: usize,
+        ctx: &CallerCtx,
+    ) -> Result<Option<OpenResult>> {
         if ctx.uid != 0 {
             return Err(Error::new(EACCES));
         }
-        let path_str = path_str
-            .trim_matches('/');
+        let path_str = path_str.trim_matches('/');
 
         let handle = if path_str.is_empty() {
             if flags & O_DIRECTORY == O_DIRECTORY || flags & O_STAT == O_STAT {
@@ -253,7 +265,10 @@ impl SchemeBlockMut for DiskScheme {
         let id = self.next_id;
         self.next_id += 1;
         self.handles.insert(id, handle);
-        Ok(Some(OpenResult::ThisScheme { number: id, flags: NewFdFlags::POSITIONED }))
+        Ok(Some(OpenResult::ThisScheme {
+            number: id,
+            flags: NewFdFlags::POSITIONED,
+        }))
     }
 
     fn dup(&mut self, id: usize, buf: &[u8]) -> Result<Option<usize>> {
@@ -358,10 +373,19 @@ impl SchemeBlockMut for DiskScheme {
         Ok(Some(i))
     }
 
-    fn read(&mut self, id: usize, buf: &mut [u8], offset: u64, _fcntl_flags: u32) -> Result<Option<usize>> {
+    fn read(
+        &mut self,
+        id: usize,
+        buf: &mut [u8],
+        offset: u64,
+        _fcntl_flags: u32,
+    ) -> Result<Option<usize>> {
         match *self.handles.get_mut(&id).ok_or(Error::new(EBADF))? {
             Handle::List(ref handle) => {
-                let src = usize::try_from(offset).ok().and_then(|o| handle.get(o..)).unwrap_or(&[]);
+                let src = usize::try_from(offset)
+                    .ok()
+                    .and_then(|o| handle.get(o..))
+                    .unwrap_or(&[]);
                 let count = core::cmp::min(src.len(), buf.len());
                 buf[..count].copy_from_slice(&src[..count]);
                 Ok(Some(count))
@@ -369,7 +393,8 @@ impl SchemeBlockMut for DiskScheme {
             Handle::Disk(number) => {
                 let disk = self.disks.get_mut(&number).ok_or(Error::new(EBADF))?;
                 let block_size = disk.as_ref().block_size;
-                self.nvme.namespace_read(disk.as_ref(), disk.as_ref().id, offset / block_size, buf)
+                self.nvme
+                    .namespace_read(disk.as_ref(), disk.as_ref().id, offset / block_size, buf)
             }
             Handle::Partition(disk_num, part_num) => {
                 let disk = self.disks.get_mut(&disk_num).ok_or(Error::new(EBADF))?;
@@ -389,18 +414,26 @@ impl SchemeBlockMut for DiskScheme {
 
                 let abs_block = part.start_lba + rel_block;
 
-                self.nvme.namespace_read(disk.as_ref(), disk.as_ref().id, abs_block, buf)
+                self.nvme
+                    .namespace_read(disk.as_ref(), disk.as_ref().id, abs_block, buf)
             }
         }
     }
 
-    fn write(&mut self, id: usize, buf: &[u8], offset: u64, _fcntl_flags: u32) -> Result<Option<usize>> {
+    fn write(
+        &mut self,
+        id: usize,
+        buf: &[u8],
+        offset: u64,
+        _fcntl_flags: u32,
+    ) -> Result<Option<usize>> {
         match *self.handles.get_mut(&id).ok_or(Error::new(EBADF))? {
             Handle::List(_) => Err(Error::new(EBADF)),
             Handle::Disk(number) => {
                 let disk = self.disks.get_mut(&number).ok_or(Error::new(EBADF))?;
                 let block_size = disk.as_ref().block_size;
-                self.nvme.namespace_write(disk.as_ref(), disk.as_ref().id, offset / block_size, buf)
+                self.nvme
+                    .namespace_write(disk.as_ref(), disk.as_ref().id, offset / block_size, buf)
             }
             Handle::Partition(disk_num, part_num) => {
                 let disk = self.disks.get_mut(&disk_num).ok_or(Error::new(EBADF))?;
@@ -420,31 +453,34 @@ impl SchemeBlockMut for DiskScheme {
 
                 let abs_block = part.start_lba + rel_block;
 
-                self.nvme.namespace_write(disk.as_ref(), disk.as_ref().id, abs_block, buf)
+                self.nvme
+                    .namespace_write(disk.as_ref(), disk.as_ref().id, abs_block, buf)
             }
         }
     }
 
     fn fsize(&mut self, id: usize) -> Result<Option<u64>> {
-        Ok(Some(match *self.handles.get_mut(&id).ok_or(Error::new(EBADF))? {
-            Handle::List(ref handle) => handle.len() as u64,
-            Handle::Disk(number) => {
-                let disk = self.disks.get_mut(&number).ok_or(Error::new(EBADF))?;
-                disk.as_ref().blocks * disk.as_ref().block_size
-            }
-            Handle::Partition(disk_num, part_num) => {
-                let disk = self.disks.get_mut(&disk_num).ok_or(Error::new(EBADF))?;
-                let part = disk
-                    .pt
-                    .as_ref()
-                    .ok_or(Error::new(EBADF))?
-                    .partitions
-                    .get(part_num as usize)
-                    .ok_or(Error::new(EBADF))?;
+        Ok(Some(
+            match *self.handles.get_mut(&id).ok_or(Error::new(EBADF))? {
+                Handle::List(ref handle) => handle.len() as u64,
+                Handle::Disk(number) => {
+                    let disk = self.disks.get_mut(&number).ok_or(Error::new(EBADF))?;
+                    disk.as_ref().blocks * disk.as_ref().block_size
+                }
+                Handle::Partition(disk_num, part_num) => {
+                    let disk = self.disks.get_mut(&disk_num).ok_or(Error::new(EBADF))?;
+                    let part = disk
+                        .pt
+                        .as_ref()
+                        .ok_or(Error::new(EBADF))?
+                        .partitions
+                        .get(part_num as usize)
+                        .ok_or(Error::new(EBADF))?;
 
-                part.size * disk.as_ref().block_size
-            }
-        }))
+                    part.size * disk.as_ref().block_size
+                }
+            },
+        ))
     }
 
     fn close(&mut self, id: usize) -> Result<Option<usize>> {

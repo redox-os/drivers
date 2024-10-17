@@ -80,12 +80,14 @@ impl Channel {
             prdt: unsafe {
                 Dma::zeroed(
                     //TODO: PhysBox::new_in_32bit_space(4096)?
-                )?.assume_init()
+                )?
+                .assume_init()
             },
             buf: unsafe {
                 Dma::zeroed(
                     //TODO: PhysBox::new_in_32bit_space(16 * 4096)?
-                )?.assume_init()
+                )?
+                .assume_init()
             },
         })
     }
@@ -142,7 +144,12 @@ impl Channel {
                 break;
             }
             if start.elapsed() >= TIMEOUT {
-                log::error!("line {} polling {} timeout with status 0x{:02X}", line, if read { "read" } else { "write" }, status);
+                log::error!(
+                    "line {} polling {} timeout with status 0x{:02X}",
+                    line,
+                    if read { "read" } else { "write" },
+                    status
+                );
                 return Err(Error::new(EIO));
             }
             thread::yield_now();
@@ -181,7 +188,13 @@ impl Disk for AtaDisk {
             let sectors = (chunk.len() + 511) / 512;
             assert!(sectors <= 128);
 
-            log::trace!("IDE read chan {} dev {} block {:#x} count {:#x}", self.chan_i, self.dev, block, sectors);
+            log::trace!(
+                "IDE read chan {} dev {} block {:#x} count {:#x}",
+                self.chan_i,
+                self.dev,
+                block,
+                sectors
+            );
 
             let mut chan = self.chan.lock().unwrap();
 
@@ -315,7 +328,13 @@ impl Disk for AtaDisk {
             let sectors = (chunk.len() + 511) / 512;
             assert!(sectors <= 128);
 
-            log::trace!("IDE write chan {} dev {} block {:#x} count {:#x}", self.chan_i, self.dev, block, sectors);
+            log::trace!(
+                "IDE write chan {} dev {} block {:#x} count {:#x}",
+                self.chan_i,
+                self.dev,
+                block,
+                sectors
+            );
 
             let mut chan = self.chan.lock().unwrap();
 
@@ -424,10 +443,10 @@ impl Disk for AtaDisk {
 
                     for i in 0..128 {
                         chan.data32.write(
-                            ((chunk[sector * 512 + i * 4 + 0] as u32) << 0) |
-                            ((chunk[sector * 512 + i * 4 + 1] as u32) << 8) |
-                            ((chunk[sector * 512 + i * 4 + 2] as u32) << 16) |
-                            ((chunk[sector * 512 + i * 4 + 3] as u32) << 24)
+                            ((chunk[sector * 512 + i * 4 + 0] as u32) << 0)
+                                | ((chunk[sector * 512 + i * 4 + 1] as u32) << 8)
+                                | ((chunk[sector * 512 + i * 4 + 2] as u32) << 16)
+                                | ((chunk[sector * 512 + i * 4 + 3] as u32) << 24),
                         );
                     }
                 }

@@ -8,11 +8,14 @@ use std::rc::Rc;
 
 use driver_network::NetworkScheme;
 use event::{user_data, EventQueue};
-use pcid_interface::{MsiSetFeatureInfo, PciFunctionHandle, PciFeature, PciFeatureInfo, SetFeatureInfo, SubdriverArguments};
 #[cfg(target_arch = "x86_64")]
 use pcid_interface::irq_helpers::allocate_single_interrupt_vector_for_msi;
 use pcid_interface::irq_helpers::read_bsp_apic_id;
 use pcid_interface::msi::{MsixInfo, MsixTableEntry};
+use pcid_interface::{
+    MsiSetFeatureInfo, PciFeature, PciFeatureInfo, PciFunctionHandle, SetFeatureInfo,
+    SubdriverArguments,
+};
 use syscall::EventFlags;
 
 pub mod device;
@@ -48,14 +51,19 @@ impl MappedMsixRegs {
 fn get_int_method(pcid_handle: &mut PciFunctionHandle) -> File {
     let pci_config = pcid_handle.config();
 
-    let all_pci_features = pcid_handle.fetch_all_features().expect("rtl8168d: failed to fetch pci features");
+    let all_pci_features = pcid_handle
+        .fetch_all_features()
+        .expect("rtl8168d: failed to fetch pci features");
     log::info!("PCI FEATURES: {:?}", all_pci_features);
 
     let has_msi = all_pci_features.iter().any(|feature| feature.is_msi());
     let has_msix = all_pci_features.iter().any(|feature| feature.is_msix());
 
     if has_msi && !has_msix {
-        let capability = match pcid_handle.feature_info(PciFeature::Msi).expect("rtl8168d: failed to retrieve the MSI capability structure from pcid") {
+        let capability = match pcid_handle
+            .feature_info(PciFeature::Msi)
+            .expect("rtl8168d: failed to retrieve the MSI capability structure from pcid")
+        {
             PciFeatureInfo::Msi(s) => s,
             PciFeatureInfo::MsiX(_) => panic!(),
         };
@@ -65,21 +73,29 @@ fn get_int_method(pcid_handle: &mut PciFunctionHandle) -> File {
         // pcid_interface, so that this can be shared between nvmed, xhcid, ixgebd, etc..
 
         let destination_id = read_bsp_apic_id().expect("rtl8168d: failed to read BSP apic id");
-        let (msg_addr_and_data, interrupt_handle) = allocate_single_interrupt_vector_for_msi(destination_id);
+        let (msg_addr_and_data, interrupt_handle) =
+            allocate_single_interrupt_vector_for_msi(destination_id);
 
         let set_feature_info = MsiSetFeatureInfo {
             multi_message_enable: Some(0),
             message_address_and_data: Some(msg_addr_and_data),
             mask_bits: None,
         };
-        pcid_handle.set_feature_info(SetFeatureInfo::Msi(set_feature_info)).expect("rtl8168d: failed to set feature info");
+        pcid_handle
+            .set_feature_info(SetFeatureInfo::Msi(set_feature_info))
+            .expect("rtl8168d: failed to set feature info");
 
-        pcid_handle.enable_feature(PciFeature::Msi).expect("rtl8168d: failed to enable MSI");
+        pcid_handle
+            .enable_feature(PciFeature::Msi)
+            .expect("rtl8168d: failed to enable MSI");
         log::info!("Enabled MSI");
 
         interrupt_handle
     } else if has_msix {
-        let msix_info = match pcid_handle.feature_info(PciFeature::MsiX).expect("rtl8168d: failed to retrieve the MSI-X capability structure from pcid") {
+        let msix_info = match pcid_handle
+            .feature_info(PciFeature::MsiX)
+            .expect("rtl8168d: failed to retrieve the MSI-X capability structure from pcid")
+        {
             PciFeatureInfo::Msi(_) => panic!(),
             PciFeatureInfo::MsiX(s) => s,
         };
@@ -89,7 +105,8 @@ fn get_int_method(pcid_handle: &mut PciFunctionHandle) -> File {
             .ptr
             .as_ptr() as usize;
 
-        let virt_table_base = (bar_address + msix_info.table_offset as usize) as *mut MsixTableEntry;
+        let virt_table_base =
+            (bar_address + msix_info.table_offset as usize) as *mut MsixTableEntry;
 
         let mut info = MappedMsixRegs {
             virt_table_base: NonNull::new(virt_table_base).unwrap(),
@@ -114,7 +131,9 @@ fn get_int_method(pcid_handle: &mut PciFunctionHandle) -> File {
             interrupt_handle
         };
 
-        pcid_handle.enable_feature(PciFeature::MsiX).expect("rtl8168d: failed to enable MSI-X");
+        pcid_handle
+            .enable_feature(PciFeature::MsiX)
+            .expect("rtl8168d: failed to enable MSI-X");
         log::info!("Enabled MSI-X");
 
         method
@@ -143,14 +162,12 @@ fn find_bar(pci_config: &SubdriverArguments) -> Option<(usize, usize)> {
     // RTL8168 uses BAR2, RTL8169 uses BAR1, search in that order
     for &barnum in &[2, 1] {
         match pci_config.func.bars[barnum] {
-            pcid_interface::PciBar::Memory32 { addr, size } => return Some((
-                addr.try_into().unwrap(),
-                size.try_into().unwrap()
-            )),
-            pcid_interface::PciBar::Memory64 { addr, size } => return Some((
-                addr.try_into().unwrap(),
-                size.try_into().unwrap()
-            )),
+            pcid_interface::PciBar::Memory32 { addr, size } => {
+                return Some((addr.try_into().unwrap(), size.try_into().unwrap()))
+            }
+            pcid_interface::PciBar::Memory64 { addr, size } => {
+                return Some((addr.try_into().unwrap(), size.try_into().unwrap()))
+            }
             other => log::warn!("BAR {} is {:?} instead of memory BAR", barnum, other),
         }
     }
@@ -166,7 +183,8 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         log::LevelFilter::Info,
     );
 
-    let mut pcid_handle = PciFunctionHandle::connect_default().expect("rtl8168d: failed to setup channel to pcid");
+    let mut pcid_handle =
+        PciFunctionHandle::connect_default().expect("rtl8168d: failed to setup channel to pcid");
 
     let pci_config = pcid_handle.config();
 
@@ -177,8 +195,13 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     log::info!(" + RTL8168 {}", pci_config.func.display());
 
     let address = unsafe {
-        common::physmap(bar_ptr, bar_size, common::Prot::RW, common::MemoryType::Uncacheable)
-            .expect("rtl8168d: failed to map address") as usize
+        common::physmap(
+            bar_ptr,
+            bar_size,
+            common::Prot::RW,
+            common::MemoryType::Uncacheable,
+        )
+        .expect("rtl8168d: failed to map address") as usize
     };
 
     //TODO: MSI-X
@@ -196,9 +219,22 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         }
     }
 
-    let mut event_queue = EventQueue::<Source>::new().expect("rtl8168d: Could not create event queue.");
-    event_queue.subscribe(irq_file.as_raw_fd() as usize, Source::Irq, event::EventFlags::READ).unwrap();
-    event_queue.subscribe(scheme.event_handle() as usize, Source::Scheme, event::EventFlags::READ).unwrap();
+    let mut event_queue =
+        EventQueue::<Source>::new().expect("rtl8168d: Could not create event queue.");
+    event_queue
+        .subscribe(
+            irq_file.as_raw_fd() as usize,
+            Source::Irq,
+            event::EventFlags::READ,
+        )
+        .unwrap();
+    event_queue
+        .subscribe(
+            scheme.event_handle() as usize,
+            Source::Scheme,
+            event::EventFlags::READ,
+        )
+        .unwrap();
 
     libredox::call::setrens(0, 0).expect("rtl8168d: failed to enter null namespace");
 
