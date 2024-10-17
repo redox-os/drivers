@@ -1,4 +1,5 @@
 #![cfg_attr(target_arch = "aarch64", feature(stdarch_arm_hints))] // Required for yield instruction
+#![cfg_attr(target_arch = "riscv64", feature(riscv_ext_intrinsics))] // Required for pause instruction
 #![feature(int_roundings)]
 
 use std::convert::TryInto;

@@ -43,6 +43,12 @@ pub(crate) unsafe fn pause() {
     std::arch::x86_64::_mm_pause();
 }
 
+#[cfg(target_arch = "riscv64")]
+#[inline(always)]
+pub(crate) unsafe fn pause() {
+    std::arch::riscv64::pause();
+}
+
 /// Used in conjunction with `InterruptMethod`, primarily by the CQ reactor.
 #[derive(Debug)]
 pub enum InterruptSources {
