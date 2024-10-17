@@ -57,7 +57,7 @@ pub mod us {
         ['\0', '\0'],
         ['\0', '\0'],
         ['\0', '\0'],
-        [' ', ' ']
+        [' ', ' '],
     ];
 
     pub fn get_char(scancode: u8, shift: bool) -> char {
@@ -236,7 +236,7 @@ pub mod dvorak {
         ['\0', '\0'],
         ['\0', '\0'],
         ['\0', '\0'],
-        [' ', ' ']
+        [' ', ' '],
     ];
 
     pub fn get_char(scancode: u8, shift: bool) -> char {
@@ -311,7 +311,7 @@ pub mod azerty {
         ['\0', '\0'],
         ['\0', '\0'],
         ['\0', '\0'],
-        [' ', ' ']
+        [' ', ' '],
     ];
 
     pub fn get_char(scancode: u8, shift: bool) -> char {
@@ -386,7 +386,7 @@ pub mod bepo {
         ['\0', '\0'],
         ['\0', '\0'],
         ['\0', '\0'],
-        [' ', ' ']
+        [' ', ' '],
     ];
 
     pub fn get_char(scancode: u8, shift: bool) -> char {
@@ -461,7 +461,7 @@ pub mod it {
         ['\0', '\0'],
         ['\0', '\0'],
         ['\0', '\0'],
-        [' ', ' ']
+        [' ', ' '],
     ];
 
     pub fn get_char(scancode: u8, shift: bool) -> char {

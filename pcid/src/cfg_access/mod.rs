@@ -2,81 +2,39 @@ use std::sync::Mutex;
 use std::{fs, io, mem};
 
 use common::{MemoryType, PhysBorrowed, Prot};
-use fdt::{DeviceTree, Node};
+use fdt::node::CellSizes;
+use fdt::Fdt;
 use pci_types::{ConfigRegionAccess, PciAddress};
 
 use fallback::Pci;
 
 mod fallback;
 
-pub fn root_cell_sz(dt: &fdt::DeviceTree) -> Option<(u32, u32)> {
-    let root_node = dt.nodes().nth(0).unwrap();
-    let address_cells = root_node
-        .properties()
-        .find(|p| p.name.contains("#address-cells"))
-        .unwrap();
-    let size_cells = root_node
-        .properties()
-        .find(|p| p.name.contains("#size-cells"))
-        .unwrap();
-
-    Some((
-        u32::from_be_bytes(<[u8; 4]>::try_from(address_cells.data).unwrap()),
-        u32::from_be_bytes(<[u8; 4]>::try_from(size_cells.data).unwrap()),
-    ))
-}
-
-pub fn find_compatible_fdt_node<'a>(
-    dt: &'a fdt::DeviceTree<'a>,
-    compat_string: &str,
-) -> Option<Node<'a, 'a>> {
-    for node in dt.nodes() {
-        if let Some(compatible) = node.properties().find(|p| p.name.contains("compatible")) {
-            let s = core::str::from_utf8(compatible.data).unwrap();
-            if s.contains(compat_string) {
-                return Some(node);
-            }
-        }
-    }
-    None
-}
-
 // https://elinux.org/Device_Tree_Usage has a lot of useful information
 fn locate_ecam_dtb<T>(f: impl FnOnce(PcieAllocs<'_>) -> io::Result<T>) -> io::Result<T> {
     let dtb = fs::read("kernel.dtb:")?;
-    let dt = DeviceTree::new(&dtb).map_err(|err| {
+    let dt = Fdt::new(&dtb).map_err(|err| {
         io::Error::new(
             io::ErrorKind::InvalidData,
             format!("invalid device tree: {err:?}"),
         )
     })?;
 
-    let node = find_compatible_fdt_node(&dt, "pci-host-ecam-generic").ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::NotFound,
-            "couldn't find pci-host-ecam-generic node in device tree",
-        )
-    })?;
+    let node = dt
+        .find_compatible(&["pci-host-ecam-generic"])
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "couldn't find pci-host-ecam-generic node in device tree",
+            )
+        })?;
 
-    let (address_cells, size_cells) = root_cell_sz(&dt).unwrap();
-    let reg = node.properties().find(|p| p.name.contains("reg")).unwrap();
-    assert_eq!(reg.data.len(), ((address_cells + size_cells) * 4) as usize);
+    let address = node.reg().unwrap().next().unwrap().starting_address as u64;
 
-    let address = if address_cells == 1 {
-        u32::from_be_bytes(<[u8; 4]>::try_from(&reg.data[0..4]).unwrap()).into()
-    } else if address_cells == 2 {
-        u64::from_be_bytes(<[u8; 8]>::try_from(&reg.data[0..8]).unwrap())
-    } else {
-        panic!();
-    };
-
-    let bus_range = node
-        .properties()
-        .find(|p| p.name.contains("bus-range"))
-        .unwrap();
-    assert_eq!(bus_range.data.len(), 8);
-    let start_bus = u32::from_be_bytes(<[u8; 4]>::try_from(&bus_range.data[0..4]).unwrap());
-    let end_bus = u32::from_be_bytes(<[u8; 4]>::try_from(&bus_range.data[4..8]).unwrap());
+    let bus_range = node.property("bus-range").unwrap();
+    assert_eq!(bus_range.value.len(), 8);
+    let start_bus = u32::from_be_bytes(<[u8; 4]>::try_from(&bus_range.value[0..4]).unwrap());
+    let end_bus = u32::from_be_bytes(<[u8; 4]>::try_from(&bus_range.value[4..8]).unwrap());
 
     // FIXME respect the BAR remappings in the ranges property
 

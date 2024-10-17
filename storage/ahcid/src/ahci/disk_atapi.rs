@@ -3,13 +3,13 @@
 use std::convert::TryInto;
 use std::ptr;
 
-use byteorder::{ByteOrder, BigEndian};
+use byteorder::{BigEndian, ByteOrder};
 
-use syscall::error::{Result, EBADF, Error};
+use syscall::error::{Error, Result, EBADF};
 
 use common::dma::Dma;
 
-use super::hba::{HbaPort, HbaCmdTable, HbaCmdHeader};
+use super::hba::{HbaCmdHeader, HbaCmdTable, HbaPort};
 use super::Disk;
 
 const SCSI_READ_CAPACITY: u8 = 0x25;
@@ -24,7 +24,7 @@ pub struct DiskATAPI {
     _fb: Dma<[u8; 256]>,
     // Just using the same buffer size as DiskATA
     // Although the sector size is different (and varies)
-    buf: Dma<[u8; 256 * 512]>
+    buf: Dma<[u8; 256 * 512]>,
 }
 
 impl DiskATAPI {
@@ -60,7 +60,8 @@ impl DiskATAPI {
 
         let mut cmd = [0; 16];
         cmd[0] = SCSI_READ_CAPACITY;
-        self.port.atapi_dma(&cmd, 8, &mut self.clb, &mut self.ctbas, &mut self.buf)?;
+        self.port
+            .atapi_dma(&cmd, 8, &mut self.clb, &mut self.ctbas, &mut self.buf)?;
 
         // Instead of a count, contains number of last LBA, so add 1
         let blk_count = BigEndian::read_u32(&self.buf[0..4]) + 1;
@@ -78,7 +79,7 @@ impl Disk for DiskATAPI {
     fn size(&mut self) -> u64 {
         match self.read_capacity() {
             Ok((blk_count, blk_size)) => (blk_count as u64) * (blk_size as u64),
-            Err(_) => 0 // XXX
+            Err(_) => 0, // XXX
         }
     }
 
@@ -101,17 +102,45 @@ impl Disk for DiskATAPI {
         let buf_size = buf_len * blk_len;
         while sectors - sector >= buf_len {
             let cmd = read10_cmd(block as u32 + sector, buf_len as u16);
-            self.port.atapi_dma(&cmd, buf_size, &mut self.clb, &mut self.ctbas, &mut self.buf)?;
+            self.port.atapi_dma(
+                &cmd,
+                buf_size,
+                &mut self.clb,
+                &mut self.ctbas,
+                &mut self.buf,
+            )?;
 
-            unsafe { ptr::copy(self.buf.as_ptr(), buffer.as_mut_ptr().offset(sector as isize * blk_len as isize), buf_size as usize); }
+            unsafe {
+                ptr::copy(
+                    self.buf.as_ptr(),
+                    buffer
+                        .as_mut_ptr()
+                        .offset(sector as isize * blk_len as isize),
+                    buf_size as usize,
+                );
+            }
 
             sector += blk_len;
         }
         if sector < sectors {
             let cmd = read10_cmd(block as u32 + sector, (sectors - sector) as u16);
-            self.port.atapi_dma(&cmd, buf_size, &mut self.clb, &mut self.ctbas, &mut self.buf)?;
+            self.port.atapi_dma(
+                &cmd,
+                buf_size,
+                &mut self.clb,
+                &mut self.ctbas,
+                &mut self.buf,
+            )?;
 
-            unsafe { ptr::copy(self.buf.as_ptr(), buffer.as_mut_ptr().offset(sector as isize * blk_len as isize), ((sectors - sector) * blk_len) as usize); }
+            unsafe {
+                ptr::copy(
+                    self.buf.as_ptr(),
+                    buffer
+                        .as_mut_ptr()
+                        .offset(sector as isize * blk_len as isize),
+                    ((sectors - sector) * blk_len) as usize,
+                );
+            }
 
             sector += sectors - sector;
         }

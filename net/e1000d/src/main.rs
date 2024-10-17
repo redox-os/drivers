@@ -49,9 +49,19 @@ fn main() {
         let mut event_queue =
             EventQueue::<Source>::new().expect("e1000d: failed to create event queue");
 
-        event_queue.subscribe(irq_file.as_raw_fd() as usize, Source::Irq, event::EventFlags::READ)
+        event_queue
+            .subscribe(
+                irq_file.as_raw_fd() as usize,
+                Source::Irq,
+                event::EventFlags::READ,
+            )
             .expect("e1000d: failed to subscribe to IRQ fd");
-        event_queue.subscribe(scheme.event_handle() as usize, Source::Scheme, event::EventFlags::READ)
+        event_queue
+            .subscribe(
+                scheme.event_handle() as usize,
+                Source::Scheme,
+                event::EventFlags::READ,
+            )
             .expect("e1000d: failed to subscribe to scheme fd");
 
         libredox::call::setrens(0, 0).expect("e1000d: failed to enter null namespace");

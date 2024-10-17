@@ -1,14 +1,14 @@
 //#![deny(warnings)]
 
 use event::{user_data, EventQueue};
-use std::{iter, mem};
-use std::os::unix::io::AsRawFd;
 use std::fs::File;
-use std::io::{Result, Read, Write};
+use std::io::{Read, Result, Write};
+use std::os::unix::io::AsRawFd;
+use std::{iter, mem};
 
+use common::io::{Io, Mmio, Pio};
 use pcid_interface::{PciBar, PciFunctionHandle};
 use syscall::flag::EventFlags;
-use common::io::{Io, Mmio, Pio};
 
 use common::dma::Dma;
 
@@ -56,7 +56,9 @@ struct VboxGetMouse {
 }
 
 impl VboxGetMouse {
-    fn request() -> u32 { 1 }
+    fn request() -> u32 {
+        1
+    }
 
     fn new() -> syscall::Result<Dma<Self>> {
         let mut packet = unsafe { Dma::<Self>::zeroed()?.assume_init() };
@@ -79,7 +81,9 @@ struct VboxSetMouse {
 }
 
 impl VboxSetMouse {
-    fn request() -> u32 { 2 }
+    fn request() -> u32 {
+        2
+    }
 
     fn new() -> syscall::Result<Dma<Self>> {
         let mut packet = unsafe { Dma::<Self>::zeroed()?.assume_init() };
@@ -100,7 +104,9 @@ struct VboxAckEvents {
 }
 
 impl VboxAckEvents {
-    fn request() -> u32 { 41 }
+    fn request() -> u32 {
+        41
+    }
 
     fn new() -> syscall::Result<Dma<Self>> {
         let mut packet = unsafe { Dma::<Self>::zeroed()?.assume_init() };
@@ -121,7 +127,9 @@ struct VboxGuestCaps {
 }
 
 impl VboxGuestCaps {
-    fn request() -> u32 { 55 }
+    fn request() -> u32 {
+        55
+    }
 
     fn new() -> syscall::Result<Dma<Self>> {
         let mut packet = unsafe { Dma::<Self>::zeroed()?.assume_init() };
@@ -144,7 +152,9 @@ struct VboxDisplayChange {
 }
 
 impl VboxDisplayChange {
-    fn request() -> u32 { 51 }
+    fn request() -> u32 {
+        51
+    }
 
     fn new() -> syscall::Result<Dma<Self>> {
         let mut packet = unsafe { Dma::<Self>::zeroed()?.assume_init() };
@@ -166,7 +176,9 @@ struct VboxGuestInfo {
 }
 
 impl VboxGuestInfo {
-    fn request() -> u32 { 50 }
+    fn request() -> u32 {
+        50
+    }
 
     fn new() -> syscall::Result<Dma<Self>> {
         let mut packet = unsafe { Dma::<Self>::zeroed()?.assume_init() };
@@ -189,7 +201,10 @@ fn main() {
 
     let bar0 = pci_config.func.bars[0].expect_port();
 
-    let irq = pci_config.func.legacy_interrupt_line.expect("vboxd: no legacy interrupts supported");
+    let irq = pci_config
+        .func
+        .legacy_interrupt_line
+        .expect("vboxd: no legacy interrupts supported");
 
     println!(" + VirtualBox {}", pci_config.func.display());
 
@@ -205,15 +220,28 @@ fn main() {
             if let Ok(count) = libredox::call::fpath(display.as_raw_fd() as usize, &mut buf) {
                 let path = unsafe { String::from_utf8_unchecked(Vec::from(&buf[..count])) };
                 let res = path.split(":").nth(1).unwrap_or("");
-                width = res.split("/").nth(1).unwrap_or("").parse::<u32>().unwrap_or(0);
-                height = res.split("/").nth(2).unwrap_or("").parse::<u32>().unwrap_or(0);
+                width = res
+                    .split("/")
+                    .nth(1)
+                    .unwrap_or("")
+                    .parse::<u32>()
+                    .unwrap_or(0);
+                height = res
+                    .split("/")
+                    .nth(2)
+                    .unwrap_or("")
+                    .parse::<u32>()
+                    .unwrap_or(0);
             }
         }
 
         let mut irq_file = irq.irq_handle("vboxd");
 
         let mut port = Pio::<u32>::new(bar0 as u16);
-        let address = unsafe { pcid_handle.map_bar(1) }.expect("vboxd").ptr.as_ptr();
+        let address = unsafe { pcid_handle.map_bar(1) }
+            .expect("vboxd")
+            .ptr
+            .as_ptr();
         {
             let vmmdev = unsafe { &mut *(address as *mut VboxVmmDev) };
 
@@ -230,7 +258,9 @@ fn main() {
             set_mouse.features.write(1 << 4 | 1);
             port.write(set_mouse.physical() as u32);
 
-            vmmdev.guest_events.write(VBOX_EVENT_DISPLAY | VBOX_EVENT_MOUSE);
+            vmmdev
+                .guest_events
+                .write(VBOX_EVENT_DISPLAY | VBOX_EVENT_MOUSE);
 
             user_data! {
                 enum Source {
@@ -238,8 +268,15 @@ fn main() {
                 }
             }
 
-            let event_queue = EventQueue::<Source>::new().expect("vboxd: Could not create event queue.");
-            event_queue.subscribe(irq_file.as_raw_fd() as usize, Source::Irq, event::EventFlags::READ).unwrap();
+            let event_queue =
+                EventQueue::<Source>::new().expect("vboxd: Could not create event queue.");
+            event_queue
+                .subscribe(
+                    irq_file.as_raw_fd() as usize,
+                    Source::Irq,
+                    event::EventFlags::READ,
+                )
+                .unwrap();
 
             daemon.ready().expect("failed to signal readiness");
 
@@ -247,10 +284,13 @@ fn main() {
 
             let mut bga = Bga::new();
             let get_mouse = VboxGetMouse::new().expect("vboxd: failed to map GetMouse");
-            let display_change = VboxDisplayChange::new().expect("vboxd: failed to map DisplayChange");
+            let display_change =
+                VboxDisplayChange::new().expect("vboxd: failed to map DisplayChange");
             let ack_events = VboxAckEvents::new().expect("vboxd: failed to map AckEvents");
 
-            for Source::Irq in iter::once(Source::Irq).chain(event_queue.map(|e| e.expect("vboxd: failed to get next event").user_data)) {
+            for Source::Irq in iter::once(Source::Irq)
+                .chain(event_queue.map(|e| e.expect("vboxd: failed to get next event").user_data))
+            {
                 let mut irq = [0; 8];
                 if irq_file.read(&mut irq).unwrap() >= irq.len() {
                     let host_events = vmmdev.host_events.read();
@@ -268,10 +308,9 @@ fn main() {
                                     height = new_height;
                                     println!("Display {}, {}", width, height);
                                     bga.set_size(width as u16, height as u16);
-                                    let _ = display.write(&orbclient::ResizeEvent {
-                                        width,
-                                        height,
-                                    }.to_event());
+                                    let _ = display.write(
+                                        &orbclient::ResizeEvent { width, height }.to_event(),
+                                    );
                                 }
                             }
                         }
@@ -281,10 +320,13 @@ fn main() {
                             if let Some(ref mut display) = display_opt {
                                 let x = get_mouse.x.read() * width / 0x10000;
                                 let y = get_mouse.y.read() * height / 0x10000;
-                                let _ = display.write(&orbclient::MouseEvent {
-                                    x: x as i32,
-                                    y: y as i32,
-                                }.to_event());
+                                let _ = display.write(
+                                    &orbclient::MouseEvent {
+                                        x: x as i32,
+                                        y: y as i32,
+                                    }
+                                    .to_event(),
+                                );
                             }
                         }
                     }
@@ -293,5 +335,6 @@ fn main() {
         }
 
         std::process::exit(0);
-    }).expect("vboxd: failed to daemonize");
+    })
+    .expect("vboxd: failed to daemonize");
 }

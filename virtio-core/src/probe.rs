@@ -40,11 +40,6 @@ static_assertions::const_assert_eq!(std::mem::size_of::<MsixTableEntry>(), 16);
 
 pub const MSIX_PRIMARY_VECTOR: u16 = 0;
 
-#[cfg(not(target_arch = "x86_64"))]
-fn enable_msix(pcid_handle: &mut PciFunctionHandle) -> Result<File, Error> {
-    panic!("Msi-X only supported on x86_64");
-}
-
 /// VirtIO Device Probe
 ///
 /// ## Device State

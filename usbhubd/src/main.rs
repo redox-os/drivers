@@ -3,7 +3,10 @@ use std::env;
 use std::fs::File;
 use std::io::{Read, Write};
 
-use xhcid_interface::{plain, usb, ConfigureEndpointsReq, DevDesc, DeviceReqData, EndpDirection, EndpointTy, PortReqRecipient, PortReqTy, XhciClientHandle};
+use xhcid_interface::{
+    plain, usb, ConfigureEndpointsReq, DevDesc, DeviceReqData, EndpDirection, EndpointTy,
+    PortReqRecipient, PortReqTy, XhciClientHandle,
+};
 
 fn main() {
     common::setup_logging(
@@ -55,11 +58,7 @@ fn main() {
                     None
                 }
             })?;
-            Some((
-                conf_desc.clone(),
-                conf_num,
-                if_desc,
-            ))
+            Some((conf_desc.clone(), conf_num, if_desc))
         })
         .expect("Failed to find suitable configuration");
 
