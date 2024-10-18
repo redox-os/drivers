@@ -19,7 +19,7 @@ use syscall::Result;
 
 use crossbeam_channel::Receiver;
 
-use super::{CmdId, CqId, InterruptSources, Nvme, NvmeComp, NvmeCmd, SqId};
+use super::{CmdId, CqId, InterruptSources, Nvme, NvmeCmd, NvmeComp, SqId};
 
 /// A notification request, sent by the future in order to tell the completion thread that the
 /// current task wants a notification when a matching completion queue entry has been seen.
@@ -39,7 +39,7 @@ pub enum NotifReq {
     RequestAvailSubmission {
         sq_id: SqId,
         waker: task::Waker,
-    }
+    },
 }
 
 enum PendingReq {
@@ -97,7 +97,11 @@ impl CqReactor {
             receiver,
         })
     }
-    fn handle_notif_reqs_raw(pending_reqs: &mut Vec<PendingReq>, receiver: &Receiver<NotifReq>, block_until_first: bool) {
+    fn handle_notif_reqs_raw(
+        pending_reqs: &mut Vec<PendingReq>,
+        receiver: &Receiver<NotifReq>,
+        block_until_first: bool,
+    ) {
         let mut blocking_iter;
         let mut nonblocking_iter;
 
@@ -125,7 +129,9 @@ impl CqReactor {
                     message,
                     waker,
                 }),
-                NotifReq::RequestAvailSubmission { sq_id, waker } => pending_reqs.push(PendingReq::PendingAvailSubmission { sq_id, waker, }),
+                NotifReq::RequestAvailSubmission { sq_id, waker } => {
+                    pending_reqs.push(PendingReq::PendingAvailSubmission { sq_id, waker })
+                }
             }
         }
     }
@@ -144,21 +150,28 @@ impl CqReactor {
             while let Some((head, entry)) = completion_queue.complete(None) {
                 unsafe { self.nvme.completion_queue_head(cq_id, head) };
 
-                log::trace!("Got completion queue entry (CQID {}): {:?} at {}", cq_id, entry, head);
+                log::trace!(
+                    "Got completion queue entry (CQID {}): {:?} at {}",
+                    cq_id,
+                    entry,
+                    head
+                );
 
                 {
                     let submission_queues_read_lock = self.nvme.submission_queues.read().unwrap();
                     // this lock is actually important, since it will block during submission from other
                     // threads. the lock won't be held for long by the submitters, but it still prevents
                     // the entry being lost before this reactor is actually able to respond:
-                    let &(ref sq_lock, corresponding_cq_id) = submission_queues_read_lock.get(&{entry.sq_id}).expect("nvmed: internal error: queue returned from controller doesn't exist");
+                    let &(ref sq_lock, corresponding_cq_id) =
+                        submission_queues_read_lock.get(&{ entry.sq_id }).expect(
+                            "nvmed: internal error: queue returned from controller doesn't exist",
+                        );
                     assert_eq!(cq_id, corresponding_cq_id);
                     let mut sq_guard = sq_lock.lock().unwrap();
                     sq_guard.head = entry.sq_head;
                     // the channel still has to be polled twice though:
                     Self::handle_notif_reqs_raw(&mut self.pending_reqs, &self.receiver, false);
                 }
-
 
                 Self::try_notify_futures(&mut self.pending_reqs, cq_id, &entry);
 
@@ -169,11 +182,16 @@ impl CqReactor {
 
         Some(())
     }
-    fn finish_pending_completion(pending_reqs: &mut Vec<PendingReq>, req_cq_id: CqId, cq_id: CqId, sq_id: SqId, cmd_id: CmdId, entry: &NvmeComp, i: usize) -> bool {
-        if req_cq_id == cq_id
-            && sq_id == entry.sq_id
-            && cmd_id == entry.cid
-        {
+    fn finish_pending_completion(
+        pending_reqs: &mut Vec<PendingReq>,
+        req_cq_id: CqId,
+        cq_id: CqId,
+        sq_id: SqId,
+        cmd_id: CmdId,
+        entry: &NvmeComp,
+        i: usize,
+    ) -> bool {
+        if req_cq_id == cq_id && sq_id == entry.sq_id && cmd_id == entry.cid {
             let (waker, message) = match pending_reqs.remove(i) {
                 PendingReq::PendingCompletion { waker, message, .. } => (waker, message),
                 _ => unreachable!(),
@@ -187,7 +205,12 @@ impl CqReactor {
             false
         }
     }
-    fn finish_pending_avail_submission(pending_reqs: &mut Vec<PendingReq>, sq_id: SqId, entry: &NvmeComp, i: usize) -> bool {
+    fn finish_pending_avail_submission(
+        pending_reqs: &mut Vec<PendingReq>,
+        sq_id: SqId,
+        entry: &NvmeComp,
+        i: usize,
+    ) -> bool {
         if sq_id == entry.sq_id {
             let waker = match pending_reqs.remove(i) {
                 PendingReq::PendingAvailSubmission { waker, .. } => waker,
@@ -200,22 +223,43 @@ impl CqReactor {
             false
         }
     }
-    fn try_notify_futures(pending_reqs: &mut Vec<PendingReq>, cq_id: CqId, entry: &NvmeComp) -> Option<()> {
+    fn try_notify_futures(
+        pending_reqs: &mut Vec<PendingReq>,
+        cq_id: CqId,
+        entry: &NvmeComp,
+    ) -> Option<()> {
         let mut i = 0usize;
 
         let mut futures_notified = 0;
 
         while i < pending_reqs.len() {
             match &pending_reqs[i] {
-                &PendingReq::PendingCompletion { cq_id: req_cq_id, sq_id, cmd_id, .. } => if Self::finish_pending_completion(pending_reqs, req_cq_id, cq_id, sq_id, cmd_id, entry, i) {
-                    futures_notified += 1;
-                } else {
-                    i += 1;
+                &PendingReq::PendingCompletion {
+                    cq_id: req_cq_id,
+                    sq_id,
+                    cmd_id,
+                    ..
+                } => {
+                    if Self::finish_pending_completion(
+                        pending_reqs,
+                        req_cq_id,
+                        cq_id,
+                        sq_id,
+                        cmd_id,
+                        entry,
+                        i,
+                    ) {
+                        futures_notified += 1;
+                    } else {
+                        i += 1;
+                    }
                 }
-                &PendingReq::PendingAvailSubmission { sq_id, .. } => if Self::finish_pending_avail_submission(pending_reqs, sq_id, entry, i) {
-                    futures_notified += 1;
-                } else {
-                    i += 1;
+                &PendingReq::PendingAvailSubmission { sq_id, .. } => {
+                    if Self::finish_pending_avail_submission(pending_reqs, sq_id, entry, i) {
+                        futures_notified += 1;
+                    } else {
+                        i += 1;
+                    }
                 }
             }
         }
@@ -272,7 +316,7 @@ pub fn start_cq_reactor_thread(
     // multiple vectors to point to different CPUs, so that the load can be balanced across the
     // logical processors.
     let reactor = CqReactor::new(nvme, interrupt_sources, receiver)
-            .expect("nvmed: failed to setup CQ reactor");
+        .expect("nvmed: failed to setup CQ reactor");
     thread::spawn(move || reactor.run())
 }
 
@@ -317,7 +361,11 @@ where
         let this = &mut self.get_mut().state;
 
         match mem::replace(this, CompletionFutureState::Placeholder) {
-            CompletionFutureState::PendingSubmission { cmd_init, nvme, sq_id } => {
+            CompletionFutureState::PendingSubmission {
+                cmd_init,
+                nvme,
+                sq_id,
+            } => {
                 let sqs_read_guard = nvme.submission_queues.read().unwrap();
                 let &(ref sq_lock, cq_id) = sqs_read_guard
                     .get(&sq_id)
@@ -329,20 +377,43 @@ where
                     // when the CQ reactor gets a new completion queue entry, it'll lock the
                     // submisson queue it came from. since we're holding the same lock, this
                     // message will always be sent before the reactor is done with the entry.
-                    nvme.reactor_sender.send(NotifReq::RequestAvailSubmission { sq_id, waker: context.waker().clone() }).unwrap();
-                    *this = CompletionFutureState::PendingSubmission { cmd_init, nvme, sq_id };
+                    nvme.reactor_sender
+                        .send(NotifReq::RequestAvailSubmission {
+                            sq_id,
+                            waker: context.waker().clone(),
+                        })
+                        .unwrap();
+                    *this = CompletionFutureState::PendingSubmission {
+                        cmd_init,
+                        nvme,
+                        sq_id,
+                    };
                     return task::Poll::Pending;
                 }
 
-                let cmd_id =
-                    u16::try_from(sq.tail).expect("nvmed: internal error: CQ has more than 2^16 entries");
+                let cmd_id = u16::try_from(sq.tail)
+                    .expect("nvmed: internal error: CQ has more than 2^16 entries");
                 let tail = sq.submit_unchecked(cmd_init(cmd_id));
                 let tail = u16::try_from(tail).unwrap();
 
                 // make sure that we register interest before the reactor can get notified
                 let message = Arc::new(Mutex::new(None));
-                *this = CompletionFutureState::PendingCompletion { nvme, cq_id, cmd_id, sq_id, message: Arc::clone(&message), };
-                nvme.reactor_sender.send(NotifReq::RequestCompletion { cq_id, sq_id, cmd_id, message, waker: context.waker().clone() }).expect("reactor dead");
+                *this = CompletionFutureState::PendingCompletion {
+                    nvme,
+                    cq_id,
+                    cmd_id,
+                    sq_id,
+                    message: Arc::clone(&message),
+                };
+                nvme.reactor_sender
+                    .send(NotifReq::RequestCompletion {
+                        cq_id,
+                        sq_id,
+                        cmd_id,
+                        message,
+                        waker: context.waker().clone(),
+                    })
+                    .expect("reactor dead");
                 unsafe { nvme.submission_queue_tail(sq_id, tail) };
                 task::Poll::Pending
             }
@@ -357,14 +428,22 @@ where
                     *this = CompletionFutureState::Finished;
                     return task::Poll::Ready(value.cq_entry);
                 }
-                nvme.reactor_sender.send(NotifReq::RequestCompletion {
+                nvme.reactor_sender
+                    .send(NotifReq::RequestCompletion {
+                        cq_id,
+                        sq_id,
+                        cmd_id,
+                        waker: context.waker().clone(),
+                        message: Arc::clone(&message),
+                    })
+                    .expect("reactor dead");
+                *this = CompletionFutureState::PendingCompletion {
+                    message,
                     cq_id,
-                    sq_id,
                     cmd_id,
-                    waker: context.waker().clone(),
-                    message: Arc::clone(&message),
-                }).expect("reactor dead");
-                *this = CompletionFutureState::PendingCompletion { message, cq_id, cmd_id, sq_id, nvme };
+                    sq_id,
+                    nvme,
+                };
                 task::Poll::Pending
             }
             CompletionFutureState::Finished => {

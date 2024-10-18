@@ -1,11 +1,11 @@
-use std::mem;
 use std::convert::TryInto;
+use std::mem;
 
 use driver_network::NetworkAdapter;
-use syscall::error::{Error, EIO, EMSGSIZE, Result};
+use syscall::error::{Error, Result, EIO, EMSGSIZE};
 
-use common::io::{Mmio, Io, ReadOnly};
 use common::dma::Dma;
+use common::io::{Io, Mmio, ReadOnly};
 
 const RX_BUFFER_SIZE: usize = 64 * 1024;
 
@@ -135,16 +135,11 @@ impl NetworkAdapter for Rtl8139 {
         self.next_read()
     }
 
-
     fn read_packet(&mut self, buf: &mut [u8]) -> Result<Option<usize>> {
         if !self.regs.cr.readf(CR_BUFE) {
-            let rxsts =
-                (self.rx(0) as u16) |
-                (self.rx(1) as u16) << 8;
+            let rxsts = (self.rx(0) as u16) | (self.rx(1) as u16) << 8;
 
-            let size_with_crc =
-                (self.rx(2) as usize) |
-                (self.rx(3) as usize) << 8;
+            let size_with_crc = (self.rx(2) as usize) | (self.rx(3) as usize) << 8;
 
             let res = if (rxsts & RXSTS_ROK) == RXSTS_ROK {
                 let mut i = 0;
@@ -159,7 +154,8 @@ impl NetworkAdapter for Rtl8139 {
                 Err(Error::new(EIO))
             };
 
-            self.receive_i = (self.receive_i + 4 + size_with_crc).next_multiple_of(4) % RX_BUFFER_SIZE;
+            self.receive_i =
+                (self.receive_i + 4 + size_with_crc).next_multiple_of(4) % RX_BUFFER_SIZE;
             let capr = self.receive_i.wrapping_sub(16) as u16;
             self.regs.capr.write(capr);
 
@@ -243,13 +239,9 @@ impl Rtl8139 {
 
     pub fn next_read(&self) -> usize {
         if !self.regs.cr.readf(CR_BUFE) {
-            let rxsts =
-                (self.rx(0) as u16) |
-                (self.rx(1) as u16) << 8;
+            let rxsts = (self.rx(0) as u16) | (self.rx(1) as u16) << 8;
 
-            let size_with_crc =
-                (self.rx(2) as usize) |
-                (self.rx(3) as usize) << 8;
+            let size_with_crc = (self.rx(2) as usize) | (self.rx(3) as usize) << 8;
 
             if (rxsts & RXSTS_ROK) == RXSTS_ROK {
                 size_with_crc.saturating_sub(4)
@@ -264,13 +256,18 @@ impl Rtl8139 {
     pub unsafe fn init(&mut self) {
         let mac_low = self.regs.mac[0].read();
         let mac_high = self.regs.mac[1].read();
-        let mac = [mac_low as u8,
-                    (mac_low >> 8) as u8,
-                    (mac_low >> 16) as u8,
-                    (mac_low >> 24) as u8,
-                    mac_high as u8,
-                    (mac_high >> 8) as u8];
-        println!("   - MAC: {:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        let mac = [
+            mac_low as u8,
+            (mac_low >> 8) as u8,
+            (mac_low >> 16) as u8,
+            (mac_low >> 24) as u8,
+            mac_high as u8,
+            (mac_high >> 8) as u8,
+        ];
+        println!(
+            "   - MAC: {:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}",
+            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
+        );
         self.mac_address = mac;
 
         // Reset - this will disable tx and rx, reinitialize FIFOs, and set the system buffer pointer to the initial value
@@ -282,13 +279,17 @@ impl Rtl8139 {
 
         // Set up rx buffer
         println!("  - Receive buffer");
-        self.regs.rbstart.write(self.receive_buffer.physical() as u32);
+        self.regs
+            .rbstart
+            .write(self.receive_buffer.physical() as u32);
 
         println!("  - Interrupt mask");
         self.regs.imr.write(IMR_TOK | IMR_ROK);
 
         println!("  - Receive configuration");
-        self.regs.rcr.write(RCR_RBLEN_64K | RCR_AB | RCR_AM | RCR_APM | RCR_AAP);
+        self.regs
+            .rcr
+            .write(RCR_RBLEN_64K | RCR_AB | RCR_AM | RCR_APM | RCR_AAP);
 
         println!("  - Enable RX and TX");
         self.regs.cr.writef(CR_RE | CR_TE, true);

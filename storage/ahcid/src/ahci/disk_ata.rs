@@ -5,7 +5,7 @@ use syscall::error::Result;
 
 use common::dma::Dma;
 
-use super::hba::{HbaPort, HbaCmdTable, HbaCmdHeader};
+use super::hba::{HbaCmdHeader, HbaCmdTable, HbaPort};
 use super::Disk;
 
 enum BufferKind<'a> {
@@ -28,7 +28,7 @@ pub struct DiskATA {
     clb: Dma<[HbaCmdHeader; 32]>,
     ctbas: [Dma<HbaCmdTable>; 32],
     _fb: Dma<[u8; 256]>,
-    buf: Dma<[u8; 256 * 512]>
+    buf: Dma<[u8; 256 * 512]>,
 }
 
 impl DiskATA {
@@ -56,26 +56,28 @@ impl DiskATA {
             clb: clb,
             ctbas,
             _fb: fb,
-            buf: buf
+            buf: buf,
         })
     }
 
     fn request(&mut self, block: u64, mut buffer_kind: BufferKind) -> Result<Option<usize>> {
         let (write, address, total_sectors) = match buffer_kind {
-            BufferKind::Read(ref buffer) => (false, buffer.as_ptr() as usize, buffer.len()/512),
-            BufferKind::Write(ref buffer) => (true, buffer.as_ptr() as usize, buffer.len()/512),
+            BufferKind::Read(ref buffer) => (false, buffer.as_ptr() as usize, buffer.len() / 512),
+            BufferKind::Write(ref buffer) => (true, buffer.as_ptr() as usize, buffer.len() / 512),
         };
 
         loop {
             let mut request = match self.request_opt.take() {
-                Some(request) => if address == request.address && total_sectors == request.total_sectors {
-                    // Keep servicing current request
-                    request
-                } else {
-                    // Have to wait for another request to finish
-                    self.request_opt = Some(request);
-                    return Ok(None);
-                },
+                Some(request) => {
+                    if address == request.address && total_sectors == request.total_sectors {
+                        // Keep servicing current request
+                        request
+                    } else {
+                        // Have to wait for another request to finish
+                        self.request_opt = Some(request);
+                        return Ok(None);
+                    }
+                }
                 None => {
                     // Create new request
                     Request {
@@ -99,7 +101,13 @@ impl DiskATA {
                 self.port.ata_stop(running.0)?;
 
                 if let BufferKind::Read(ref mut buffer) = buffer_kind {
-                    unsafe { ptr::copy(self.buf.as_ptr(), buffer.as_mut_ptr().add(request.sector * 512), running.1 * 512); }
+                    unsafe {
+                        ptr::copy(
+                            self.buf.as_ptr(),
+                            buffer.as_mut_ptr().add(request.sector * 512),
+                            running.1 * 512,
+                        );
+                    }
                 }
 
                 request.sector += running.1;
@@ -114,10 +122,23 @@ impl DiskATA {
                 };
 
                 if let BufferKind::Write(ref buffer) = buffer_kind {
-                    unsafe { ptr::copy(buffer.as_ptr().add(request.sector * 512), self.buf.as_mut_ptr(), sectors * 512); }
+                    unsafe {
+                        ptr::copy(
+                            buffer.as_ptr().add(request.sector * 512),
+                            self.buf.as_mut_ptr(),
+                            sectors * 512,
+                        );
+                    }
                 }
 
-                if let Some(slot) = self.port.ata_dma(block + request.sector as u64, sectors, write, &mut self.clb, &mut self.ctbas, &mut self.buf) {
+                if let Some(slot) = self.port.ata_dma(
+                    block + request.sector as u64,
+                    sectors,
+                    write,
+                    &mut self.clb,
+                    &mut self.ctbas,
+                    &mut self.buf,
+                ) {
                     request.running_opt = Some((slot, sectors));
                 }
 
@@ -146,7 +167,7 @@ impl Disk for DiskATA {
         loop {
             match self.request(block, BufferKind::Read(buffer))? {
                 Some(count) => return Ok(Some(count)),
-                None => std::thread::yield_now()
+                None => std::thread::yield_now(),
             }
         }
     }
@@ -156,7 +177,7 @@ impl Disk for DiskATA {
         loop {
             match self.request(block, BufferKind::Write(buffer))? {
                 Some(count) => return Ok(Some(count)),
-                None => std::thread::yield_now()
+                None => std::thread::yield_now(),
             }
         }
     }

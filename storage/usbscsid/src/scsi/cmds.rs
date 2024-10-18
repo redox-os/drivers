@@ -1,6 +1,6 @@
 use super::opcodes::Opcode;
-use std::{fmt, mem, slice};
 use std::convert::TryInto;
+use std::{fmt, mem, slice};
 
 #[repr(packed)]
 pub struct Inquiry {
@@ -517,7 +517,7 @@ impl<'a> Iterator for ModePageIterRaw<'a> {
 #[derive(Clone, Copy, Debug)]
 pub enum AnyModePage<'a> {
     RwErrorRecovery(&'a RwErrorRecoveryPage),
-    Caching(&'a CachingModePage)
+    Caching(&'a CachingModePage),
 }
 
 struct ModePageIter<'a> {
@@ -540,9 +540,7 @@ impl<'a> Iterator for ModePageIter<'a> {
                     plain::from_bytes(next_buf).ok()?,
                 ))
             } else if page_code == 0x08 {
-                Some(AnyModePage::Caching(
-                    plain::from_bytes(next_buf).ok()?,
-                ))
+                Some(AnyModePage::Caching(plain::from_bytes(next_buf).ok()?))
             } else {
                 println!("Unimplemented sub_page {}", base64::encode(next_buf));
                 None

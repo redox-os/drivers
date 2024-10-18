@@ -33,7 +33,8 @@ fn main() {
         scheme, port, protocol
     );
 
-    redox_daemon::Daemon::new(move |d| daemon(d, scheme, port, protocol)).expect("usbscsid: failed to daemonize");
+    redox_daemon::Daemon::new(move |d| daemon(d, scheme, port, protocol))
+        .expect("usbscsid: failed to daemonize");
 }
 fn daemon(daemon: redox_daemon::Daemon, scheme: String, port: usize, protocol: u8) -> ! {
     let disk_scheme_name = format!(":disk.usb-{scheme}+{port}-scsi");
@@ -81,8 +82,8 @@ fn daemon(daemon: redox_daemon::Daemon, scheme: String, port: usize, protocol: u
 
     // TODO: Let all of the USB drivers fork or be managed externally, and xhcid won't have to keep
     // track of all the drivers.
-    let socket_fd = Socket::<V2>::create(&disk_scheme_name)
-        .expect("usbscsid: failed to create disk scheme");
+    let socket_fd =
+        Socket::<V2>::create(&disk_scheme_name).expect("usbscsid: failed to create disk scheme");
 
     //libredox::call::setrens(0, 0).expect("scsid: failed to enter null namespace");
     let mut scsi = Scsi::new(&mut *protocol).expect("usbscsid: failed to setup SCSI");
@@ -95,11 +96,16 @@ fn daemon(daemon: redox_daemon::Daemon, scheme: String, port: usize, protocol: u
 
     // TODO: Use nonblocking and put all pending calls in a todo VecDeque. Use an eventfd as well.
     loop {
-        let req = match socket_fd.next_request(SignalBehavior::Restart).expect("scsid: failed to read disk scheme") {
-            Some(r) => if let RequestKind::Call(c) = r.kind() {
-                c
-            } else {
-                continue;
+        let req = match socket_fd
+            .next_request(SignalBehavior::Restart)
+            .expect("scsid: failed to read disk scheme")
+        {
+            Some(r) => {
+                if let RequestKind::Call(c) = r.kind() {
+                    c
+                } else {
+                    continue;
+                }
             }
             None => break,
         };

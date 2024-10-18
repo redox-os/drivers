@@ -5,11 +5,11 @@ extern crate bitflags;
 extern crate orbclient;
 extern crate syscall;
 
-use std::{env, process};
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::io::AsRawFd;
+use std::{env, process};
 
 use log::info;
 use syscall::call::iopl;
@@ -20,7 +20,6 @@ mod controller;
 mod keymap;
 mod state;
 mod vm;
-
 
 fn daemon(daemon: redox_daemon::Daemon) -> ! {
     common::setup_logging(
@@ -35,10 +34,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         iopl(3).expect("ps2d: failed to get I/O permission");
     }
 
-    let (keymap, keymap_name): (
-        fn(u8, bool) -> char,
-        &str
-    ) = match env::args().skip(1).next() {
+    let (keymap, keymap_name): (fn(u8, bool) -> char, &str) = match env::args().skip(1).next() {
         Some(k) => match k.to_lowercase().as_ref() {
             "dvorak" => (keymap::dvorak::get_char, "dvorak"),
             "us" => (keymap::us::get_char, "us"),
@@ -71,11 +67,13 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         .open("/scheme/serio/0")
         .expect("ps2d: failed to open /scheme/serio/0");
 
-    event_file.write(&syscall::Event {
-        id: key_file.as_raw_fd() as usize,
-        flags: syscall::EVENT_READ,
-        data: 0
-    }).expect("ps2d: failed to event /scheme/serio/0");
+    event_file
+        .write(&syscall::Event {
+            id: key_file.as_raw_fd() as usize,
+            flags: syscall::EVENT_READ,
+            data: 0,
+        })
+        .expect("ps2d: failed to event /scheme/serio/0");
 
     let mut mouse_file = OpenOptions::new()
         .read(true)
@@ -84,15 +82,19 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         .open("/scheme/serio/1")
         .expect("ps2d: failed to open /scheme/serio/1");
 
-    event_file.write(&syscall::Event {
-        id: mouse_file.as_raw_fd() as usize,
-        flags: syscall::EVENT_READ,
-        data: 1
-    }).expect("ps2d: failed to event /scheme/serio/1");
+    event_file
+        .write(&syscall::Event {
+            id: mouse_file.as_raw_fd() as usize,
+            flags: syscall::EVENT_READ,
+            data: 1,
+        })
+        .expect("ps2d: failed to event /scheme/serio/1");
 
     libredox::call::setrens(0, 0).expect("ps2d: failed to enter null namespace");
 
-    daemon.ready().expect("ps2d: failed to mark daemon as ready");
+    daemon
+        .ready()
+        .expect("ps2d: failed to mark daemon as ready");
 
     let mut ps2d = Ps2d::new(input, keymap);
 
@@ -108,7 +110,11 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         // to grab bytes and sort them based on the source
 
         let mut event = syscall::Event::default();
-        if event_file.read(&mut event).expect("ps2d: failed to read event file") == 0 {
+        if event_file
+            .read(&mut event)
+            .expect("ps2d: failed to read event file")
+            == 0
+        {
             break;
         }
 

@@ -1,6 +1,6 @@
 use crate::usb;
-use std::{fmt, mem};
 use common::io::{Io, Mmio};
+use std::{fmt, mem};
 
 use super::context::StreamContextType;
 

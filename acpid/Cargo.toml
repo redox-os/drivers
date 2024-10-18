@@ -11,7 +11,7 @@ aml = { git = "https://github.com/rw-vanc/acpi.git", branch = "cumulative" }
 log = "0.4"
 num-derive = "0.3"
 num-traits = "0.2"
-parking_lot = "0.11.1"
+parking_lot = "0.12"
 plain = "0.2.3"
 redox-daemon = "0.1"
 redox_syscall = "0.5.6"

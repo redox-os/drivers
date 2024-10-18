@@ -69,9 +69,7 @@ impl NvmeCompQueue {
 
         //HACK FOR SOMETIMES RETURNING INVALID DATA ON QEMU!
         if let Some((sq_id, cmd)) = cmd_opt {
-            if entry.sq_id != sq_id
-            || entry.cid != cmd.cid
-            {
+            if entry.sq_id != sq_id || entry.cid != cmd.cid {
                 return None;
             }
         }
@@ -94,7 +92,9 @@ impl NvmeCompQueue {
             if let Some(some) = self.complete(cmd_opt) {
                 return some;
             } else {
-                unsafe { super::pause(); }
+                unsafe {
+                    super::pause();
+                }
             }
         }
     }

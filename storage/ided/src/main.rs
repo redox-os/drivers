@@ -1,3 +1,4 @@
+use common::io::Io as _;
 use driver_block::Disk;
 use event::{EventFlags, RawEventQueue};
 use libredox::flag;
@@ -12,9 +13,12 @@ use std::{
     thread::{self, sleep},
     time::Duration,
 };
-use common::io::Io as _;
 use syscall::{
-    data::{Event, Packet}, error::{Error, ENODEV}, flag::EVENT_READ, scheme::SchemeBlockMut, EAGAIN, EINTR, EWOULDBLOCK
+    data::{Event, Packet},
+    error::{Error, ENODEV},
+    flag::EVENT_READ,
+    scheme::SchemeBlockMut,
+    EAGAIN, EINTR, EWOULDBLOCK,
 };
 
 use crate::{
@@ -164,10 +168,10 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
                     }
                 }
 
-                let mut sectors = (dest[100] as u64) |
-                                  ((dest[101] as u64) << 16) |
-                                  ((dest[102] as u64) << 32) |
-                                  ((dest[103] as u64) << 48);
+                let mut sectors = (dest[100] as u64)
+                    | ((dest[101] as u64) << 16)
+                    | ((dest[102] as u64) << 32)
+                    | ((dest[103] as u64) << 48);
 
                 let lba_bits = if sectors == 0 {
                     sectors = (dest[60] as u64) | ((dest[61] as u64) << 16);
@@ -196,21 +200,23 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     }
 
     let scheme_name = format!("disk.{}", name);
-    let socket_fd = Socket::<V2>::nonblock(&scheme_name)
-        .expect("ided: failed to create disk scheme");
+    let socket_fd =
+        Socket::<V2>::nonblock(&scheme_name).expect("ided: failed to create disk scheme");
 
     let primary_irq_fd = libredox::call::open(
         &format!("/scheme/irq/{}", primary_irq),
         flag::O_RDWR | flag::O_NONBLOCK,
         0,
-    ).expect("ided: failed to open irq file");
+    )
+    .expect("ided: failed to open irq file");
     let mut primary_irq_file = unsafe { File::from_raw_fd(primary_irq_fd as RawFd) };
 
     let secondary_irq_fd = libredox::call::open(
         &format!("/scheme/irq/{}", secondary_irq),
         flag::O_RDWR | flag::O_NONBLOCK,
         0,
-    ).expect("ided: failed to open irq file");
+    )
+    .expect("ided: failed to open irq file");
     let mut secondary_irq_file = unsafe { File::from_raw_fd(secondary_irq_fd as RawFd) };
 
     let mut event_queue = RawEventQueue::new().expect("ided: failed to open event file");
@@ -219,63 +225,75 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     daemon.ready().expect("ided: failed to notify parent");
 
-    event_queue.subscribe(
-        socket_fd.inner().raw(),
-        0,
-        EventFlags::READ,
-    ).expect("ided: failed to event disk scheme");
+    event_queue
+        .subscribe(socket_fd.inner().raw(), 0, EventFlags::READ)
+        .expect("ided: failed to event disk scheme");
 
-    event_queue.subscribe(
-        primary_irq_fd,
-        0,
-        EventFlags::READ,
-    ).expect("ided: failed to event irq scheme");
+    event_queue
+        .subscribe(primary_irq_fd, 0, EventFlags::READ)
+        .expect("ided: failed to event irq scheme");
 
-    event_queue.subscribe(
-        secondary_irq_fd,
-        0,
-        EventFlags::READ,
-    ).expect("ided: failed to event irq scheme");
+    event_queue
+        .subscribe(secondary_irq_fd, 0, EventFlags::READ)
+        .expect("ided: failed to event irq scheme");
 
     let mut scheme = DiskScheme::new(scheme_name, chans, disks);
 
     let mut todo = Vec::new();
     'outer: loop {
-        let Some(event) = event_queue.next().transpose().expect("ided: failed to read event file") else {
+        let Some(event) = event_queue
+            .next()
+            .transpose()
+            .expect("ided: failed to read event file")
+        else {
             break;
         };
         if event.fd == socket_fd.inner().raw() {
             loop {
                 let req = match socket_fd.next_request(SignalBehavior::Interrupt) {
                     Ok(None) => break 'outer,
-                    Ok(Some(r)) => if let RequestKind::Call(c) = r.kind() {
-                        c
-                    } else {
-                        continue;
-                    },
-                    Err(err) => if matches!(err.errno, EAGAIN | EWOULDBLOCK | EINTR) {
-                        break;
-                    } else {
-                        panic!("ided: failed to read disk scheme: {}", err);
+                    Ok(Some(r)) => {
+                        if let RequestKind::Call(c) = r.kind() {
+                            c
+                        } else {
+                            continue;
+                        }
+                    }
+                    Err(err) => {
+                        if matches!(err.errno, EAGAIN | EWOULDBLOCK | EINTR) {
+                            break;
+                        } else {
+                            panic!("ided: failed to read disk scheme: {}", err);
+                        }
                     }
                 };
                 if let Some(resp) = req.handle_scheme_block_mut(&mut scheme) {
-                    socket_fd.write_response(resp, SignalBehavior::Restart).expect("ided: failed to write disk scheme");
+                    socket_fd
+                        .write_response(resp, SignalBehavior::Restart)
+                        .expect("ided: failed to write disk scheme");
                 } else {
                     todo.push(req);
                 }
             }
         } else if event.fd == primary_irq_fd {
             let mut irq = [0; 8];
-            if primary_irq_file.read(&mut irq).expect("ided: failed to read irq file") >= irq.len() {
+            if primary_irq_file
+                .read(&mut irq)
+                .expect("ided: failed to read irq file")
+                >= irq.len()
+            {
                 if scheme.irq(0) {
-                    primary_irq_file.write(&irq).expect("ided: failed to write irq file");
+                    primary_irq_file
+                        .write(&irq)
+                        .expect("ided: failed to write irq file");
 
                     // Handle todos in order to finish previous packets if possible
                     let mut i = 0;
                     while i < todo.len() {
                         if let Some(resp) = todo[i].handle_scheme_block_mut(&mut scheme) {
-                            socket_fd.write_response(resp, SignalBehavior::Restart).expect("ided: failed to write disk scheme");
+                            socket_fd
+                                .write_response(resp, SignalBehavior::Restart)
+                                .expect("ided: failed to write disk scheme");
                         } else {
                             i += 1;
                         }
@@ -284,15 +302,23 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
             }
         } else if event.fd == secondary_irq_fd {
             let mut irq = [0; 8];
-            if secondary_irq_file.read(&mut irq).expect("ided: failed to read irq file") >= irq.len() {
+            if secondary_irq_file
+                .read(&mut irq)
+                .expect("ided: failed to read irq file")
+                >= irq.len()
+            {
                 if scheme.irq(1) {
-                    secondary_irq_file.write(&irq).expect("ided: failed to write irq file");
+                    secondary_irq_file
+                        .write(&irq)
+                        .expect("ided: failed to write irq file");
 
                     // Handle todos in order to finish previous packets if possible
                     let mut i = 0;
                     while i < todo.len() {
                         if let Some(resp) = todo[i].handle_scheme_block_mut(&mut scheme) {
-                            socket_fd.write_response(resp, SignalBehavior::Restart).expect("ided: failed to write disk scheme");
+                            socket_fd
+                                .write_response(resp, SignalBehavior::Restart)
+                                .expect("ided: failed to write disk scheme");
                         } else {
                             i += 1;
                         }
@@ -307,14 +333,20 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         let mut i = 0;
         while i < todo.len() {
             if let Some(resp) = todo[i].handle_scheme_block_mut(&mut scheme) {
-                socket_fd.write_response(resp, SignalBehavior::Restart).expect("ided: failed to write disk scheme");
+                socket_fd
+                    .write_response(resp, SignalBehavior::Restart)
+                    .expect("ided: failed to write disk scheme");
             } else {
                 i += 1;
             }
         }
 
         for req in todo.drain(..) {
-            socket_fd.write_response(Response::new(&req, Err(Error::new(ENODEV))), SignalBehavior::Restart)
+            socket_fd
+                .write_response(
+                    Response::new(&req, Err(Error::new(ENODEV))),
+                    SignalBehavior::Restart,
+                )
                 .expect("ided: failed to write disk scheme");
         }
     }

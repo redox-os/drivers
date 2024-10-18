@@ -2,46 +2,53 @@
 #![feature(int_roundings)]
 
 extern crate bitflags;
+extern crate event;
 extern crate spin;
 extern crate syscall;
-extern crate event;
 
-use std::usize;
-use std::fs::File;
-use std::io::{ErrorKind, Read, Write, Result};
-use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use libredox::flag;
-use syscall::{Packet, SchemeBlockMut, EventFlags};
 use std::cell::RefCell;
+use std::fs::File;
+use std::io::{ErrorKind, Read, Result, Write};
+use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::sync::Arc;
+use std::usize;
+use syscall::{EventFlags, Packet, SchemeBlockMut};
 
 use event::{user_data, EventQueue};
-use pcid_interface::{MsiSetFeatureInfo, PciFunctionHandle, PciFeature, PciFeatureInfo, SetFeatureInfo};
 #[cfg(target_arch = "x86_64")]
 use pcid_interface::irq_helpers::allocate_single_interrupt_vector_for_msi;
 use pcid_interface::irq_helpers::read_bsp_apic_id;
+use pcid_interface::{
+    MsiSetFeatureInfo, PciFeature, PciFeatureInfo, PciFunctionHandle, SetFeatureInfo,
+};
 
 pub mod hda;
 
 /*
-   VEND:PROD
-   Virtualbox   8086:2668
-   QEMU ICH9    8086:293E
-   82801H ICH8  8086:284B
-   */
+VEND:PROD
+Virtualbox   8086:2668
+QEMU ICH9    8086:293E
+82801H ICH8  8086:284B
+*/
 
 #[cfg(target_arch = "x86_64")]
 fn get_int_method(pcid_handle: &mut PciFunctionHandle) -> File {
     let pci_config = pcid_handle.config();
 
-    let all_pci_features = pcid_handle.fetch_all_features().expect("ihdad: failed to fetch pci features");
+    let all_pci_features = pcid_handle
+        .fetch_all_features()
+        .expect("ihdad: failed to fetch pci features");
     log::debug!("PCI FEATURES: {:?}", all_pci_features);
 
     let has_msi = all_pci_features.iter().any(|feature| feature.is_msi());
     let has_msix = all_pci_features.iter().any(|feature| feature.is_msix());
 
     if has_msi && !has_msix {
-        let capability = match pcid_handle.feature_info(PciFeature::Msi).expect("ihdad: failed to retrieve the MSI capability structure from pcid") {
+        let capability = match pcid_handle
+            .feature_info(PciFeature::Msi)
+            .expect("ihdad: failed to retrieve the MSI capability structure from pcid")
+        {
             PciFeatureInfo::Msi(s) => s,
             PciFeatureInfo::MsiX(_) => panic!(),
         };
@@ -51,16 +58,21 @@ fn get_int_method(pcid_handle: &mut PciFunctionHandle) -> File {
         // pcid_interface, so that this can be shared between nvmed, xhcid, ixgebd, etc..
 
         let destination_id = read_bsp_apic_id().expect("ihdad: failed to read BSP apic id");
-        let (msg_addr_and_data, interrupt_handle) = allocate_single_interrupt_vector_for_msi(destination_id);
+        let (msg_addr_and_data, interrupt_handle) =
+            allocate_single_interrupt_vector_for_msi(destination_id);
 
         let set_feature_info = MsiSetFeatureInfo {
             multi_message_enable: Some(0),
             message_address_and_data: Some(msg_addr_and_data),
             mask_bits: None,
         };
-        pcid_handle.set_feature_info(SetFeatureInfo::Msi(set_feature_info)).expect("ihdad: failed to set feature info");
+        pcid_handle
+            .set_feature_info(SetFeatureInfo::Msi(set_feature_info))
+            .expect("ihdad: failed to set feature info");
 
-        pcid_handle.enable_feature(PciFeature::Msi).expect("ihdad: failed to enable MSI");
+        pcid_handle
+            .enable_feature(PciFeature::Msi)
+            .expect("ihdad: failed to enable MSI");
         log::debug!("Enabled MSI");
 
         interrupt_handle
@@ -96,7 +108,8 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         log::LevelFilter::Info,
     );
 
-    let mut pcid_handle = PciFunctionHandle::connect_default().expect("ihdad: failed to setup channel to pcid");
+    let mut pcid_handle =
+        PciFunctionHandle::connect_default().expect("ihdad: failed to setup channel to pcid");
 
     let pci_config = pcid_handle.config();
 
@@ -105,7 +118,9 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     log::info!(" + IHDA {}", pci_config.func.display());
 
-    let address = unsafe { pcid_handle.map_bar(0).expect("ihdad") }.ptr.as_ptr() as usize;
+    let address = unsafe { pcid_handle.map_bar(0).expect("ihdad") }
+        .ptr
+        .as_ptr() as usize;
 
     //TODO: MSI-X
     let mut irq_file = get_int_method(&mut pcid_handle);
@@ -121,13 +136,29 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
             }
         }
 
-        let mut event_queue = EventQueue::<Source>::new().expect("ihdad: Could not create event queue.");
-        let mut device = unsafe { hda::IntelHDA::new(address, vend_prod).expect("ihdad: failed to allocate device") };
-        let socket_fd = libredox::call::open(":audiohw", flag::O_RDWR | flag::O_CREAT | flag::O_NONBLOCK, 0).expect("ihdad: failed to create hda scheme");
+        let mut event_queue =
+            EventQueue::<Source>::new().expect("ihdad: Could not create event queue.");
+        let mut device = unsafe {
+            hda::IntelHDA::new(address, vend_prod).expect("ihdad: failed to allocate device")
+        };
+        let socket_fd = libredox::call::open(
+            ":audiohw",
+            flag::O_RDWR | flag::O_CREAT | flag::O_NONBLOCK,
+            0,
+        )
+        .expect("ihdad: failed to create hda scheme");
         let mut socket = unsafe { File::from_raw_fd(socket_fd as RawFd) };
 
-        event_queue.subscribe(socket_fd, Source::Scheme, event::EventFlags::READ).unwrap();
-        event_queue.subscribe(irq_file.as_raw_fd() as usize, Source::Irq, event::EventFlags::READ).unwrap();
+        event_queue
+            .subscribe(socket_fd, Source::Scheme, event::EventFlags::READ)
+            .unwrap();
+        event_queue
+            .subscribe(
+                irq_file.as_raw_fd() as usize,
+                Source::Irq,
+                event::EventFlags::READ,
+            )
+            .unwrap();
 
         daemon.ready().expect("ihdad: failed to signal readiness");
 
@@ -137,7 +168,10 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
         let all = [Source::Irq, Source::Scheme];
 
-        'events: for event in all.into_iter().chain(event_queue.map(|e| e.expect("failed to get next event").user_data)) {
+        'events: for event in all
+            .into_iter()
+            .chain(event_queue.map(|e| e.expect("failed to get next event").user_data))
+        {
             match event {
                 Source::Irq => {
                     let mut irq = [0; 8];
@@ -158,11 +192,11 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
                         }
 
                         /*
-                           let next_read = device_irq.next_read();
-                           if next_read > 0 {
-                           return Ok(Some(next_read));
-                           }
-                           */
+                        let next_read = device_irq.next_read();
+                        if next_read > 0 {
+                        return Ok(Some(next_read));
+                        }
+                        */
                     }
                 }
                 Source::Scheme => {
@@ -171,10 +205,12 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
                         match socket.read(&mut packet) {
                             Ok(0) => break 'events,
                             Ok(_) => (),
-                            Err(err) => if err.kind() == ErrorKind::WouldBlock {
-                                break;
-                            } else {
-                                panic!("ihdad: failed to read from socket: {err}");
+                            Err(err) => {
+                                if err.kind() == ErrorKind::WouldBlock {
+                                    break;
+                                } else {
+                                    panic!("ihdad: failed to read from socket: {err}");
+                                }
                             }
                         }
 
@@ -187,11 +223,11 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
                     }
 
                     /*
-                       let next_read = device.borrow().next_read();
-                       if next_read > 0 {
-                       return Ok(Some(next_read));
-                       }
-                       */
+                    let next_read = device.borrow().next_read();
+                    if next_read > 0 {
+                    return Ok(Some(next_read));
+                    }
+                    */
                 }
             }
         }

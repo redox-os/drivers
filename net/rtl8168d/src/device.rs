@@ -1,9 +1,9 @@
-use std::mem;
 use std::convert::TryInto;
+use std::mem;
 
+use common::io::{Io, Mmio, ReadOnly};
 use driver_network::NetworkAdapter;
 use syscall::error::{Error, Result, EMSGSIZE};
-use common::io::{Mmio, Io, ReadOnly};
 
 use common::dma::Dma;
 
@@ -89,14 +89,13 @@ impl NetworkAdapter for Rtl8168 {
         self.next_read()
     }
 
-
     fn read_packet(&mut self, buf: &mut [u8]) -> Result<Option<usize>> {
         if self.receive_i >= self.receive_ring.len() {
             self.receive_i = 0;
         }
 
         let rd = &mut self.receive_ring[self.receive_i];
-        if ! rd.ctrl.readf(OWN) {
+        if !rd.ctrl.readf(OWN) {
             let rd_len = rd.ctrl.read() & 0x3FFF;
 
             let data = &self.receive_buffer[self.receive_i];
@@ -125,7 +124,7 @@ impl NetworkAdapter for Rtl8168 {
             }
 
             let td = &mut self.transmit_ring[self.transmit_i];
-            if ! td.ctrl.readf(OWN) {
+            if !td.ctrl.readf(OWN) {
                 let data = &mut self.transmit_buffer[self.transmit_i];
 
                 if buf.len() > data.len() {
@@ -214,7 +213,7 @@ impl Rtl8168 {
         }
 
         let rd = &self.receive_ring[receive_i];
-        if ! rd.ctrl.readf(OWN) {
+        if !rd.ctrl.readf(OWN) {
             (rd.ctrl.read() & 0x3FFF) as usize
         } else {
             0
@@ -224,13 +223,18 @@ impl Rtl8168 {
     pub unsafe fn init(&mut self) {
         let mac_low = self.regs.mac[0].read();
         let mac_high = self.regs.mac[1].read();
-        let mac = [mac_low as u8,
-                    (mac_low >> 8) as u8,
-                    (mac_low >> 16) as u8,
-                    (mac_low >> 24) as u8,
-                    mac_high as u8,
-                    (mac_high >> 8) as u8];
-        println!("   - MAC: {:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        let mac = [
+            mac_low as u8,
+            (mac_low >> 8) as u8,
+            (mac_low >> 16) as u8,
+            (mac_low >> 24) as u8,
+            mac_high as u8,
+            (mac_high >> 8) as u8,
+        ];
+        println!(
+            "   - MAC: {:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}",
+            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
+        );
         self.mac_address = mac;
 
         // Reset - this will disable tx and rx, reinitialize FIFOs, and set the system buffer pointer to the initial value
@@ -256,8 +260,12 @@ impl Rtl8168 {
         // Set up normal priority tx buffers
         println!("  - Transmit buffers (normal priority)");
         for i in 0..self.transmit_ring.len() {
-            self.transmit_ring[i].buffer_low.write(self.transmit_buffer[i].physical() as u32);
-            self.transmit_ring[i].buffer_high.write((self.transmit_buffer[i].physical() as u64 >> 32) as u32);
+            self.transmit_ring[i]
+                .buffer_low
+                .write(self.transmit_buffer[i].physical() as u32);
+            self.transmit_ring[i]
+                .buffer_high
+                .write((self.transmit_buffer[i].physical() as u64 >> 32) as u32);
         }
         if let Some(td) = self.transmit_ring.last_mut() {
             td.ctrl.writef(EOR, true);
@@ -266,8 +274,12 @@ impl Rtl8168 {
         // Set up high priority tx buffers
         println!("  - Transmit buffers (high priority)");
         for i in 0..self.transmit_ring_h.len() {
-            self.transmit_ring_h[i].buffer_low.write(self.transmit_buffer_h[i].physical() as u32);
-            self.transmit_ring_h[i].buffer_high.write((self.transmit_buffer_h[i].physical() as u64 >> 32) as u32);
+            self.transmit_ring_h[i]
+                .buffer_low
+                .write(self.transmit_buffer_h[i].physical() as u32);
+            self.transmit_ring_h[i]
+                .buffer_high
+                .write((self.transmit_buffer_h[i].physical() as u64 >> 32) as u32);
         }
         if let Some(td) = self.transmit_ring_h.last_mut() {
             td.ctrl.writef(EOR, true);
@@ -306,7 +318,9 @@ impl Rtl8168 {
         self.regs.isr.write(isr);
 
         // Interrupt on tx error (bit 3), tx ok (bit 2), rx error(bit 1), and rx ok (bit 0)
-        self.regs.imr.write(1 << 15 | 1 << 14 | 1 << 7 | 1 << 6 | 1 << 5 | 1 << 4 | 1 << 3 | 1 << 2 | 1 << 1 | 1);
+        self.regs.imr.write(
+            1 << 15 | 1 << 14 | 1 << 7 | 1 << 6 | 1 << 5 | 1 << 4 | 1 << 3 | 1 << 2 | 1 << 1 | 1,
+        );
 
         // Set TX config
         self.regs.tcr.write(0b11 << 24 | 0b111 << 8);

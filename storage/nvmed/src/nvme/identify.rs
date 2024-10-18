@@ -61,7 +61,6 @@ pub struct IdentifyNamespaceData {
     pub nows: u16,
     pub _rsvd1: [u8; 18],
     // 92
-
     pub anagrpid: u32,
     pub _rsvd2: [u8; 3],
     pub nsattr: u8,
@@ -137,8 +136,12 @@ impl LbaFormat {
         ((self.0 >> 16) & 0xFF) as u8
     }
     pub fn lba_data_size(&self) -> Option<u64> {
-        if self.log_lba_data_size() < 9 { return None }
-        if self.log_lba_data_size() >= 32 { return None }
+        if self.log_lba_data_size() < 9 {
+            return None;
+        }
+        if self.log_lba_data_size() >= 32 {
+            return None;
+        }
         Some(1u64 << self.log_lba_data_size())
     }
     pub fn metadata_size(&self) -> u16 {
@@ -153,8 +156,9 @@ impl Nvme {
         let data: Dma<IdentifyControllerData> = unsafe { Dma::zeroed().unwrap().assume_init() };
 
         // println!("  - Attempting to identify controller");
-        let comp = self
-            .submit_and_complete_admin_command(|cid| NvmeCmd::identify_controller(cid, data.physical()));
+        let comp = self.submit_and_complete_admin_command(|cid| {
+            NvmeCmd::identify_controller(cid, data.physical())
+        });
         log::trace!("Completion: {:?}", comp);
 
         // println!("  - Dumping identify controller");
@@ -169,7 +173,9 @@ impl Nvme {
 
         log::info!(
             "  - Model: {} Serial: {} Firmware: {}",
-            model, serial, firmware,
+            model,
+            serial,
+            firmware,
         );
     }
     pub fn identify_namespace_list(&self, base: u32) -> Vec<u32> {
@@ -177,10 +183,9 @@ impl Nvme {
         let data: Dma<[u32; 1024]> = unsafe { Dma::zeroed().unwrap().assume_init() };
 
         // println!("  - Attempting to retrieve namespace ID list");
-        let comp = self
-            .submit_and_complete_admin_command(|cid| {
-                NvmeCmd::identify_namespace_list(cid, data.physical(), base)
-            });
+        let comp = self.submit_and_complete_admin_command(|cid| {
+            NvmeCmd::identify_namespace_list(cid, data.physical(), base)
+        });
 
         log::trace!("Completion2: {:?}", comp);
 
@@ -192,8 +197,9 @@ impl Nvme {
         let data: Dma<IdentifyNamespaceData> = unsafe { Dma::zeroed().unwrap().assume_init() };
 
         // println!("  - Attempting to identify namespace {}", nsid);
-        let comp = self
-            .submit_and_complete_admin_command(|cid| NvmeCmd::identify_namespace(cid, data.physical(), nsid));
+        let comp = self.submit_and_complete_admin_command(|cid| {
+            NvmeCmd::identify_namespace(cid, data.physical(), nsid)
+        });
 
         // println!("  - Dumping identify namespace");
 
@@ -201,7 +207,10 @@ impl Nvme {
         let capacity = data.capacity_in_blocks();
         log::info!("NSID: {} Size: {} Capacity: {}", nsid, size, capacity);
 
-        let block_size = data.formatted_lba_size().lba_data_size().expect("nvmed: error: size outside 512-2^64 range");
+        let block_size = data
+            .formatted_lba_size()
+            .lba_data_size()
+            .expect("nvmed: error: size outside 512-2^64 range");
         log::debug!("NVME block size: {}", block_size);
 
         NvmeNamespace {

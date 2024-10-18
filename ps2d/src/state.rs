@@ -4,7 +4,7 @@ use std::os::unix::io::AsRawFd;
 use std::str;
 
 use log::{error, warn};
-use orbclient::{KeyEvent, MouseEvent, MouseRelativeEvent, ButtonEvent, ScrollEvent};
+use orbclient::{ButtonEvent, KeyEvent, MouseEvent, MouseRelativeEvent, ScrollEvent};
 
 use crate::controller::Ps2;
 use crate::vm;
@@ -22,7 +22,7 @@ bitflags! {
     }
 }
 
-pub struct Ps2d<F: Fn(u8,bool) -> char>  {
+pub struct Ps2d<F: Fn(u8, bool) -> char> {
     ps2: Ps2,
     vmmouse: bool,
     vmmouse_relative: bool,
@@ -39,10 +39,10 @@ pub struct Ps2d<F: Fn(u8,bool) -> char>  {
     packet_i: usize,
     extra_packet: bool,
     //Keymap function
-    get_char: F
+    get_char: F,
 }
 
-impl<F: Fn(u8,bool) -> char> Ps2d<F> {
+impl<F: Fn(u8, bool) -> char> Ps2d<F> {
     pub fn new(input: File, keymap: F) -> Self {
         let mut ps2 = Ps2::new();
         let extra_packet = ps2.init().expect("ps2d: failed to initialize");
@@ -67,7 +67,7 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
             packets: [0; 4],
             packet_i: 0,
             extra_packet,
-            get_char: keymap
+            get_char: keymap,
         }
     }
 
@@ -228,11 +228,19 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
                 }
 
                 if scancode != 0 {
-                    self.input.write(&KeyEvent {
-                        character: (self.get_char)(ps2_scancode, self.lshift || self.rshift),
-                        scancode,
-                        pressed
-                    }.to_event()).expect("ps2d: failed to write key event");
+                    self.input
+                        .write(
+                            &KeyEvent {
+                                character: (self.get_char)(
+                                    ps2_scancode,
+                                    self.lshift || self.rshift,
+                                ),
+                                scancode,
+                                pressed,
+                            }
+                            .to_event(),
+                        )
+                        .expect("ps2d: failed to write key event");
                 }
             }
         } else if self.vmmouse {
@@ -254,10 +262,15 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
 
                 if self.vmmouse_relative {
                     if dx != 0 || dy != 0 {
-                        self.input.write(&MouseRelativeEvent {
-                            dx: dx as i32,
-                            dy: dy as i32,
-                        }.to_event()).expect("ps2d: failed to write mouse event");
+                        self.input
+                            .write(
+                                &MouseRelativeEvent {
+                                    dx: dx as i32,
+                                    dy: dy as i32,
+                                }
+                                .to_event(),
+                            )
+                            .expect("ps2d: failed to write mouse event");
                     }
                 } else {
                     let x = dx as i32;
@@ -272,24 +285,37 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
                 };
 
                 if dz != 0 {
-                    self.input.write(&ScrollEvent {
-                        x: 0,
-                        y: -(dz as i32),
-                    }.to_event()).expect("ps2d: failed to write scroll event");
+                    self.input
+                        .write(
+                            &ScrollEvent {
+                                x: 0,
+                                y: -(dz as i32),
+                            }
+                            .to_event(),
+                        )
+                        .expect("ps2d: failed to write scroll event");
                 }
 
                 let left = status & vm::LEFT_BUTTON == vm::LEFT_BUTTON;
                 let middle = status & vm::MIDDLE_BUTTON == vm::MIDDLE_BUTTON;
                 let right = status & vm::RIGHT_BUTTON == vm::RIGHT_BUTTON;
-                if left != self.mouse_left || middle != self.mouse_middle || right != self.mouse_right {
+                if left != self.mouse_left
+                    || middle != self.mouse_middle
+                    || right != self.mouse_right
+                {
                     self.mouse_left = left;
                     self.mouse_middle = middle;
                     self.mouse_right = right;
-                    self.input.write(&ButtonEvent {
-                        left: left,
-                        middle: middle,
-                        right: right,
-                    }.to_event()).expect("ps2d: failed to write button event");
+                    self.input
+                        .write(
+                            &ButtonEvent {
+                                left: left,
+                                middle: middle,
+                                right: right,
+                            }
+                            .to_event(),
+                        )
+                        .expect("ps2d: failed to write button event");
                 }
             }
         } else {
@@ -297,13 +323,17 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
             self.packet_i += 1;
 
             let flags = MousePacketFlags::from_bits_truncate(self.packets[0]);
-            if ! flags.contains(MousePacketFlags::ALWAYS_ON) {
+            if !flags.contains(MousePacketFlags::ALWAYS_ON) {
                 error!("ps2d: mouse misalign {:X}", self.packets[0]);
 
                 self.packets = [0; 4];
                 self.packet_i = 0;
-            } else if self.packet_i >= self.packets.len() || (!self.extra_packet && self.packet_i >= 3) {
-                if ! flags.contains(MousePacketFlags::X_OVERFLOW) && ! flags.contains(MousePacketFlags::Y_OVERFLOW) {
+            } else if self.packet_i >= self.packets.len()
+                || (!self.extra_packet && self.packet_i >= 3)
+            {
+                if !flags.contains(MousePacketFlags::X_OVERFLOW)
+                    && !flags.contains(MousePacketFlags::Y_OVERFLOW)
+                {
                     let mut dx = self.packets[1] as i32;
                     if flags.contains(MousePacketFlags::X_SIGN) {
                         dx -= 0x100;
@@ -324,34 +354,43 @@ impl<F: Fn(u8,bool) -> char> Ps2d<F> {
                     }
 
                     if dx != 0 || dy != 0 {
-                        self.input.write(&MouseRelativeEvent {
-                            dx: dx,
-                            dy: dy,
-                        }.to_event()).expect("ps2d: failed to write mouse event");
+                        self.input
+                            .write(&MouseRelativeEvent { dx: dx, dy: dy }.to_event())
+                            .expect("ps2d: failed to write mouse event");
                     }
 
                     if dz != 0 {
-                        self.input.write(&ScrollEvent {
-                            x: 0,
-                            y: dz,
-                        }.to_event()).expect("ps2d: failed to write scroll event");
+                        self.input
+                            .write(&ScrollEvent { x: 0, y: dz }.to_event())
+                            .expect("ps2d: failed to write scroll event");
                     }
 
                     let left = flags.contains(MousePacketFlags::LEFT_BUTTON);
                     let middle = flags.contains(MousePacketFlags::MIDDLE_BUTTON);
                     let right = flags.contains(MousePacketFlags::RIGHT_BUTTON);
-                    if left != self.mouse_left || middle != self.mouse_middle || right != self.mouse_right {
+                    if left != self.mouse_left
+                        || middle != self.mouse_middle
+                        || right != self.mouse_right
+                    {
                         self.mouse_left = left;
                         self.mouse_middle = middle;
                         self.mouse_right = right;
-                        self.input.write(&ButtonEvent {
-                            left: left,
-                            middle: middle,
-                            right: right,
-                        }.to_event()).expect("ps2d: failed to write button event");
+                        self.input
+                            .write(
+                                &ButtonEvent {
+                                    left: left,
+                                    middle: middle,
+                                    right: right,
+                                }
+                                .to_event(),
+                            )
+                            .expect("ps2d: failed to write button event");
                     }
                 } else {
-                    warn!("ps2d: overflow {:X} {:X} {:X} {:X}", self.packets[0], self.packets[1], self.packets[2], self.packets[3]);
+                    warn!(
+                        "ps2d: overflow {:X} {:X} {:X} {:X}",
+                        self.packets[0], self.packets[1], self.packets[2], self.packets[3]
+                    );
                 }
 
                 self.packets = [0; 4];

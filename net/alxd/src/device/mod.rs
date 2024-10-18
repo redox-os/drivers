@@ -1,9 +1,9 @@
-use std::{ptr, thread, time};
 use std::convert::TryInto;
+use std::{ptr, thread, time};
 
-use syscall::error::{Error, EACCES, EINVAL, EIO, EWOULDBLOCK, Result};
-use syscall::flag::{EventFlags, O_NONBLOCK};
 use common::io::{Io, Mmio};
+use syscall::error::{Error, Result, EACCES, EINVAL, EIO, EWOULDBLOCK};
+use syscall::flag::{EventFlags, O_NONBLOCK};
 use syscall::scheme;
 
 use common::dma::Dma;
@@ -48,61 +48,48 @@ const CAP_MTQ: u32 = 1 << 8;
 /* support Multi-RX-Q */
 const CAP_MRQ: u32 = 1 << 9;
 
-const ISR_MISC: u32 =
-    ISR_PCIE_LNKDOWN |
-	ISR_DMAW |
-	ISR_DMAR |
-	ISR_SMB |
-	ISR_MANU |
-	ISR_TIMER;
+const ISR_MISC: u32 = ISR_PCIE_LNKDOWN | ISR_DMAW | ISR_DMAR | ISR_SMB | ISR_MANU | ISR_TIMER;
 
-const ISR_FATAL: u32 =
-    ISR_PCIE_LNKDOWN |
-	ISR_DMAW |
-	ISR_DMAR;
+const ISR_FATAL: u32 = ISR_PCIE_LNKDOWN | ISR_DMAW | ISR_DMAR;
 
-const ISR_ALERT: u32 =
-    ISR_RXF_OV |
-	ISR_TXF_UR |
-	ISR_RFD_UR;
+const ISR_ALERT: u32 = ISR_RXF_OV | ISR_TXF_UR | ISR_RFD_UR;
 
-const ISR_ALL_QUEUES: u32 =
-    ISR_TX_Q0 |
-	ISR_TX_Q1 |
-	ISR_TX_Q2 |
-	ISR_TX_Q3 |
-	ISR_RX_Q0 |
-	ISR_RX_Q1 |
-	ISR_RX_Q2 |
-	ISR_RX_Q3 |
-	ISR_RX_Q4 |
-	ISR_RX_Q5 |
-	ISR_RX_Q6 |
-	ISR_RX_Q7;
+const ISR_ALL_QUEUES: u32 = ISR_TX_Q0
+    | ISR_TX_Q1
+    | ISR_TX_Q2
+    | ISR_TX_Q3
+    | ISR_RX_Q0
+    | ISR_RX_Q1
+    | ISR_RX_Q2
+    | ISR_RX_Q3
+    | ISR_RX_Q4
+    | ISR_RX_Q5
+    | ISR_RX_Q6
+    | ISR_RX_Q7;
 
-const PCI_COMMAND_IO: u16 = 0x1;            /* Enable response in I/O space */
-const PCI_COMMAND_MEMORY: u16 = 0x2;        /* Enable response in Memory space */
-const PCI_COMMAND_MASTER: u16 = 0x4;        /* Enable bus mastering */
-const PCI_COMMAND_SPECIAL: u16 = 0x8;       /* Enable response to special cycles */
-const PCI_COMMAND_INVALIDATE: u16 = 0x10;   /* Use memory write and invalidate */
-const PCI_COMMAND_VGA_PALETTE: u16 = 0x20;  /* Enable palette snooping */
-const PCI_COMMAND_PARITY: u16 = 0x40;       /* Enable parity checking */
-const PCI_COMMAND_WAIT: u16 = 0x80;         /* Enable address/data stepping */
-const PCI_COMMAND_SERR: u16 = 0x100;        /* Enable SERR */
-const PCI_COMMAND_FAST_BACK: u16 = 0x200;   /* Enable back-to-back writes */
-const PCI_COMMAND_INTX_DISABLE: u16 = 0x400;/* INTx Emulation Disable */
+const PCI_COMMAND_IO: u16 = 0x1; /* Enable response in I/O space */
+const PCI_COMMAND_MEMORY: u16 = 0x2; /* Enable response in Memory space */
+const PCI_COMMAND_MASTER: u16 = 0x4; /* Enable bus mastering */
+const PCI_COMMAND_SPECIAL: u16 = 0x8; /* Enable response to special cycles */
+const PCI_COMMAND_INVALIDATE: u16 = 0x10; /* Use memory write and invalidate */
+const PCI_COMMAND_VGA_PALETTE: u16 = 0x20; /* Enable palette snooping */
+const PCI_COMMAND_PARITY: u16 = 0x40; /* Enable parity checking */
+const PCI_COMMAND_WAIT: u16 = 0x80; /* Enable address/data stepping */
+const PCI_COMMAND_SERR: u16 = 0x100; /* Enable SERR */
+const PCI_COMMAND_FAST_BACK: u16 = 0x200; /* Enable back-to-back writes */
+const PCI_COMMAND_INTX_DISABLE: u16 = 0x400; /* INTx Emulation Disable */
 
 /// MII basic mode control register
 const MII_BMCR: u16 = 0x00;
-    const BMCR_FULLDPLX: u16 = 0x0100;
-    const BMCR_ANRESTART: u16 = 0x0200;
-    const BMCR_ANENABLE: u16 = 0x1000;
-    const BMCR_SPEED100: u16 = 0x2000;
-    const BMCR_RESET: u16 = 0x8000;
+const BMCR_FULLDPLX: u16 = 0x0100;
+const BMCR_ANRESTART: u16 = 0x0200;
+const BMCR_ANENABLE: u16 = 0x1000;
+const BMCR_SPEED100: u16 = 0x2000;
+const BMCR_RESET: u16 = 0x8000;
 
 /// MII basic mode status register
 const MII_BMSR: u16 = 0x01;
-    const BMSR_LSTATUS: u16 = 0x0004;
+const BMSR_LSTATUS: u16 = 0x0004;
 
 /// MII advertisement register
 const MII_ADVERTISE: u16 = 0x04;
@@ -122,46 +109,46 @@ const ADVERTISED_Autoneg: u32 = 1 << 6;
 const ADVERTISED_Pause: u32 = 1 << 13;
 const ADVERTISED_Asym_Pause: u32 = 1 << 14;
 
-const ADVERTISE_CSMA: u32 = 0x0001;  /* Only selector supported     */
-const ADVERTISE_10HALF: u32 = 0x0020;  /* Try for 10mbps half-duplex  */
-const ADVERTISE_1000XFULL: u32 = 0x0020;  /* Try for 1000BASE-X full-duplex */
-const ADVERTISE_10FULL: u32 = 0x0040;  /* Try for 10mbps full-duplex  */
-const ADVERTISE_1000XHALF: u32 = 0x0040;  /* Try for 1000BASE-X half-duplex */
-const ADVERTISE_100HALF: u32 = 0x0080;  /* Try for 100mbps half-duplex */
-const ADVERTISE_1000XPAUSE: u32 = 0x0080;  /* Try for 1000BASE-X pause    */
-const ADVERTISE_100FULL: u32 = 0x0100;  /* Try for 100mbps full-duplex */
-const ADVERTISE_1000XPSE_ASYM: u32 = 0x0100;  /* Try for 1000BASE-X asym pause */
-const ADVERTISE_100BASE4: u32 = 0x0200;  /* Try for 100mbps 4k packets  */
-const ADVERTISE_PAUSE_CAP: u32 = 0x0400;  /* Try for pause               */
-const ADVERTISE_PAUSE_ASYM: u32 = 0x0800;  /* Try for asymetric pause     */
+const ADVERTISE_CSMA: u32 = 0x0001; /* Only selector supported     */
+const ADVERTISE_10HALF: u32 = 0x0020; /* Try for 10mbps half-duplex  */
+const ADVERTISE_1000XFULL: u32 = 0x0020; /* Try for 1000BASE-X full-duplex */
+const ADVERTISE_10FULL: u32 = 0x0040; /* Try for 10mbps full-duplex  */
+const ADVERTISE_1000XHALF: u32 = 0x0040; /* Try for 1000BASE-X half-duplex */
+const ADVERTISE_100HALF: u32 = 0x0080; /* Try for 100mbps half-duplex */
+const ADVERTISE_1000XPAUSE: u32 = 0x0080; /* Try for 1000BASE-X pause    */
+const ADVERTISE_100FULL: u32 = 0x0100; /* Try for 100mbps full-duplex */
+const ADVERTISE_1000XPSE_ASYM: u32 = 0x0100; /* Try for 1000BASE-X asym pause */
+const ADVERTISE_100BASE4: u32 = 0x0200; /* Try for 100mbps 4k packets  */
+const ADVERTISE_PAUSE_CAP: u32 = 0x0400; /* Try for pause               */
+const ADVERTISE_PAUSE_ASYM: u32 = 0x0800; /* Try for asymetric pause     */
 
 const ADVERTISE_1000HALF: u32 = 0x0100;
 const ADVERTISE_1000FULL: u32 = 0x0200;
 
 macro_rules! FIELD_GETX {
-    ($x:expr, $name:ident) => ((
+    ($x:expr, $name:ident) => {
         ((($x) >> concat_idents!($name, _SHIFT)) & concat_idents!($name, _MASK))
-    ))
+    };
 }
 
 macro_rules! FIELDX {
-    ($name:ident, $v:expr) => ((
-        ((($v) as u32) & concat_idents!($name, _MASK)) << concat_idents!($name, _SHIFT)
-    ))
+    ($name:ident, $v:expr) => {
+        (((($v) as u32) & concat_idents!($name, _MASK)) << concat_idents!($name, _SHIFT))
+    };
 }
 
 macro_rules! FIELD_SETS {
     ($x:expr, $name:ident, $v:expr) => {{
         ($x) = (($x) & !(concat_idents!($name, _MASK) << concat_idents!($name, _SHIFT)))
-           | (((($v) as u16) & concat_idents!($name, _MASK)) << concat_idents!($name, _SHIFT))
-    }}
+            | (((($v) as u16) & concat_idents!($name, _MASK)) << concat_idents!($name, _SHIFT))
+    }};
 }
 
 macro_rules! FIELD_SET32 {
     ($x:expr, $name:ident, $v:expr) => {{
         ($x) = (($x) & !(concat_idents!($name, _MASK) << concat_idents!($name, _SHIFT)))
-           | (((($v) as u32) & concat_idents!($name, _MASK)) << concat_idents!($name, _SHIFT))
-    }}
+            | (((($v) as u32) & concat_idents!($name, _MASK)) << concat_idents!($name, _SHIFT))
+    }};
 }
 
 fn udelay(micros: u32) {
@@ -316,22 +303,22 @@ impl Alx {
             link_speed: 0,
             link_duplex: 0,
 
-            adv_cfg: ADVERTISED_Autoneg |
-        			ADVERTISED_10baseT_Half |
-        			ADVERTISED_10baseT_Full |
-        			ADVERTISED_100baseT_Full |
-        			ADVERTISED_100baseT_Half |
-        			ADVERTISED_1000baseT_Full,
+            adv_cfg: ADVERTISED_Autoneg
+                | ADVERTISED_10baseT_Half
+                | ADVERTISED_10baseT_Full
+                | ADVERTISED_100baseT_Full
+                | ADVERTISED_100baseT_Half
+                | ADVERTISED_1000baseT_Full,
             flowctrl: FC_ANEG | FC_RX | FC_TX,
 
-            rx_ctrl: MAC_CTRL_WOLSPED_SWEN |
-        			MAC_CTRL_MHASH_ALG_HI5B |
-        			MAC_CTRL_BRD_EN |
-        			MAC_CTRL_PCRCE |
-        			MAC_CTRL_CRCE |
-        			MAC_CTRL_RXFC_EN |
-        			MAC_CTRL_TXFC_EN |
-        			FIELDX!(MAC_CTRL_PRMBLEN, 7),
+            rx_ctrl: MAC_CTRL_WOLSPED_SWEN
+                | MAC_CTRL_MHASH_ALG_HI5B
+                | MAC_CTRL_BRD_EN
+                | MAC_CTRL_PCRCE
+                | MAC_CTRL_CRCE
+                | MAC_CTRL_RXFC_EN
+                | MAC_CTRL_TXFC_EN
+                | FIELDX!(MAC_CTRL_PRMBLEN, 7),
 
             lnk_patch: false,
             hib_patch: false,
@@ -358,72 +345,75 @@ impl Alx {
     }
 
     unsafe fn handle_intr_misc(&mut self, intr: u32) -> bool {
-    	if (intr & ISR_FATAL > 0) {
+        if (intr & ISR_FATAL > 0) {
             println!("intr-fatal: {:X}", intr);
             self.flag |= FLAG_TASK_RESET;
             self.task();
-    		return true;
-    	}
-
-    	if (intr & ISR_ALERT > 0) {
-    		println!("interrupt alert: {:X}", intr);
+            return true;
         }
 
-    	if (intr & ISR_SMB > 0) {
-            self.flag |= FLAG_TASK_UPDATE_SMB;
-    		self.task();
-    	}
+        if (intr & ISR_ALERT > 0) {
+            println!("interrupt alert: {:X}", intr);
+        }
 
-    	if (intr & ISR_PHY > 0) {
-    		/* suppress PHY interrupt, because the source
-    		 * is from PHY internal. only the internal status
-    		 * is cleared, the interrupt status could be cleared.
-    		 */
-    		self.imask &= !ISR_PHY;
+        if (intr & ISR_SMB > 0) {
+            self.flag |= FLAG_TASK_UPDATE_SMB;
+            self.task();
+        }
+
+        if (intr & ISR_PHY > 0) {
+            /* suppress PHY interrupt, because the source
+             * is from PHY internal. only the internal status
+             * is cleared, the interrupt status could be cleared.
+             */
+            self.imask &= !ISR_PHY;
             let imask = self.imask;
             self.write(IMR, imask);
             self.flag |= FLAG_TASK_CHK_LINK;
             self.task();
-    	}
+        }
 
-    	return false;
+        return false;
     }
 
     unsafe fn intr_1(&mut self, mut intr: u32) -> bool {
-    	/* ACK interrupt */
-    	println!("ACK interrupt: {:X}", intr | ISR_DIS);
-    	self.write(ISR, intr | ISR_DIS);
-    	intr &= self.imask;
+        /* ACK interrupt */
+        println!("ACK interrupt: {:X}", intr | ISR_DIS);
+        self.write(ISR, intr | ISR_DIS);
+        intr &= self.imask;
 
-    	if (self.handle_intr_misc(intr)) {
-    		return true;
+        if (self.handle_intr_misc(intr)) {
+            return true;
         }
 
-    	if (intr & (ISR_TX_Q0 | ISR_RX_Q0) > 0) {
+        if (intr & (ISR_TX_Q0 | ISR_RX_Q0) > 0) {
             println!("TX | RX");
-    		//TODO: napi_schedule(&adpt->qnapi[0]->napi);
-    		/* mask rx/tx interrupt, enable them when napi complete */
-    		self.imask &= !ISR_ALL_QUEUES;
+            //TODO: napi_schedule(&adpt->qnapi[0]->napi);
+            /* mask rx/tx interrupt, enable them when napi complete */
+            self.imask &= !ISR_ALL_QUEUES;
             let imask = self.imask;
-    		self.write(IMR, imask);
-    	}
+            self.write(IMR, imask);
+        }
 
-    	self.write(ISR, 0);
+        self.write(ISR, 0);
 
-    	return true;
+        return true;
     }
 
     pub unsafe fn intr_legacy(&mut self) -> bool {
-    	/* read interrupt status */
-    	let intr = self.read(ISR);
-    	if (intr & ISR_DIS > 0 || intr & self.imask == 0) {
-    		let mask = self.read(IMR);
-    		println!("seems a wild interrupt, intr={:X}, imask={:X}, mask={:X}", intr, self.imask, mask);
+        /* read interrupt status */
+        let intr = self.read(ISR);
+        if (intr & ISR_DIS > 0 || intr & self.imask == 0) {
+            let mask = self.read(IMR);
+            println!(
+                "seems a wild interrupt, intr={:X}, imask={:X}, mask={:X}",
+                intr, self.imask, mask
+            );
 
-    		return false;
-    	}
+            return false;
+        }
 
-    	return self.intr_1(intr);
+        return self.intr_1(intr);
     }
 
     pub fn next_read(&self) -> usize {
@@ -459,46 +449,46 @@ impl Alx {
 
     unsafe fn wait_mdio_idle(&mut self) -> bool {
         let mut val: u32;
-    	let mut i: u32 = 0;
+        let mut i: u32 = 0;
 
-    	while (i < MDIO_MAX_AC_TO) {
-    		val = self.read(MDIO);
-    		if (val & MDIO_BUSY == 0) {
-    			break;
+        while (i < MDIO_MAX_AC_TO) {
+            val = self.read(MDIO);
+            if (val & MDIO_BUSY == 0) {
+                break;
             }
-    		udelay(10);
+            udelay(10);
             i += 1;
-    	}
-    	return i != MDIO_MAX_AC_TO;
+        }
+        return i != MDIO_MAX_AC_TO;
     }
 
     unsafe fn stop_phy_polling(&mut self) {
         if (!self.is_fpga) {
-    		return;
+            return;
         }
 
-    	self.write(MDIO, 0);
-    	self.wait_mdio_idle();
+        self.write(MDIO, 0);
+        self.wait_mdio_idle();
     }
 
     unsafe fn start_phy_polling(&mut self, clk_sel: u16) {
         let mut val: u32;
 
-    	if (!self.is_fpga) {
-    		return;
+        if (!self.is_fpga) {
+            return;
         }
 
-    	val = MDIO_SPRES_PRMBL |
-    	      FIELDX!(MDIO_CLK_SEL, clk_sel) |
-    	      FIELDX!(MDIO_REG, 1) |
-    	      MDIO_START |
-    	      MDIO_OP_READ;
-    	self.write(MDIO, val);
-    	self.wait_mdio_idle();
-    	val |= MDIO_AUTO_POLLING;
-    	val &= !MDIO_START;
-    	self.write(MDIO, val);
-    	udelay(30);
+        val = MDIO_SPRES_PRMBL
+            | FIELDX!(MDIO_CLK_SEL, clk_sel)
+            | FIELDX!(MDIO_REG, 1)
+            | MDIO_START
+            | MDIO_OP_READ;
+        self.write(MDIO, val);
+        self.wait_mdio_idle();
+        val |= MDIO_AUTO_POLLING;
+        val &= !MDIO_START;
+        self.write(MDIO, val);
+        udelay(30);
     }
 
     unsafe fn read_phy_core(&mut self, ext: bool, dev: u8, reg: u16, phy_data: &mut u16) -> usize {
@@ -506,43 +496,46 @@ impl Alx {
         let clk_sel: u16;
         let err: usize;
 
-    	self.stop_phy_polling();
+        self.stop_phy_polling();
 
-    	*phy_data = 0;
+        *phy_data = 0;
 
-    	/* use slow clock when it's in hibernation status */
-    	clk_sel = if !self.link_up { MDIO_CLK_SEL_25MD128 } else { MDIO_CLK_SEL_25MD4 };
-
-    	if (ext) {
-    		val = FIELDX!(MDIO_EXTN_DEVAD, dev) |
-    		      FIELDX!(MDIO_EXTN_REG, reg);
-    		self.write(MDIO_EXTN, val);
-
-    		val = MDIO_SPRES_PRMBL |
-    		      FIELDX!(MDIO_CLK_SEL, clk_sel) |
-    		      MDIO_START |
-    		      MDIO_MODE_EXT |
-    		      MDIO_OP_READ;
-    	} else {
-    		val = MDIO_SPRES_PRMBL |
-    		      FIELDX!(MDIO_CLK_SEL, clk_sel) |
-    		      FIELDX!(MDIO_REG, reg) |
-    		      MDIO_START |
-    		      MDIO_OP_READ;
-    	}
-    	self.write(MDIO, val);
-
-    	if (! self.wait_mdio_idle()) {
-    		err = ERR_MIIBUSY;
+        /* use slow clock when it's in hibernation status */
+        clk_sel = if !self.link_up {
+            MDIO_CLK_SEL_25MD128
         } else {
-    		val = self.read(MDIO);
-    		*phy_data = FIELD_GETX!(val, MDIO_DATA) as u16;
-    		err = 0;
-    	}
+            MDIO_CLK_SEL_25MD4
+        };
 
-    	self.start_phy_polling(clk_sel);
+        if (ext) {
+            val = FIELDX!(MDIO_EXTN_DEVAD, dev) | FIELDX!(MDIO_EXTN_REG, reg);
+            self.write(MDIO_EXTN, val);
 
-    	return err;
+            val = MDIO_SPRES_PRMBL
+                | FIELDX!(MDIO_CLK_SEL, clk_sel)
+                | MDIO_START
+                | MDIO_MODE_EXT
+                | MDIO_OP_READ;
+        } else {
+            val = MDIO_SPRES_PRMBL
+                | FIELDX!(MDIO_CLK_SEL, clk_sel)
+                | FIELDX!(MDIO_REG, reg)
+                | MDIO_START
+                | MDIO_OP_READ;
+        }
+        self.write(MDIO, val);
+
+        if (!self.wait_mdio_idle()) {
+            err = ERR_MIIBUSY;
+        } else {
+            val = self.read(MDIO);
+            *phy_data = FIELD_GETX!(val, MDIO_DATA) as u16;
+            err = 0;
+        }
+
+        self.start_phy_polling(clk_sel);
+
+        return err;
     }
 
     unsafe fn write_phy_core(&mut self, ext: bool, dev: u8, reg: u16, phy_data: u16) -> usize {
@@ -550,41 +543,44 @@ impl Alx {
         let clk_sel: u16;
         let mut err: usize = 0;
 
-    	self.stop_phy_polling();
+        self.stop_phy_polling();
 
-    	/* use slow clock when it's in hibernation status */
-    	clk_sel = if ! self.link_up { MDIO_CLK_SEL_25MD128 } else { MDIO_CLK_SEL_25MD4 };
+        /* use slow clock when it's in hibernation status */
+        clk_sel = if !self.link_up {
+            MDIO_CLK_SEL_25MD128
+        } else {
+            MDIO_CLK_SEL_25MD4
+        };
 
-    	if (ext) {
-    		val = FIELDX!(MDIO_EXTN_DEVAD, dev) |
-    		      FIELDX!(MDIO_EXTN_REG, reg);
-    		self.write(MDIO_EXTN, val);
+        if (ext) {
+            val = FIELDX!(MDIO_EXTN_DEVAD, dev) | FIELDX!(MDIO_EXTN_REG, reg);
+            self.write(MDIO_EXTN, val);
 
-    		val = MDIO_SPRES_PRMBL |
-    		      FIELDX!(MDIO_CLK_SEL, clk_sel) |
-    		      FIELDX!(MDIO_DATA, phy_data) |
-    		      MDIO_START |
-    		      MDIO_MODE_EXT;
-    	} else {
-    		val = MDIO_SPRES_PRMBL |
-    		      FIELDX!(MDIO_CLK_SEL, clk_sel) |
-    		      FIELDX!(MDIO_REG, reg) |
-    		      FIELDX!(MDIO_DATA, phy_data) |
-    		      MDIO_START;
-    	}
-    	self.write(MDIO, val);
+            val = MDIO_SPRES_PRMBL
+                | FIELDX!(MDIO_CLK_SEL, clk_sel)
+                | FIELDX!(MDIO_DATA, phy_data)
+                | MDIO_START
+                | MDIO_MODE_EXT;
+        } else {
+            val = MDIO_SPRES_PRMBL
+                | FIELDX!(MDIO_CLK_SEL, clk_sel)
+                | FIELDX!(MDIO_REG, reg)
+                | FIELDX!(MDIO_DATA, phy_data)
+                | MDIO_START;
+        }
+        self.write(MDIO, val);
 
-    	if ! self.wait_mdio_idle() {
-    		err = ERR_MIIBUSY;
+        if !self.wait_mdio_idle() {
+            err = ERR_MIIBUSY;
         }
 
-    	self.start_phy_polling(clk_sel);
+        self.start_phy_polling(clk_sel);
 
-    	return err;
+        return err;
     }
 
     unsafe fn read_phy_reg(&mut self, reg: u16, phy_data: &mut u16) -> usize {
-    	self.read_phy_core(false, 0, reg, phy_data)
+        self.read_phy_core(false, 0, reg, phy_data)
     }
 
     unsafe fn write_phy_reg(&mut self, reg: u16, phy_data: u16) -> usize {
@@ -592,7 +588,7 @@ impl Alx {
     }
 
     unsafe fn read_phy_ext(&mut self, dev: u8, reg: u16, data: &mut u16) -> usize {
-    	self.read_phy_core(true, dev, reg, data)
+        self.read_phy_core(true, dev, reg, data)
     }
 
     unsafe fn write_phy_ext(&mut self, dev: u8, reg: u16, data: u16) -> usize {
@@ -601,109 +597,102 @@ impl Alx {
 
     unsafe fn read_phy_dbg(&mut self, reg: u16, data: &mut u16) -> usize {
         let err = self.write_phy_reg(MII_DBG_ADDR, reg);
-    	if (err > 0) {
-    		return err;
+        if (err > 0) {
+            return err;
         }
 
         self.read_phy_reg(MII_DBG_DATA, data)
     }
 
     unsafe fn write_phy_dbg(&mut self, reg: u16, data: u16) -> usize {
-    	let err = self.write_phy_reg(MII_DBG_ADDR, reg);
-    	if (err > 0) {
-    		return err;
-    	}
+        let err = self.write_phy_reg(MII_DBG_ADDR, reg);
+        if (err > 0) {
+            return err;
+        }
 
-    	self.write_phy_reg(MII_DBG_DATA, data)
+        self.write_phy_reg(MII_DBG_DATA, data)
     }
 
     unsafe fn enable_aspm(&mut self, l0s_en: bool, l1_en: bool) {
         let mut pmctrl: u32;
-    	let rev: u8 = self.revid();
+        let rev: u8 = self.revid();
 
-    	pmctrl = self.read(PMCTRL);
+        pmctrl = self.read(PMCTRL);
 
-    	FIELD_SET32!(pmctrl, PMCTRL_LCKDET_TIMER, PMCTRL_LCKDET_TIMER_DEF);
-    	pmctrl |= PMCTRL_RCVR_WT_1US    |
-    		  PMCTRL_L1_CLKSW_EN    |
-    		  PMCTRL_L1_SRDSRX_PWD  ;
-    	FIELD_SET32!(pmctrl, PMCTRL_L1REQ_TO, PMCTRL_L1REG_TO_DEF);
-    	FIELD_SET32!(pmctrl, PMCTRL_L1_TIMER, PMCTRL_L1_TIMER_16US);
-    	pmctrl &= !(PMCTRL_L1_SRDS_EN |
-    		    PMCTRL_L1_SRDSPLL_EN |
-    		    PMCTRL_L1_BUFSRX_EN |
-    		    PMCTRL_SADLY_EN |
-    		    PMCTRL_HOTRST_WTEN|
-    		    PMCTRL_L0S_EN |
-    		    PMCTRL_L1_EN |
-    		    PMCTRL_ASPM_FCEN |
-    		    PMCTRL_TXL1_AFTER_L0S |
-    		    PMCTRL_RXL1_AFTER_L0S
-    		    );
-    	if ((rev == REV_A0 || rev == REV_A1) && self.with_cr()) {
-    		pmctrl |= PMCTRL_L1_SRDS_EN | PMCTRL_L1_SRDSPLL_EN;
+        FIELD_SET32!(pmctrl, PMCTRL_LCKDET_TIMER, PMCTRL_LCKDET_TIMER_DEF);
+        pmctrl |= PMCTRL_RCVR_WT_1US | PMCTRL_L1_CLKSW_EN | PMCTRL_L1_SRDSRX_PWD;
+        FIELD_SET32!(pmctrl, PMCTRL_L1REQ_TO, PMCTRL_L1REG_TO_DEF);
+        FIELD_SET32!(pmctrl, PMCTRL_L1_TIMER, PMCTRL_L1_TIMER_16US);
+        pmctrl &= !(PMCTRL_L1_SRDS_EN
+            | PMCTRL_L1_SRDSPLL_EN
+            | PMCTRL_L1_BUFSRX_EN
+            | PMCTRL_SADLY_EN
+            | PMCTRL_HOTRST_WTEN
+            | PMCTRL_L0S_EN
+            | PMCTRL_L1_EN
+            | PMCTRL_ASPM_FCEN
+            | PMCTRL_TXL1_AFTER_L0S
+            | PMCTRL_RXL1_AFTER_L0S);
+        if ((rev == REV_A0 || rev == REV_A1) && self.with_cr()) {
+            pmctrl |= PMCTRL_L1_SRDS_EN | PMCTRL_L1_SRDSPLL_EN;
         }
 
-    	if (l0s_en) {
-    		pmctrl |= (PMCTRL_L0S_EN | PMCTRL_ASPM_FCEN);
+        if (l0s_en) {
+            pmctrl |= (PMCTRL_L0S_EN | PMCTRL_ASPM_FCEN);
         }
-    	if (l1_en) {
-    		pmctrl |= (PMCTRL_L1_EN | PMCTRL_ASPM_FCEN);
+        if (l1_en) {
+            pmctrl |= (PMCTRL_L1_EN | PMCTRL_ASPM_FCEN);
         }
 
-    	self.write(PMCTRL, pmctrl);
+        self.write(PMCTRL, pmctrl);
     }
 
     unsafe fn reset_pcie(&mut self) {
         let mut val: u32;
-    	let rev: u8 = self.revid();
+        let rev: u8 = self.revid();
 
-    	/* Workaround for PCI problem when BIOS sets MMRBC incorrectly. */
+        /* Workaround for PCI problem when BIOS sets MMRBC incorrectly. */
         let mut val16 = ptr::read((self.base + 4) as *const u16);
-    	if (val16 & (PCI_COMMAND_MASTER | PCI_COMMAND_MEMORY | PCI_COMMAND_IO) == 0
-           || val16 & PCI_COMMAND_INTX_DISABLE > 0) {
+        if (val16 & (PCI_COMMAND_MASTER | PCI_COMMAND_MEMORY | PCI_COMMAND_IO) == 0
+            || val16 & PCI_COMMAND_INTX_DISABLE > 0)
+        {
             println!("Fix PCI_COMMAND_INTX_DISABLE");
-    		val16 = (val16 | (PCI_COMMAND_MASTER | PCI_COMMAND_MEMORY | PCI_COMMAND_IO)) & !PCI_COMMAND_INTX_DISABLE;
+            val16 = (val16 | (PCI_COMMAND_MASTER | PCI_COMMAND_MEMORY | PCI_COMMAND_IO))
+                & !PCI_COMMAND_INTX_DISABLE;
             ptr::write((self.base + 4) as *mut u16, val16);
-    	}
+        }
 
-    	/* clear WoL setting/status */
-    	val = self.read(WOL0);
-    	self.write(WOL0, 0);
+        /* clear WoL setting/status */
+        val = self.read(WOL0);
+        self.write(WOL0, 0);
 
-    	/* deflt val of PDLL D3PLLOFF */
-    	val = self.read(PDLL_TRNS1);
-    	self.write(PDLL_TRNS1, val & !PDLL_TRNS1_D3PLLOFF_EN);
+        /* deflt val of PDLL D3PLLOFF */
+        val = self.read(PDLL_TRNS1);
+        self.write(PDLL_TRNS1, val & !PDLL_TRNS1_D3PLLOFF_EN);
 
-    	/* mask some pcie error bits */
-    	val = self.read(UE_SVRT);
-    	val &= !(UE_SVRT_DLPROTERR | UE_SVRT_FCPROTERR);
-    	self.write(UE_SVRT, val);
+        /* mask some pcie error bits */
+        val = self.read(UE_SVRT);
+        val &= !(UE_SVRT_DLPROTERR | UE_SVRT_FCPROTERR);
+        self.write(UE_SVRT, val);
 
-    	/* wol 25M  & pclk */
-    	val = self.read(MASTER);
-    	if ((rev == REV_A0 || rev == REV_A1) && self.with_cr()) {
-    		if ((val & MASTER_WAKEN_25M) == 0 ||
-    		    (val & MASTER_PCLKSEL_SRDS) == 0) {
-    			self.write(MASTER,
-    				    val | MASTER_PCLKSEL_SRDS |
-    				    MASTER_WAKEN_25M);
-    		}
-    	} else {
-    		if ((val & MASTER_WAKEN_25M) == 0 ||
-    		    (val & MASTER_PCLKSEL_SRDS) != 0) {
-    			self.write(MASTER,
-    				    (val & !MASTER_PCLKSEL_SRDS) |
-    				    MASTER_WAKEN_25M);
-    		}
-    	}
+        /* wol 25M  & pclk */
+        val = self.read(MASTER);
+        if ((rev == REV_A0 || rev == REV_A1) && self.with_cr()) {
+            if ((val & MASTER_WAKEN_25M) == 0 || (val & MASTER_PCLKSEL_SRDS) == 0) {
+                self.write(MASTER, val | MASTER_PCLKSEL_SRDS | MASTER_WAKEN_25M);
+            }
+        } else {
+            if ((val & MASTER_WAKEN_25M) == 0 || (val & MASTER_PCLKSEL_SRDS) != 0) {
+                self.write(MASTER, (val & !MASTER_PCLKSEL_SRDS) | MASTER_WAKEN_25M);
+            }
+        }
 
-    	/* ASPM setting */
+        /* ASPM setting */
         let l0s_en = self.cap & CAP_L0S > 0;
         let l1_en = self.cap & CAP_L1 > 0;
-    	self.enable_aspm(l0s_en, l1_en);
+        self.enable_aspm(l0s_en, l1_en);
 
-    	udelay(10);
+        udelay(10);
     }
 
     unsafe fn reset_phy(&mut self) {
@@ -711,89 +700,94 @@ impl Alx {
         let mut val: u32;
         let mut phy_val: u16 = 0;
 
-    	/* (DSP)reset PHY core */
-    	val = self.read(PHY_CTRL);
-    	val &= !(PHY_CTRL_DSPRST_OUT | PHY_CTRL_IDDQ |
-    		 PHY_CTRL_GATE_25M | PHY_CTRL_POWER_DOWN |
-    		 PHY_CTRL_CLS);
-    	val |= PHY_CTRL_RST_ANALOG;
+        /* (DSP)reset PHY core */
+        val = self.read(PHY_CTRL);
+        val &= !(PHY_CTRL_DSPRST_OUT
+            | PHY_CTRL_IDDQ
+            | PHY_CTRL_GATE_25M
+            | PHY_CTRL_POWER_DOWN
+            | PHY_CTRL_CLS);
+        val |= PHY_CTRL_RST_ANALOG;
 
-    	if (! self.hib_patch) {
-    		val |= (PHY_CTRL_HIB_PULSE | PHY_CTRL_HIB_EN);
-    	} else {
-    		val &= !(PHY_CTRL_HIB_PULSE | PHY_CTRL_HIB_EN);
+        if (!self.hib_patch) {
+            val |= (PHY_CTRL_HIB_PULSE | PHY_CTRL_HIB_EN);
+        } else {
+            val &= !(PHY_CTRL_HIB_PULSE | PHY_CTRL_HIB_EN);
         }
-    	self.write(PHY_CTRL, val);
-    	udelay(10);
-    	self.write(PHY_CTRL, val | PHY_CTRL_DSPRST_OUT);
+        self.write(PHY_CTRL, val);
+        udelay(10);
+        self.write(PHY_CTRL, val | PHY_CTRL_DSPRST_OUT);
 
-    	/* delay 800us */
+        /* delay 800us */
         i = 0;
-    	while (i < PHY_CTRL_DSPRST_TO) {
-    		udelay(10);
+        while (i < PHY_CTRL_DSPRST_TO) {
+            udelay(10);
             i += 1;
         }
 
-    	if ! self.is_fpga {
-        	/* phy power saving & hib */
-        	if (! self.hib_patch) {
-        		self.write_phy_dbg(MIIDBG_LEGCYPS, LEGCYPS_DEF);
-        		self.write_phy_dbg(MIIDBG_SYSMODCTRL,
-        			SYSMODCTRL_IECHOADJ_DEF);
-        		self.write_phy_ext(MIIEXT_PCS, MIIEXT_VDRVBIAS, VDRVBIAS_DEF);
-        	} else {
-        		self.write_phy_dbg(MIIDBG_LEGCYPS,
-        			LEGCYPS_DEF & !LEGCYPS_EN);
-        		self.write_phy_dbg(MIIDBG_HIBNEG, HIBNEG_NOHIB);
-        		self.write_phy_dbg(MIIDBG_GREENCFG, GREENCFG_DEF);
-        	}
+        if !self.is_fpga {
+            /* phy power saving & hib */
+            if (!self.hib_patch) {
+                self.write_phy_dbg(MIIDBG_LEGCYPS, LEGCYPS_DEF);
+                self.write_phy_dbg(MIIDBG_SYSMODCTRL, SYSMODCTRL_IECHOADJ_DEF);
+                self.write_phy_ext(MIIEXT_PCS, MIIEXT_VDRVBIAS, VDRVBIAS_DEF);
+            } else {
+                self.write_phy_dbg(MIIDBG_LEGCYPS, LEGCYPS_DEF & !LEGCYPS_EN);
+                self.write_phy_dbg(MIIDBG_HIBNEG, HIBNEG_NOHIB);
+                self.write_phy_dbg(MIIDBG_GREENCFG, GREENCFG_DEF);
+            }
 
-        	/* EEE advertisement */
-        	if (self.cap & CAP_AZ > 0) {
+            /* EEE advertisement */
+            if (self.cap & CAP_AZ > 0) {
                 let eeeadv = if self.cap & CAP_GIGA > 0 {
                     LOCAL_EEEADV_1000BT | LOCAL_EEEADV_100BT
                 } else {
                     LOCAL_EEEADV_100BT
                 };
-        		self.write_phy_ext(MIIEXT_ANEG, MIIEXT_LOCAL_EEEADV, eeeadv);
-        		/* half amplify */
-        		self.write_phy_dbg(MIIDBG_AZ_ANADECT,
-        			AZ_ANADECT_DEF);
-        	} else {
-        		val = self.read(LPI_CTRL);
-        		self.write(LPI_CTRL, val & (!LPI_CTRL_EN));
-        		self.write_phy_ext(MIIEXT_ANEG,
-        			MIIEXT_LOCAL_EEEADV, 0);
-        	}
+                self.write_phy_ext(MIIEXT_ANEG, MIIEXT_LOCAL_EEEADV, eeeadv);
+                /* half amplify */
+                self.write_phy_dbg(MIIDBG_AZ_ANADECT, AZ_ANADECT_DEF);
+            } else {
+                val = self.read(LPI_CTRL);
+                self.write(LPI_CTRL, val & (!LPI_CTRL_EN));
+                self.write_phy_ext(MIIEXT_ANEG, MIIEXT_LOCAL_EEEADV, 0);
+            }
 
-        	/* phy power saving */
-        	self.write_phy_dbg(MIIDBG_TST10BTCFG, TST10BTCFG_DEF);
-        	self.write_phy_dbg(MIIDBG_SRDSYSMOD, SRDSYSMOD_DEF);
-        	self.write_phy_dbg(MIIDBG_TST100BTCFG, TST100BTCFG_DEF);
-        	self.write_phy_dbg(MIIDBG_ANACTRL, ANACTRL_DEF);
-        	self.read_phy_dbg(MIIDBG_GREENCFG2, &mut phy_val);
-        	self.write_phy_dbg(MIIDBG_GREENCFG2, phy_val & (!GREENCFG2_GATE_DFSE_EN));
-        	/* rtl8139c, 120m issue */
-        	self.write_phy_ext(MIIEXT_ANEG, MIIEXT_NLP78, MIIEXT_NLP78_120M_DEF);
-        	self.write_phy_ext(MIIEXT_ANEG, MIIEXT_S3DIG10, MIIEXT_S3DIG10_DEF);
+            /* phy power saving */
+            self.write_phy_dbg(MIIDBG_TST10BTCFG, TST10BTCFG_DEF);
+            self.write_phy_dbg(MIIDBG_SRDSYSMOD, SRDSYSMOD_DEF);
+            self.write_phy_dbg(MIIDBG_TST100BTCFG, TST100BTCFG_DEF);
+            self.write_phy_dbg(MIIDBG_ANACTRL, ANACTRL_DEF);
+            self.read_phy_dbg(MIIDBG_GREENCFG2, &mut phy_val);
+            self.write_phy_dbg(MIIDBG_GREENCFG2, phy_val & (!GREENCFG2_GATE_DFSE_EN));
+            /* rtl8139c, 120m issue */
+            self.write_phy_ext(MIIEXT_ANEG, MIIEXT_NLP78, MIIEXT_NLP78_120M_DEF);
+            self.write_phy_ext(MIIEXT_ANEG, MIIEXT_S3DIG10, MIIEXT_S3DIG10_DEF);
 
-        	if (self.lnk_patch) {
-        		/* Turn off half amplitude */
-        		self.read_phy_ext(MIIEXT_PCS, MIIEXT_CLDCTRL3, &mut phy_val);
-        		self.write_phy_ext(MIIEXT_PCS, MIIEXT_CLDCTRL3, phy_val | CLDCTRL3_BP_CABLE1TH_DET_GT);
-        		/* Turn off Green feature */
-        		self.read_phy_dbg(MIIDBG_GREENCFG2, &mut phy_val);
-        		self.write_phy_dbg(MIIDBG_GREENCFG2, phy_val | GREENCFG2_BP_GREEN);
-        		/* Turn off half Bias */
-        		self.read_phy_ext(MIIEXT_PCS, MIIEXT_CLDCTRL5, &mut phy_val);
-        		self.write_phy_ext(MIIEXT_PCS, MIIEXT_CLDCTRL5, phy_val | CLDCTRL5_BP_VD_HLFBIAS);
-        	}
+            if (self.lnk_patch) {
+                /* Turn off half amplitude */
+                self.read_phy_ext(MIIEXT_PCS, MIIEXT_CLDCTRL3, &mut phy_val);
+                self.write_phy_ext(
+                    MIIEXT_PCS,
+                    MIIEXT_CLDCTRL3,
+                    phy_val | CLDCTRL3_BP_CABLE1TH_DET_GT,
+                );
+                /* Turn off Green feature */
+                self.read_phy_dbg(MIIDBG_GREENCFG2, &mut phy_val);
+                self.write_phy_dbg(MIIDBG_GREENCFG2, phy_val | GREENCFG2_BP_GREEN);
+                /* Turn off half Bias */
+                self.read_phy_ext(MIIEXT_PCS, MIIEXT_CLDCTRL5, &mut phy_val);
+                self.write_phy_ext(
+                    MIIEXT_PCS,
+                    MIIEXT_CLDCTRL5,
+                    phy_val | CLDCTRL5_BP_VD_HLFBIAS,
+                );
+            }
         }
 
-    	/* set phy interrupt mask */
-    	self.write_phy_reg(MII_IER, IER_LINK_UP | IER_LINK_DOWN);
+        /* set phy interrupt mask */
+        self.write_phy_reg(MII_IER, IER_LINK_UP | IER_LINK_DOWN);
     }
-
 
     unsafe fn stop_mac(&mut self) -> usize {
         let txq: u32;
@@ -801,27 +795,31 @@ impl Alx {
         let mut val: u32;
         let mut i: u32;
 
-    	rxq = self.read(RXQ0);
-    	self.write(RXQ0, rxq & (!RXQ0_EN));
-    	txq = self.read(TXQ0);
-    	self.write(TXQ0, txq & (!TXQ0_EN));
+        rxq = self.read(RXQ0);
+        self.write(RXQ0, rxq & (!RXQ0_EN));
+        txq = self.read(TXQ0);
+        self.write(TXQ0, txq & (!TXQ0_EN));
 
-    	udelay(40);
+        udelay(40);
 
-    	self.rx_ctrl &= !(MAC_CTRL_RX_EN | MAC_CTRL_TX_EN);
-    	self.write(MAC_CTRL, self.rx_ctrl);
+        self.rx_ctrl &= !(MAC_CTRL_RX_EN | MAC_CTRL_TX_EN);
+        self.write(MAC_CTRL, self.rx_ctrl);
 
         i = 0;
-    	while i < DMA_MAC_RST_TO {
-    		val = self.read(MAC_STS);
-    		if (val & MAC_STS_IDLE == 0) {
-    			break;
+        while i < DMA_MAC_RST_TO {
+            val = self.read(MAC_STS);
+            if (val & MAC_STS_IDLE == 0) {
+                break;
             }
-    		udelay(10);
+            udelay(10);
             i += 1;
-    	}
+        }
 
-    	return if (DMA_MAC_RST_TO == i) { ERR_RSTMAC as usize } else { 0 };
+        return if (DMA_MAC_RST_TO == i) {
+            ERR_RSTMAC as usize
+        } else {
+            0
+        };
     }
 
     unsafe fn start_mac(&mut self) {
@@ -829,66 +827,69 @@ impl Alx {
         let txq: u32;
         let rxq: u32;
 
-    	rxq = self.read(RXQ0);
-    	self.write(RXQ0, rxq | RXQ0_EN);
-    	txq = self.read(TXQ0);
-    	self.write(TXQ0, txq | TXQ0_EN);
+        rxq = self.read(RXQ0);
+        self.write(RXQ0, rxq | RXQ0_EN);
+        txq = self.read(TXQ0);
+        self.write(TXQ0, txq | TXQ0_EN);
 
-    	mac = self.rx_ctrl;
-    	if (self.link_duplex == FULL_DUPLEX) {
-    		mac |= MAC_CTRL_FULLD;
-    	} else {
-    		mac &= !MAC_CTRL_FULLD;
-        }
-    	FIELD_SET32!(mac, MAC_CTRL_SPEED, if self.link_speed == 1000 {
-            MAC_CTRL_SPEED_1000
+        mac = self.rx_ctrl;
+        if (self.link_duplex == FULL_DUPLEX) {
+            mac |= MAC_CTRL_FULLD;
         } else {
-            MAC_CTRL_SPEED_10_100
-        });
-    	mac |= MAC_CTRL_TX_EN | MAC_CTRL_RX_EN;
-    	self.rx_ctrl = mac;
-    	self.write(MAC_CTRL, mac);
+            mac &= !MAC_CTRL_FULLD;
+        }
+        FIELD_SET32!(
+            mac,
+            MAC_CTRL_SPEED,
+            if self.link_speed == 1000 {
+                MAC_CTRL_SPEED_1000
+            } else {
+                MAC_CTRL_SPEED_10_100
+            }
+        );
+        mac |= MAC_CTRL_TX_EN | MAC_CTRL_RX_EN;
+        self.rx_ctrl = mac;
+        self.write(MAC_CTRL, mac);
     }
 
     unsafe fn reset_osc(&mut self, rev: u8) {
         let mut val: u32;
         let mut val2: u32;
 
-    	/* clear Internal OSC settings, switching OSC by hw itself */
-    	val = self.read(MISC3);
-    	self.write(MISC3,
-    		(val & !MISC3_25M_BY_SW) | MISC3_25M_NOTO_INTNL);
+        /* clear Internal OSC settings, switching OSC by hw itself */
+        val = self.read(MISC3);
+        self.write(MISC3, (val & !MISC3_25M_BY_SW) | MISC3_25M_NOTO_INTNL);
 
-    	/* 25M clk from chipset may be unstable 1s after de-assert of
-    	 * PERST, driver need re-calibrate before enter Sleep for WoL
-    	 */
-    	val = self.read(MISC);
-    	if (rev >= REV_B0) {
-    		/* restore over current protection def-val,
-    		 * this val could be reset by MAC-RST
-    		 */
-    		FIELD_SET32!(val, MISC_PSW_OCP, MISC_PSW_OCP_DEF);
-    		/* a 0->1 change will update the internal val of osc */
-    		val &= !MISC_INTNLOSC_OPEN;
-    		self.write(MISC, val);
-    		self.write(MISC, val | MISC_INTNLOSC_OPEN);
-    		/* hw will automatically dis OSC after cab. */
-    		val2 = self.read(MSIC2);
-    		val2 &= !MSIC2_CALB_START;
-    		self.write(MSIC2, val2);
-    		self.write(MSIC2, val2 | MSIC2_CALB_START);
-    	} else {
-    		val &= !MISC_INTNLOSC_OPEN;
-    		/* disable isoloate for A0 */
-    		if ((rev == REV_A0 || rev == REV_A1)) {
-    			val &= !MISC_ISO_EN;
+        /* 25M clk from chipset may be unstable 1s after de-assert of
+         * PERST, driver need re-calibrate before enter Sleep for WoL
+         */
+        val = self.read(MISC);
+        if (rev >= REV_B0) {
+            /* restore over current protection def-val,
+             * this val could be reset by MAC-RST
+             */
+            FIELD_SET32!(val, MISC_PSW_OCP, MISC_PSW_OCP_DEF);
+            /* a 0->1 change will update the internal val of osc */
+            val &= !MISC_INTNLOSC_OPEN;
+            self.write(MISC, val);
+            self.write(MISC, val | MISC_INTNLOSC_OPEN);
+            /* hw will automatically dis OSC after cab. */
+            val2 = self.read(MSIC2);
+            val2 &= !MSIC2_CALB_START;
+            self.write(MSIC2, val2);
+            self.write(MSIC2, val2 | MSIC2_CALB_START);
+        } else {
+            val &= !MISC_INTNLOSC_OPEN;
+            /* disable isoloate for A0 */
+            if (rev == REV_A0 || rev == REV_A1) {
+                val &= !MISC_ISO_EN;
             }
 
-    		self.write(MISC, val | MISC_INTNLOSC_OPEN);
-    		self.write(MISC, val);
-    	}
+            self.write(MISC, val | MISC_INTNLOSC_OPEN);
+            self.write(MISC, val);
+        }
 
-    	udelay(20);
+        udelay(20);
     }
 
     unsafe fn reset_mac(&mut self) -> usize {
@@ -899,213 +900,210 @@ impl Alx {
         let rev: u8;
         let a_cr: bool;
 
-    	pmctrl = 0;
-    	rev = self.revid();
-    	a_cr = (rev == REV_A0 || rev == REV_A1) && self.with_cr();
+        pmctrl = 0;
+        rev = self.revid();
+        a_cr = (rev == REV_A0 || rev == REV_A1) && self.with_cr();
 
-    	/* disable all interrupts, RXQ/TXQ */
-    	self.write(MSIX_MASK, 0xFFFFFFFF);
-    	self.write(IMR, 0);
-    	self.write(ISR, ISR_DIS);
+        /* disable all interrupts, RXQ/TXQ */
+        self.write(MSIX_MASK, 0xFFFFFFFF);
+        self.write(IMR, 0);
+        self.write(ISR, ISR_DIS);
 
-    	ret = self.stop_mac();
-    	if (ret > 0) {
-    		return ret;
+        ret = self.stop_mac();
+        if (ret > 0) {
+            return ret;
         }
 
-    	/* mac reset workaroud */
-    	self.write(RFD_PIDX, 1);
+        /* mac reset workaroud */
+        self.write(RFD_PIDX, 1);
 
-    	/* dis l0s/l1 before mac reset */
-    	if (a_cr) {
-    		pmctrl = self.read(PMCTRL);
-    		if ((pmctrl & (PMCTRL_L1_EN | PMCTRL_L0S_EN)) != 0) {
-    			self.write(PMCTRL, pmctrl & !(PMCTRL_L1_EN | PMCTRL_L0S_EN));
-    		}
-    	}
+        /* dis l0s/l1 before mac reset */
+        if (a_cr) {
+            pmctrl = self.read(PMCTRL);
+            if ((pmctrl & (PMCTRL_L1_EN | PMCTRL_L0S_EN)) != 0) {
+                self.write(PMCTRL, pmctrl & !(PMCTRL_L1_EN | PMCTRL_L0S_EN));
+            }
+        }
 
-    	/* reset whole mac safely */
-    	val = self.read(MASTER);
-    	self.write(MASTER, val | MASTER_DMA_MAC_RST | MASTER_OOB_DIS);
+        /* reset whole mac safely */
+        val = self.read(MASTER);
+        self.write(MASTER, val | MASTER_DMA_MAC_RST | MASTER_OOB_DIS);
 
-    	/* make sure it's real idle */
-    	udelay(10);
+        /* make sure it's real idle */
+        udelay(10);
         i = 0;
-    	while (i < DMA_MAC_RST_TO) {
-    		val = self.read(RFD_PIDX);
-    		if (val == 0) {
-    			break;
-            }
-    		udelay(10);
-            i += 1;
-    	}
         while (i < DMA_MAC_RST_TO) {
-    		val = self.read(MASTER);
-    		if ((val & MASTER_DMA_MAC_RST) == 0) {
-    			break;
+            val = self.read(RFD_PIDX);
+            if (val == 0) {
+                break;
             }
-    		udelay(10);
+            udelay(10);
             i += 1;
-    	}
-    	if (i == DMA_MAC_RST_TO) {
-    		return ERR_RSTMAC;
         }
-    	udelay(10);
-
-    	if (a_cr) {
-    		/* set MASTER_PCLKSEL_SRDS (affect by soft-rst, PERST) */
-    		self.write(MASTER, val | MASTER_PCLKSEL_SRDS);
-    		/* resoter l0s / l1 */
-    		if (pmctrl & (PMCTRL_L1_EN | PMCTRL_L0S_EN) > 0) {
-    			self.write(PMCTRL, pmctrl);
+        while (i < DMA_MAC_RST_TO) {
+            val = self.read(MASTER);
+            if ((val & MASTER_DMA_MAC_RST) == 0) {
+                break;
             }
-    	}
-
-    	self.reset_osc(rev);
-    	/* clear Internal OSC settings, switching OSC by hw itself,
-    	 * disable isoloate for A version
-    	 */
-    	val = self.read(MISC3);
-    	self.write(MISC3, (val & !MISC3_25M_BY_SW) | MISC3_25M_NOTO_INTNL);
-    	val = self.read(MISC);
-    	val &= !MISC_INTNLOSC_OPEN;
-    	if ((rev == REV_A0 || rev == REV_A1)) {
-    		val &= !MISC_ISO_EN;
+            udelay(10);
+            i += 1;
         }
-    	self.write(MISC, val);
-    	udelay(20);
+        if (i == DMA_MAC_RST_TO) {
+            return ERR_RSTMAC;
+        }
+        udelay(10);
 
-    	/* driver control speed/duplex, hash-alg */
-    	self.write(MAC_CTRL, self.rx_ctrl);
-
-    	/* clk sw */
-    	val = self.read(SERDES);
-    	self.write(SERDES,
-    		val | SERDES_MACCLK_SLWDWN | SERDES_PHYCLK_SLWDWN);
-
-    	/* mac reset cause MDIO ctrl restore non-polling status */
-    	if (self.is_fpga) {
-    		self.start_phy_polling(MDIO_CLK_SEL_25MD128);
+        if (a_cr) {
+            /* set MASTER_PCLKSEL_SRDS (affect by soft-rst, PERST) */
+            self.write(MASTER, val | MASTER_PCLKSEL_SRDS);
+            /* resoter l0s / l1 */
+            if (pmctrl & (PMCTRL_L1_EN | PMCTRL_L0S_EN) > 0) {
+                self.write(PMCTRL, pmctrl);
+            }
         }
 
+        self.reset_osc(rev);
+        /* clear Internal OSC settings, switching OSC by hw itself,
+         * disable isoloate for A version
+         */
+        val = self.read(MISC3);
+        self.write(MISC3, (val & !MISC3_25M_BY_SW) | MISC3_25M_NOTO_INTNL);
+        val = self.read(MISC);
+        val &= !MISC_INTNLOSC_OPEN;
+        if (rev == REV_A0 || rev == REV_A1) {
+            val &= !MISC_ISO_EN;
+        }
+        self.write(MISC, val);
+        udelay(20);
 
-    	return ret;
+        /* driver control speed/duplex, hash-alg */
+        self.write(MAC_CTRL, self.rx_ctrl);
+
+        /* clk sw */
+        val = self.read(SERDES);
+        self.write(SERDES, val | SERDES_MACCLK_SLWDWN | SERDES_PHYCLK_SLWDWN);
+
+        /* mac reset cause MDIO ctrl restore non-polling status */
+        if (self.is_fpga) {
+            self.start_phy_polling(MDIO_CLK_SEL_25MD128);
+        }
+
+        return ret;
     }
 
     unsafe fn ethadv_to_hw_cfg(&self, ethadv_cfg: u32) -> u32 {
-    	let mut cfg: u32 = 0;
+        let mut cfg: u32 = 0;
 
-    	if (ethadv_cfg & ADVERTISED_Autoneg > 0) {
-    		cfg |= DRV_PHY_AUTO;
-    		if (ethadv_cfg & ADVERTISED_10baseT_Half > 0) {
-    			cfg |= DRV_PHY_10;
+        if (ethadv_cfg & ADVERTISED_Autoneg > 0) {
+            cfg |= DRV_PHY_AUTO;
+            if (ethadv_cfg & ADVERTISED_10baseT_Half > 0) {
+                cfg |= DRV_PHY_10;
             }
-    		if (ethadv_cfg & ADVERTISED_10baseT_Full > 0) {
-    			cfg |= DRV_PHY_10 | DRV_PHY_DUPLEX;
+            if (ethadv_cfg & ADVERTISED_10baseT_Full > 0) {
+                cfg |= DRV_PHY_10 | DRV_PHY_DUPLEX;
             }
-    		if (ethadv_cfg & ADVERTISED_100baseT_Half > 0) {
-    			cfg |= DRV_PHY_100;
+            if (ethadv_cfg & ADVERTISED_100baseT_Half > 0) {
+                cfg |= DRV_PHY_100;
             }
-    		if (ethadv_cfg & ADVERTISED_100baseT_Full > 0) {
-    			cfg |= DRV_PHY_100 | DRV_PHY_DUPLEX;
+            if (ethadv_cfg & ADVERTISED_100baseT_Full > 0) {
+                cfg |= DRV_PHY_100 | DRV_PHY_DUPLEX;
             }
-    		if (ethadv_cfg & ADVERTISED_1000baseT_Half > 0) {
-    			cfg |= DRV_PHY_1000;
+            if (ethadv_cfg & ADVERTISED_1000baseT_Half > 0) {
+                cfg |= DRV_PHY_1000;
             }
-    		if (ethadv_cfg & ADVERTISED_1000baseT_Full > 0) {
-    			cfg |= DRV_PHY_100 | DRV_PHY_DUPLEX;
+            if (ethadv_cfg & ADVERTISED_1000baseT_Full > 0) {
+                cfg |= DRV_PHY_100 | DRV_PHY_DUPLEX;
             }
-    		if (ethadv_cfg & ADVERTISED_Pause > 0) {
-    			cfg |= ADVERTISE_PAUSE_CAP;
+            if (ethadv_cfg & ADVERTISED_Pause > 0) {
+                cfg |= ADVERTISE_PAUSE_CAP;
             }
-    		if (ethadv_cfg & ADVERTISED_Asym_Pause > 0) {
-    			cfg |= ADVERTISE_PAUSE_ASYM;
+            if (ethadv_cfg & ADVERTISED_Asym_Pause > 0) {
+                cfg |= ADVERTISE_PAUSE_ASYM;
             }
-    		if (self.cap & CAP_AZ > 0) {
-    			cfg |= DRV_PHY_EEE;
+            if (self.cap & CAP_AZ > 0) {
+                cfg |= DRV_PHY_EEE;
             }
-    	} else {
-    		match (ethadv_cfg) {
-        		ADVERTISED_10baseT_Half => {
-        			cfg |= DRV_PHY_10;
-        		},
-        		ADVERTISED_100baseT_Half => {
-        			cfg |= DRV_PHY_100;
-        		},
-        		ADVERTISED_10baseT_Full => {
-        			cfg |= DRV_PHY_10 | DRV_PHY_DUPLEX;
-        		},
-        		ADVERTISED_100baseT_Full => {
-        			cfg |= DRV_PHY_100 | DRV_PHY_DUPLEX;
-        		},
-                _ => ()
-    		}
-    	}
+        } else {
+            match (ethadv_cfg) {
+                ADVERTISED_10baseT_Half => {
+                    cfg |= DRV_PHY_10;
+                }
+                ADVERTISED_100baseT_Half => {
+                    cfg |= DRV_PHY_100;
+                }
+                ADVERTISED_10baseT_Full => {
+                    cfg |= DRV_PHY_10 | DRV_PHY_DUPLEX;
+                }
+                ADVERTISED_100baseT_Full => {
+                    cfg |= DRV_PHY_100 | DRV_PHY_DUPLEX;
+                }
+                _ => (),
+            }
+        }
 
-    	return cfg;
+        return cfg;
     }
 
     unsafe fn setup_speed_duplex(&mut self, ethadv: u32, flowctrl: u8) -> usize {
         let mut adv: u32;
         let mut giga: u16;
         let mut cr: u16;
-    	let mut val: u32;
-    	let mut err: usize = 0;
+        let mut val: u32;
+        let mut err: usize = 0;
 
-    	/* clear flag */
-    	self.write_phy_reg(MII_DBG_ADDR, 0);
-    	val = self.read(DRV);
-    	FIELD_SET32!(val, DRV_PHY, 0);
+        /* clear flag */
+        self.write_phy_reg(MII_DBG_ADDR, 0);
+        val = self.read(DRV);
+        FIELD_SET32!(val, DRV_PHY, 0);
 
-    	if (ethadv & ADVERTISED_Autoneg > 0) {
-    		adv = ADVERTISE_CSMA;
-    		adv |= ethtool_adv_to_mii_adv_t(ethadv);
+        if (ethadv & ADVERTISED_Autoneg > 0) {
+            adv = ADVERTISE_CSMA;
+            adv |= ethtool_adv_to_mii_adv_t(ethadv);
 
-    		if (flowctrl & FC_ANEG == FC_ANEG) {
-    			if (flowctrl & FC_RX > 0) {
-    				adv |= ADVERTISED_Pause;
-    				if (flowctrl & FC_TX == 0) {
-    					adv |= ADVERTISED_Asym_Pause;
+            if (flowctrl & FC_ANEG == FC_ANEG) {
+                if (flowctrl & FC_RX > 0) {
+                    adv |= ADVERTISED_Pause;
+                    if (flowctrl & FC_TX == 0) {
+                        adv |= ADVERTISED_Asym_Pause;
                     }
-    			} else if (flowctrl & FC_TX > 0) {
-    				adv |= ADVERTISED_Asym_Pause;
+                } else if (flowctrl & FC_TX > 0) {
+                    adv |= ADVERTISED_Asym_Pause;
                 }
-    		}
-    		giga = 0;
-    		if (self.cap & CAP_GIGA > 0) {
-    			giga = ethtool_adv_to_mii_ctrl1000_t(ethadv) as u16;
+            }
+            giga = 0;
+            if (self.cap & CAP_GIGA > 0) {
+                giga = ethtool_adv_to_mii_ctrl1000_t(ethadv) as u16;
             }
 
-    		cr = BMCR_RESET | BMCR_ANENABLE | BMCR_ANRESTART;
+            cr = BMCR_RESET | BMCR_ANENABLE | BMCR_ANRESTART;
 
-    		if (self.write_phy_reg(MII_ADVERTISE, adv as u16) > 0 ||
-    		    self.write_phy_reg(MII_CTRL1000, giga) > 0 ||
-    		    self.write_phy_reg(MII_BMCR, cr) > 0) {
-    			err = ERR_MIIBUSY;
+            if (self.write_phy_reg(MII_ADVERTISE, adv as u16) > 0
+                || self.write_phy_reg(MII_CTRL1000, giga) > 0
+                || self.write_phy_reg(MII_BMCR, cr) > 0)
+            {
+                err = ERR_MIIBUSY;
             }
-    	} else {
-    		cr = BMCR_RESET;
-    		if (ethadv == ADVERTISED_100baseT_Half ||
-    		    ethadv == ADVERTISED_100baseT_Full) {
-    			cr |= BMCR_SPEED100;
+        } else {
+            cr = BMCR_RESET;
+            if (ethadv == ADVERTISED_100baseT_Half || ethadv == ADVERTISED_100baseT_Full) {
+                cr |= BMCR_SPEED100;
             }
-    		if (ethadv == ADVERTISED_10baseT_Full ||
-    		    ethadv == ADVERTISED_100baseT_Full) {
-    			cr |= BMCR_FULLDPLX;
+            if (ethadv == ADVERTISED_10baseT_Full || ethadv == ADVERTISED_100baseT_Full) {
+                cr |= BMCR_FULLDPLX;
             }
 
-    		err = self.write_phy_reg(MII_BMCR, cr);
-    	}
+            err = self.write_phy_reg(MII_BMCR, cr);
+        }
 
-    	if (err == 0) {
-    		self.write_phy_reg(MII_DBG_ADDR, PHY_INITED);
-    		/* save config to HW */
-    		val |= self.ethadv_to_hw_cfg(ethadv);
-    	}
+        if (err == 0) {
+            self.write_phy_reg(MII_DBG_ADDR, PHY_INITED);
+            /* save config to HW */
+            val |= self.ethadv_to_hw_cfg(ethadv);
+        }
 
-    	self.write(DRV, val);
+        self.write(DRV, val);
 
-    	return err;
+        return err;
     }
 
     unsafe fn get_perm_macaddr(&mut self) -> [u8; 6] {
@@ -1117,55 +1115,59 @@ impl Alx {
             (mac_low >> 16) as u8,
             (mac_low >> 24) as u8,
             mac_high as u8,
-            (mac_high >> 8) as u8
+            (mac_high >> 8) as u8,
         ]
     }
 
     unsafe fn get_phy_link(&mut self, link_up: &mut bool, speed: &mut u16) -> usize {
         let mut bmsr: u16 = 0;
         let mut giga: u16 = 0;
-    	let mut err: usize;
+        let mut err: usize;
 
-    	err = self.read_phy_reg(MII_BMSR, &mut bmsr);
-    	err = self.read_phy_reg(MII_BMSR, &mut bmsr);
-    	if (err > 0) {
-    		return err;
-        }
-
-    	if (bmsr & BMSR_LSTATUS == 0) {
-    		*link_up = false;
-            return err;
-    	}
-
-    	*link_up = true;
-
-    	/* speed/duplex result is saved in PHY Specific Status Register */
-    	err = self.read_phy_reg(MII_GIGA_PSSR, &mut giga);
-    	if (err > 0) {
+        err = self.read_phy_reg(MII_BMSR, &mut bmsr);
+        err = self.read_phy_reg(MII_BMSR, &mut bmsr);
+        if (err > 0) {
             return err;
         }
 
-    	if (giga & GIGA_PSSR_SPD_DPLX_RESOLVED == 0) {
+        if (bmsr & BMSR_LSTATUS == 0) {
+            *link_up = false;
+            return err;
+        }
+
+        *link_up = true;
+
+        /* speed/duplex result is saved in PHY Specific Status Register */
+        err = self.read_phy_reg(MII_GIGA_PSSR, &mut giga);
+        if (err > 0) {
+            return err;
+        }
+
+        if (giga & GIGA_PSSR_SPD_DPLX_RESOLVED == 0) {
             println!("PHY SPD/DPLX unresolved: {:X}", giga);
-        	err = (-EINVAL) as usize;
+            err = (-EINVAL) as usize;
         } else {
-        	match (giga & GIGA_PSSR_SPEED) {
-            	GIGA_PSSR_1000MBS => *speed = SPEED_1000,
-            	GIGA_PSSR_100MBS =>  *speed = SPEED_100,
-            	GIGA_PSSR_10MBS =>  *speed = SPEED_10,
-            	_ => {
+            match (giga & GIGA_PSSR_SPEED) {
+                GIGA_PSSR_1000MBS => *speed = SPEED_1000,
+                GIGA_PSSR_100MBS => *speed = SPEED_100,
+                GIGA_PSSR_10MBS => *speed = SPEED_10,
+                _ => {
                     println!("PHY SPD/DPLX unresolved: {:X}", giga);
-                	err = (-EINVAL) as usize;
+                    err = (-EINVAL) as usize;
                 }
-        	}
-        	*speed += if (giga & GIGA_PSSR_DPLX > 0) { FULL_DUPLEX as u16 } else { HALF_DUPLEX as u16 };
+            }
+            *speed += if (giga & GIGA_PSSR_DPLX > 0) {
+                FULL_DUPLEX as u16
+            } else {
+                HALF_DUPLEX as u16
+            };
         }
 
-    	return err;
+        return err;
     }
 
     fn show_speed(&self, speed: u16) {
-        let desc = if speed == SPEED_1000 + FULL_DUPLEX as u16  {
+        let desc = if speed == SPEED_1000 + FULL_DUPLEX as u16 {
             "1 Gbps Full"
         } else if speed == SPEED_100 + FULL_DUPLEX as u16 {
             "100 Mbps Full"
@@ -1189,188 +1191,185 @@ impl Alx {
         let val16: u16;
         let chip_rev = self.revid();
 
-    	/* mac address */
-    	//TODO alx_set_macaddr(hw, self.mac_addr);
+        /* mac address */
+        //TODO alx_set_macaddr(hw, self.mac_addr);
 
-    	/* clk gating */
-    	self.write(CLK_GATE, CLK_GATE_ALL_A0);
+        /* clk gating */
+        self.write(CLK_GATE, CLK_GATE_ALL_A0);
 
-    	/* idle timeout to switch clk_125M */
-    	if (chip_rev >= REV_B0) {
-    		self.write(IDLE_DECISN_TIMER,
-    			IDLE_DECISN_TIMER_DEF);
-    	}
-
-    	/* stats refresh timeout */
-    	self.write(SMB_TIMER, self.smb_timer * 500);
-
-    	/* intr moduration */
-    	val = self.read(MASTER);
-    	val = val | MASTER_IRQMOD2_EN |
-    		    MASTER_IRQMOD1_EN |
-    		    MASTER_SYSALVTIMER_EN;
-    	self.write(MASTER, val);
-    	self.write(IRQ_MODU_TIMER,
-    		    FIELDX!(IRQ_MODU_TIMER1, self.imt >> 1));
-    	/* intr re-trig timeout */
-    	self.write(INT_RETRIG, INT_RETRIG_TO);
-    	/* tpd threshold to trig int */
-    	self.write(TINT_TPD_THRSHLD, self.ith_tpd);
-    	self.write(TINT_TIMER, self.imt as u32);
-
-    	/* mtu, 8:fcs+vlan */
-    	raw_mtu = (self.mtu + ETH_HLEN) as u32;
-    	self.write(MTU, raw_mtu + 8);
-    	if (raw_mtu > MTU_JUMBO_TH) {
-    		self.rx_ctrl &= !MAC_CTRL_FAST_PAUSE;
+        /* idle timeout to switch clk_125M */
+        if (chip_rev >= REV_B0) {
+            self.write(IDLE_DECISN_TIMER, IDLE_DECISN_TIMER_DEF);
         }
 
-    	/* txq */
-    	if ((raw_mtu + 8) < TXQ1_JUMBO_TSO_TH) {
-    		val = (raw_mtu + 8 + 7) >> 3;
+        /* stats refresh timeout */
+        self.write(SMB_TIMER, self.smb_timer * 500);
+
+        /* intr moduration */
+        val = self.read(MASTER);
+        val = val | MASTER_IRQMOD2_EN | MASTER_IRQMOD1_EN | MASTER_SYSALVTIMER_EN;
+        self.write(MASTER, val);
+        self.write(IRQ_MODU_TIMER, FIELDX!(IRQ_MODU_TIMER1, self.imt >> 1));
+        /* intr re-trig timeout */
+        self.write(INT_RETRIG, INT_RETRIG_TO);
+        /* tpd threshold to trig int */
+        self.write(TINT_TPD_THRSHLD, self.ith_tpd);
+        self.write(TINT_TIMER, self.imt as u32);
+
+        /* mtu, 8:fcs+vlan */
+        raw_mtu = (self.mtu + ETH_HLEN) as u32;
+        self.write(MTU, raw_mtu + 8);
+        if (raw_mtu > MTU_JUMBO_TH) {
+            self.rx_ctrl &= !MAC_CTRL_FAST_PAUSE;
+        }
+
+        /* txq */
+        if ((raw_mtu + 8) < TXQ1_JUMBO_TSO_TH) {
+            val = (raw_mtu + 8 + 7) >> 3;
         } else {
-    		val = TXQ1_JUMBO_TSO_TH >> 3;
+            val = TXQ1_JUMBO_TSO_TH >> 3;
         }
-    	self.write(TXQ1, val | TXQ1_ERRLGPKT_DROP_EN);
+        self.write(TXQ1, val | TXQ1_ERRLGPKT_DROP_EN);
 
         /* TODO
-    	max_payload = alx_get_readrq(hw) >> 8;
-    	/*
-    	 * if BIOS had changed the default dma read max length,
-    	 * restore it to default value
-    	 */
-    	if (max_payload < DEV_CTRL_MAXRRS_MIN)
-    		alx_set_readrq(hw, 128 << DEV_CTRL_MAXRRS_MIN);
+        max_payload = alx_get_readrq(hw) >> 8;
+        /*
+         * if BIOS had changed the default dma read max length,
+         * restore it to default value
+         */
+        if (max_payload < DEV_CTRL_MAXRRS_MIN)
+            alx_set_readrq(hw, 128 << DEV_CTRL_MAXRRS_MIN);
         */
         max_payload = 128 << DEV_CTRL_MAXRRS_MIN;
 
-    	val = FIELDX!(TXQ0_TPD_BURSTPREF, TXQ_TPD_BURSTPREF_DEF) |
-    	      TXQ0_MODE_ENHANCE |
-    	      TXQ0_LSO_8023_EN |
-    	      TXQ0_SUPT_IPOPT |
-    	      FIELDX!(TXQ0_TXF_BURST_PREF, TXQ_TXF_BURST_PREF_DEF);
-    	self.write(TXQ0, val);
-    	val = FIELDX!(HQTPD_Q1_NUMPREF, TXQ_TPD_BURSTPREF_DEF) |
-    	      FIELDX!(HQTPD_Q2_NUMPREF, TXQ_TPD_BURSTPREF_DEF) |
-    	      FIELDX!(HQTPD_Q3_NUMPREF, TXQ_TPD_BURSTPREF_DEF) |
-    	      HQTPD_BURST_EN;
-    	self.write(HQTPD, val);
+        val = FIELDX!(TXQ0_TPD_BURSTPREF, TXQ_TPD_BURSTPREF_DEF)
+            | TXQ0_MODE_ENHANCE
+            | TXQ0_LSO_8023_EN
+            | TXQ0_SUPT_IPOPT
+            | FIELDX!(TXQ0_TXF_BURST_PREF, TXQ_TXF_BURST_PREF_DEF);
+        self.write(TXQ0, val);
+        val = FIELDX!(HQTPD_Q1_NUMPREF, TXQ_TPD_BURSTPREF_DEF)
+            | FIELDX!(HQTPD_Q2_NUMPREF, TXQ_TPD_BURSTPREF_DEF)
+            | FIELDX!(HQTPD_Q3_NUMPREF, TXQ_TPD_BURSTPREF_DEF)
+            | HQTPD_BURST_EN;
+        self.write(HQTPD, val);
 
-    	/* rxq, flow control */
-    	val = self.read(SRAM5);
-    	val = FIELD_GETX!(val, SRAM_RXF_LEN) << 3;
-    	if (val > SRAM_RXF_LEN_8K) {
-    		val16 = (MTU_STD_ALGN >> 3) as u16;
-    		val = (val - RXQ2_RXF_FLOW_CTRL_RSVD) >> 3;
-    	} else {
-    		val16 = (MTU_STD_ALGN >> 3) as u16;
-    		val = (val - MTU_STD_ALGN) >> 3;
-    	}
-    	self.write(RXQ2,
-    		    FIELDX!(RXQ2_RXF_XOFF_THRESH, val16) |
-    		    FIELDX!(RXQ2_RXF_XON_THRESH, val));
-    	val = FIELDX!(RXQ0_NUM_RFD_PREF, RXQ0_NUM_RFD_PREF_DEF) |
-    	      FIELDX!(RXQ0_RSS_MODE, RXQ0_RSS_MODE_DIS) |
-    	      FIELDX!(RXQ0_IDT_TBL_SIZE, RXQ0_IDT_TBL_SIZE_DEF) |
-    	      RXQ0_RSS_HSTYP_ALL |
-    	      RXQ0_RSS_HASH_EN |
-    	      RXQ0_IPV6_PARSE_EN;
-    	if (self.cap & CAP_GIGA > 0) {
-    		FIELD_SET32!(val, RXQ0_ASPM_THRESH, RXQ0_ASPM_THRESH_100M);
-    	}
-    	self.write(RXQ0, val);
+        /* rxq, flow control */
+        val = self.read(SRAM5);
+        val = FIELD_GETX!(val, SRAM_RXF_LEN) << 3;
+        if (val > SRAM_RXF_LEN_8K) {
+            val16 = (MTU_STD_ALGN >> 3) as u16;
+            val = (val - RXQ2_RXF_FLOW_CTRL_RSVD) >> 3;
+        } else {
+            val16 = (MTU_STD_ALGN >> 3) as u16;
+            val = (val - MTU_STD_ALGN) >> 3;
+        }
+        self.write(
+            RXQ2,
+            FIELDX!(RXQ2_RXF_XOFF_THRESH, val16) | FIELDX!(RXQ2_RXF_XON_THRESH, val),
+        );
+        val = FIELDX!(RXQ0_NUM_RFD_PREF, RXQ0_NUM_RFD_PREF_DEF)
+            | FIELDX!(RXQ0_RSS_MODE, RXQ0_RSS_MODE_DIS)
+            | FIELDX!(RXQ0_IDT_TBL_SIZE, RXQ0_IDT_TBL_SIZE_DEF)
+            | RXQ0_RSS_HSTYP_ALL
+            | RXQ0_RSS_HASH_EN
+            | RXQ0_IPV6_PARSE_EN;
+        if (self.cap & CAP_GIGA > 0) {
+            FIELD_SET32!(val, RXQ0_ASPM_THRESH, RXQ0_ASPM_THRESH_100M);
+        }
+        self.write(RXQ0, val);
 
-    	/* DMA */
-    	val = self.read(DMA);
-    	val = FIELDX!(DMA_RORDER_MODE, DMA_RORDER_MODE_OUT) |
-    	      DMA_RREQ_PRI_DATA |
-    	      FIELDX!(DMA_RREQ_BLEN, max_payload) |
-    	      FIELDX!(DMA_WDLY_CNT, DMA_WDLY_CNT_DEF) |
-    	      FIELDX!(DMA_RDLY_CNT, DMA_RDLY_CNT_DEF) |
-    	      FIELDX!(DMA_RCHNL_SEL, self.dma_chnl - 1);
-    	self.write(DMA, val);
+        /* DMA */
+        val = self.read(DMA);
+        val = FIELDX!(DMA_RORDER_MODE, DMA_RORDER_MODE_OUT)
+            | DMA_RREQ_PRI_DATA
+            | FIELDX!(DMA_RREQ_BLEN, max_payload)
+            | FIELDX!(DMA_WDLY_CNT, DMA_WDLY_CNT_DEF)
+            | FIELDX!(DMA_RDLY_CNT, DMA_RDLY_CNT_DEF)
+            | FIELDX!(DMA_RCHNL_SEL, self.dma_chnl - 1);
+        self.write(DMA, val);
 
-    	/* multi-tx-q weight */
-    	if (self.cap & CAP_MTQ > 0) {
-    		val = FIELDX!(WRR_PRI, self.wrr_ctrl) |
-    		      FIELDX!(WRR_PRI0, self.wrr[0]) |
-    		      FIELDX!(WRR_PRI1, self.wrr[1]) |
-    		      FIELDX!(WRR_PRI2, self.wrr[2]) |
-    		      FIELDX!(WRR_PRI3, self.wrr[3]);
-    		self.write(WRR, val);
-    	}
+        /* multi-tx-q weight */
+        if (self.cap & CAP_MTQ > 0) {
+            val = FIELDX!(WRR_PRI, self.wrr_ctrl)
+                | FIELDX!(WRR_PRI0, self.wrr[0])
+                | FIELDX!(WRR_PRI1, self.wrr[1])
+                | FIELDX!(WRR_PRI2, self.wrr[2])
+                | FIELDX!(WRR_PRI3, self.wrr[3]);
+            self.write(WRR, val);
+        }
     }
 
     unsafe fn set_rx_mode(&mut self) {
         /* TODO
         struct alx_adapter *adpt = netdev_priv(netdev);
-    	struct alx_hw *hw = &adpt->hw;
-    	struct netdev_hw_addr *ha;
+        struct alx_hw *hw = &adpt->hw;
+        struct netdev_hw_addr *ha;
 
 
-    	/* comoute mc addresses' hash value ,and put it into hash table */
-    	netdev_for_each_mc_addr(ha, netdev)
-    		alx_add_mc_addr(hw, ha->addr);
+        /* comoute mc addresses' hash value ,and put it into hash table */
+        netdev_for_each_mc_addr(ha, netdev)
+            alx_add_mc_addr(hw, ha->addr);
         */
 
-    	self.write(HASH_TBL0, self.mc_hash[0]);
-    	self.write(HASH_TBL1, self.mc_hash[1]);
+        self.write(HASH_TBL0, self.mc_hash[0]);
+        self.write(HASH_TBL1, self.mc_hash[1]);
 
-    	/* check for Promiscuous and All Multicast modes */
-    	self.rx_ctrl &= !(MAC_CTRL_MULTIALL_EN | MAC_CTRL_PROMISC_EN);
+        /* check for Promiscuous and All Multicast modes */
+        self.rx_ctrl &= !(MAC_CTRL_MULTIALL_EN | MAC_CTRL_PROMISC_EN);
         /* TODO
-    	if (netdev->flags & IFF_PROMISC) {
-    		self.rx_ctrl |= MAC_CTRL_PROMISC_EN;
+        if (netdev->flags & IFF_PROMISC) {
+            self.rx_ctrl |= MAC_CTRL_PROMISC_EN;
         }
-    	if (netdev->flags & IFF_ALLMULTI) {
-    		self.rx_ctrl |= MAC_CTRL_MULTIALL_EN;
+        if (netdev->flags & IFF_ALLMULTI) {
+            self.rx_ctrl |= MAC_CTRL_MULTIALL_EN;
         }
         */
 
-    	self.write(MAC_CTRL, self.rx_ctrl);
+        self.write(MAC_CTRL, self.rx_ctrl);
     }
 
     unsafe fn set_vlan_mode(&mut self, vlan_rx: bool) {
         if (vlan_rx) {
-    		self.rx_ctrl |= MAC_CTRL_VLANSTRIP;
+            self.rx_ctrl |= MAC_CTRL_VLANSTRIP;
         } else {
-    		self.rx_ctrl &= !MAC_CTRL_VLANSTRIP;
+            self.rx_ctrl &= !MAC_CTRL_VLANSTRIP;
         }
 
-	    self.write(MAC_CTRL, self.rx_ctrl);
+        self.write(MAC_CTRL, self.rx_ctrl);
     }
 
     unsafe fn configure_rss(&mut self, en: bool) {
         let mut ctrl: u32;
 
-    	ctrl = self.read(RXQ0);
+        ctrl = self.read(RXQ0);
 
-    	if (en) {
+        if (en) {
             unimplemented!();
             /*
-    		for (i = 0; i < sizeof(self.rss_key); i++) {
-    			/* rss key should be saved in chip with
-    			 * reversed order.
-    			 */
-    			int j = sizeof(self.rss_key) - i - 1;
+            for (i = 0; i < sizeof(self.rss_key); i++) {
+                /* rss key should be saved in chip with
+                 * reversed order.
+                 */
+                int j = sizeof(self.rss_key) - i - 1;
 
-    			MEM_W8(hw, RSS_KEY0 + j, self.rss_key[i]);
-    		}
+                MEM_W8(hw, RSS_KEY0 + j, self.rss_key[i]);
+            }
 
-    		for (i = 0; i < ARRAY_SIZE(self.rss_idt); i++)
-    			self.write(RSS_IDT_TBL0 + i * 4,
-    				    self.rss_idt[i]);
+            for (i = 0; i < ARRAY_SIZE(self.rss_idt); i++)
+                self.write(RSS_IDT_TBL0 + i * 4,
+                        self.rss_idt[i]);
 
-    		FIELD_SET32(ctrl, RXQ0_RSS_HSTYP, self.rss_hash_type);
-    		FIELD_SET32(ctrl, RXQ0_RSS_MODE, RXQ0_RSS_MODE_MQMI);
-    		FIELD_SET32(ctrl, RXQ0_IDT_TBL_SIZE, self.rss_idt_size);
-    		ctrl |= RXQ0_RSS_HASH_EN;
+            FIELD_SET32(ctrl, RXQ0_RSS_HSTYP, self.rss_hash_type);
+            FIELD_SET32(ctrl, RXQ0_RSS_MODE, RXQ0_RSS_MODE_MQMI);
+            FIELD_SET32(ctrl, RXQ0_IDT_TBL_SIZE, self.rss_idt_size);
+            ctrl |= RXQ0_RSS_HASH_EN;
             */
-    	} else {
-    		ctrl &= !RXQ0_RSS_HASH_EN;
-    	}
+        } else {
+            ctrl &= !RXQ0_RSS_HASH_EN;
+        }
 
-    	self.write(RXQ0, ctrl);
+        self.write(RXQ0, ctrl);
     }
 
     unsafe fn configure(&mut self) {
@@ -1381,89 +1380,86 @@ impl Alx {
     }
 
     unsafe fn irq_enable(&mut self) {
-    	self.write(ISR, 0);
+        self.write(ISR, 0);
         let imask = self.imask;
         self.write(IMR, imask);
     }
 
     unsafe fn irq_disable(&mut self) {
         self.write(ISR, ISR_DIS);
-	    self.write(IMR, 0);
+        self.write(IMR, 0);
     }
 
     unsafe fn clear_phy_intr(&mut self) -> usize {
-       let mut isr: u16 = 0;
-       self.read_phy_reg(MII_ISR, &mut isr)
+        let mut isr: u16 = 0;
+        self.read_phy_reg(MII_ISR, &mut isr)
     }
 
     unsafe fn post_phy_link(&mut self, speed: u16, az_en: bool) {
         let mut phy_val: u16 = 0;
         let len: u16;
         let agc: u16;
-    	let revid: u8 = self.revid();
-    	let adj_th: bool;
+        let revid: u8 = self.revid();
+        let adj_th: bool;
 
-    	if (revid != REV_B0 &&
-    	    revid != REV_A1 &&
-    	    revid != REV_A0) {
-    		return;
-    	}
-    	adj_th = if (revid == REV_B0) { true } else { false };
+        if (revid != REV_B0 && revid != REV_A1 && revid != REV_A0) {
+            return;
+        }
+        adj_th = if (revid == REV_B0) { true } else { false };
 
-    	/* 1000BT/AZ, wrong cable length */
-    	if (speed != SPEED_0) {
-    		self.read_phy_ext(MIIEXT_PCS, MIIEXT_CLDCTRL6, &mut phy_val);
-    		len = FIELD_GETX!(phy_val, CLDCTRL6_CAB_LEN);
-    		self.read_phy_dbg(MIIDBG_AGC, &mut phy_val);
-    		agc = FIELD_GETX!(phy_val, AGC_2_VGA);
+        /* 1000BT/AZ, wrong cable length */
+        if (speed != SPEED_0) {
+            self.read_phy_ext(MIIEXT_PCS, MIIEXT_CLDCTRL6, &mut phy_val);
+            len = FIELD_GETX!(phy_val, CLDCTRL6_CAB_LEN);
+            self.read_phy_dbg(MIIDBG_AGC, &mut phy_val);
+            agc = FIELD_GETX!(phy_val, AGC_2_VGA);
 
-    		if ((speed == SPEED_1000 &&
-    		    (len > CLDCTRL6_CAB_LEN_SHORT1G ||
-    		    (0 == len && agc > AGC_LONG1G_LIMT))) ||
-    		    (speed == SPEED_100 &&
-    		    (len > CLDCTRL6_CAB_LEN_SHORT100M ||
-    		    (0 == len && agc > AGC_LONG100M_LIMT)))) {
-    			self.write_phy_dbg(MIIDBG_AZ_ANADECT, AZ_ANADECT_LONG);
-    			self.read_phy_ext(MIIEXT_ANEG, MIIEXT_AFE, &mut phy_val);
-    			self.write_phy_ext(MIIEXT_ANEG, MIIEXT_AFE, phy_val | AFE_10BT_100M_TH);
-    		} else {
-    			self.write_phy_dbg(MIIDBG_AZ_ANADECT, AZ_ANADECT_DEF);
-    			self.read_phy_ext(MIIEXT_ANEG, MIIEXT_AFE, &mut phy_val);
-    			self.write_phy_ext(MIIEXT_ANEG, MIIEXT_AFE, phy_val & !AFE_10BT_100M_TH);
-    		}
+            if ((speed == SPEED_1000
+                && (len > CLDCTRL6_CAB_LEN_SHORT1G || (0 == len && agc > AGC_LONG1G_LIMT)))
+                || (speed == SPEED_100
+                    && (len > CLDCTRL6_CAB_LEN_SHORT100M || (0 == len && agc > AGC_LONG100M_LIMT))))
+            {
+                self.write_phy_dbg(MIIDBG_AZ_ANADECT, AZ_ANADECT_LONG);
+                self.read_phy_ext(MIIEXT_ANEG, MIIEXT_AFE, &mut phy_val);
+                self.write_phy_ext(MIIEXT_ANEG, MIIEXT_AFE, phy_val | AFE_10BT_100M_TH);
+            } else {
+                self.write_phy_dbg(MIIDBG_AZ_ANADECT, AZ_ANADECT_DEF);
+                self.read_phy_ext(MIIEXT_ANEG, MIIEXT_AFE, &mut phy_val);
+                self.write_phy_ext(MIIEXT_ANEG, MIIEXT_AFE, phy_val & !AFE_10BT_100M_TH);
+            }
 
-    		/* threashold adjust */
-    		if (adj_th && self.lnk_patch) {
-    			if (speed == SPEED_100) {
-    				self.write_phy_dbg(MIIDBG_MSE16DB, MSE16DB_UP);
-    			} else if (speed == SPEED_1000) {
-    				/*
-    				 * Giga link threshold, raise the tolerance of
-    				 * noise 50%
-    				 */
-    				self.read_phy_dbg(MIIDBG_MSE20DB, &mut phy_val);
-    				FIELD_SETS!(phy_val, MSE20DB_TH, MSE20DB_TH_HI);
-    				self.write_phy_dbg(MIIDBG_MSE20DB, phy_val);
-    			}
-    		}
-    		/* phy link-down in 1000BT/AZ mode */
-    		if (az_en && revid == REV_B0 && speed == SPEED_1000) {
-    			self.write_phy_dbg(MIIDBG_SRDSYSMOD, SRDSYSMOD_DEF & !SRDSYSMOD_DEEMP_EN);
-    		}
-    	} else {
-    		self.read_phy_ext(MIIEXT_ANEG, MIIEXT_AFE, &mut phy_val);
-    		self.write_phy_ext(MIIEXT_ANEG, MIIEXT_AFE, phy_val & !AFE_10BT_100M_TH);
+            /* threashold adjust */
+            if (adj_th && self.lnk_patch) {
+                if (speed == SPEED_100) {
+                    self.write_phy_dbg(MIIDBG_MSE16DB, MSE16DB_UP);
+                } else if (speed == SPEED_1000) {
+                    /*
+                     * Giga link threshold, raise the tolerance of
+                     * noise 50%
+                     */
+                    self.read_phy_dbg(MIIDBG_MSE20DB, &mut phy_val);
+                    FIELD_SETS!(phy_val, MSE20DB_TH, MSE20DB_TH_HI);
+                    self.write_phy_dbg(MIIDBG_MSE20DB, phy_val);
+                }
+            }
+            /* phy link-down in 1000BT/AZ mode */
+            if (az_en && revid == REV_B0 && speed == SPEED_1000) {
+                self.write_phy_dbg(MIIDBG_SRDSYSMOD, SRDSYSMOD_DEF & !SRDSYSMOD_DEEMP_EN);
+            }
+        } else {
+            self.read_phy_ext(MIIEXT_ANEG, MIIEXT_AFE, &mut phy_val);
+            self.write_phy_ext(MIIEXT_ANEG, MIIEXT_AFE, phy_val & !AFE_10BT_100M_TH);
 
-    		if (adj_th && self.lnk_patch) {
-    			self.write_phy_dbg(MIIDBG_MSE16DB, MSE16DB_DOWN);
-    			self.read_phy_dbg(MIIDBG_MSE20DB, &mut phy_val);
-    			FIELD_SETS!(phy_val, MSE20DB_TH, MSE20DB_TH_DEF);
-    			self.write_phy_dbg(MIIDBG_MSE20DB, phy_val);
-    		}
-    		if (az_en && revid == REV_B0) {
-    			self.write_phy_dbg(MIIDBG_SRDSYSMOD, SRDSYSMOD_DEF);
-    		}
-    	}
+            if (adj_th && self.lnk_patch) {
+                self.write_phy_dbg(MIIDBG_MSE16DB, MSE16DB_DOWN);
+                self.read_phy_dbg(MIIDBG_MSE20DB, &mut phy_val);
+                FIELD_SETS!(phy_val, MSE20DB_TH, MSE20DB_TH_DEF);
+                self.write_phy_dbg(MIIDBG_MSE20DB, phy_val);
+            }
+            if (az_en && revid == REV_B0) {
+                self.write_phy_dbg(MIIDBG_SRDSYSMOD, SRDSYSMOD_DEF);
+            }
+        }
     }
 
     unsafe fn task(&mut self) {
@@ -1502,25 +1498,25 @@ impl Alx {
     unsafe fn activate(&mut self) {
         /* hardware setting lost, restore it */
         self.init_ring_ptrs();
-    	self.configure();
+        self.configure();
 
         self.flag &= !FLAG_HALT;
-    	/* clear old interrupts */
+        /* clear old interrupts */
         self.write(ISR, !ISR_DIS);
 
-    	self.irq_enable();
+        self.irq_enable();
 
         self.flag |= FLAG_TASK_CHK_LINK;
         self.task();
     }
 
     unsafe fn reinit(&mut self) {
-    	if self.flag & FLAG_HALT > 0 {
-    		return;
+        if self.flag & FLAG_HALT > 0 {
+            return;
         }
 
-    	self.halt();
-    	self.activate();
+        self.halt();
+        self.activate();
     }
 
     unsafe fn init_ring_ptrs(&mut self) {
@@ -1530,8 +1526,12 @@ impl Alx {
 
         // RFD ring
         for i in 0..self.rfd_ring.len() {
-            self.rfd_ring[i].addr_low.write(self.rfd_buffer[i].physical() as u32);
-            self.rfd_ring[i].addr_high.write(((self.rfd_buffer[i].physical() as u64) >> 32) as u32);
+            self.rfd_ring[i]
+                .addr_low
+                .write(self.rfd_buffer[i].physical() as u32);
+            self.rfd_ring[i]
+                .addr_high
+                .write(((self.rfd_buffer[i].physical() as u64) >> 32) as u32);
         }
         self.write(RFD_ADDR_LO, self.rfd_ring.physical() as u32);
         self.write(RFD_RING_SZ, self.rfd_ring.len() as u32);
@@ -1555,104 +1555,104 @@ impl Alx {
     unsafe fn check_link(&mut self) {
         let mut speed: u16 = SPEED_0;
         let old_speed: u16;
-    	let mut link_up: bool = false;
+        let mut link_up: bool = false;
         let old_link_up: bool;
-    	let mut err: usize;
+        let mut err: usize;
 
-    	if (self.flag & FLAG_HALT > 0) {
-    		return;
+        if (self.flag & FLAG_HALT > 0) {
+            return;
         }
 
         macro_rules! goto_out {
             () => {
                 if (err > 0) {
                     self.flag |= FLAG_TASK_RESET;
-            		self.task();
-            	}
+                    self.task();
+                }
                 return;
-            }
+            };
         }
 
-    	/* clear PHY internal interrupt status,
-    	 * otherwise the Main interrupt status will be asserted
-    	 * for ever.
-    	 */
+        /* clear PHY internal interrupt status,
+         * otherwise the Main interrupt status will be asserted
+         * for ever.
+         */
         self.clear_phy_intr();
 
-    	err = self.get_phy_link(&mut link_up, &mut speed);
-    	if (err > 0) {
+        err = self.get_phy_link(&mut link_up, &mut speed);
+        if (err > 0) {
             goto_out!();
         }
 
-    	/* open interrutp mask */
-    	self.imask |= ISR_PHY;
+        /* open interrutp mask */
+        self.imask |= ISR_PHY;
         let imask = self.imask;
-    	self.write(IMR, imask);
+        self.write(IMR, imask);
 
-    	if (!link_up && !self.link_up) {
-    		goto_out!();
+        if (!link_up && !self.link_up) {
+            goto_out!();
         }
 
-    	old_speed = self.link_speed + self.link_duplex as u16;
-    	old_link_up = self.link_up;
+        old_speed = self.link_speed + self.link_duplex as u16;
+        old_link_up = self.link_up;
 
-    	if (link_up) {
-    		/* same speed ? */
-    		if (old_link_up && old_speed == speed) {
-        		goto_out!();
+        if (link_up) {
+            /* same speed ? */
+            if (old_link_up && old_speed == speed) {
+                goto_out!();
             }
 
-    		self.show_speed(speed);
-    		self.link_duplex = (speed % 10) as u8;
-    		self.link_speed = speed - self.link_duplex as u16;
-    		self.link_up = true;
+            self.show_speed(speed);
+            self.link_duplex = (speed % 10) as u8;
+            self.link_speed = speed - self.link_duplex as u16;
+            self.link_up = true;
             let link_speed = self.link_speed;
             let az_en = self.cap & CAP_AZ > 0;
-    		self.post_phy_link(link_speed, az_en);
+            self.post_phy_link(link_speed, az_en);
             let l0s_en = self.cap & CAP_L0S > 0;
             let l1_en = self.cap & CAP_L1 > 0;
-    		self.enable_aspm(l0s_en, l1_en);
-    		self.start_mac();
+            self.enable_aspm(l0s_en, l1_en);
+            self.start_mac();
 
-    		/* link kept, just speed changed */
-    		if (old_link_up) {
-        		goto_out!();
+            /* link kept, just speed changed */
+            if (old_link_up) {
+                goto_out!();
             }
-    		/* link changed from 'down' to 'up' */
-    		// TODO self.netif_start();
-        	goto_out!();
-    	}
+            /* link changed from 'down' to 'up' */
+            // TODO self.netif_start();
+            goto_out!();
+        }
 
-    	/* link changed from 'up' to 'down' */
-    	// TODO self.netif_stop();
-    	self.link_up = false;
-    	self.link_speed = SPEED_0;
-    	println!("NIC Link Down");
-    	err = self.reset_mac();
-    	if (err > 0) {
-    		println!("linkdown:reset_mac fail {}", err);
-    		err = (-EIO) as usize;
-        	goto_out!();
-    	}
-    	self.irq_disable();
+        /* link changed from 'up' to 'down' */
+        // TODO self.netif_stop();
+        self.link_up = false;
+        self.link_speed = SPEED_0;
+        println!("NIC Link Down");
+        err = self.reset_mac();
+        if (err > 0) {
+            println!("linkdown:reset_mac fail {}", err);
+            err = (-EIO) as usize;
+            goto_out!();
+        }
+        self.irq_disable();
 
-    	/* reset-mac cause all settings on HW lost,
-    	 * following steps restore all of them and
-    	 * refresh whole RX/TX rings
-    	 */
-    	self.init_ring_ptrs();
+        /* reset-mac cause all settings on HW lost,
+         * following steps restore all of them and
+         * refresh whole RX/TX rings
+         */
+        self.init_ring_ptrs();
 
-    	self.configure();
+        self.configure();
 
         let l1_en = self.cap & CAP_L1 > 0;
-    	self.enable_aspm(false, l1_en);
+        self.enable_aspm(false, l1_en);
 
         let cap_az = self.cap & CAP_AZ > 0;
-    	self.post_phy_link(SPEED_0, cap_az);
+        self.post_phy_link(SPEED_0, cap_az);
 
-    	self.irq_enable();
+        self.irq_enable();
 
-    	goto_out!();
+        goto_out!();
     }
 
     unsafe fn get_phy_info(&mut self) -> bool {
@@ -1660,22 +1660,22 @@ impl Alx {
         let mut devs1: u16 = 0;
         let mut devs2: u16 = 0;
 
-    	if (self.read_phy_reg(MII_PHYSID1, &mut self.phy_id[0]) > 0 ||
-    	    self.read_phy_reg(MII_PHYSID2, &mut self.phy_id[1]) > 0) {
-    		return false;
+        if (self.read_phy_reg(MII_PHYSID1, &mut self.phy_id[0]) > 0 ||
+            self.read_phy_reg(MII_PHYSID2, &mut self.phy_id[1]) > 0) {
+            return false;
         }
 
-    	/* since we haven't PMA/PMD status2 register, we can't
-    	 * use mdio45_probe function for prtad and mmds.
-    	 * use fixed MMD3 to get mmds.
-    	 */
-    	if (self.read_phy_ext(3, MDIO_DEVS1, &devs1) ||
-    	    self.read_phy_ext(3, MDIO_DEVS2, &devs2)) {
-    		return false;
+        /* since we haven't PMA/PMD status2 register, we can't
+         * use mdio45_probe function for prtad and mmds.
+         * use fixed MMD3 to get mmds.
+         */
+        if (self.read_phy_ext(3, MDIO_DEVS1, &devs1) ||
+            self.read_phy_ext(3, MDIO_DEVS2, &devs2)) {
+            return false;
         }
-    	self.mdio.mmds = devs1 | devs2 << 16;
+        self.mdio.mmds = devs1 | devs2 << 16;
 
-    	return true;
+        return true;
         */
         return true;
     }
@@ -1704,9 +1704,12 @@ impl Alx {
         }
 
         let mac = self.get_perm_macaddr();
-        println!("   - MAC: {:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}\n", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        println!(
+            "   - MAC: {:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}\n",
+            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
+        );
 
-        if ! self.get_phy_info() {
+        if !self.get_phy_info() {
             println!("   - Identify PHY failed");
             return Err(Error::new(EIO));
         }
@@ -1727,28 +1730,28 @@ impl Alx {
 
         macro_rules! goto_out {
             () => {{
-            	self.free_all_ring_resources();
-            	self.disable_advanced_intr();
-            	return err;
-            }}
+                self.free_all_ring_resources();
+                self.disable_advanced_intr();
+                return err;
+            }};
         }
 
-    	/* allocate all memory resources */
-    	self.init_ring_ptrs();
+        /* allocate all memory resources */
+        self.init_ring_ptrs();
 
-    	/* make hardware ready before allocate interrupt */
-    	self.configure();
+        /* make hardware ready before allocate interrupt */
+        self.configure();
 
         self.flag &= !FLAG_HALT;
 
-    	/* clear old interrupts */
+        /* clear old interrupts */
         self.write(ISR, !ISR_DIS);
 
-    	self.irq_enable();
+        self.irq_enable();
 
         self.flag |= FLAG_TASK_CHK_LINK;
-    	self.task();
-    	return 0;
+        self.task();
+        return 0;
     }
 
     unsafe fn init(&mut self) -> Result<()> {
@@ -1773,10 +1776,10 @@ impl Alx {
             self.dma_chnl = if self.revid() >= REV_B0 { 4 } else { 2 };
         }
 
-        println!("   - ID: {:>04X}:{:>04X} SUB: {:>04X}:{:>04X} REV: {:>02X}",
-                self.vendor_id, self.device_id,
-                self.subven_id, self.subdev_id,
-                self.revision);
+        println!(
+            "   - ID: {:>04X}:{:>04X} SUB: {:>04X}:{:>04X} REV: {:>02X}",
+            self.vendor_id, self.device_id, self.subven_id, self.subdev_id, self.revision
+        );
 
         self.probe()?;
 
@@ -1800,7 +1803,7 @@ impl scheme::SchemeMut for Alx {
     }
 
     fn dup(&mut self, id: usize, buf: &[u8]) -> Result<usize> {
-        if ! buf.is_empty() {
+        if !buf.is_empty() {
             return Err(Error::new(EINVAL));
         }
 

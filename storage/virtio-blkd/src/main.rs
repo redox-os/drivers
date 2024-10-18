@@ -154,12 +154,22 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
     deamon.ready().expect("virtio-blkd: failed to deamonize");
 
     loop {
-        let req = match socket_fd.next_request(SignalBehavior::Restart)
-            .expect("virtio-blkd: failed to read disk scheme") {
-                Some(r) => if let RequestKind::Call(c) = r.kind() { c } else { continue },
-                None => break,
+        let req = match socket_fd
+            .next_request(SignalBehavior::Restart)
+            .expect("virtio-blkd: failed to read disk scheme")
+        {
+            Some(r) => {
+                if let RequestKind::Call(c) = r.kind() {
+                    c
+                } else {
+                    continue;
+                }
+            }
+            None => break,
         };
-        let resp = req.handle_scheme_block_mut(&mut scheme).expect("TODO: block?");
+        let resp = req
+            .handle_scheme_block_mut(&mut scheme)
+            .expect("TODO: block?");
         socket_fd
             .write_response(resp, SignalBehavior::Restart)
             .expect("virtio-blkd: failed to write to disk scheme");

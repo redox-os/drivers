@@ -19,6 +19,9 @@ const DMA_MEMTY: MemoryType = {
     } else if cfg!(target_arch = "aarch64") {
         // aarch64 currently must map DMA memory without caching to ensure coherence
         MemoryType::Uncacheable
+    } else if cfg!(target_arch = "riscv64") {
+        // FIXME check this out more
+        MemoryType::Uncacheable
     } else {
         panic!("invalid arch")
     }

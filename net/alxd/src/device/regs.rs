@@ -421,10 +421,7 @@ pub const PHY_CTRL_RTL_MODE: u32 = 1 << 1;
 /* bit0: out of dsp RST state */
 pub const PHY_CTRL_DSPRST_OUT: u32 = 1 << 0;
 pub const PHY_CTRL_DSPRST_TO: u32 = 80;
-pub const PHY_CTRL_CLS: u32 =
-	PHY_CTRL_LED_MODE |
-	PHY_CTRL_100AB_EN |
-	PHY_CTRL_PLL_ON;
+pub const PHY_CTRL_CLS: u32 = PHY_CTRL_LED_MODE | PHY_CTRL_100AB_EN | PHY_CTRL_PLL_ON;
 
 pub const MAC_STS: u32 = 0x1410;
 pub const MAC_STS_SFORCE_MASK: u32 = 0xF;
@@ -439,10 +436,7 @@ pub const MAC_STS_RXQ_BUSY: u32 = 1 << 2;
 pub const MAC_STS_TXMAC_BUSY: u32 = 1 << 1;
 pub const MAC_STS_RXMAC_BUSY: u32 = 1 << 0;
 pub const MAC_STS_IDLE: u32 =
-	MAC_STS_TXQ_BUSY |
-	MAC_STS_RXQ_BUSY |
-	MAC_STS_TXMAC_BUSY |
-	MAC_STS_RXMAC_BUSY;
+    MAC_STS_TXQ_BUSY | MAC_STS_RXQ_BUSY | MAC_STS_TXMAC_BUSY | MAC_STS_RXMAC_BUSY;
 
 pub const MDIO: u32 = 0x1414;
 pub const MDIO_MODE_EXT: u32 = 1 << 30;
@@ -876,7 +870,7 @@ pub const SRAM_RXF_HEAD_ADDR_SHIFT: u32 = 0;
 pub const SRAM5: u32 = 0x1524;
 pub const SRAM_RXF_LEN_MASK: u32 = 0xFFF;
 pub const SRAM_RXF_LEN_SHIFT: u32 = 0;
-pub const SRAM_RXF_LEN_8K: u32 = (8*1024);
+pub const SRAM_RXF_LEN_8K: u32 = (8 * 1024);
 
 pub const SRAM6: u32 = 0x1528;
 pub const SRAM_TXF_TAIL_ADDR_MASK: u32 = 0xFFF;
@@ -955,7 +949,7 @@ pub const TXQ1_ERRLGPKT_DROP_EN: u32 = 1 << 11;
 /* bit[9:0]:: u32 = 8bytes unit */
 pub const TXQ1_JUMBO_TSOTHR_MASK: u32 = 0x7FF;
 pub const TXQ1_JUMBO_TSOTHR_SHIFT: u32 = 0;
-pub const TXQ1_JUMBO_TSO_TH: u32 = (7*1024);
+pub const TXQ1_JUMBO_TSO_TH: u32 = (7 * 1024);
 
 /* L1 entrance control */
 pub const TXQ2: u32 = 0x1598;
@@ -990,11 +984,10 @@ pub const RXQ0_RSS_HSTYP_IPV6_TCP_EN: u32 = 1 << 5;
 pub const RXQ0_RSS_HSTYP_IPV6_EN: u32 = 1 << 4;
 pub const RXQ0_RSS_HSTYP_IPV4_TCP_EN: u32 = 1 << 3;
 pub const RXQ0_RSS_HSTYP_IPV4_EN: u32 = 1 << 2;
-pub const RXQ0_RSS_HSTYP_ALL: u32 =
-	RXQ0_RSS_HSTYP_IPV6_TCP_EN |
-	RXQ0_RSS_HSTYP_IPV4_TCP_EN |
-	RXQ0_RSS_HSTYP_IPV6_EN |
-	RXQ0_RSS_HSTYP_IPV4_EN;
+pub const RXQ0_RSS_HSTYP_ALL: u32 = RXQ0_RSS_HSTYP_IPV6_TCP_EN
+    | RXQ0_RSS_HSTYP_IPV4_TCP_EN
+    | RXQ0_RSS_HSTYP_IPV6_EN
+    | RXQ0_RSS_HSTYP_IPV4_EN;
 pub const RXQ0_ASPM_THRESH_MASK: u32 = 0x3;
 pub const RXQ0_ASPM_THRESH_SHIFT: u32 = 0;
 pub const RXQ0_ASPM_THRESH_NO: u32 = 0;
@@ -1223,7 +1216,6 @@ pub const INT_DEASST_TIMER: u32 = 0x1614;
 pub const PATTERN_MASK: u32 = 0x1620;
 pub const PATTERN_MASK_LEN: u32 = 128;
 
-
 pub const FLT1_SRC_IP0: u32 = 0x1A00;
 pub const FLT1_SRC_IP1: u32 = 0x1A04;
 pub const FLT1_SRC_IP2: u32 = 0x1A08;
@@ -1392,12 +1384,7 @@ pub const CLK_GATE_TXQ: u32 = 1 << 2;
 pub const CLK_GATE_DMAR: u32 = 1 << 1;
 pub const CLK_GATE_DMAW: u32 = 1 << 0;
 pub const CLK_GATE_ALL_A0: u32 =
-	CLK_GATE_RXMAC |
-	CLK_GATE_TXMAC |
-	CLK_GATE_RXQ |
-	CLK_GATE_TXQ |
-	CLK_GATE_DMAR |
-	CLK_GATE_DMAW;
+    CLK_GATE_RXMAC | CLK_GATE_TXMAC | CLK_GATE_RXQ | CLK_GATE_TXQ | CLK_GATE_DMAR | CLK_GATE_DMAW;
 pub const CLK_GATE_ALL_B0: u32 = CLK_GATE_ALL_A0;
 
 /* PORST affect */
@@ -1834,7 +1821,6 @@ pub const CR_DMA_CTRL_WEARLY_EN: u32 = 1 << 8;
 pub const CR_DMA_CTRL_RXTH_MASK: u32 = 0xF;
 pub const CR_DMA_CTRL_WTH_MASK: u32 = 0xF;
 
-
 pub const EFUSE_BIST: u32 = 0x1934;
 pub const EFUSE_BIST_COL_MASK: u32 = 0x3F;
 pub const EFUSE_BIST_COL_SHIFT: u32 = 24;
@@ -1988,7 +1974,6 @@ pub const IO_MDIO: u32 = 0x38;
 /* same as reg140C */
 pub const IO_PHY_CTRL: u32 = 0x3C;
 
-
 /********************* PHY regs definition ***************************/
 
 /* Autoneg Advertisement Register */
@@ -2043,7 +2028,6 @@ pub const CDTC_EN: u16 = 1;
 pub const CDTC_PAIR_MASK: u16 = 0x3;
 pub const CDTC_PAIR_SHIFT: u16 = 8;
 
-
 /* Cable-Detect-Test Status Register */
 pub const MII_CDTS: u16 = 0x1C;
 pub const CDTS_STATUS_MASK: u16 = 0x3;
@@ -2080,7 +2064,6 @@ pub const ANACTRL_MANUSWON_BW3_4M: u16 = 0x0002;
 pub const ANACTRL_RESTART_CAL: u16 = 0x0001;
 pub const ANACTRL_DEF: u16 = 0x02EF;
 
-
 pub const MIIDBG_SYSMODCTRL: u16 = 0x04;
 pub const SYSMODCTRL_IECHOADJ_PFMH_PHY: u16 = 0x8000;
 pub const SYSMODCTRL_IECHOADJ_BIASGEN: u16 = 0x4000;
@@ -2100,7 +2083,6 @@ pub const SYSMODCTRL_IECHOADJ_VDLANSW: u16 = 0x0001;
 /* en half bias */
 pub const SYSMODCTRL_IECHOADJ_DEF: u16 = 0xBB8B;
 
-
 pub const MIIDBG_SRDSYSMOD: u16 = 0x05;
 pub const SRDSYSMOD_LCKDET_EN: u16 = 0x2000;
 pub const SRDSYSMOD_PLL_EN: u16 = 0x0800;
@@ -2113,7 +2095,6 @@ pub const SRDSYSMOD_MS_PAD: u16 = 0x0004;
 pub const SRDSYSMOD_CDR_ADC_VLTG: u16 = 0x0002;
 pub const SRDSYSMOD_CDR_DAC_1MA: u16 = 0x0001;
 pub const SRDSYSMOD_DEF: u16 = 0x2C46;
-
 
 pub const MIIDBG_HIBNEG: u16 = 0x0B;
 pub const HIBNEG_PSHIB_EN: u16 = 0x8000;
@@ -2204,7 +2185,6 @@ pub const MIIDBG_GREENCFG2: u16 = 0x3D;
 pub const GREENCFG2_BP_GREEN: u16 = 0x8000;
 pub const GREENCFG2_GATE_DFSE_EN: u16 = 0x0080;
 
-
 /***************************** extension **************************************/
 
 /******* dev 3 *********/
@@ -2292,4 +2272,4 @@ pub const MIIEXT_NLP56_DEF: u16 = 0x1010;
 pub const MIIEXT_NLP78: u16 = 0x8027;
 /* for: u16 = 160m */
 pub const MIIEXT_NLP78_160M_DEF: u16 = 0x8D05;
-pub const MIIEXT_NLP78_120M_DEF	: u16 = 0x8A05;
+pub const MIIEXT_NLP78_120M_DEF: u16 = 0x8A05;

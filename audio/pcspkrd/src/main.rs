@@ -41,5 +41,6 @@ fn main() {
                 .write(&packet)
                 .expect("pcspkrd: failed to write responses to pcspkr scheme");
         }
-    }).expect("pcspkrd: failed to daemonize");
+    })
+    .expect("pcspkrd: failed to daemonize");
 }
