@@ -4,6 +4,7 @@ use std::io::prelude::*;
 use std::ptr::NonNull;
 use std::{env, io};
 
+use log::info;
 use std::os::unix::io::{FromRawFd, RawFd};
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -21,19 +22,35 @@ pub mod irq_helpers;
 pub mod msi;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub struct LegacyInterruptLine(#[doc(hidden)] pub u8);
+pub struct LegacyInterruptLine {
+    #[doc(hidden)]
+    pub irq: u8,
+    pub phandled: Option<(u32, [u32; 3])>,
+}
 
 impl LegacyInterruptLine {
     /// Get an IRQ handle for this interrupt line.
     pub fn irq_handle(self, driver: &str) -> File {
-        File::open(format!("/scheme/irq/{}", self.0))
+        if let Some((phandle, addr)) = self.phandled {
+            File::create(format!(
+                "/scheme/irq/phandle-{}/{},{},{}",
+                phandle, addr[0], addr[1], addr[2]
+            ))
             .unwrap_or_else(|err| panic!("{driver}: failed to open IRQ file: {err}"))
+        } else {
+            File::open(format!("/scheme/irq/{}", self.irq))
+                .unwrap_or_else(|err| panic!("{driver}: failed to open IRQ file: {err}"))
+        }
     }
 }
 
 impl fmt::Display for LegacyInterruptLine {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
+        if let Some((phandle, addr)) = self.phandled {
+            write!(f, "(phandle {}, {:?})", phandle, addr)
+        } else {
+            write!(f, "{}", self.irq)
+        }
     }
 }
 
