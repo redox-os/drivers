@@ -32,7 +32,7 @@ dependencies = [
  "parking_lot 0.12.3",
  "plain",
  "redox-daemon",
- "redox-scheme 0.2.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "redox-scheme",
  "redox_event",
  "redox_syscall",
  "ron",
@@ -52,7 +52,7 @@ dependencies = [
  "log",
  "pcid",
  "redox-daemon",
- "redox-scheme 0.2.3 (git+https://gitlab.redox-os.org/redox-os/redox-scheme.git)",
+ "redox-scheme",
  "redox_event",
  "redox_syscall",
 ]
@@ -180,7 +180,7 @@ dependencies = [
  "fdt",
  "libredox",
  "redox-daemon",
- "redox-scheme 0.2.3 (git+https://gitlab.redox-os.org/redox-os/redox-scheme.git)",
+ "redox-scheme",
  "redox_event",
  "redox_syscall",
 ]
@@ -614,7 +614,7 @@ dependencies = [
  "log",
  "pcid",
  "redox-daemon",
- "redox-scheme 0.2.3 (git+https://gitlab.redox-os.org/redox-os/redox-scheme.git)",
+ "redox-scheme",
  "redox_event",
  "redox_syscall",
 ]
@@ -695,9 +695,9 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
 name = "libc"
-version = "0.2.160"
+version = "0.2.161"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f0b21006cd1874ae9e650973c565615676dc4a274c965bb0a73796dac838ce4f"
+checksum = "8e9489c2807c139ffd9c1794f4af0ebe86a828db53ecdc7fea2111d0fed085d1"
 
 [[package]]
 name = "libredox"
@@ -717,7 +717,7 @@ dependencies = [
  "anyhow",
  "libredox",
  "redox-daemon",
- "redox-scheme 0.2.3 (git+https://gitlab.redox-os.org/redox-os/redox-scheme.git)",
+ "redox-scheme",
  "redox_event",
  "redox_syscall",
 ]
@@ -791,7 +791,7 @@ dependencies = [
  "partitionlib",
  "pcid",
  "redox-daemon",
- "redox-scheme 0.2.3 (git+https://gitlab.redox-os.org/redox-os/redox-scheme.git)",
+ "redox-scheme",
  "redox_event",
  "redox_syscall",
  "smallvec 1.13.2",
@@ -1104,18 +1104,8 @@ dependencies = [
 
 [[package]]
 name = "redox-scheme"
-version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95624e20d2c1808f7ca0820720d30aad9f5d2fc404e1ef379431ad7a790c3f7e"
-dependencies = [
- "libredox",
- "redox_syscall",
-]
-
-[[package]]
-name = "redox-scheme"
-version = "0.2.3"
-source = "git+https://gitlab.redox-os.org/redox-os/redox-scheme.git#dc6a047842353ed49c1788396d9135de2c3d7382"
+version = "0.2.4"
+source = "git+https://gitlab.redox-os.org/redox-os/redox-scheme.git#efe7addc3d6c54149694f875ed51467f8c4aa8b9"
 dependencies = [
  "libredox",
  "redox_syscall",
@@ -1324,9 +1314,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.128"
+version = "1.0.129"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6ff5456707a1de34e7e37f2a6fd3d3f808c318259cbd01ab6377795054b483d8"
+checksum = "6dbcf9b78a125ee667ae19388837dd12294b858d101fdd393cb9d5501ef09eb2"
 dependencies = [
  "itoa",
  "memchr",
@@ -1606,7 +1596,7 @@ dependencies = [
  "libredox",
  "plain",
  "redox-daemon",
- "redox-scheme 0.2.3 (git+https://gitlab.redox-os.org/redox-os/redox-scheme.git)",
+ "redox-scheme",
  "redox_syscall",
  "thiserror",
  "xhcid",
@@ -1690,7 +1680,7 @@ dependencies = [
  "partitionlib",
  "pcid",
  "redox-daemon",
- "redox-scheme 0.2.3 (git+https://gitlab.redox-os.org/redox-os/redox-scheme.git)",
+ "redox-scheme",
  "redox_syscall",
  "spin",
  "static_assertions",
