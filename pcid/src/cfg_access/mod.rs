@@ -10,8 +10,17 @@ use fallback::Pci;
 
 mod fallback;
 
+pub struct InterruptMap {
+    pub addr: [u32; 3],
+    pub interrupt: u32,
+    pub parent_phandle: u32,
+    pub parent_interrupt: [u32; 3],
+}
+
 // https://elinux.org/Device_Tree_Usage has a lot of useful information
-fn locate_ecam_dtb<T>(f: impl FnOnce(PcieAllocs<'_>) -> io::Result<T>) -> io::Result<T> {
+fn locate_ecam_dtb<T>(
+    f: impl FnOnce(PcieAllocs<'_>, Vec<InterruptMap>, [u32; 4]) -> io::Result<T>,
+) -> io::Result<T> {
     let dtb = fs::read("kernel.dtb:")?;
     let dt = Fdt::new(&dtb).map_err(|err| {
         io::Error::new(
@@ -36,15 +45,53 @@ fn locate_ecam_dtb<T>(f: impl FnOnce(PcieAllocs<'_>) -> io::Result<T>) -> io::Re
     let start_bus = u32::from_be_bytes(<[u8; 4]>::try_from(&bus_range.value[0..4]).unwrap());
     let end_bus = u32::from_be_bytes(<[u8; 4]>::try_from(&bus_range.value[4..8]).unwrap());
 
-    // FIXME respect the BAR remappings in the ranges property
+    // address-cells == 3, size-cells == 2, interrupt-cells == 1
+    let mut interrupt_map_data = node
+        .property("interrupt-map")
+        .unwrap()
+        .value
+        .chunks_exact(4)
+        .map(|x| u32::from_be_bytes(<[u8; 4]>::try_from(x).unwrap()));
+    let mut interrupt_map = Vec::<InterruptMap>::new();
+    while let Ok([addr1, addr2, addr3, int1, phandle]) = interrupt_map_data.next_chunk::<5>() {
+        let parent = dt.find_phandle(phandle).unwrap();
+        let interrupt_cells = parent.interrupt_cells().unwrap();
+        let parent_interrupt = match interrupt_cells {
+            1 if let Some(a) = interrupt_map_data.next() => [a, 0, 0],
+            2 if let Ok([a, b]) = interrupt_map_data.next_chunk::<2>() => [a, b, 0],
+            2 if let Ok([a, b, c]) = interrupt_map_data.next_chunk::<3>() => [a, b, c],
+            _ => break,
+        };
+        interrupt_map.push(InterruptMap {
+            addr: [addr1, addr2, addr3],
+            interrupt: int1,
+            parent_phandle: phandle,
+            parent_interrupt,
+        });
+    }
 
-    f(PcieAllocs(&[PcieAlloc {
-        base_addr: address,
-        seg_group_num: 0,
-        start_bus: start_bus.try_into().unwrap(),
-        end_bus: end_bus.try_into().unwrap(),
-        _rsvd: [0; 4],
-    }]))
+    let interrupt_map_mask = if let Some(interrupt_mask_node) = node.property("interrupt-map-mask")
+    {
+        let mut cells = interrupt_mask_node
+            .value
+            .chunks_exact(4)
+            .map(|x| u32::from_be_bytes(<[u8; 4]>::try_from(x).unwrap()));
+        cells.next_chunk::<4>().unwrap().to_owned()
+    } else {
+        [u32::MAX, u32::MAX, u32::MAX, u32::MAX]
+    };
+
+    f(
+        PcieAllocs(&[PcieAlloc {
+            base_addr: address,
+            seg_group_num: 0,
+            start_bus: start_bus.try_into().unwrap(),
+            end_bus: end_bus.try_into().unwrap(),
+            _rsvd: [0; 4],
+        }]),
+        interrupt_map,
+        interrupt_map_mask,
+    )
 }
 
 pub const MCFG_NAME: [u8; 4] = *b"MCFG";
@@ -83,7 +130,9 @@ unsafe impl plain::Plain for PcieAlloc {}
 struct PcieAllocs<'a>(&'a [PcieAlloc]);
 
 impl Mcfg {
-    fn with<T>(f: impl FnOnce(PcieAllocs<'_>) -> io::Result<T>) -> io::Result<T> {
+    fn with<T>(
+        f: impl FnOnce(PcieAllocs<'_>, Vec<InterruptMap>, [u32; 4]) -> io::Result<T>,
+    ) -> io::Result<T> {
         let table_dir = fs::read_dir("/scheme/acpi/tables")?;
 
         // TODO: validate/print MCFG?
@@ -103,7 +152,7 @@ impl Mcfg {
                 match Mcfg::parse(&*bytes) {
                     Some((mcfg, allocs)) => {
                         log::info!("MCFG {mcfg:?} ALLOCS {allocs:?}");
-                        return f(allocs);
+                        return f(allocs, Vec::new(), [u32::MAX, u32::MAX, u32::MAX, u32::MAX]);
                     }
                     None => {
                         return Err(io::Error::new(
@@ -147,6 +196,8 @@ impl Mcfg {
 pub struct Pcie {
     lock: Mutex<()>,
     allocs: Vec<Alloc>,
+    pub interrupt_map: Vec<InterruptMap>,
+    pub interrupt_map_mask: [u32; 4],
     fallback: Pci,
 }
 struct Alloc {
@@ -179,13 +230,19 @@ impl Pcie {
                         lock: Mutex::new(()),
                         allocs: Vec::new(),
                         fallback: Pci::new(),
+                        interrupt_map: Vec::new(),
+                        interrupt_map_mask: [u32::MAX, u32::MAX, u32::MAX, u32::MAX],
                     }
                 }
             },
         }
     }
 
-    fn from_allocs(allocs: PcieAllocs<'_>) -> Result<Pcie, io::Error> {
+    fn from_allocs(
+        allocs: PcieAllocs<'_>,
+        interrupt_map: Vec<InterruptMap>,
+        interrupt_map_mask: [u32; 4],
+    ) -> Result<Pcie, io::Error> {
         let mut allocs = allocs
             .0
             .iter()
@@ -220,6 +277,8 @@ impl Pcie {
         Ok(Self {
             lock: Mutex::new(()),
             allocs,
+            interrupt_map,
+            interrupt_map_mask,
             fallback: Pci::new(),
         })
     }
