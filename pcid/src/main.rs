@@ -1,4 +1,6 @@
 #![feature(non_exhaustive_omitted_patterns_lint)]
+#![feature(iter_next_chunk)]
+#![feature(if_let_guard)]
 
 use std::fs::{metadata, read_dir, File};
 use std::io::prelude::*;
@@ -134,6 +136,32 @@ fn handle_parsed_header(
             }
         };
 
+        let mut phandled: Option<(u32, [u32; 3])> = None;
+        if legacy_interrupt_enabled {
+            let pci_address = endpoint_header.header().address();
+            let dt_address = ((pci_address.bus() as u32) << 16)
+                | ((pci_address.device() as u32) << 11)
+                | ((pci_address.function() as u32) << 8);
+            let addr = [
+                dt_address & state.pcie.interrupt_map_mask[0],
+                0u32,
+                0u32,
+                interrupt_pin as u32 & state.pcie.interrupt_map_mask[3],
+            ];
+            let mapping = state
+                .pcie
+                .interrupt_map
+                .iter()
+                .find(|x| x.addr == addr[0..3] && x.interrupt == addr[3]);
+            if let Some(mapping) = mapping {
+                debug!(
+                    "found mapping: addr={:?} => (phandle={} irq={:?})",
+                    addr, mapping.parent_phandle, mapping.parent_interrupt
+                );
+                phandled = Some((mapping.parent_phandle, mapping.parent_interrupt));
+            }
+        }
+
         let capabilities = if endpoint_header.status(&state.pcie).has_capability_list() {
             endpoint_header
                 .capabilities(&state.pcie)
@@ -154,7 +182,7 @@ fn handle_parsed_header(
             bars,
             addr: endpoint_header.header().address(),
             legacy_interrupt_line: if legacy_interrupt_enabled {
-                Some(LegacyInterruptLine(irq))
+                Some(LegacyInterruptLine { irq, phandled })
             } else {
                 None
             },
