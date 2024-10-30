@@ -32,10 +32,11 @@ pub enum AmlSerdeValue {
         serialize: bool,
         sync_level: u8,
     },
-    Buffer,
+    Buffer(Vec<u8>),
     BufferField {
         offset: u64,
         length: u64,
+        data: Vec<u8>,
     },
     Processor {
         id: u8,
@@ -210,14 +211,15 @@ impl AmlSerdeValue {
                 serialize: flags.serialize(),
                 sync_level: flags.sync_level(),
             },
-            AmlValue::Buffer(_) => AmlSerdeValue::Buffer,
+            AmlValue::Buffer(buffer_data) => AmlSerdeValue::Buffer({ buffer_data.lock().to_owned() }),
             AmlValue::BufferField {
-                buffer_data: _,
+                buffer_data,
                 offset,
                 length,
             } => AmlSerdeValue::BufferField {
                 offset: offset.to_owned(),
                 length: length.to_owned(),
+                data: { buffer_data.lock().to_owned() }
             },
             AmlValue::Processor {
                 id,
