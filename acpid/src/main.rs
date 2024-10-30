@@ -59,6 +59,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let acpi_context = self::acpi::AcpiContext::init(physaddrs_iter);
 
     // TODO: I/O permission bitmap?
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     common::acquire_port_io_rights().expect("acpid: failed to set I/O privilege level to Ring 3");
 
     let shutdown_pipe = File::open("/scheme/kernel.acpi/kstop")
