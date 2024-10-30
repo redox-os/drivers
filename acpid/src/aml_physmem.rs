@@ -1,3 +1,4 @@
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use common::io::{Io, Pio};
 use num_traits::PrimInt;
 use rustc_hash::FxHashMap;
@@ -219,22 +220,28 @@ impl aml::Handler for AmlPhysMemHandler {
     }
 
     // Pio must be enabled via syscall::iopl
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     fn read_io_u8(&self, port: u16) -> u8 {
         Pio::<u8>::new(port).read()
     }
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     fn read_io_u16(&self, port: u16) -> u16 {
         Pio::<u16>::new(port).read()
     }
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     fn read_io_u32(&self, port: u16) -> u32 {
         Pio::<u32>::new(port).read()
     }
 
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     fn write_io_u8(&self, port: u16, value: u8) {
         Pio::<u8>::new(port).write(value)
     }
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     fn write_io_u16(&self, port: u16, value: u16) {
         Pio::<u16>::new(port).write(value)
     }
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     fn write_io_u32(&self, port: u16, value: u32) {
         Pio::<u32>::new(port).write(value)
     }
