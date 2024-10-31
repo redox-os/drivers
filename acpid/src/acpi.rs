@@ -15,6 +15,7 @@ use aml::{AmlContext, AmlError, AmlHandle, AmlName};
 use amlserde::aml_serde_name::aml_to_symbol;
 use amlserde::{AmlHandleLookup, AmlSerde};
 
+#[cfg(target_arch = "x86_64")]
 pub mod dmar;
 use crate::aml_physmem::{AmlPageCache, AmlPhysMemHandler};
 
