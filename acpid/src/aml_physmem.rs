@@ -247,7 +247,7 @@ impl aml::Handler for AmlPhysMemHandler {
     }
 
     fn read_pci_u8(&self, _segment: u16, _bus: u8, _device: u8, _function: u8, _offset: u16) -> u8 {
-        log::error!("read pci u8 {:X}", _device);
+        log::error!("read pci u8 {:X}, {:X}, {:X}, {:X}, {:X}", _segment, _bus, _device, _function, _offset);
 
         0
     }
@@ -259,7 +259,7 @@ impl aml::Handler for AmlPhysMemHandler {
         _function: u8,
         _offset: u16,
     ) -> u16 {
-        log::error!("read pci  u16 {:X}", _device);
+        log::error!("read pci u16 {:X}, {:X}, {:X}, {:X}, {:X}", _segment, _bus, _device, _function, _offset);
 
         0
     }
@@ -271,7 +271,7 @@ impl aml::Handler for AmlPhysMemHandler {
         _function: u8,
         _offset: u16,
     ) -> u32 {
-        log::error!("read pci u32 {:X}", _device);
+        log::error!("read pci u32 {:X}, {:X}, {:X}, {:X}, {:X}", _segment, _bus, _device, _function, _offset);
 
         0
     }
@@ -284,7 +284,7 @@ impl aml::Handler for AmlPhysMemHandler {
         _offset: u16,
         _value: u8,
     ) {
-        log::error!("write pci u8 {:X}", _device);
+        log::error!("write pci u8 {:X}, {:X}, {:X}, {:X}, {:X} = {:X}", _segment, _bus, _device, _function, _offset, _value);
     }
     fn write_pci_u16(
         &self,
@@ -295,7 +295,7 @@ impl aml::Handler for AmlPhysMemHandler {
         _offset: u16,
         _value: u16,
     ) {
-        log::error!("write pci u16 {:X}", _device);
+        log::error!("write pci u16 {:X}, {:X}, {:X}, {:X}, {:X} = {:X}", _segment, _bus, _device, _function, _offset, _value);
     }
     fn write_pci_u32(
         &self,
@@ -306,7 +306,7 @@ impl aml::Handler for AmlPhysMemHandler {
         _offset: u16,
         _value: u32,
     ) {
-        log::error!("write pci u32 {:X}", _device);
+        log::error!("write pci u32 {:X}, {:X}, {:X}, {:X}, {:X} = {:X}", _segment, _bus, _device, _function, _offset, _value);
     }
 }
 

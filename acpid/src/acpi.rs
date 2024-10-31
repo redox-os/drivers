@@ -4,6 +4,7 @@ use std::fmt::Write;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex};
 use std::{fmt, mem};
+use syscall::PAGE_SIZE;
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use common::io::{Io, Pio};
@@ -18,15 +19,6 @@ use amlserde::{AmlHandleLookup, AmlSerde};
 #[cfg(target_arch = "x86_64")]
 pub mod dmar;
 use crate::aml_physmem::{AmlPageCache, AmlPhysMemHandler};
-
-#[cfg(target_arch = "aarch64")]
-pub const PAGE_SIZE: usize = 4096;
-
-#[cfg(target_arch = "x86")]
-pub const PAGE_SIZE: usize = 4096;
-
-#[cfg(target_arch = "x86_64")]
-pub const PAGE_SIZE: usize = 4096;
 
 /// The raw SDT header struct, as defined by the ACPI specification.
 #[derive(Copy, Clone, Debug)]
