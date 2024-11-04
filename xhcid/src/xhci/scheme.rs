@@ -912,19 +912,8 @@ impl Xhci {
     ) -> Result<chashmap::WriteGuard<'_, usize, super::PortState>> {
         self.port_states.get_mut(&port).ok_or(Error::new(EBADF))
     }
-    async fn configure_endpoints(&self, port: usize, json_buf: &[u8]) -> Result<()> {
-        let mut req: ConfigureEndpointsReq =
-            serde_json::from_slice(json_buf).or(Err(Error::new(EBADMSG)))?;
 
-        info!(
-            "Running configure endpoints command, at port {}, request: {:?}",
-            port, req
-        );
-
-        if req.interface_desc.is_some() != req.alternate_setting.is_some() {
-            return Err(Error::new(EBADMSG));
-        }
-
+    async fn configure_endpoints_once(&self, port: usize, req: &ConfigureEndpointsReq) -> Result<()> {
         let (endp_desc_count, new_context_entries, configuration_value) = {
             let mut port_state = self.port_states.get_mut(&port).ok_or(Error::new(EBADFD))?;
 
@@ -1144,6 +1133,8 @@ impl Xhci {
             endp_ctx
                 .c
                 .write(u32::from(avg_trb_len) | (u32::from(max_esit_payload_lo) << 16));
+
+            log::info!("INITIALIZED ENDPOINT {}", endp_num);
         }
 
         {
@@ -1164,6 +1155,31 @@ impl Xhci {
 
         // Tell the device about this configuration.
         self.set_configuration(port, configuration_value).await?;
+
+        Ok(())
+    }
+
+    async fn configure_endpoints(&self, port: usize, json_buf: &[u8]) -> Result<()> {
+        let mut req: ConfigureEndpointsReq =
+            serde_json::from_slice(json_buf).or(Err(Error::new(EBADMSG)))?;
+
+        info!(
+            "Running configure endpoints command, at port {}, request: {:?}",
+            port, req
+        );
+
+        if req.interface_desc.is_some() != req.alternate_setting.is_some() {
+            return Err(Error::new(EBADMSG));
+        }
+
+        let already_configured = {
+            let port_state = self.port_states.get(&port).ok_or(Error::new(EBADFD))?;
+            port_state.cfg_idx == Some(req.config_desc)
+        };
+
+        if ! already_configured {
+            self.configure_endpoints_once(port, &req).await?;
+        }
 
         if let Some(interface_num) = req.interface_desc {
             if let Some(alternate_setting) = req.alternate_setting {

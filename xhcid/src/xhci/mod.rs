@@ -970,8 +970,7 @@ impl Xhci {
 
         let drivers_usercfg: &DriversConfig = &DRIVERS_CONFIG;
 
-        //TODO: allow spawning on all interfaces (will require fixing port state)
-        for ifdesc in config_desc.interface_descs.iter().take(1) {
+        for ifdesc in config_desc.interface_descs.iter() {
             if let Some(driver) = drivers_usercfg.drivers.iter().find(|driver| {
                 driver.class == ifdesc.class
                     && driver

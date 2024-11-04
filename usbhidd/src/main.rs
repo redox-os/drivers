@@ -205,19 +205,21 @@ fn main() {
         .expect("Failed to get standard descriptors");
     log::info!("{:X?}", desc);
 
-    let (conf_desc, conf_num, (if_desc, endpoint_num_opt, hid_desc)) =
+    let mut endp_count = 0;
+    let (conf_desc, conf_num, (if_desc, endp_desc_opt, hid_desc)) =
         desc.config_descs
             .iter()
             .enumerate()
             .find_map(|(conf_num, conf_desc)| {
                 let if_desc = conf_desc.interface_descs.iter().find_map(|if_desc| {
                     if if_desc.number == interface_num {
-                        let endpoint_num_opt = if_desc.endpoints.iter().enumerate().find_map(
-                            |(endpoint_i, endpoint)| {
-                                if endpoint.ty() == EndpointTy::Interrupt
-                                    && endpoint.direction() == EndpDirection::In
+                        let endp_desc_opt = if_desc.endpoints.iter().find_map(
+                            |endp_desc| {
+                                endp_count += 1;
+                                if endp_desc.ty() == EndpointTy::Interrupt
+                                    && endp_desc.direction() == EndpDirection::In
                                 {
-                                    Some(endpoint_i + 1)
+                                    Some((endp_count, endp_desc.clone()))
                                 } else {
                                     None
                                 }
@@ -227,8 +229,9 @@ fn main() {
                             //TODO: should we do any filtering?
                             Some(hid_desc)
                         })?;
-                        Some((if_desc.clone(), endpoint_num_opt, hid_desc))
+                        Some((if_desc.clone(), endp_desc_opt, hid_desc))
                     } else {
+                        endp_count += if_desc.endpoints.len();
                         None
                     }
                 })?;
@@ -268,17 +271,21 @@ fn main() {
     let mut handler =
         ReportHandler::new(&report_desc_bytes).expect("failed to parse report descriptor");
 
-    let mut report_buffer = vec![0u8; handler.total_byte_length];
+    let report_len = match endp_desc_opt {
+        Some((_endp_num, endp_desc)) => endp_desc.max_packet_size as usize,
+        None => handler.total_byte_length as usize,
+    };
+    let mut report_buffer = vec![0u8; report_len];
     let report_ty = ReportTy::Input;
     let report_id = 0;
 
     let mut display =
         File::open("/scheme/input/producer").expect("Failed to open orbital input socket");
-    let mut endpoint_opt = match endpoint_num_opt {
-        Some(endpoint_num) => match handle.open_endpoint(endpoint_num as u8) {
+    let mut endpoint_opt = match endp_desc_opt {
+        Some((endp_num, _endp_desc)) => match handle.open_endpoint(endp_num as u8) {
             Ok(ok) => Some(ok),
             Err(err) => {
-                log::warn!("failed to open endpoint {endpoint_num}: {err}");
+                log::warn!("failed to open endpoint {endp_num}: {err}");
                 None
             }
         },
