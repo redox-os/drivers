@@ -1,0 +1,11 @@
+[package]
+name = "hwd"
+version = "0.1.0"
+edition = "2018"
+
+[dependencies]
+log = "0.4"
+ron = "0.8.1"
+
+amlserde = { path = "../amlserde" }
+common = { path = "../common" }

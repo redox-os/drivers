@@ -2,6 +2,7 @@
 members = [
     "acpid",
     "common",
+    "hwd",
     "pcid",
     "ps2d",
     "vboxd",
