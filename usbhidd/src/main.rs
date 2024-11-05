@@ -18,8 +18,8 @@ mod reqs;
 
 fn send_key_event(
     display: &mut File,
-    usage_page: u32,
-    usage: u32,
+    usage_page: u16,
+    usage: u16,
     pressed: bool,
     shift_opt: Option<bool>,
 ) {
@@ -206,38 +206,36 @@ fn main() {
     log::info!("{:X?}", desc);
 
     let mut endp_count = 0;
-    let (conf_desc, conf_num, (if_desc, endp_desc_opt, hid_desc)) =
-        desc.config_descs
-            .iter()
-            .enumerate()
-            .find_map(|(conf_num, conf_desc)| {
-                let if_desc = conf_desc.interface_descs.iter().find_map(|if_desc| {
-                    if if_desc.number == interface_num {
-                        let endp_desc_opt = if_desc.endpoints.iter().find_map(
-                            |endp_desc| {
-                                endp_count += 1;
-                                if endp_desc.ty() == EndpointTy::Interrupt
-                                    && endp_desc.direction() == EndpDirection::In
-                                {
-                                    Some((endp_count, endp_desc.clone()))
-                                } else {
-                                    None
-                                }
-                            },
-                        );
-                        let hid_desc = if_desc.hid_descs.iter().find_map(|hid_desc| {
-                            //TODO: should we do any filtering?
-                            Some(hid_desc)
-                        })?;
-                        Some((if_desc.clone(), endp_desc_opt, hid_desc))
-                    } else {
-                        endp_count += if_desc.endpoints.len();
-                        None
-                    }
-                })?;
-                Some((conf_desc.clone(), conf_num, if_desc))
-            })
-            .expect("Failed to find suitable configuration");
+    let (conf_desc, conf_num, (if_desc, endp_desc_opt, hid_desc)) = desc
+        .config_descs
+        .iter()
+        .enumerate()
+        .find_map(|(conf_num, conf_desc)| {
+            let if_desc = conf_desc.interface_descs.iter().find_map(|if_desc| {
+                if if_desc.number == interface_num {
+                    let endp_desc_opt = if_desc.endpoints.iter().find_map(|endp_desc| {
+                        endp_count += 1;
+                        if endp_desc.ty() == EndpointTy::Interrupt
+                            && endp_desc.direction() == EndpDirection::In
+                        {
+                            Some((endp_count, endp_desc.clone()))
+                        } else {
+                            None
+                        }
+                    });
+                    let hid_desc = if_desc.hid_descs.iter().find_map(|hid_desc| {
+                        //TODO: should we do any filtering?
+                        Some(hid_desc)
+                    })?;
+                    Some((if_desc.clone(), endp_desc_opt, hid_desc))
+                } else {
+                    endp_count += if_desc.endpoints.len();
+                    None
+                }
+            })?;
+            Some((conf_desc.clone(), conf_num, if_desc))
+        })
+        .expect("Failed to find suitable configuration");
 
     handle
         .configure_endpoints(&ConfigureEndpointsReq {
@@ -327,23 +325,23 @@ fn main() {
             .expect("failed to parse report")
         {
             log::debug!("{:X?}", event);
-            if event.usage_page == UsagePage::GenericDesktop as u32 {
-                if event.usage == GenericDesktopUsage::X as u32 {
+            if event.usage_page == UsagePage::GenericDesktop as u16 {
+                if event.usage == GenericDesktopUsage::X as u16 {
                     if event.relative {
-                        mouse_dx += event.value;
+                        mouse_dx += event.value as i32;
                     } else {
-                        mouse_pos.0 = event.value;
+                        mouse_pos.0 = event.value as i32;
                     }
-                } else if event.usage == GenericDesktopUsage::Y as u32 {
+                } else if event.usage == GenericDesktopUsage::Y as u16 {
                     if event.relative {
-                        mouse_dy += event.value;
+                        mouse_dy += event.value as i32;
                     } else {
-                        mouse_pos.1 = event.value;
+                        mouse_pos.1 = event.value as i32;
                     }
-                } else if event.usage == GenericDesktopUsage::Wheel as u32 {
+                } else if event.usage == GenericDesktopUsage::Wheel as u16 {
                     //TODO: what is X scroll?
                     if event.relative {
-                        scroll_y += event.value;
+                        scroll_y += event.value as i32;
                     } else {
                         log::warn!("absolute mouse wheel not supported");
                     }
@@ -355,7 +353,7 @@ fn main() {
                         event.value
                     );
                 }
-            } else if event.usage_page == UsagePage::KeyboardOrKeypad as u32 {
+            } else if event.usage_page == UsagePage::KeyboardOrKeypad as u16 {
                 let (pressed, shift_opt) = if event.value != 0 {
                     (true, Some(left_shift | right_shift))
                 } else {
@@ -373,7 +371,7 @@ fn main() {
                     pressed,
                     shift_opt,
                 );
-            } else if event.usage_page == UsagePage::Button as u32 {
+            } else if event.usage_page == UsagePage::Button as u16 {
                 if event.usage > 0 && event.usage as usize <= buttons.len() {
                     buttons[event.usage as usize - 1] = event.value != 0;
                 } else {
