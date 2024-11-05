@@ -1,8 +1,9 @@
-use crate::usb;
-use common::io::{Io, Mmio};
-use std::{fmt, mem};
-
 use super::context::StreamContextType;
+use crate::usb;
+use crate::xhci::trb::TrbType::PortStatusChange;
+use common::io::{Io, Mmio};
+use log::trace;
+use std::{fmt, mem};
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -196,6 +197,17 @@ impl Trb {
         }
     }
 
+    pub fn port_status_change_port_id(&self) -> Option<u8> {
+        debug_assert_eq!(self.trb_type(), TrbType::PortStatusChange as u8);
+
+        if self.has_completion_trb_pointer() {
+            let data = self.read_data();
+            Some(((data >> 24) & 0xFF) as u8)
+        } else {
+            None
+        }
+    }
+
     pub fn event_slot(&self) -> u8 {
         (self.control.read() >> 24) as u8
     }
@@ -234,6 +246,7 @@ impl Trb {
     }
 
     pub fn enable_slot(&mut self, slot_type: u8, cycle: bool) {
+        trace!("Enabling slot with type {}", slot_type);
         self.set(
             0,
             0,
@@ -379,6 +392,10 @@ impl Trb {
             length as u32,
             ((input as u32) << 16) | ((TrbType::DataStage as u32) << 10) | (cycle as u32),
         );
+    }
+
+    pub fn cycle(&self) -> bool {
+        self.control.readf(0x01)
     }
 
     pub fn status(

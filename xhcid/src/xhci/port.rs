@@ -6,6 +6,7 @@ bitflags! {
         const PORT_PED = 1 << 1;
         const PORT_OCA = 1 << 3;
         const PORT_PR =  1 << 4;
+        const PORT_PLS = 1 << 5;
         const PORT_PP =  1 << 9;
         const PORT_PIC_AMB = 1 << 14;
         const PORT_PIC_GRN = 1 << 15;
