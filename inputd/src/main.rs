@@ -432,8 +432,8 @@ pub fn main() {
         "misc",
         "inputd",
         "inputd",
-        log::LevelFilter::Trace,
-        log::LevelFilter::Trace,
+        log::LevelFilter::Info,
+        log::LevelFilter::Debug,
     );
 
     let mut args = std::env::args().skip(1);
