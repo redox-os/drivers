@@ -271,7 +271,7 @@ pub struct Xhci {
     handles: CHashMap<usize, scheme::Handle>,
     next_handle: AtomicUsize,
     port_states: CHashMap<usize, PortState>,
-    drivers: CHashMap<usize, Mutex<process::Child>>,
+    drivers: CHashMap<usize, Vec<process::Child>>,
     scheme_name: String,
 
     interrupt_method: InterruptMethod,
@@ -844,30 +844,38 @@ impl Xhci {
     }
 
     pub async fn detach_device(&self, port_number: usize) -> Result<()> {
+        if let Some(children) = self.drivers.remove(&port_number) {
+            for mut child in children {
+                info!("killing driver process {} for port {}", child.id(), port_number);
+                match child.kill() {
+                    Ok(()) => {
+                        info!("killed driver process {} for port {}", child.id(), port_number);
+                        match child.try_wait() {
+                            Ok(status_opt) => match status_opt {
+                                Some(status) => {
+                                    info!("driver process {} for port {} exited with status {}", child.id(), port_number, status);
+                                },
+                                None => {
+                                    //TODO: kill harder
+                                    info!("driver process {} for port {} still running", child.id(), port_number);
+                                }
+                            },
+                            Err(err) => {
+                                info!("failed to wait for the driver process {} for port {}: {}", child.id(), port_number, err);
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        warn!("failed to kill the driver process {} for port {}: {}", child.id(), port_number, err);
+                    }
+                }
+            }
+        }
+
         if let Some(state) = self.port_states.remove(&port_number) {
             info!("disabling port slot {} for port {}", state.slot, port_number);
             let result = self.disable_port_slot(state.slot).await;
             info!("disabled port slot {} for port {} with result: {:?}", state.slot, port_number, result);
-
-            //TODO handle killing the child process properly. I'm not sure how
-            //to get a mutable reference that I can kill.
-
-            if let Some(mutex) = self.drivers.remove(&port_number) {
-                info!("locking driver process for port {}", port_number);
-                let mut child = mutex.lock().unwrap();
-
-                info!("Killing {:?}", child);
-                match child.kill() {
-                    Ok(_) => {
-                        info!("Killed {:?}", child)
-                    }
-                    Err(_) => {
-                        warn!("Failed to kill the child process!");
-                    }
-                }
-            } else {
-                info!("no driver process for port {}", port_number);
-            }
 
             result
         } else {
@@ -1155,23 +1163,25 @@ impl Xhci {
                 } else {
                     "/usr/lib/drivers/".to_owned() + command
                 };
-                let process = Mutex::new(
-                    process::Command::new(command)
-                        .args(
-                            args.into_iter()
-                                .map(|arg| {
-                                    arg.replace("$SCHEME", &self.scheme_name)
-                                        .replace("$PORT", &format!("{}", port))
-                                        .replace("$IF_NUM", &format!("{}", ifdesc.number))
-                                        .replace("$IF_PROTO", &format!("{}", ifdesc.protocol))
-                                })
-                                .collect::<Vec<_>>(),
-                        )
-                        .stdin(process::Stdio::null())
-                        .spawn()
-                        .or(Err(Error::new(ENOENT)))?,
-                );
-                self.drivers.insert(port, process);
+                let process = process::Command::new(command)
+                    .args(
+                        args.into_iter()
+                            .map(|arg| {
+                                arg.replace("$SCHEME", &self.scheme_name)
+                                    .replace("$PORT", &format!("{}", port))
+                                    .replace("$IF_NUM", &format!("{}", ifdesc.number))
+                                    .replace("$IF_PROTO", &format!("{}", ifdesc.protocol))
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                    .stdin(process::Stdio::null())
+                    .spawn()
+                    .or(Err(Error::new(ENOENT)))?;
+                self.drivers.alter(port, |children_opt| {
+                    let mut children = children_opt.unwrap_or_else(|| Vec::new());
+                    children.push(process);
+                    Some(children)
+                });
             } else {
                 warn!(
                     "No driver for USB class {}.{}",
