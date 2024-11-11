@@ -34,6 +34,14 @@ pub struct State {
     is_isoch_or_vf: bool,
 }
 
+impl State {
+    fn finish(self, message: Option<NextEventTrb>) {
+        *self.message.lock().unwrap() = message;
+        trace!("Waking up future with waker: {:?}", self.waker);
+        self.waker.wake();
+    }
+}
+
 #[derive(Debug)]
 pub struct NextEventTrb {
     pub event_trb: Trb,
@@ -401,13 +409,10 @@ impl IrqReactor {
                         };
 
                         // TODO: Validate the command TRB.
-                        *state.message.lock().unwrap() = Some(NextEventTrb {
+                        state.finish(Some(NextEventTrb {
                             src_trb: Some(command_trb.clone()),
                             event_trb: trb.clone(),
-                        });
-
-                        trace!("Waking up future with waker: {:?}", state.waker);
-                        state.waker.wake();
+                        }));
 
                         return;
                     } else if trb.completion_trb_pointer().is_none() {
@@ -419,12 +424,9 @@ impl IrqReactor {
                     first_phys_ptr,
                     last_phys_ptr,
                     ring_id,
-                } if trb.trb_type() == TrbType::Transfer as u8 => {
-                    if let Some(src_trb) = trb
-                        .transfer_event_trb_pointer()
-                        .map(|ptr| self.hci.get_transfer_trb(ptr, ring_id))
-                        .flatten()
-                    {
+                } => {
+                    // Check if the TRB matches the transfer
+                    if trb.trb_type() == TrbType::Transfer as u8 {
                         match trb.transfer_event_trb_pointer() {
                             Some(phys_ptr) => {
                                 let matches = if first_phys_ptr <= last_phys_ptr {
@@ -434,13 +436,13 @@ impl IrqReactor {
                                     phys_ptr >= first_phys_ptr || phys_ptr <= last_phys_ptr
                                 };
                                 if matches {
+                                    let src_trb = self.hci.get_transfer_trb(phys_ptr, ring_id);
                                     // Give the source transfer TRB together with the event TRB, to the future.
                                     let state = self.states.remove(index);
-                                    *state.message.lock().unwrap() = Some(NextEventTrb {
-                                        src_trb: Some(src_trb),
+                                    state.finish(Some(NextEventTrb {
+                                        src_trb: src_trb,
                                         event_trb: trb.clone(),
-                                    });
-                                    state.waker.wake();
+                                    }));
                                     return;
                                 }
                             }
@@ -461,11 +463,23 @@ impl IrqReactor {
                             }
                         }
                     }
+
+                    // Also check if the transfer is on a dead ring
+                    if self.hci.with_ring(ring_id, |_ring| ()).is_none() {
+                        log::debug!("State {} is a dead transfer", index);
+                        let state = self.states.remove(index);
+                        state.finish(Some(NextEventTrb {
+                            src_trb: None,
+                            //TODO: don't send this TRB as it may not be related
+                            event_trb: trb.clone(),
+                        }));
+                        continue;
+                    }
                 }
 
                 StateKind::Other(trb_type) if trb_type as u8 == trb.trb_type() => {
                     let state = self.states.remove(index);
-                    state.waker.wake();
+                    state.finish(None);
                     return;
                 }
 
@@ -493,11 +507,10 @@ impl IrqReactor {
                 continue;
             }
             let state = self.states.remove(index);
-            *state.message.lock().unwrap() = Some(NextEventTrb {
+            state.finish(Some(NextEventTrb {
                 event_trb: trb.clone(),
                 src_trb: None,
-            });
-            state.waker.wake();
+            }));
         }
     }
     /// Checks if an event TRB is a Host Controller Event, with the completion code Event Ring

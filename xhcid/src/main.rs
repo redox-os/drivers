@@ -63,10 +63,6 @@ pub mod driver_interface;
 mod usb;
 mod xhci;
 
-async fn handle_packet(hci: Arc<Xhci>, packet: Packet) -> Packet {
-    todo!()
-}
-
 #[cfg(target_arch = "x86_64")]
 fn get_int_method(
     pcid_handle: &mut PciFunctionHandle,
@@ -224,7 +220,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let socket_fd =
         libredox::call::open(format!(":{}", scheme_name), flag::O_RDWR | flag::O_CREAT, 0)
             .expect("xhcid: failed to create usb scheme");
-    let socket = Arc::new(Mutex::new(unsafe { File::from_raw_fd(socket_fd as RawFd) }));
+    let mut socket = unsafe { File::from_raw_fd(socket_fd as RawFd) };
 
     daemon.ready().expect("xhcid: failed to notify parent");
 
@@ -238,20 +234,8 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     hci.poll();
 
-    //let event_queue = RawEventQueue::new().expect("xhcid: failed to create event queue");
-
-    let todo = Arc::new(Mutex::new(Vec::<Packet>::new()));
-    //let todo_futures = Arc::new(Mutex::new(Vec::<Pin<Box<dyn Future<Output = usize> + Send + Sync + 'static>>>::new()));
-
-    //let socket_fd = socket.lock().unwrap().as_raw_fd();
-    //event_queue.subscribe(socket_fd as usize, 0, event::EventFlags::READ).unwrap();
-
-    let socket_packet = socket.clone();
-
+    let mut todo = Vec::<Packet>::new();
     loop {
-        let mut socket = socket_packet.lock().unwrap();
-        let mut todo = todo.lock().unwrap();
-
         let mut packet = Packet::default();
         match socket.read(&mut packet) {
             Ok(0) => break,

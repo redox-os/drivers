@@ -162,7 +162,7 @@ impl Xhci {
         debug!("Waiting for the next transfer event TRB...");
         let trbs = future.await;
         let event_trb = trbs.event_trb;
-        let status_trb = trbs.src_trb.unwrap();
+        let status_trb = trbs.src_trb.ok_or(Error::new(EIO))?;
         trace!("Handling the transfer event TRB!");
         self::scheme::handle_transfer_event_trb("GET_DESC", &event_trb, &status_trb)?;
 
@@ -698,6 +698,7 @@ impl Xhci {
         Ok(event_trb.event_slot())
     }
     pub async fn disable_port_slot(&self, slot: u8) -> Result<()> {
+        trace!("Disable slot {}", slot);
         let (event_trb, command_trb) = self
             .execute_command(|cmd, cycle| cmd.disable_slot(slot, cycle))
             .await;

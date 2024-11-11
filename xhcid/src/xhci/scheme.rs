@@ -651,7 +651,7 @@ impl Xhci {
 
         let trbs = future.await;
         let event_trb = trbs.event_trb;
-        let status_trb = trbs.src_trb.unwrap();
+        let status_trb = trbs.src_trb.ok_or(Error::new(EIO))?;
 
         handle_transfer_event_trb("CONTROL_TRANSFER", &event_trb, &status_trb)?;
 
@@ -748,7 +748,7 @@ impl Xhci {
 
         let trbs = future.await;
         let event_trb = trbs.event_trb;
-        let transfer_trb = trbs.src_trb.unwrap();
+        let transfer_trb = trbs.src_trb.ok_or(Error::new(EIO))?;
 
         handle_transfer_event_trb("EXECUTE_TRANSFER", &event_trb, &transfer_trb)?;
 
@@ -1136,7 +1136,7 @@ impl Xhci {
                 .c
                 .write(u32::from(avg_trb_len) | (u32::from(max_esit_payload_lo) << 16));
 
-            log::info!("INITIALIZED ENDPOINT {}", endp_num);
+            log::info!("initialized endpoint {}", endp_num);
         }
 
         {
