@@ -844,30 +844,30 @@ impl Xhci {
     }
 
     pub async fn detach_device(&self, port_number: usize) -> Result<()> {
-        let port_state = self.port_states.get(&port_number);
-        let mut driver_process = self.drivers.get(&port_number);
-
-        if let Some(state) = port_state {
+        if let Some(state) = self.port_states.remove(&port_number) {
+            info!("disabling port slot {} for port {}", state.slot, port_number);
             let result = self.disable_port_slot(state.slot).await;
-            self.port_states.remove(&port_number);
+            info!("disabled port slot {} for port {} with result: {:?}", state.slot, port_number, result);
 
             //TODO handle killing the child process properly. I'm not sure how
             //to get a mutable reference that I can kill.
 
-            if let Some(mutex) = driver_process {
+            if let Some(mutex) = self.drivers.remove(&port_number) {
+                info!("locking driver process for port {}", port_number);
                 let mut child = mutex.lock().unwrap();
 
+                info!("Killing {:?}", child);
                 match child.kill() {
                     Ok(_) => {
-                        info!("Killing {:?}", child)
+                        info!("Killed {:?}", child)
                     }
                     Err(_) => {
                         warn!("Failed to kill the child process!");
                     }
                 }
+            } else {
+                info!("no driver process for port {}", port_number);
             }
-
-            self.drivers.remove(&port_number);
 
             result
         } else {

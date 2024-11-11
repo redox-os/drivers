@@ -103,13 +103,14 @@ impl DeviceEnumerator {
 
     pub fn run(&mut self) {
         loop {
-            trace!("Start Device Enumerator Loop");
+            info!("Start Device Enumerator Loop");
             let request = match self.request_queue.recv() {
                 Ok(req) => req,
                 Err(err) => {
                     panic!("Failed to received an enumeration request! error: {}", err)
                 }
             };
+            info!("Device Enumerator request for port {}", request.port_number);
 
             let port_array_index = request.port_number - 1;
 
