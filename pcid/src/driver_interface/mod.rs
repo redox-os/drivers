@@ -25,18 +25,26 @@ pub mod msi;
 pub struct LegacyInterruptLine {
     #[doc(hidden)]
     pub irq: u8,
-    pub phandled: Option<(u32, [u32; 3])>,
+    pub phandled: Option<(u32, [u32; 3], usize)>,
 }
 
 impl LegacyInterruptLine {
     /// Get an IRQ handle for this interrupt line.
     pub fn irq_handle(self, driver: &str) -> File {
-        if let Some((phandle, addr)) = self.phandled {
-            File::create(format!(
-                "/scheme/irq/phandle-{}/{},{},{}",
-                phandle, addr[0], addr[1], addr[2]
-            ))
-            .unwrap_or_else(|err| panic!("{driver}: failed to open IRQ file: {err}"))
+        if let Some((phandle, addr, cells)) = self.phandled {
+            let path = match cells {
+                1 => format!("/scheme/irq/phandle-{}/{}", phandle, addr[0]),
+                2 => format!("/scheme/irq/phandle-{}/{},{}", phandle, addr[0], addr[1]),
+                3 => format!(
+                    "/scheme/irq/phandle-{}/{},{},{}",
+                    phandle, addr[0], addr[1], addr[2]
+                ),
+                _ => panic!(
+                    "unexpected number of IRQ description cells for phandle {phandle}: {cells}"
+                ),
+            };
+            File::create(path)
+                .unwrap_or_else(|err| panic!("{driver}: failed to open IRQ file: {err}"))
         } else {
             File::open(format!("/scheme/irq/{}", self.irq))
                 .unwrap_or_else(|err| panic!("{driver}: failed to open IRQ file: {err}"))
@@ -46,8 +54,15 @@ impl LegacyInterruptLine {
 
 impl fmt::Display for LegacyInterruptLine {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some((phandle, addr)) = self.phandled {
-            write!(f, "(phandle {}, {:?})", phandle, addr)
+        if let Some((phandle, addr, cells)) = self.phandled {
+            match cells {
+                1 => write!(f, "(phandle {}, {:?})", phandle, addr[0]),
+                2 => write!(f, "(phandle {}, {:?},{:?})", phandle, addr[0], addr[1]),
+                3 => write!(f, "(phandle {}, {:?})", phandle, addr),
+                _ => panic!(
+                    "unexpected number of IRQ description cells for phandle {phandle}: {cells}"
+                ),
+            }
         } else {
             write!(f, "{}", self.irq)
         }
