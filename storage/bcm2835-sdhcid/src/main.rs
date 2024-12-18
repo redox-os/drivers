@@ -1,3 +1,5 @@
+#![feature(let_chains)]
+
 use std::{
     fs::File,
     io::{Read, Write},
@@ -50,17 +52,29 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     let fdt = Fdt::new(&dtb_data).unwrap();
     println!("DTB model = {}", fdt.root().model());
-    let with = ["brcm,bcm2835-sdhcid"];
+    let with = ["brcm,bcm2835-sdhci"];
     let compat_node = fdt.find_compatible(&with).unwrap();
     let reg = compat_node.reg().unwrap().next().unwrap();
     let reg_size = reg.size.unwrap();
+    let mut reg_addr = reg.starting_address as usize;
     println!(
         "DeviceMemory start = 0x{:08x}, size = 0x{:08x}",
-        reg.starting_address as usize, reg_size
+        reg_addr, reg_size
     );
+    if let Some(mut ranges) = fdt.find_node("/soc").and_then(|f| f.ranges()) {
+        let range = ranges
+            .find(|f| f.child_bus_address <= reg_addr && reg_addr - f.child_bus_address < f.size)
+            .expect("Couldn't find device range in /soc/@ranges");
+        reg_addr = range.parent_bus_address + (reg_addr - range.child_bus_address);
+        println!(
+            "DeviceMemory remapped onto CPU address space: start = 0x{:08x}, size = 0x{:08x}",
+            reg_addr, reg_size
+        );
+    }
+
     let addr = unsafe {
         common::physmap(
-            reg.starting_address as usize,
+            reg_addr,
             reg_size,
             common::Prot::RW,
             common::MemoryType::DeviceMemory,

@@ -211,7 +211,9 @@ impl AmlSerdeValue {
                 serialize: flags.serialize(),
                 sync_level: flags.sync_level(),
             },
-            AmlValue::Buffer(buffer_data) => AmlSerdeValue::Buffer({ buffer_data.lock().to_owned() }),
+            AmlValue::Buffer(buffer_data) => {
+                AmlSerdeValue::Buffer({ buffer_data.lock().to_owned() })
+            }
             AmlValue::BufferField {
                 buffer_data,
                 offset,
@@ -219,7 +221,7 @@ impl AmlSerdeValue {
             } => AmlSerdeValue::BufferField {
                 offset: offset.to_owned(),
                 length: length.to_owned(),
-                data: { buffer_data.lock().to_owned() }
+                data: { buffer_data.lock().to_owned() },
             },
             AmlValue::Processor {
                 id,

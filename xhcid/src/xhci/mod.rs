@@ -847,36 +847,69 @@ impl Xhci {
     pub async fn detach_device(&self, port_number: usize) -> Result<()> {
         if let Some(children) = self.drivers.remove(&port_number) {
             for mut child in children {
-                info!("killing driver process {} for port {}", child.id(), port_number);
+                info!(
+                    "killing driver process {} for port {}",
+                    child.id(),
+                    port_number
+                );
                 match child.kill() {
                     Ok(()) => {
-                        info!("killed driver process {} for port {}", child.id(), port_number);
+                        info!(
+                            "killed driver process {} for port {}",
+                            child.id(),
+                            port_number
+                        );
                         match child.try_wait() {
                             Ok(status_opt) => match status_opt {
                                 Some(status) => {
-                                    info!("driver process {} for port {} exited with status {}", child.id(), port_number, status);
-                                },
+                                    info!(
+                                        "driver process {} for port {} exited with status {}",
+                                        child.id(),
+                                        port_number,
+                                        status
+                                    );
+                                }
                                 None => {
                                     //TODO: kill harder
-                                    info!("driver process {} for port {} still running", child.id(), port_number);
+                                    info!(
+                                        "driver process {} for port {} still running",
+                                        child.id(),
+                                        port_number
+                                    );
                                 }
                             },
                             Err(err) => {
-                                info!("failed to wait for the driver process {} for port {}: {}", child.id(), port_number, err);
+                                info!(
+                                    "failed to wait for the driver process {} for port {}: {}",
+                                    child.id(),
+                                    port_number,
+                                    err
+                                );
                             }
                         }
                     }
                     Err(err) => {
-                        warn!("failed to kill the driver process {} for port {}: {}", child.id(), port_number, err);
+                        warn!(
+                            "failed to kill the driver process {} for port {}: {}",
+                            child.id(),
+                            port_number,
+                            err
+                        );
                     }
                 }
             }
         }
 
         if let Some(state) = self.port_states.remove(&port_number) {
-            info!("disabling port slot {} for port {}", state.slot, port_number);
+            info!(
+                "disabling port slot {} for port {}",
+                state.slot, port_number
+            );
             let result = self.disable_port_slot(state.slot).await;
-            info!("disabled port slot {} for port {} with result: {:?}", state.slot, port_number, result);
+            info!(
+                "disabled port slot {} for port {} with result: {:?}",
+                state.slot, port_number, result
+            );
 
             result
         } else {
