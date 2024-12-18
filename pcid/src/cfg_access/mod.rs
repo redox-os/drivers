@@ -15,6 +15,7 @@ pub struct InterruptMap {
     pub interrupt: u32,
     pub parent_phandle: u32,
     pub parent_interrupt: [u32; 3],
+    pub parent_interrupt_cells: usize,
 }
 
 // https://elinux.org/Device_Tree_Usage has a lot of useful information
@@ -55,11 +56,11 @@ fn locate_ecam_dtb<T>(
     let mut interrupt_map = Vec::<InterruptMap>::new();
     while let Ok([addr1, addr2, addr3, int1, phandle]) = interrupt_map_data.next_chunk::<5>() {
         let parent = dt.find_phandle(phandle).unwrap();
-        let interrupt_cells = parent.interrupt_cells().unwrap();
-        let parent_interrupt = match interrupt_cells {
+        let parent_interrupt_cells = parent.interrupt_cells().unwrap();
+        let parent_interrupt = match parent_interrupt_cells {
             1 if let Some(a) = interrupt_map_data.next() => [a, 0, 0],
             2 if let Ok([a, b]) = interrupt_map_data.next_chunk::<2>() => [a, b, 0],
-            2 if let Ok([a, b, c]) = interrupt_map_data.next_chunk::<3>() => [a, b, c],
+            3 if let Ok([a, b, c]) = interrupt_map_data.next_chunk::<3>() => [a, b, c],
             _ => break,
         };
         interrupt_map.push(InterruptMap {
@@ -67,6 +68,7 @@ fn locate_ecam_dtb<T>(
             interrupt: int1,
             parent_phandle: phandle,
             parent_interrupt,
+            parent_interrupt_cells,
         });
     }
 

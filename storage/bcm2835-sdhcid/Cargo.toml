@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-fdt = "0.1.5"
+fdt = { git = "https://github.com/repnop/fdt.git" }
 common = { path = "../../common" }
 driver-block = { path = "../driver-block" }
 

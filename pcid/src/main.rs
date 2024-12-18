@@ -136,7 +136,7 @@ fn handle_parsed_header(
             }
         };
 
-        let mut phandled: Option<(u32, [u32; 3])> = None;
+        let mut phandled: Option<(u32, [u32; 3], usize)> = None;
         if legacy_interrupt_enabled {
             let pci_address = endpoint_header.header().address();
             let dt_address = ((pci_address.bus() as u32) << 16)
@@ -154,11 +154,12 @@ fn handle_parsed_header(
                 .iter()
                 .find(|x| x.addr == addr[0..3] && x.interrupt == addr[3]);
             if let Some(mapping) = mapping {
-                debug!(
-                    "found mapping: addr={:?} => (phandle={} irq={:?})",
-                    addr, mapping.parent_phandle, mapping.parent_interrupt
-                );
-                phandled = Some((mapping.parent_phandle, mapping.parent_interrupt));
+                phandled = Some((
+                    mapping.parent_phandle,
+                    mapping.parent_interrupt,
+                    mapping.parent_interrupt_cells,
+                ));
+                debug!("found mapping: addr={:?} => {:?}", addr, phandled);
             }
         }
 
