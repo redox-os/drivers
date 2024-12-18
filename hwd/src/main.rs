@@ -18,9 +18,7 @@ fn acpi() -> Result<(), Box<dyn Error>> {
                         let vendor_3 = (((vendor_rev >> 0) & 0x1f) as u8 + 64) as char;
                         format!("{}{}{}{:04X}", vendor_1, vendor_2, vendor_3, device)
                     }
-                    AmlSerdeValue::String(string) => {
-                        string
-                    },
+                    AmlSerdeValue::String(string) => string,
                     _ => {
                         log::warn!("{}: unsupported value {:x?}", name, value);
                         continue;
