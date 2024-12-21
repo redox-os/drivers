@@ -13,17 +13,15 @@
 
 use std::collections::BTreeMap;
 use std::fs::File;
-use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
 
 use inputd::{Cmd, VtActivate};
 
-use spin::Mutex;
+use redox_scheme::{RequestKind, SchemeMut, SignalBehavior, Socket, V2};
 
 use orbclient::{Event, EventOption};
-use syscall::{Error as SysError, EventFlags, Packet, SchemeMut, EINVAL};
+use syscall::{Error as SysError, EventFlags, EINVAL};
 
 enum Handle {
     Producer,
@@ -44,37 +42,29 @@ impl Handle {
     }
 }
 
-/// VT Inner State
-///
-/// This is *required* to be lazily initialized since opening the handle to the display
-/// requires the system call to return first. Otherwise, it will block indefinitely.
-struct VtInner {
-    handle_file: File,
-}
-
 struct Vt {
     display: String,
     index: usize,
-    inner: spin::Once<Mutex<VtInner>>,
+
+    /// This is *required* to be lazily initialized since opening the handle to the display
+    /// requires the system call to return first. Otherwise, it will block indefinitely.
+    handle_file: Option<File>,
 }
 
 impl Vt {
-    pub fn new<D>(display: D, index: usize) -> Arc<Self>
-    where
-        D: Into<String>,
-    {
-        Arc::new(Self {
+    fn new(display: impl Into<String>, index: usize) -> Self {
+        Self {
             display: display.into(),
-            inner: spin::Once::new(),
+            handle_file: None,
             index,
-        })
+        }
     }
 
-    pub fn inner(&self) -> &Mutex<VtInner> {
-        self.inner.call_once(|| {
-            let handle_file = File::open(format!("/scheme/{}/handle", self.display)).unwrap();
-            Mutex::new(VtInner { handle_file })
-        })
+    fn send_command(&mut self, cmd: Cmd) -> Result<(), libredox::error::Error> {
+        let handle_file = self
+            .handle_file
+            .get_or_insert_with(|| File::open(format!("/scheme/{}/handle", self.display)).unwrap());
+        inputd::send_comand(handle_file, cmd)
     }
 }
 
@@ -84,15 +74,16 @@ struct InputScheme {
     next_id: AtomicUsize,
     next_vt_id: AtomicUsize,
 
-    vts: BTreeMap<usize, Arc<Vt>>,
+    vts: BTreeMap<usize, Vt>,
     super_key: bool,
-    active_vt: Option<Arc<Vt>>,
+    active_vt: Option<usize>,
 
-    todo: Vec<VtActivate>,
+    pending_activate: Option<VtActivate>,
+    has_new_events: bool,
 }
 
 impl InputScheme {
-    pub fn new() -> Self {
+    fn new() -> Self {
         Self {
             next_id: AtomicUsize::new(0),
             next_vt_id: AtomicUsize::new(1),
@@ -102,7 +93,8 @@ impl InputScheme {
             super_key: false,
             active_vt: None,
 
-            todo: vec![],
+            pending_activate: None,
+            has_new_events: false,
         }
     }
 }
@@ -162,7 +154,13 @@ impl SchemeMut for InputScheme {
         }
     }
 
-    fn read(&mut self, id: usize, buf: &mut [u8]) -> syscall::Result<usize> {
+    fn read(
+        &mut self,
+        id: usize,
+        buf: &mut [u8],
+        _offset: u64,
+        _fcntl_flags: u32,
+    ) -> syscall::Result<usize> {
         let handle = self.handles.get_mut(&id).ok_or(SysError::new(EINVAL))?;
 
         match handle {
@@ -184,28 +182,45 @@ impl SchemeMut for InputScheme {
                 Ok(vt)
             }
 
-            _ => unreachable!(),
+            Handle::Producer => {
+                log::error!("inputd: producer tried to read");
+                return Err(SysError::new(EINVAL));
+            }
         }
     }
 
-    fn write(&mut self, id: usize, buf: &[u8]) -> syscall::Result<usize> {
+    fn write(
+        &mut self,
+        id: usize,
+        buf: &[u8],
+        _offset: u64,
+        _fcntl_flags: u32,
+    ) -> syscall::Result<usize> {
+        self.has_new_events = true;
+
         let handle = self.handles.get_mut(&id).ok_or(SysError::new(EINVAL))?;
 
         match handle {
             Handle::Device { device } => {
-                assert!(buf.len() == core::mem::size_of::<VtActivate>());
+                if buf.len() != core::mem::size_of::<VtActivate>() {
+                    log::error!("inputd: device tried to write incorrectly sized command");
+                    return Err(SysError::new(EINVAL));
+                }
 
                 // SAFETY: We have verified the size of the buffer above.
                 let cmd = unsafe { &*buf.as_ptr().cast::<VtActivate>() };
 
                 self.vts.insert(cmd.vt, Vt::new(device.clone(), cmd.vt));
-                self.todo.push(cmd.clone());
+                self.pending_activate = Some(cmd.clone());
 
                 return Ok(buf.len());
             }
 
-            Handle::Consumer { .. } => unreachable!(),
-            _ => {}
+            Handle::Consumer { .. } => {
+                log::error!("inputd: consumer tried to write");
+                return Err(SysError::new(EINVAL));
+            }
+            Handle::Producer => {}
         }
 
         if buf.len() == 1 && buf[0] > 0xf4 {
@@ -247,50 +262,36 @@ impl SchemeMut for InputScheme {
                 },
 
                 EventOption::Resize(resize_event) => {
-                    let active_vt = self.active_vt.as_ref().unwrap();
-                    let mut vt_inner = active_vt.inner().lock();
+                    let active_vt = self.vts.get_mut(&self.active_vt.unwrap()).unwrap();
+                    active_vt.send_command(Cmd::Resize {
+                        vt: active_vt.index,
+                        width: resize_event.width,
+                        height: resize_event.height,
 
-                    inputd::send_comand(
-                        &mut vt_inner.handle_file,
-                        Cmd::Resize {
-                            vt: active_vt.index,
-                            width: resize_event.width,
-                            height: resize_event.height,
-
-                            // TODO(andypython): Figure out how to get the stride.
-                            stride: resize_event.width,
-                        },
-                    )?;
+                        // TODO(andypython): Figure out how to get the stride.
+                        stride: resize_event.width,
+                    })?;
                 }
 
                 _ => continue,
             }
 
             if let Some(new_active) = new_active_opt {
-                if new_active == self.active_vt.as_ref().unwrap().index {
+                if new_active == self.vts[&self.active_vt.unwrap()].index {
                     continue 'out;
                 }
 
-                if let Some(new_active) = self.vts.get(&new_active).cloned() {
-                    {
-                        let active_vt = self.active_vt.as_ref().unwrap();
-                        let mut vt_inner = active_vt.inner().lock();
+                if self.vts.contains_key(&new_active) {
+                    let active_vt = self.vts.get_mut(&self.active_vt.unwrap()).unwrap();
 
-                        inputd::send_comand(
-                            &mut vt_inner.handle_file,
-                            Cmd::Deactivate(active_vt.index),
-                        )?;
-                    }
+                    active_vt.send_command(Cmd::Deactivate(active_vt.index))?;
+                }
 
-                    let mut vt_inner = new_active.inner().lock();
-
-                    inputd::send_comand(
-                        &mut vt_inner.handle_file,
-                        Cmd::Activate {
-                            vt: new_active.index,
-                        },
-                    )?;
-                    self.active_vt = Some(new_active.clone());
+                if let Some(new_active) = self.vts.get_mut(&new_active) {
+                    new_active.send_command(Cmd::Activate {
+                        vt: new_active.index,
+                    })?;
+                    self.active_vt = Some(new_active.index);
                 } else {
                     log::warn!("inputd: switch to non-existent VT #{new_active} was requested");
                 }
@@ -299,7 +300,7 @@ impl SchemeMut for InputScheme {
 
         assert!(handle.is_producer());
 
-        let active_vt = self.active_vt.as_ref().unwrap();
+        let active_vt = self.active_vt.unwrap();
         for handle in self.handles.values_mut() {
             match handle {
                 Handle::Consumer {
@@ -308,7 +309,7 @@ impl SchemeMut for InputScheme {
                     vt,
                     ..
                 } => {
-                    if *vt != active_vt.index {
+                    if *vt != active_vt {
                         continue;
                     }
 
@@ -337,11 +338,13 @@ impl SchemeMut for InputScheme {
             } => {
                 *events = flags;
                 *notified = false;
+                Ok(EventFlags::empty())
             }
-            _ => unreachable!(),
+            Handle::Producer | Handle::Device { .. } => {
+                log::error!("inputd: producer or device tried to use an event queue");
+                Err(SysError::new(EINVAL))
+            }
         }
-
-        Ok(EventFlags::empty())
     }
 
     fn close(&mut self, _id: usize) -> syscall::Result<usize> {
@@ -351,39 +354,40 @@ impl SchemeMut for InputScheme {
 
 fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
     // Create the ":input" scheme.
-    let mut socket_file = File::create(":input")?;
+    let socket_file: Socket<V2> = Socket::create("input")?;
     let mut scheme = InputScheme::new();
 
     deamon.ready().unwrap();
 
     loop {
-        let mut should_handle = false;
-        let mut packet = Packet::default();
-        socket_file.read(&mut packet)?;
+        scheme.has_new_events = false;
+        let Some(request) = socket_file.next_request(SignalBehavior::Restart)? else {
+            // Scheme likely got unmounted
+            return Ok(());
+        };
 
-        // The producer has written to the channel; the consumers should be notified.
-        if packet.a == syscall::SYS_WRITE {
-            should_handle = true;
+        match request.kind() {
+            RequestKind::Call(call_request) => {
+                socket_file.write_response(
+                    call_request.handle_scheme_mut(&mut scheme),
+                    SignalBehavior::Restart,
+                )?;
+            }
+            RequestKind::Cancellation(_cancellation_request) => {}
+            RequestKind::MsyncMsg | RequestKind::MunmapMsg | RequestKind::MmapMsg => unreachable!(),
         }
 
-        scheme.handle(&mut packet);
-        socket_file.write(&packet)?;
-
-        while let Some(cmd) = scheme.todo.pop() {
+        if let Some(cmd) = scheme.pending_activate.take() {
             let vt = scheme.vts.get_mut(&cmd.vt).unwrap();
-            let mut vt_inner = vt.inner().lock();
-
             // Failing to activate a VT is not a fatal error.
-            if let Err(err) =
-                inputd::send_comand(&mut vt_inner.handle_file, Cmd::Activate { vt: vt.index })
-            {
+            if let Err(err) = vt.send_command(Cmd::Activate { vt: vt.index }) {
                 log::error!("inputd: failed to activate VT #{}: {err}", vt.index)
             }
 
-            scheme.active_vt = Some(vt.clone());
+            scheme.active_vt = Some(vt.index);
         }
 
-        if !should_handle {
+        if !scheme.has_new_events {
             continue;
         }
 
@@ -399,22 +403,16 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
                     continue;
                 }
 
-                let active_vt = scheme.active_vt.as_ref().unwrap();
+                let active_vt = scheme.active_vt.unwrap();
 
                 // The activate VT is not the same as the VT that the consumer is listening to
                 // for events.
-                if active_vt.index != *vt {
+                if active_vt != *vt {
                     continue;
                 }
 
                 // Notify the consumer that we have some events to read. Yum yum.
-                let mut event_packet = Packet::default();
-                event_packet.a = syscall::SYS_FEVENT;
-                event_packet.b = *id;
-                event_packet.c = EventFlags::EVENT_READ.bits();
-                // Specifies the number of bytes that can be read non-blocking.
-                event_packet.d = pending.len();
-                socket_file.write(&event_packet)?;
+                socket_file.post_fevent(*id, EventFlags::EVENT_READ.bits())?;
 
                 *notified = true;
             }
@@ -427,7 +425,7 @@ fn daemon_runner(redox_daemon: redox_daemon::Daemon) -> ! {
     unreachable!();
 }
 
-pub fn main() {
+fn main() {
     common::setup_logging(
         "misc",
         "inputd",
