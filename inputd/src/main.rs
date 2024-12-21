@@ -194,7 +194,10 @@ impl SchemeMut for InputScheme {
                 Ok(vt)
             }
 
-            _ => unreachable!(),
+            Handle::Producer => {
+                log::error!("inputd: producer tried to read");
+                return Err(SysError::new(EINVAL));
+            }
         }
     }
 
@@ -211,7 +214,10 @@ impl SchemeMut for InputScheme {
 
         match handle {
             Handle::Device { device } => {
-                assert!(buf.len() == core::mem::size_of::<VtActivate>());
+                if buf.len() != core::mem::size_of::<VtActivate>() {
+                    log::error!("inputd: device tried to write incorrectly sized command");
+                    return Err(SysError::new(EINVAL));
+                }
 
                 // SAFETY: We have verified the size of the buffer above.
                 let cmd = unsafe { &*buf.as_ptr().cast::<VtActivate>() };
@@ -222,8 +228,11 @@ impl SchemeMut for InputScheme {
                 return Ok(buf.len());
             }
 
-            Handle::Consumer { .. } => unreachable!(),
-            _ => {}
+            Handle::Consumer { .. } => {
+                log::error!("inputd: consumer tried to write");
+                return Err(SysError::new(EINVAL));
+            }
+            Handle::Producer => {}
         }
 
         if buf.len() == 1 && buf[0] > 0xf4 {
@@ -355,11 +364,13 @@ impl SchemeMut for InputScheme {
             } => {
                 *events = flags;
                 *notified = false;
+                Ok(EventFlags::empty())
             }
-            _ => unreachable!(),
+            Handle::Producer | Handle::Device { .. } => {
+                log::error!("inputd: producer or device tried to use an event queue");
+                Err(SysError::new(EINVAL))
+            }
         }
-
-        Ok(EventFlags::empty())
     }
 
     fn close(&mut self, _id: usize) -> syscall::Result<usize> {
@@ -388,7 +399,7 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
                     SignalBehavior::Restart,
                 )?;
             }
-            RequestKind::Cancellation(_cancellation_request) => {},
+            RequestKind::Cancellation(_cancellation_request) => {}
             RequestKind::MsyncMsg | RequestKind::MunmapMsg | RequestKind::MmapMsg => unreachable!(),
         }
 
