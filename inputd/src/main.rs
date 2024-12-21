@@ -59,7 +59,7 @@ struct Vt {
 }
 
 impl Vt {
-    pub fn new<D>(display: D, index: usize) -> Arc<Self>
+    fn new<D>(display: D, index: usize) -> Arc<Self>
     where
         D: Into<String>,
     {
@@ -70,7 +70,7 @@ impl Vt {
         })
     }
 
-    pub fn inner(&self) -> &Mutex<VtInner> {
+    fn inner(&self) -> &Mutex<VtInner> {
         self.inner.call_once(|| {
             let handle_file = File::open(format!("/scheme/{}/handle", self.display)).unwrap();
             Mutex::new(VtInner { handle_file })
@@ -88,13 +88,12 @@ struct InputScheme {
     super_key: bool,
     active_vt: Option<Arc<Vt>>,
 
-    todo: Vec<VtActivate>,
-
+    pending_activate: Option<VtActivate>,
     has_new_events: bool,
 }
 
 impl InputScheme {
-    pub fn new() -> Self {
+    fn new() -> Self {
         Self {
             next_id: AtomicUsize::new(0),
             next_vt_id: AtomicUsize::new(1),
@@ -104,8 +103,7 @@ impl InputScheme {
             super_key: false,
             active_vt: None,
 
-            todo: vec![],
-
+            pending_activate: None,
             has_new_events: false,
         }
     }
@@ -223,7 +221,7 @@ impl SchemeMut for InputScheme {
                 let cmd = unsafe { &*buf.as_ptr().cast::<VtActivate>() };
 
                 self.vts.insert(cmd.vt, Vt::new(device.clone(), cmd.vt));
-                self.todo.push(cmd.clone());
+                self.pending_activate = Some(cmd.clone());
 
                 return Ok(buf.len());
             }
@@ -403,7 +401,7 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
             RequestKind::MsyncMsg | RequestKind::MunmapMsg | RequestKind::MmapMsg => unreachable!(),
         }
 
-        while let Some(cmd) = scheme.todo.pop() {
+        if let Some(cmd) = scheme.pending_activate.take() {
             let vt = scheme.vts.get_mut(&cmd.vt).unwrap();
             let mut vt_inner = vt.inner().lock();
 
@@ -455,7 +453,7 @@ fn daemon_runner(redox_daemon: redox_daemon::Daemon) -> ! {
     unreachable!();
 }
 
-pub fn main() {
+fn main() {
     common::setup_logging(
         "misc",
         "inputd",
