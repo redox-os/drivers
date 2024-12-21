@@ -256,6 +256,7 @@ pub struct Scheme<'a> {
     /// Counter used for file descriptor allocation.
     next_id: AtomicUsize,
     displays: Vec<Arc<Display<'a>>>,
+    pub inputd_handle: inputd::DisplayHandle,
 }
 
 impl<'a> Scheme<'a> {
@@ -273,10 +274,15 @@ impl<'a> Scheme<'a> {
         )
         .await?;
 
+        let mut inputd_handle = inputd::DisplayHandle::new("virtio-gpu").unwrap();
+        // FIXME make vesad handoff control over all it's VT's instead
+        inputd_handle.register_vt().unwrap();
+
         Ok(Self {
             handles: BTreeMap::new(),
             next_id: AtomicUsize::new(0),
             displays,
+            inputd_handle,
         })
     }
 
@@ -329,8 +335,7 @@ impl<'a> Scheme<'a> {
         Ok(response)
     }
 
-    // FIXME wire this up
-    fn handle_vt_event(&mut self, vt_event: VtEvent) {
+    pub fn handle_vt_event(&mut self, vt_event: VtEvent) {
         match vt_event.kind {
             VtEventKind::Activate => {
                 log::info!("activate {}", vt_event.vt);

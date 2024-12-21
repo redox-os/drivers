@@ -23,8 +23,11 @@
 #![feature(int_roundings)]
 
 use std::cell::UnsafeCell;
+use std::os::fd::AsRawFd;
 use std::sync::Arc;
 
+use event::{user_data, EventQueue};
+use libredox::errno::EAGAIN;
 use pcid_interface::PciFunctionHandle;
 
 use redox_scheme::{RequestKind, SignalBehavior, Socket, V2};
@@ -436,7 +439,7 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
     device.transport.run_device();
     deamon.ready().unwrap();
 
-    let socket_file: Socket<V2> = Socket::create("display.virtio-gpu")?;
+    let socket: Socket<V2> = Socket::nonblock("display.virtio-gpu")?;
     let mut scheme = futures::executor::block_on(scheme::Scheme::new(
         config,
         control_queue.clone(),
@@ -444,17 +447,90 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
         device.transport.clone(),
     ))?;
 
-    // scheme.inputd_handle.activate(scheme.main_vt)?;
+    user_data! {
+        enum Source {
+            Input,
+            Scheme,
+        }
+    }
+
+    let event_queue: EventQueue<Source> =
+        EventQueue::new().expect("vesad: failed to create event queue");
+    event_queue
+        .subscribe(
+            scheme.inputd_handle.inner().as_raw_fd() as usize,
+            Source::Input,
+            event::EventFlags::READ,
+        )
+        .unwrap();
+    event_queue
+        .subscribe(
+            socket.inner().raw(),
+            Source::Scheme,
+            event::EventFlags::READ,
+        )
+        .unwrap();
+
+    //let mut inputd_control_handle = inputd::ControlHandle::new().unwrap();
+    //inputd_control_handle.activate_vt(3).unwrap();
+
+    let all = [Source::Input, Source::Scheme];
+    for event in all
+        .into_iter()
+        .chain(event_queue.map(|e| e.expect("vesad: failed to get next event").user_data))
+    {
+        match event {
+            Source::Input => {
+                while let Some(vt_event) = scheme
+                    .inputd_handle
+                    .read_vt_event()
+                    .expect("vesad: failed to read display handle")
+                {
+                    scheme.handle_vt_event(vt_event);
+                }
+            }
+            Source::Scheme => {
+                loop {
+                    let request = match socket.next_request(SignalBehavior::Restart) {
+                        Ok(Some(request)) => request,
+                        Ok(None) => {
+                            // Scheme likely got unmounted
+                            std::process::exit(0);
+                        }
+                        Err(err) if err.errno == EAGAIN => break,
+                        Err(err) => return Err(err.into()),
+                    };
+
+                    match request.kind() {
+                        RequestKind::Call(call_request) => {
+                            socket
+                                .write_response(
+                                    call_request.handle_scheme_mut(&mut scheme),
+                                    SignalBehavior::Restart,
+                                )
+                                .expect("vesad: failed to write display scheme");
+                        }
+                        RequestKind::Cancellation(_cancellation_request) => {
+                            // FIXME handle this
+                        }
+                        RequestKind::MsyncMsg | RequestKind::MunmapMsg | RequestKind::MmapMsg => {
+                            unreachable!()
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     loop {
-        let Some(request) = socket_file.next_request(SignalBehavior::Restart)? else {
+        let Some(request) = socket.next_request(SignalBehavior::Restart)? else {
             // Scheme likely got unmounted
             return Ok(());
         };
 
         match request.kind() {
             RequestKind::Call(call_request) => {
-                socket_file.write_response(
+                socket.write_response(
                     call_request.handle_scheme_mut(&mut scheme),
                     SignalBehavior::Restart,
                 )?;

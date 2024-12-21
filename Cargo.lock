@@ -1738,6 +1738,7 @@ dependencies = [
  "pcid",
  "redox-daemon",
  "redox-scheme",
+ "redox_event",
  "redox_syscall",
  "spin",
  "static_assertions",
