@@ -11,12 +11,10 @@
 //! Read events from `input:consumer`. Optionally, set the `EVENT_READ` flag to be notified when
 //! events are available.
 
-use std::cell::OnceCell;
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::os::fd::AsRawFd;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Mutex;
 
 use inputd::{Cmd, VtActivate};
 
@@ -44,34 +42,29 @@ impl Handle {
     }
 }
 
-/// VT Inner State
-///
-/// This is *required* to be lazily initialized since opening the handle to the display
-/// requires the system call to return first. Otherwise, it will block indefinitely.
-struct VtInner {
-    handle_file: File,
-}
-
 struct Vt {
     display: String,
     index: usize,
-    inner: OnceCell<Mutex<VtInner>>,
+
+    /// This is *required* to be lazily initialized since opening the handle to the display
+    /// requires the system call to return first. Otherwise, it will block indefinitely.
+    handle_file: Option<File>,
 }
 
 impl Vt {
     fn new(display: impl Into<String>, index: usize) -> Self {
         Self {
             display: display.into(),
-            inner: OnceCell::new(),
+            handle_file: None,
             index,
         }
     }
 
-    fn inner(&self) -> &Mutex<VtInner> {
-        self.inner.get_or_init(|| {
-            let handle_file = File::open(format!("/scheme/{}/handle", self.display)).unwrap();
-            Mutex::new(VtInner { handle_file })
-        })
+    fn send_command(&mut self, cmd: Cmd) -> Result<(), libredox::error::Error> {
+        let handle_file = self
+            .handle_file
+            .get_or_insert_with(|| File::open(format!("/scheme/{}/handle", self.display)).unwrap());
+        inputd::send_comand(handle_file, cmd)
     }
 }
 
@@ -269,20 +262,15 @@ impl SchemeMut for InputScheme {
                 },
 
                 EventOption::Resize(resize_event) => {
-                    let active_vt = &self.vts[&self.active_vt.unwrap()];
-                    let mut vt_inner = active_vt.inner().lock().unwrap();
+                    let active_vt = self.vts.get_mut(&self.active_vt.unwrap()).unwrap();
+                    active_vt.send_command(Cmd::Resize {
+                        vt: active_vt.index,
+                        width: resize_event.width,
+                        height: resize_event.height,
 
-                    inputd::send_comand(
-                        &mut vt_inner.handle_file,
-                        Cmd::Resize {
-                            vt: active_vt.index,
-                            width: resize_event.width,
-                            height: resize_event.height,
-
-                            // TODO(andypython): Figure out how to get the stride.
-                            stride: resize_event.width,
-                        },
-                    )?;
+                        // TODO(andypython): Figure out how to get the stride.
+                        stride: resize_event.width,
+                    })?;
                 }
 
                 _ => continue,
@@ -293,25 +281,16 @@ impl SchemeMut for InputScheme {
                     continue 'out;
                 }
 
-                if let Some(new_active) = self.vts.get(&new_active) {
-                    {
-                        let active_vt = &self.vts[&self.active_vt.unwrap()];
-                        let mut vt_inner = active_vt.inner().lock().unwrap();
+                if self.vts.contains_key(&new_active) {
+                    let active_vt = self.vts.get_mut(&self.active_vt.unwrap()).unwrap();
 
-                        inputd::send_comand(
-                            &mut vt_inner.handle_file,
-                            Cmd::Deactivate(active_vt.index),
-                        )?;
-                    }
+                    active_vt.send_command(Cmd::Deactivate(active_vt.index))?;
+                }
 
-                    let mut vt_inner = new_active.inner().lock().unwrap();
-
-                    inputd::send_comand(
-                        &mut vt_inner.handle_file,
-                        Cmd::Activate {
-                            vt: new_active.index,
-                        },
-                    )?;
+                if let Some(new_active) = self.vts.get_mut(&new_active) {
+                    new_active.send_command(Cmd::Activate {
+                        vt: new_active.index,
+                    })?;
                     self.active_vt = Some(new_active.index);
                 } else {
                     log::warn!("inputd: switch to non-existent VT #{new_active} was requested");
@@ -400,12 +379,8 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
 
         if let Some(cmd) = scheme.pending_activate.take() {
             let vt = scheme.vts.get_mut(&cmd.vt).unwrap();
-            let mut vt_inner = vt.inner().lock().unwrap();
-
             // Failing to activate a VT is not a fatal error.
-            if let Err(err) =
-                inputd::send_comand(&mut vt_inner.handle_file, Cmd::Activate { vt: vt.index })
-            {
+            if let Err(err) = vt.send_command(Cmd::Activate { vt: vt.index }) {
                 log::error!("inputd: failed to activate VT #{}: {err}", vt.index)
             }
 
