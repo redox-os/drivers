@@ -11,15 +11,16 @@
 //! Read events from `input:consumer`. Optionally, set the `EVENT_READ` flag to be notified when
 //! events are available.
 
+use std::cell::OnceCell;
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::os::fd::AsRawFd;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 
 use inputd::{Cmd, VtActivate};
 
 use redox_scheme::{RequestKind, SchemeMut, SignalBehavior, Socket, V2};
-use spin::Mutex;
 
 use orbclient::{Event, EventOption};
 use syscall::{Error as SysError, EventFlags, EINVAL};
@@ -54,20 +55,20 @@ struct VtInner {
 struct Vt {
     display: String,
     index: usize,
-    inner: spin::Once<Mutex<VtInner>>,
+    inner: OnceCell<Mutex<VtInner>>,
 }
 
 impl Vt {
     fn new(display: impl Into<String>, index: usize) -> Self {
         Self {
             display: display.into(),
-            inner: spin::Once::new(),
+            inner: OnceCell::new(),
             index,
         }
     }
 
     fn inner(&self) -> &Mutex<VtInner> {
-        self.inner.call_once(|| {
+        self.inner.get_or_init(|| {
             let handle_file = File::open(format!("/scheme/{}/handle", self.display)).unwrap();
             Mutex::new(VtInner { handle_file })
         })
@@ -269,7 +270,7 @@ impl SchemeMut for InputScheme {
 
                 EventOption::Resize(resize_event) => {
                     let active_vt = &self.vts[&self.active_vt.unwrap()];
-                    let mut vt_inner = active_vt.inner().lock();
+                    let mut vt_inner = active_vt.inner().lock().unwrap();
 
                     inputd::send_comand(
                         &mut vt_inner.handle_file,
@@ -295,7 +296,7 @@ impl SchemeMut for InputScheme {
                 if let Some(new_active) = self.vts.get(&new_active) {
                     {
                         let active_vt = &self.vts[&self.active_vt.unwrap()];
-                        let mut vt_inner = active_vt.inner().lock();
+                        let mut vt_inner = active_vt.inner().lock().unwrap();
 
                         inputd::send_comand(
                             &mut vt_inner.handle_file,
@@ -303,7 +304,7 @@ impl SchemeMut for InputScheme {
                         )?;
                     }
 
-                    let mut vt_inner = new_active.inner().lock();
+                    let mut vt_inner = new_active.inner().lock().unwrap();
 
                     inputd::send_comand(
                         &mut vt_inner.handle_file,
@@ -399,7 +400,7 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
 
         if let Some(cmd) = scheme.pending_activate.take() {
             let vt = scheme.vts.get_mut(&cmd.vt).unwrap();
-            let mut vt_inner = vt.inner().lock();
+            let mut vt_inner = vt.inner().lock().unwrap();
 
             // Failing to activate a VT is not a fatal error.
             if let Err(err) =
