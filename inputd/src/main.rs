@@ -15,7 +15,6 @@ use std::collections::BTreeMap;
 use std::fs::File;
 use std::os::fd::AsRawFd;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
 
 use inputd::{Cmd, VtActivate};
 
@@ -59,15 +58,12 @@ struct Vt {
 }
 
 impl Vt {
-    fn new<D>(display: D, index: usize) -> Arc<Self>
-    where
-        D: Into<String>,
-    {
-        Arc::new(Self {
+    fn new(display: impl Into<String>, index: usize) -> Self {
+        Self {
             display: display.into(),
             inner: spin::Once::new(),
             index,
-        })
+        }
     }
 
     fn inner(&self) -> &Mutex<VtInner> {
@@ -84,9 +80,9 @@ struct InputScheme {
     next_id: AtomicUsize,
     next_vt_id: AtomicUsize,
 
-    vts: BTreeMap<usize, Arc<Vt>>,
+    vts: BTreeMap<usize, Vt>,
     super_key: bool,
-    active_vt: Option<Arc<Vt>>,
+    active_vt: Option<usize>,
 
     pending_activate: Option<VtActivate>,
     has_new_events: bool,
@@ -272,7 +268,7 @@ impl SchemeMut for InputScheme {
                 },
 
                 EventOption::Resize(resize_event) => {
-                    let active_vt = self.active_vt.as_ref().unwrap();
+                    let active_vt = &self.vts[&self.active_vt.unwrap()];
                     let mut vt_inner = active_vt.inner().lock();
 
                     inputd::send_comand(
@@ -292,13 +288,13 @@ impl SchemeMut for InputScheme {
             }
 
             if let Some(new_active) = new_active_opt {
-                if new_active == self.active_vt.as_ref().unwrap().index {
+                if new_active == self.vts[&self.active_vt.unwrap()].index {
                     continue 'out;
                 }
 
-                if let Some(new_active) = self.vts.get(&new_active).cloned() {
+                if let Some(new_active) = self.vts.get(&new_active) {
                     {
-                        let active_vt = self.active_vt.as_ref().unwrap();
+                        let active_vt = &self.vts[&self.active_vt.unwrap()];
                         let mut vt_inner = active_vt.inner().lock();
 
                         inputd::send_comand(
@@ -315,7 +311,7 @@ impl SchemeMut for InputScheme {
                             vt: new_active.index,
                         },
                     )?;
-                    self.active_vt = Some(new_active.clone());
+                    self.active_vt = Some(new_active.index);
                 } else {
                     log::warn!("inputd: switch to non-existent VT #{new_active} was requested");
                 }
@@ -324,7 +320,7 @@ impl SchemeMut for InputScheme {
 
         assert!(handle.is_producer());
 
-        let active_vt = self.active_vt.as_ref().unwrap();
+        let active_vt = self.active_vt.unwrap();
         for handle in self.handles.values_mut() {
             match handle {
                 Handle::Consumer {
@@ -333,7 +329,7 @@ impl SchemeMut for InputScheme {
                     vt,
                     ..
                 } => {
-                    if *vt != active_vt.index {
+                    if *vt != active_vt {
                         continue;
                     }
 
@@ -412,7 +408,7 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
                 log::error!("inputd: failed to activate VT #{}: {err}", vt.index)
             }
 
-            scheme.active_vt = Some(vt.clone());
+            scheme.active_vt = Some(vt.index);
         }
 
         if !scheme.has_new_events {
@@ -431,11 +427,11 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
                     continue;
                 }
 
-                let active_vt = scheme.active_vt.as_ref().unwrap();
+                let active_vt = scheme.active_vt.unwrap();
 
                 // The activate VT is not the same as the VT that the consumer is listening to
                 // for events.
-                if active_vt.index != *vt {
+                if active_vt != *vt {
                     continue;
                 }
 
