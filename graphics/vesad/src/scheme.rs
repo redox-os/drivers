@@ -32,12 +32,12 @@ pub struct DisplayScheme {
     pub vts: BTreeMap<VtIndex, BTreeMap<ScreenIndex, GraphicScreen>>,
     next_id: usize,
     pub handles: BTreeMap<usize, Handle>,
-    pub inputd_handle: inputd::Handle,
+    _inputd_handle: inputd::DisplayHandle,
 }
 
 impl DisplayScheme {
     pub fn new(framebuffers: Vec<FrameBuffer>, spec: &[()]) -> DisplayScheme {
-        let mut inputd_handle = inputd::Handle::new("vesa").unwrap();
+        let mut inputd_handle = inputd::DisplayHandle::new("vesa").unwrap();
 
         let mut vts = BTreeMap::<VtIndex, BTreeMap<ScreenIndex, GraphicScreen>>::new();
 
@@ -47,7 +47,7 @@ impl DisplayScheme {
                 let fb = &framebuffers[fb_i];
                 screens.insert(ScreenIndex(fb_i), GraphicScreen::new(fb.width, fb.height));
             }
-            vts.insert(VtIndex(inputd_handle.register().unwrap()), screens);
+            vts.insert(VtIndex(inputd_handle.register_vt().unwrap()), screens);
         }
 
         DisplayScheme {
@@ -56,7 +56,7 @@ impl DisplayScheme {
             vts,
             next_id: 0,
             handles: BTreeMap::new(),
-            inputd_handle,
+            _inputd_handle: inputd_handle,
         }
     }
 

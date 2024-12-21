@@ -86,11 +86,13 @@ fn inner(daemon: redox_daemon::Daemon, framebuffers: Vec<FrameBuffer>, spec: &[(
 
     let _ = File::open("/scheme/debug/disable-graphical-debug");
 
+    let mut inputd_control_handle = inputd::ControlHandle::new().unwrap();
+
     libredox::call::setrens(0, 0).expect("vesad: failed to enter null namespace");
 
     daemon.ready().expect("failed to notify parent");
 
-    scheme.inputd_handle.activate(1).unwrap();
+    inputd_control_handle.activate_vt(1).unwrap();
 
     let mut blocked = Vec::new();
     loop {

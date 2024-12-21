@@ -13,7 +13,6 @@
 
 use std::collections::BTreeMap;
 use std::fs::File;
-use std::os::fd::AsRawFd;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use inputd::{Cmd, VtActivate};
@@ -31,9 +30,10 @@ enum Handle {
         notified: bool,
         vt: usize,
     },
-    Device {
+    Display {
         device: String,
     },
+    Control,
 }
 
 impl Handle {
@@ -123,8 +123,9 @@ impl SchemeMut for InputScheme {
             }
             "handle" => {
                 let display = path_parts.collect::<Vec<_>>().join(".");
-                Handle::Device { device: display }
+                Handle::Display { device: display }
             }
+            "control" => Handle::Control,
 
             _ => {
                 log::error!("inputd: invalid path {path}");
@@ -174,7 +175,7 @@ impl SchemeMut for InputScheme {
                 Ok(copy)
             }
 
-            Handle::Device { device } => {
+            Handle::Display { device } => {
                 assert!(buf.is_empty());
 
                 let vt = self.next_vt_id.fetch_add(1, Ordering::SeqCst);
@@ -184,6 +185,10 @@ impl SchemeMut for InputScheme {
 
             Handle::Producer => {
                 log::error!("inputd: producer tried to read");
+                return Err(SysError::new(EINVAL));
+            }
+            Handle::Control => {
+                log::error!("inputd: control tried to read");
                 return Err(SysError::new(EINVAL));
             }
         }
@@ -201,16 +206,15 @@ impl SchemeMut for InputScheme {
         let handle = self.handles.get_mut(&id).ok_or(SysError::new(EINVAL))?;
 
         match handle {
-            Handle::Device { device } => {
+            Handle::Control => {
                 if buf.len() != core::mem::size_of::<VtActivate>() {
-                    log::error!("inputd: device tried to write incorrectly sized command");
+                    log::error!("inputd: control tried to write incorrectly sized command");
                     return Err(SysError::new(EINVAL));
                 }
 
                 // SAFETY: We have verified the size of the buffer above.
                 let cmd = unsafe { &*buf.as_ptr().cast::<VtActivate>() };
 
-                self.vts.insert(cmd.vt, Vt::new(device.clone(), cmd.vt));
                 self.pending_activate = Some(cmd.clone());
 
                 return Ok(buf.len());
@@ -218,6 +222,10 @@ impl SchemeMut for InputScheme {
 
             Handle::Consumer { .. } => {
                 log::error!("inputd: consumer tried to write");
+                return Err(SysError::new(EINVAL));
+            }
+            Handle::Display { .. } => {
+                log::error!("inputd: display tried to write");
                 return Err(SysError::new(EINVAL));
             }
             Handle::Producer => {}
@@ -340,8 +348,8 @@ impl SchemeMut for InputScheme {
                 *notified = false;
                 Ok(EventFlags::empty())
             }
-            Handle::Producer | Handle::Device { .. } => {
-                log::error!("inputd: producer or device tried to use an event queue");
+            Handle::Producer | Handle::Control | Handle::Display { .. } => {
+                log::error!("inputd: producer, control or display tried to use an event queue");
                 Err(SysError::new(EINVAL))
             }
         }
@@ -378,13 +386,16 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
         }
 
         if let Some(cmd) = scheme.pending_activate.take() {
-            let vt = scheme.vts.get_mut(&cmd.vt).unwrap();
-            // Failing to activate a VT is not a fatal error.
-            if let Err(err) = vt.send_command(Cmd::Activate { vt: vt.index }) {
-                log::error!("inputd: failed to activate VT #{}: {err}", vt.index)
-            }
+            if let Some(vt) = scheme.vts.get_mut(&cmd.vt) {
+                // Failing to activate a VT is not a fatal error.
+                if let Err(err) = vt.send_command(Cmd::Activate { vt: vt.index }) {
+                    log::error!("inputd: failed to activate VT #{}: {err}", vt.index)
+                }
 
-            scheme.active_vt = Some(vt.index);
+                scheme.active_vt = Some(vt.index);
+            } else {
+                log::error!("inputd: failed to activate non-existent VT #{}", cmd.vt)
+            }
         }
 
         if !scheme.has_new_events {
@@ -442,31 +453,11 @@ fn main() {
             "-A" => {
                 let vt = args.next().unwrap().parse::<usize>().unwrap();
 
-                let handle = File::open(format!("/scheme/input/consumer/{vt}"))
-                    .expect("inputd: failed to open consumer handle");
-                let mut display_path = [0; 4096];
-
-                let written = libredox::call::fpath(handle.as_raw_fd() as usize, &mut display_path)
-                    .expect("inputd: fpath() failed");
-
-                assert!(written <= display_path.len());
-                drop(handle);
-
-                let display_path = std::str::from_utf8(&display_path[..written])
-                    .expect("inputd: display path UTF-8 validation failed");
-                let display_name = display_path
-                    .split('.')
-                    .skip(1)
-                    .next()
-                    .expect("inputd: invalid display path");
-                let display_scheme = display_name
-                    .split(':')
-                    .next()
-                    .expect("inputd: invalid display path");
-
-                let mut handle = inputd::Handle::new(display_scheme)
-                    .expect("inputd: failed to open display handle");
-                handle.activate(vt).expect("inputd: failed to activate VT");
+                let mut handle =
+                    inputd::ControlHandle::new().expect("inputd: failed to open display handle");
+                handle
+                    .activate_vt(vt)
+                    .expect("inputd: failed to activate VT");
             }
 
             _ => panic!("inputd: invalid argument: {}", val),

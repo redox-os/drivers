@@ -13,9 +13,9 @@ pub struct VtActivate {
     pub vt: usize,
 }
 
-pub struct Handle(File);
+pub struct DisplayHandle(File);
 
-impl Handle {
+impl DisplayHandle {
     pub fn new<S: Into<String>>(device_name: S) -> Result<Self, Error> {
         let path = format!("/scheme/input/handle/display/{}", device_name.into());
         Ok(Self(File::open(path)?))
@@ -23,11 +23,21 @@ impl Handle {
 
     // The return value is the display identifier. It will be used to uniquely
     // identify the display on activation events.
-    pub fn register(&mut self) -> Result<usize, Error> {
+    pub fn register_vt(&mut self) -> Result<usize, Error> {
         self.0.read(&mut [])
     }
 
-    pub fn activate(&mut self, vt: usize) -> Result<usize, Error> {
+}
+
+pub struct ControlHandle(File);
+
+impl ControlHandle {
+    pub fn new() -> Result<Self, Error> {
+        let path = format!("/scheme/input/control");
+        Ok(Self(File::open(path)?))
+    }
+
+    pub fn activate_vt(&mut self, vt: usize) -> Result<usize, Error> {
         let cmd = VtActivate { vt };
         self.0.write(unsafe { any_as_u8_slice(&cmd) })
     }
