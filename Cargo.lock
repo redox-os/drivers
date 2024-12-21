@@ -677,6 +677,7 @@ dependencies = [
  "log",
  "orbclient",
  "redox-daemon",
+ "redox-scheme",
  "redox_syscall",
  "spin",
 ]

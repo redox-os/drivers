@@ -13,17 +13,17 @@
 
 use std::collections::BTreeMap;
 use std::fs::File;
-use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use inputd::{Cmd, VtActivate};
 
+use redox_scheme::{RequestKind, SchemeMut, SignalBehavior, Socket, V2};
 use spin::Mutex;
 
 use orbclient::{Event, EventOption};
-use syscall::{Error as SysError, EventFlags, Packet, SchemeMut, EINVAL};
+use syscall::{Error as SysError, EventFlags, EINVAL};
 
 enum Handle {
     Producer,
@@ -89,6 +89,8 @@ struct InputScheme {
     active_vt: Option<Arc<Vt>>,
 
     todo: Vec<VtActivate>,
+
+    has_new_events: bool,
 }
 
 impl InputScheme {
@@ -103,6 +105,8 @@ impl InputScheme {
             active_vt: None,
 
             todo: vec![],
+
+            has_new_events: false,
         }
     }
 }
@@ -162,7 +166,13 @@ impl SchemeMut for InputScheme {
         }
     }
 
-    fn read(&mut self, id: usize, buf: &mut [u8]) -> syscall::Result<usize> {
+    fn read(
+        &mut self,
+        id: usize,
+        buf: &mut [u8],
+        _offset: u64,
+        _fcntl_flags: u32,
+    ) -> syscall::Result<usize> {
         let handle = self.handles.get_mut(&id).ok_or(SysError::new(EINVAL))?;
 
         match handle {
@@ -188,7 +198,15 @@ impl SchemeMut for InputScheme {
         }
     }
 
-    fn write(&mut self, id: usize, buf: &[u8]) -> syscall::Result<usize> {
+    fn write(
+        &mut self,
+        id: usize,
+        buf: &[u8],
+        _offset: u64,
+        _fcntl_flags: u32,
+    ) -> syscall::Result<usize> {
+        self.has_new_events = true;
+
         let handle = self.handles.get_mut(&id).ok_or(SysError::new(EINVAL))?;
 
         match handle {
@@ -351,23 +369,28 @@ impl SchemeMut for InputScheme {
 
 fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
     // Create the ":input" scheme.
-    let mut socket_file = File::create(":input")?;
+    let socket_file: Socket<V2> = Socket::create("input")?;
     let mut scheme = InputScheme::new();
 
     deamon.ready().unwrap();
 
     loop {
-        let mut should_handle = false;
-        let mut packet = Packet::default();
-        socket_file.read(&mut packet)?;
+        scheme.has_new_events = false;
+        let Some(request) = socket_file.next_request(SignalBehavior::Restart)? else {
+            // Scheme likely got unmounted
+            return Ok(());
+        };
 
-        // The producer has written to the channel; the consumers should be notified.
-        if packet.a == syscall::SYS_WRITE {
-            should_handle = true;
+        match request.kind() {
+            RequestKind::Call(call_request) => {
+                socket_file.write_response(
+                    call_request.handle_scheme_mut(&mut scheme),
+                    SignalBehavior::Restart,
+                )?;
+            }
+            RequestKind::Cancellation(_cancellation_request) => {},
+            RequestKind::MsyncMsg | RequestKind::MunmapMsg | RequestKind::MmapMsg => unreachable!(),
         }
-
-        scheme.handle(&mut packet);
-        socket_file.write(&packet)?;
 
         while let Some(cmd) = scheme.todo.pop() {
             let vt = scheme.vts.get_mut(&cmd.vt).unwrap();
@@ -383,7 +406,7 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
             scheme.active_vt = Some(vt.clone());
         }
 
-        if !should_handle {
+        if !scheme.has_new_events {
             continue;
         }
 
@@ -408,13 +431,7 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
                 }
 
                 // Notify the consumer that we have some events to read. Yum yum.
-                let mut event_packet = Packet::default();
-                event_packet.a = syscall::SYS_FEVENT;
-                event_packet.b = *id;
-                event_packet.c = EventFlags::EVENT_READ.bits();
-                // Specifies the number of bytes that can be read non-blocking.
-                event_packet.d = pending.len();
-                socket_file.write(&event_packet)?;
+                socket_file.post_fevent(*id, EventFlags::EVENT_READ.bits())?;
 
                 *notified = true;
             }
