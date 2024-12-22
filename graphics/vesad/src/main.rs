@@ -2,15 +2,15 @@
 extern crate orbclient;
 extern crate syscall;
 
-use redox_scheme::{RequestKind, SignalBehavior, Socket, V2};
+use event::{user_data, EventQueue};
+use libredox::errno::{EAGAIN, EINTR};
+use redox_scheme::{RequestKind, Response, SignalBehavior, Socket, V2};
 use std::env;
 use std::fs::File;
+use std::os::fd::AsRawFd;
 use syscall::EVENT_READ;
 
-use crate::{
-    framebuffer::FrameBuffer,
-    scheme::{DisplayScheme, HandleKind},
-};
+use crate::{framebuffer::FrameBuffer, scheme::DisplayScheme};
 
 mod display;
 mod framebuffer;
@@ -80,9 +80,35 @@ fn main() {
 }
 fn inner(daemon: redox_daemon::Daemon, framebuffers: Vec<FrameBuffer>, spec: &[()]) -> ! {
     let socket: Socket<V2> =
-        Socket::create("display.vesa").expect("vesad: failed to create display scheme");
+        Socket::nonblock("display.vesa").expect("vesad: failed to create display scheme");
 
     let mut scheme = DisplayScheme::new(framebuffers, &spec);
+
+    let mut inputd_control_handle = inputd::ControlHandle::new().unwrap();
+
+    user_data! {
+        enum Source {
+            Input,
+            Scheme,
+        }
+    }
+
+    let event_queue: EventQueue<Source> =
+        EventQueue::new().expect("vesad: failed to create event queue");
+    event_queue
+        .subscribe(
+            scheme.inputd_handle.inner().as_raw_fd() as usize,
+            Source::Input,
+            event::EventFlags::READ,
+        )
+        .unwrap();
+    event_queue
+        .subscribe(
+            socket.inner().raw(),
+            Source::Scheme,
+            event::EventFlags::READ,
+        )
+        .unwrap();
 
     let _ = File::open("/scheme/debug/disable-graphical-debug");
 
@@ -90,70 +116,102 @@ fn inner(daemon: redox_daemon::Daemon, framebuffers: Vec<FrameBuffer>, spec: &[(
 
     daemon.ready().expect("failed to notify parent");
 
-    scheme.inputd_handle.activate(1).unwrap();
+    inputd_control_handle.activate_vt(1).unwrap();
 
     let mut blocked = Vec::new();
-    loop {
-        let Some(request) = socket
-            .next_request(SignalBehavior::Restart)
-            .expect("vesad: failed to read display scheme")
-        else {
-            // Scheme likely got unmounted
-            std::process::exit(0);
-        };
-
-        match request.kind() {
-            RequestKind::Call(call_request) => {
-                if let Some(resp) = call_request.handle_scheme_block_mut(&mut scheme) {
-                    socket
-                        .write_response(resp, SignalBehavior::Restart)
-                        .expect("vesad: failed to write display scheme");
-                } else {
-                    blocked.push(call_request);
+    let all = [Source::Input, Source::Scheme];
+    for event in all
+        .into_iter()
+        .chain(event_queue.map(|e| e.expect("vesad: failed to get next event").user_data))
+    {
+        match event {
+            Source::Input => {
+                while let Some(vt_event) = scheme
+                    .inputd_handle
+                    .read_vt_event()
+                    .expect("vesad: failed to read display handle")
+                {
+                    scheme.handle_vt_event(vt_event);
                 }
             }
-            RequestKind::Cancellation(_cancellation_request) => {}
-            RequestKind::MsyncMsg | RequestKind::MunmapMsg | RequestKind::MmapMsg => unreachable!(),
-        }
+            Source::Scheme => {
+                loop {
+                    let request = match socket.next_request(SignalBehavior::Restart) {
+                        Ok(Some(request)) => request,
+                        Ok(None) => {
+                            // Scheme likely got unmounted
+                            std::process::exit(0);
+                        }
+                        Err(err) if err.errno == EAGAIN => break,
+                        Err(err) => panic!("vesad: failed to read display scheme: {err}"),
+                    };
 
-        // If there are blocked readers, try to handle them.
-        {
-            let mut i = 0;
-            while i < blocked.len() {
-                if let Some(resp) = blocked[i].handle_scheme_block_mut(&mut scheme) {
-                    socket
-                        .write_response(resp, SignalBehavior::Restart)
-                        .expect("vesad: failed to write display scheme");
-                    blocked.remove(i);
-                } else {
-                    i += 1;
+                    match request.kind() {
+                        RequestKind::Call(call_request) => {
+                            if let Some(resp) = call_request.handle_scheme_block_mut(&mut scheme) {
+                                socket
+                                    .write_response(resp, SignalBehavior::Restart)
+                                    .expect("vesad: failed to write display scheme");
+                            } else {
+                                blocked.push(call_request);
+                            }
+                        }
+                        RequestKind::Cancellation(cancellation_request) => {
+                            if let Some(i) = blocked.iter().position(|req| {
+                                req.request().request_id() == cancellation_request.id
+                            }) {
+                                let blocked_req = blocked.remove(i);
+                                let resp =
+                                    Response::new(&blocked_req, Err(syscall::Error::new(EINTR)));
+                                socket
+                                    .write_response(resp, SignalBehavior::Restart)
+                                    .expect("vesad: failed to write display scheme");
+                            }
+                        }
+                        RequestKind::MsyncMsg | RequestKind::MunmapMsg | RequestKind::MmapMsg => {
+                            unreachable!()
+                        }
+                    }
+
+                    // If there are blocked readers, try to handle them.
+                    {
+                        let mut i = 0;
+                        while i < blocked.len() {
+                            if let Some(resp) = blocked[i].handle_scheme_block_mut(&mut scheme) {
+                                socket
+                                    .write_response(resp, SignalBehavior::Restart)
+                                    .expect("vesad: failed to write display scheme");
+                                blocked.remove(i);
+                            } else {
+                                i += 1;
+                            }
+                        }
+                    }
+
+                    for (handle_id, handle) in scheme.handles.iter_mut() {
+                        if handle.notified_read || !handle.events.contains(EVENT_READ) {
+                            continue;
+                        }
+
+                        let can_read = scheme
+                            .vts
+                            .get(&handle.vt)
+                            .and_then(|screens| screens.get(&handle.screen))
+                            .map_or(false, |screen| screen.can_read());
+
+                        if can_read {
+                            handle.notified_read = true;
+                            socket
+                                .post_fevent(*handle_id, EVENT_READ.bits())
+                                .expect("vesad: failed to write display event");
+                        } else {
+                            handle.notified_read = false;
+                        }
+                    }
                 }
-            }
-        }
-
-        for (handle_id, handle) in scheme.handles.iter_mut() {
-            if handle.notified_read || !handle.events.contains(EVENT_READ) {
-                continue;
-            }
-
-            let can_read = if let HandleKind::Screen(vt_i, screen_i) = handle.kind {
-                scheme
-                    .vts
-                    .get(&vt_i)
-                    .and_then(|screens| screens.get(&screen_i))
-                    .map_or(false, |screen| screen.can_read())
-            } else {
-                false
-            };
-
-            if can_read {
-                handle.notified_read = true;
-                socket
-                    .post_fevent(*handle_id, EVENT_READ.bits())
-                    .expect("vesad: failed to write display event");
-            } else {
-                handle.notified_read = false;
             }
         }
     }
+
+    panic!();
 }

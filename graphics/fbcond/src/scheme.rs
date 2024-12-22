@@ -36,13 +36,10 @@ pub struct FbconScheme {
     pub vts: BTreeMap<VtIndex, TextScreen>,
     next_id: usize,
     pub handles: BTreeMap<usize, Handle>,
-    pub inputd_handle: inputd::Handle,
 }
 
 impl FbconScheme {
     pub fn new(vt_ids: &[usize], event_queue: &mut EventQueue<VtIndex>) -> FbconScheme {
-        let inputd_handle = inputd::Handle::new("vesa").unwrap();
-
         let mut vts = BTreeMap::new();
 
         for &vt_i in vt_ids {
@@ -61,7 +58,6 @@ impl FbconScheme {
             vts,
             next_id: 0,
             handles: BTreeMap::new(),
-            inputd_handle,
         }
     }
 

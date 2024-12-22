@@ -2,9 +2,15 @@
 
 use std::fs::File;
 use std::io::{Error, Read, Write};
+use std::mem::size_of;
+use std::os::fd::{AsFd, BorrowedFd};
 
 unsafe fn any_as_u8_slice<T: Sized>(p: &T) -> &[u8] {
-    ::core::slice::from_raw_parts((p as *const T) as *const u8, ::core::mem::size_of::<T>())
+    std::slice::from_raw_parts((p as *const T) as *const u8, size_of::<T>())
+}
+
+unsafe fn any_as_u8_slice_mut<T: Sized>(p: &mut T) -> &mut [u8] {
+    std::slice::from_raw_parts_mut((p as *mut T) as *mut u8, size_of::<T>())
 }
 
 #[derive(Debug, Clone)]
@@ -13,9 +19,9 @@ pub struct VtActivate {
     pub vt: usize,
 }
 
-pub struct Handle(File);
+pub struct DisplayHandle(File);
 
-impl Handle {
+impl DisplayHandle {
     pub fn new<S: Into<String>>(device_name: S) -> Result<Self, Error> {
         let path = format!("/scheme/input/handle/display/{}", device_name.into());
         Ok(Self(File::open(path)?))
@@ -23,131 +29,65 @@ impl Handle {
 
     // The return value is the display identifier. It will be used to uniquely
     // identify the display on activation events.
-    pub fn register(&mut self) -> Result<usize, Error> {
+    pub fn register_vt(&mut self) -> Result<usize, Error> {
         self.0.read(&mut [])
     }
 
-    pub fn activate(&mut self, vt: usize) -> Result<usize, Error> {
+    pub fn read_vt_event(&mut self) -> Result<Option<VtEvent>, Error> {
+        let mut event = VtEvent {
+            kind: VtEventKind::Resize,
+            vt: usize::MAX,
+            width: u32::MAX,
+            height: u32::MAX,
+            stride: u32::MAX,
+        };
+
+        let nread = self.0.read(unsafe { any_as_u8_slice_mut(&mut event) })?;
+
+        if nread == 0 {
+            Ok(None)
+        } else {
+            assert_eq!(nread, size_of::<VtEvent>());
+            Ok(Some(event))
+        }
+    }
+
+    pub fn inner(&self) -> BorrowedFd<'_> {
+        self.0.as_fd()
+    }
+}
+
+pub struct ControlHandle(File);
+
+impl ControlHandle {
+    pub fn new() -> Result<Self, Error> {
+        let path = format!("/scheme/input/control");
+        Ok(Self(File::open(path)?))
+    }
+
+    pub fn activate_vt(&mut self, vt: usize) -> Result<usize, Error> {
         let cmd = VtActivate { vt };
         self.0.write(unsafe { any_as_u8_slice(&cmd) })
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq)]
-#[repr(u8)]
-enum CmdTy {
-    Unknown = 0,
-
+#[derive(Debug)]
+#[repr(usize)]
+pub enum VtEventKind {
     Activate,
     Deactivate,
     Resize,
 }
 
-impl From<u8> for CmdTy {
-    fn from(value: u8) -> Self {
-        match value {
-            1 => CmdTy::Activate,
-            2 => CmdTy::Deactivate,
-            3 => CmdTy::Resize,
-            _ => CmdTy::Unknown,
-        }
-    }
-}
-
 #[derive(Debug)]
-pub enum Cmd {
-    // TODO(andypython): #VT should really need to be a `u8`.
-    Activate {
-        vt: usize,
-    },
+#[repr(C)]
+pub struct VtEvent {
+    pub kind: VtEventKind,
+    pub vt: usize,
 
-    Deactivate(usize /* #VT */),
-    Resize {
-        // TODO(andypython): do we really need to pass the VT here?
-        vt: usize,
-
-        width: u32,
-        height: u32,
-        stride: u32,
-    },
-}
-
-impl Cmd {
-    fn ty(&self) -> CmdTy {
-        match self {
-            Cmd::Activate { .. } => CmdTy::Activate,
-            Cmd::Deactivate(_) => CmdTy::Deactivate,
-            Cmd::Resize { .. } => CmdTy::Resize,
-        }
-    }
-}
-
-pub fn send_comand(file: &mut File, command: Cmd) -> Result<(), libredox::error::Error> {
-    use std::os::fd::AsRawFd;
-
-    let mut result = vec![];
-    result.push(command.ty() as u8);
-
-    match command {
-        Cmd::Activate { vt } => {
-            let cmd = VtActivate { vt };
-            let bytes = unsafe { any_as_u8_slice(&cmd) };
-
-            result.extend_from_slice(bytes);
-        }
-
-        Cmd::Deactivate(vt) => result.extend_from_slice(&vt.to_le_bytes()),
-        Cmd::Resize {
-            vt,
-            width,
-            height,
-            stride,
-        } => {
-            result.extend_from_slice(&vt.to_le_bytes());
-            result.extend(width.to_le_bytes());
-            result.extend(height.to_le_bytes());
-            result.extend(stride.to_le_bytes());
-        }
-    };
-
-    let written = libredox::call::write(file.as_raw_fd() as usize, &result)?;
-
-    // XXX: Ensure all of the data is written.
-    assert_eq!(written, result.len());
-    Ok(())
-}
-
-pub fn parse_command(buffer: &[u8]) -> Option<Cmd> {
-    const U32_SIZE: usize = core::mem::size_of::<u32>();
-    const USIZE_SIZE: usize = core::mem::size_of::<usize>();
-
-    let mut parser = buffer.iter().cloned();
-
-    let command = CmdTy::from(parser.next()?);
-    let vt = usize::from_le_bytes(parser.next_chunk::<USIZE_SIZE>().ok()?);
-
-    match command {
-        CmdTy::Activate => {
-            let cmd = unsafe { &*buffer.as_ptr().offset(1).cast::<VtActivate>() };
-            Some(Cmd::Activate { vt: cmd.vt })
-        }
-
-        CmdTy::Deactivate => Some(Cmd::Deactivate(vt)),
-        CmdTy::Resize => {
-            let width = parser.next_chunk::<U32_SIZE>().ok()?;
-            let height = parser.next_chunk::<U32_SIZE>().ok()?;
-            let stride = parser.next_chunk::<U32_SIZE>().ok()?;
-
-            Some(Cmd::Resize {
-                vt,
-                width: u32::from_le_bytes(width),
-                height: u32::from_le_bytes(height),
-                stride: u32::from_le_bytes(stride),
-            })
-        }
-
-        CmdTy::Unknown => None,
-    }
+    pub width: u32,
+    pub height: u32,
+    pub stride: u32,
 }
 
 #[repr(packed)]
