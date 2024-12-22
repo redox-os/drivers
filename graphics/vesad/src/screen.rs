@@ -110,12 +110,8 @@ impl GraphicScreen {
         Ok(i * mem::size_of::<Event>())
     }
 
-    pub fn can_read(&self) -> Option<usize> {
-        if self.input.is_empty() {
-            None
-        } else {
-            Some(self.input.len() * mem::size_of::<Event>())
-        }
+    pub fn can_read(&self) -> bool {
+        !self.input.is_empty()
     }
 
     pub fn write(&mut self, buf: &[u8]) -> Result<usize> {
