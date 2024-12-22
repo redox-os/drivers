@@ -5,10 +5,11 @@ use std::convert::{TryFrom, TryInto};
 use std::os::fd::AsRawFd;
 use std::{cmp, ptr};
 
+use inputd::Damage;
 use orbclient::{Event, EventOption, FONT};
 use syscall::error::*;
 
-use crate::display::{Display, SyncRect};
+use crate::display::Display;
 
 pub struct TextScreen {
     console: ransid::Console,
@@ -315,11 +316,11 @@ impl TextScreen {
 
         let width = self.display.width.try_into().unwrap();
         for &change in self.changed.iter() {
-            self.display.sync_rect(SyncRect {
+            self.display.sync_rect(Damage {
                 x: 0,
                 y: i32::try_from(change).unwrap() * 16,
-                w: width,
-                h: 16,
+                width,
+                height: 16,
             })?;
         }
         self.changed.clear();

@@ -1,3 +1,4 @@
+use inputd::Damage;
 use libredox::flag;
 use std::fs::OpenOptions;
 use std::mem;
@@ -10,16 +11,6 @@ use std::{
     slice,
 };
 use syscall::{O_CLOEXEC, O_NONBLOCK, O_RDWR};
-
-// Keep synced with vesad
-#[derive(Clone, Copy)]
-#[repr(C, packed)]
-pub struct SyncRect {
-    pub x: i32,
-    pub y: i32,
-    pub w: i32,
-    pub h: i32,
-}
 
 fn display_fd_map(width: usize, height: usize, display_fd: usize) -> syscall::Result<*mut [u32]> {
     unsafe {
@@ -146,13 +137,13 @@ impl Display {
         }
     }
 
-    pub fn sync_rect(&mut self, sync_rect: SyncRect) -> syscall::Result<()> {
+    pub fn sync_rect(&mut self, sync_rect: Damage) -> syscall::Result<()> {
         unsafe {
             libredox::call::write(
                 self.display_file.as_raw_fd().as_raw_fd() as usize,
                 slice::from_raw_parts(
-                    &sync_rect as *const SyncRect as *const u8,
-                    mem::size_of::<SyncRect>(),
+                    &sync_rect as *const Damage as *const u8,
+                    mem::size_of::<Damage>(),
                 ),
             )?;
             Ok(())
