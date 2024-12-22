@@ -1680,6 +1680,7 @@ dependencies = [
  "orbclient",
  "ransid",
  "redox-daemon",
+ "redox-scheme",
  "redox_syscall",
 ]
 
@@ -1735,6 +1736,7 @@ dependencies = [
  "paste",
  "pcid",
  "redox-daemon",
+ "redox-scheme",
  "redox_syscall",
  "spin",
  "static_assertions",

@@ -23,13 +23,11 @@
 #![feature(int_roundings)]
 
 use std::cell::UnsafeCell;
-use std::fs::File;
-use std::io::{Read, Write};
 use std::sync::Arc;
 
 use pcid_interface::PciFunctionHandle;
 
-use syscall::{Packet, SchemeMut};
+use redox_scheme::{RequestKind, SignalBehavior, Socket, V2};
 use virtio_core::transport::{self, Queue};
 use virtio_core::utils::VolatileCell;
 use virtio_core::MSIX_PRIMARY_VECTOR;
@@ -438,7 +436,7 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
     device.transport.run_device();
     deamon.ready().unwrap();
 
-    let mut socket_file = File::create(":display.virtio-gpu")?;
+    let socket_file: Socket<V2> = Socket::create("display.virtio-gpu")?;
     let mut scheme = futures::executor::block_on(scheme::Scheme::new(
         config,
         control_queue.clone(),
@@ -449,14 +447,21 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
     // scheme.inputd_handle.activate(scheme.main_vt)?;
 
     loop {
-        let mut packet = Packet::default();
-        socket_file
-            .read(&mut packet)
-            .expect("virtio-gpud: failed to read disk scheme");
-        scheme.handle(&mut packet);
-        socket_file
-            .write(&packet)
-            .expect("virtio-gpud: failed to read disk scheme");
+        let Some(request) = socket_file.next_request(SignalBehavior::Restart)? else {
+            // Scheme likely got unmounted
+            return Ok(());
+        };
+
+        match request.kind() {
+            RequestKind::Call(call_request) => {
+                socket_file.write_response(
+                    call_request.handle_scheme_mut(&mut scheme),
+                    SignalBehavior::Restart,
+                )?;
+            }
+            RequestKind::Cancellation(_cancellation_request) => {}
+            RequestKind::MsyncMsg | RequestKind::MunmapMsg | RequestKind::MmapMsg => unreachable!(),
+        }
     }
 }
 

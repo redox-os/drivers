@@ -7,7 +7,8 @@ use std::sync::Arc;
 use common::{dma::Dma, sgl};
 use inputd::Damage;
 
-use syscall::{Error as SysError, MapFlags, SchemeMut, EAGAIN, EINVAL, PAGE_SIZE};
+use redox_scheme::SchemeMut;
+use syscall::{Error as SysError, MapFlags, EAGAIN, EINVAL, PAGE_SIZE};
 
 use virtio_core::spec::{Buffer, ChainBuilder, DescriptorFlags};
 use virtio_core::transport::{Error, Queue, Transport};
@@ -384,13 +385,25 @@ impl<'a> SchemeMut for Scheme<'a> {
         }
     }
 
-    fn read(&mut self, _id: usize, _buf: &mut [u8]) -> syscall::Result<usize> {
+    fn read(
+        &mut self,
+        _id: usize,
+        _buf: &mut [u8],
+        _offset: u64,
+        _fcntl_flags: u32,
+    ) -> syscall::Result<usize> {
         // TODO: figure out how to get input lol
         log::warn!("virtio_gpu::read is a stub!");
         Ok(0)
     }
 
-    fn write(&mut self, id: usize, buf: &[u8]) -> syscall::Result<usize> {
+    fn write(
+        &mut self,
+        id: usize,
+        buf: &[u8],
+        _offset: u64,
+        _fcntl_flags: u32,
+    ) -> syscall::Result<usize> {
         match self.handles.get(&id).ok_or(SysError::new(EINVAL))? {
             Handle::Vt { display, .. } => {
                 // The VT is not active and the device is reseted. Ask them to try
@@ -458,10 +471,6 @@ impl<'a> SchemeMut for Scheme<'a> {
                 Ok(buf.len())
             }
         }
-    }
-
-    fn seek(&mut self, _id: usize, _pos: isize, _whence: usize) -> syscall::Result<isize> {
-        todo!()
     }
 
     fn close(&mut self, _id: usize) -> syscall::Result<usize> {

@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 use std::str;
 
-use syscall::{Error, EventFlags, MapFlags, Result, SchemeMut, EBADF, EINVAL, ENOENT, O_NONBLOCK};
+use redox_scheme::SchemeBlockMut;
+use syscall::{Error, EventFlags, MapFlags, Result, EBADF, EINVAL, ENOENT, O_NONBLOCK};
 
 use crate::{framebuffer::FrameBuffer, screen::GraphicScreen};
 
@@ -59,26 +60,6 @@ impl DisplayScheme {
         }
     }
 
-    pub fn can_read(&self, id: usize) -> Option<usize> {
-        if let Some(handle) = self.handles.get(&id) {
-            if let HandleKind::Screen(vt_i, screen_i) = handle.kind {
-                if let Some(screens) = self.vts.get(&vt_i) {
-                    if let Some(screen) = screens.get(&screen_i) {
-                        screen
-                            .can_read()
-                            .or(if handle.flags & O_NONBLOCK == O_NONBLOCK {
-                                Some(0)
-                            } else {
-                                None
-                            });
-                    }
-                }
-            }
-        }
-
-        Some(0)
-    }
-
     fn resize(&mut self, width: usize, height: usize, stride: usize) {
         //TODO: support resizing other outputs?
         let fb_i = 0;
@@ -105,8 +86,14 @@ impl DisplayScheme {
     }
 }
 
-impl SchemeMut for DisplayScheme {
-    fn open(&mut self, path_str: &str, flags: usize, _uid: u32, _gid: u32) -> Result<usize> {
+impl SchemeBlockMut for DisplayScheme {
+    fn open(
+        &mut self,
+        path_str: &str,
+        flags: usize,
+        _uid: u32,
+        _gid: u32,
+    ) -> Result<Option<usize>> {
         if path_str == "handle" {
             let id = self.next_id;
             self.next_id += 1;
@@ -119,7 +106,7 @@ impl SchemeMut for DisplayScheme {
                     notified_read: false,
                 },
             );
-            return Ok(id);
+            return Ok(Some(id));
         }
 
         let mut parts = path_str.split('/');
@@ -141,7 +128,7 @@ impl SchemeMut for DisplayScheme {
                     },
                 );
 
-                Ok(id)
+                Ok(Some(id))
             } else {
                 Err(Error::new(ENOENT))
             }
@@ -150,7 +137,7 @@ impl SchemeMut for DisplayScheme {
         }
     }
 
-    fn dup(&mut self, id: usize, buf: &[u8]) -> Result<usize> {
+    fn dup(&mut self, id: usize, buf: &[u8]) -> Result<Option<usize>> {
         if !buf.is_empty() {
             return Err(Error::new(EINVAL));
         }
@@ -166,23 +153,27 @@ impl SchemeMut for DisplayScheme {
 
         self.handles.insert(new_id, handle.clone());
 
-        Ok(new_id)
+        Ok(Some(new_id))
     }
 
-    fn fevent(&mut self, id: usize, flags: syscall::EventFlags) -> Result<syscall::EventFlags> {
+    fn fevent(
+        &mut self,
+        id: usize,
+        flags: syscall::EventFlags,
+    ) -> Result<Option<syscall::EventFlags>> {
         let handle = self.handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
         handle.notified_read = false;
 
         if let HandleKind::Screen(_vt_i, _screen_i) = handle.kind {
             handle.events = flags;
-            Ok(syscall::EventFlags::empty())
+            Ok(Some(syscall::EventFlags::empty()))
         } else {
             Err(Error::new(EBADF))
         }
     }
 
-    fn fpath(&mut self, id: usize, buf: &mut [u8]) -> Result<usize> {
+    fn fpath(&mut self, id: usize, buf: &mut [u8]) -> Result<Option<usize>> {
         let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
         let path_str = match handle.kind {
@@ -217,10 +208,10 @@ impl SchemeMut for DisplayScheme {
             i += 1;
         }
 
-        Ok(i)
+        Ok(Some(i))
     }
 
-    fn fsync(&mut self, id: usize) -> Result<usize> {
+    fn fsync(&mut self, id: usize) -> Result<Option<usize>> {
         let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
         if let HandleKind::Screen(vt_i, screen_i) = handle.kind {
@@ -229,7 +220,7 @@ impl SchemeMut for DisplayScheme {
                     if vt_i == self.active {
                         screen.sync(&mut self.framebuffers[screen_i.0]);
                     }
-                    return Ok(0);
+                    return Ok(Some(0));
                 }
             }
         }
@@ -237,13 +228,28 @@ impl SchemeMut for DisplayScheme {
         Err(Error::new(EBADF))
     }
 
-    fn read(&mut self, id: usize, buf: &mut [u8]) -> Result<usize> {
+    fn read(
+        &mut self,
+        id: usize,
+        buf: &mut [u8],
+        _offset: u64,
+        _fcntl_flags: u32,
+    ) -> Result<Option<usize>> {
         let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
         if let HandleKind::Screen(vt_i, screen_i) = handle.kind {
             if let Some(screens) = self.vts.get_mut(&vt_i) {
                 if let Some(screen) = screens.get_mut(&screen_i) {
-                    return screen.read(buf);
+                    let nread = screen.read(buf)?;
+                    if nread != 0 {
+                        return Ok(Some(nread));
+                    } else {
+                        if handle.flags & O_NONBLOCK == O_NONBLOCK {
+                            return Ok(Some(0));
+                        } else {
+                            return Ok(None);
+                        }
+                    }
                 }
             }
         }
@@ -251,7 +257,13 @@ impl SchemeMut for DisplayScheme {
         Err(Error::new(EBADF))
     }
 
-    fn write(&mut self, id: usize, buf: &[u8]) -> Result<usize> {
+    fn write(
+        &mut self,
+        id: usize,
+        buf: &[u8],
+        _offset: u64,
+        _fcntl_flags: u32,
+    ) -> Result<Option<usize>> {
         let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
         match handle.kind {
@@ -286,7 +298,7 @@ impl SchemeMut for DisplayScheme {
                     DisplayCommand::Deactivate(_) => {}
                 }
 
-                Ok(buf.len())
+                Ok(Some(buf.len()))
             }
 
             HandleKind::Screen(vt_i, screen_i) => {
@@ -296,7 +308,7 @@ impl SchemeMut for DisplayScheme {
                         if vt_i == self.active {
                             screen.sync(&mut self.framebuffers[screen_i.0]);
                         }
-                        Ok(count)
+                        Ok(Some(count))
                     } else {
                         Err(Error::new(EBADF))
                     }
@@ -307,18 +319,24 @@ impl SchemeMut for DisplayScheme {
         }
     }
 
-    fn close(&mut self, id: usize) -> Result<usize> {
+    fn close(&mut self, id: usize) -> Result<Option<usize>> {
         self.handles.remove(&id).ok_or(Error::new(EBADF))?;
-        Ok(0)
+        Ok(Some(0))
     }
-    fn mmap_prep(&mut self, id: usize, off: u64, size: usize, _flags: MapFlags) -> Result<usize> {
+    fn mmap_prep(
+        &mut self,
+        id: usize,
+        off: u64,
+        size: usize,
+        _flags: MapFlags,
+    ) -> Result<Option<usize>> {
         let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
         if let HandleKind::Screen(vt_i, screen_i) = handle.kind {
             if let Some(screens) = self.vts.get(&vt_i) {
                 if let Some(screen) = screens.get(&screen_i) {
                     if off as usize + size <= screen.offscreen.len() * 4 {
-                        return Ok(screen.offscreen.as_ptr() as usize + off as usize);
+                        return Ok(Some(screen.offscreen.as_ptr() as usize + off as usize));
                     } else {
                         return Err(Error::new(EINVAL));
                     }
