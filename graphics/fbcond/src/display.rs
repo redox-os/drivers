@@ -60,6 +60,7 @@ impl Drop for DisplayMap {
 
 enum DisplayCommand {
     Resize { width: usize, height: usize },
+    ReopenForHandoff { display_path: String },
     SyncRects(Vec<Damage>),
 }
 
@@ -104,6 +105,29 @@ impl Display {
                             }
                         }
                     }
+                    DisplayCommand::ReopenForHandoff { display_path } => {
+                        eprintln!("fbcond: Performing handoff for '{display_path}'");
+
+                        let (mut new_display_file, width, height) =
+                            Self::open_display(&display_path).unwrap();
+
+                        eprintln!("fbcond: Opened new display '{display_path}'");
+
+                        match display_fd_map(width, height, &mut new_display_file) {
+                            Ok(ok) => {
+                                *map_clone.lock().unwrap() = ok;
+                                display_file = new_display_file;
+
+                                eprintln!("fbcond: Mapped new display '{display_path}'");
+                            }
+                            Err(err) => {
+                                eprintln!(
+                                    "failed to resize display to {}x{}: {}",
+                                    width, height, err
+                                );
+                            }
+                        }
+                    }
                     DisplayCommand::SyncRects(sync_rects) => {
                         for sync_rect in sync_rects {
                             unsafe {
@@ -128,6 +152,20 @@ impl Display {
             cmd_tx,
             map,
         })
+    }
+
+    /// Re-open the display after a handoff.
+    ///
+    /// Once re-opening is finished, you must call [`resize`] to map the new framebuffer.
+    ///
+    /// Warning: This must be called in a background thread to avoid a deadlock when the
+    /// graphics driver (indirectly) writes logs to fbcond.
+    pub fn reopen_for_handoff(&mut self) {
+        let display_path = Self::display_path(&mut self.input_handle).unwrap();
+
+        self.cmd_tx
+            .send(DisplayCommand::ReopenForHandoff { display_path })
+            .unwrap();
     }
 
     fn display_path(input_handle: &mut File) -> io::Result<String> {

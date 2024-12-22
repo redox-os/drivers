@@ -27,6 +27,11 @@ impl DisplayHandle {
         Ok(Self(File::open(path)?))
     }
 
+    pub fn new_early<S: Into<String>>(device_name: S) -> Result<Self, Error> {
+        let path = format!("/scheme/input/handle_early/display/{}", device_name.into());
+        Ok(Self(File::open(path)?))
+    }
+
     // The return value is the display identifier. It will be used to uniquely
     // identify the display on activation events.
     pub fn register_vt(&mut self) -> Result<usize, Error> {

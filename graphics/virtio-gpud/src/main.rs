@@ -25,14 +25,12 @@
 use std::cell::UnsafeCell;
 use std::os::fd::AsRawFd;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Arc;
 
 use event::{user_data, EventQueue};
 use libredox::errno::EAGAIN;
 use pcid_interface::PciFunctionHandle;
 
 use redox_scheme::{RequestKind, SignalBehavior, Socket, V2};
-use virtio_core::transport::{self, Queue};
 use virtio_core::utils::VolatileCell;
 use virtio_core::MSIX_PRIMARY_VECTOR;
 
@@ -410,19 +408,6 @@ impl XferToHost2d {
 }
 
 static DEVICE: spin::Once<virtio_core::Device> = spin::Once::new();
-
-fn reinit(control_queue: Arc<Queue>, cursor_queue: Arc<Queue>) -> Result<(), transport::Error> {
-    let device = DEVICE.get().unwrap();
-
-    virtio_core::reinit(device)?;
-    device.transport.finalize_features();
-
-    device.transport.reinit_queue(control_queue.clone());
-    device.transport.reinit_queue(cursor_queue.clone());
-
-    device.transport.run_device();
-    Ok(())
-}
 
 fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
     let mut pcid_handle = PciFunctionHandle::connect_default()?;

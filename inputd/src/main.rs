@@ -18,6 +18,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use inputd::{VtActivate, VtEvent, VtEventKind};
 
+use libredox::errno::ESTALE;
 use redox_scheme::{RequestKind, SchemeMut, SignalBehavior, Socket, V2};
 
 use orbclient::{Event, EventOption};
@@ -28,6 +29,9 @@ enum Handle {
     Consumer {
         events: EventFlags,
         pending: Vec<u8>,
+        /// We return an ESTALE error once to indicate that a handoff to a different graphics driver
+        /// is necessary.
+        needs_handoff: bool,
         notified: bool,
         vt: usize,
     },
@@ -36,6 +40,8 @@ enum Handle {
         pending: Vec<VtEvent>,
         notified: bool,
         device: String,
+        /// Control of all VT's gets handed over from earlyfb devices to the first non-earlyfb device.
+        is_earlyfb: bool,
     },
     Control,
 }
@@ -46,6 +52,7 @@ impl Handle {
     }
 }
 
+#[derive(Debug)]
 struct Vt {
     display: String,
 }
@@ -69,6 +76,7 @@ struct InputScheme {
     active_vt: Option<usize>,
 
     has_new_events: bool,
+    maybe_perform_handoff_to: Option<String>,
 }
 
 impl InputScheme {
@@ -83,6 +91,7 @@ impl InputScheme {
             active_vt: None,
 
             has_new_events: false,
+            maybe_perform_handoff_to: None,
         }
     }
 
@@ -163,17 +172,40 @@ impl SchemeMut for InputScheme {
                 Handle::Consumer {
                     events: EventFlags::empty(),
                     pending: Vec::new(),
+                    needs_handoff: false,
                     notified: false,
                     vt: target,
                 }
             }
-            "handle" => {
+            "handle_early" => {
                 let display = path_parts.collect::<Vec<_>>().join(".");
                 Handle::Display {
                     events: EventFlags::empty(),
                     pending: Vec::new(),
                     notified: false,
                     device: display,
+                    is_earlyfb: true,
+                }
+            }
+            "handle" => {
+                let display = path_parts.collect::<Vec<_>>().join(".");
+                self.maybe_perform_handoff_to = Some(display.clone());
+                Handle::Display {
+                    events: EventFlags::empty(),
+                    pending: if let Some(active_vt) = self.active_vt {
+                        vec![VtEvent {
+                            kind: VtEventKind::Activate,
+                            vt: active_vt,
+                            width: 0,
+                            height: 0,
+                            stride: 0,
+                        }]
+                    } else {
+                        vec![]
+                    },
+                    notified: false,
+                    device: display,
+                    is_earlyfb: false,
                 }
             }
             "control" => Handle::Control,
@@ -216,7 +248,17 @@ impl SchemeMut for InputScheme {
         let handle = self.handles.get_mut(&id).ok_or(SysError::new(EINVAL))?;
 
         match handle {
-            Handle::Consumer { pending, .. } => {
+            Handle::Consumer {
+                pending,
+                needs_handoff,
+                ..
+            } => {
+                if *needs_handoff {
+                    *needs_handoff = false;
+                    // Indicates that handoff to a new graphics driver is necessary.
+                    return Err(SysError::new(ESTALE));
+                }
+
                 let copy = core::cmp::min(pending.len(), buf.len());
 
                 for (i, byte) in pending.drain(..copy).enumerate() {
@@ -464,6 +506,55 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
             RequestKind::MsyncMsg | RequestKind::MunmapMsg | RequestKind::MmapMsg => unreachable!(),
         }
 
+        if let Some(display) = scheme.maybe_perform_handoff_to.take() {
+            let early_displays = scheme
+                .handles
+                .values()
+                .filter_map(|handle| match handle {
+                    Handle::Display {
+                        device,
+                        is_earlyfb: true,
+                        ..
+                    } => Some(&**device),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            let vts = scheme
+                .vts
+                .iter_mut()
+                .filter_map(|(&i, vt)| {
+                    if early_displays.contains(&&*vt.display) {
+                        vt.display = display.clone();
+
+                        scheme.has_new_events = true;
+
+                        Some(i)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            for handle in scheme.handles.values_mut() {
+                match handle {
+                    Handle::Consumer {
+                        needs_handoff,
+                        notified,
+                        vt,
+                        ..
+                    } => {
+                        if !vts.contains(vt) {
+                            continue;
+                        }
+
+                        *needs_handoff = true;
+                        *notified = false;
+                    }
+                    _ => continue,
+                }
+            }
+        }
+
         if !scheme.has_new_events {
             continue;
         }
@@ -473,10 +564,14 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
                 Handle::Consumer {
                     events,
                     pending,
+                    needs_handoff,
                     ref mut notified,
                     vt,
                 } => {
-                    if pending.is_empty() || *notified || !events.contains(EventFlags::EVENT_READ) {
+                    if (!*needs_handoff && pending.is_empty())
+                        || *notified
+                        || !events.contains(EventFlags::EVENT_READ)
+                    {
                         continue;
                     }
 
@@ -484,7 +579,7 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
 
                     // The activate VT is not the same as the VT that the consumer is listening to
                     // for events.
-                    if active_vt != *vt {
+                    if !*needs_handoff && active_vt != *vt {
                         continue;
                     }
 

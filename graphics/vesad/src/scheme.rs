@@ -34,7 +34,7 @@ pub struct DisplayScheme {
 
 impl DisplayScheme {
     pub fn new(framebuffers: Vec<FrameBuffer>, spec: &[()]) -> DisplayScheme {
-        let mut inputd_handle = inputd::DisplayHandle::new("vesa").unwrap();
+        let mut inputd_handle = inputd::DisplayHandle::new_early("vesa").unwrap();
 
         let mut vts = BTreeMap::<VtIndex, BTreeMap<ScreenIndex, GraphicScreen>>::new();
 

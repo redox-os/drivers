@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use common::{dma::Dma, sgl};
@@ -40,8 +40,6 @@ pub struct Display<'a> {
     height: u32,
 
     id: usize,
-
-    is_reseted: AtomicBool,
 }
 
 impl<'a> Display<'a> {
@@ -64,26 +62,7 @@ impl<'a> Display<'a> {
             transport,
 
             id,
-
-            is_reseted: AtomicBool::new(false),
         }
-    }
-
-    async fn init(&self, vt: usize) -> Result<(), Error> {
-        if !self.is_reseted.load(Ordering::SeqCst) {
-            // The device is already initialized.
-            self.set_scanout(vt).await?;
-            return Ok(());
-        }
-
-        self.is_reseted.store(false, Ordering::SeqCst);
-
-        log::info!("virtio-gpu: initializing GPU after a reset");
-
-        crate::reinit(self.control_queue.clone(), self.cursor_queue.clone())?;
-        self.set_scanout(vt).await?;
-
-        Ok(())
     }
 
     async fn get_fpath(&self, buffer: &mut [u8]) -> Result<usize, Error> {
@@ -199,9 +178,12 @@ impl<'a> Display<'a> {
 
     /// If `damage` is `None`, the entire screen is flushed.
     async fn flush(&self, vt: usize, damage: Option<&Damage>) -> Result<(), Error> {
-        if vt != *self.active_vt.borrow() {
+        let Some(&res_id) = self.vts_res.borrow().get(&vt) else {
+            // The resource is not yet created. Ignore the damage. We will write the entire backing
+            // storage to the resource once we create the resource, which is equivalent to damaging
+            // the entire resource.
             return Ok(());
-        }
+        };
 
         let damage = if let Some(damage) = damage {
             damage.into()
@@ -215,7 +197,7 @@ impl<'a> Display<'a> {
         };
 
         let req = Dma::new(XferToHost2d::new(
-            self.vts_res.borrow()[&vt],
+            res_id,
             GpuRect {
                 x: 0,
                 y: 0,
@@ -226,31 +208,8 @@ impl<'a> Display<'a> {
         let header = self.send_request(req).await?;
         assert_eq!(header.ty.get(), CommandTy::RespOkNodata);
 
-        self.flush_resource(ResourceFlush::new(
-            self.vts_res.borrow()[&vt],
-            damage.clone(),
-        ))
-        .await?;
-        Ok(())
-    }
-
-    /// This detaches any backing pages from the display and unrefs the resource. Also resets the
-    /// device, which is required to go back to legacy mode.
-    async fn detach(&self) -> Result<(), Error> {
-        for (_vt, res_id) in self.vts_res.borrow_mut().drain() {
-            let request = Dma::new(DetachBacking::new(res_id))?;
-            let header = self.send_request(request).await?;
-            assert_eq!(header.ty.get(), CommandTy::RespOkNodata);
-
-            let request = Dma::new(ResourceUnref::new(res_id))?;
-            let header = self.send_request(request).await?;
-            assert_eq!(header.ty.get(), CommandTy::RespOkNodata);
-        }
-
-        // Go back to legacy mode.
-        self.transport.reset();
-        self.is_reseted.store(true, Ordering::SeqCst);
-
+        self.flush_resource(ResourceFlush::new(res_id, damage.clone()))
+            .await?;
         Ok(())
     }
 }
@@ -283,9 +242,7 @@ impl<'a> Scheme<'a> {
         )
         .await?;
 
-        let mut inputd_handle = inputd::DisplayHandle::new("virtio-gpu").unwrap();
-        // FIXME make vesad handoff control over all it's VT's instead
-        inputd_handle.register_vt().unwrap();
+        let inputd_handle = inputd::DisplayHandle::new("virtio-gpu").unwrap();
 
         Ok(Self {
             handles: BTreeMap::new(),
@@ -319,11 +276,6 @@ impl<'a> Scheme<'a> {
                 transport.clone(),
                 id,
             );
-            // FIXME this is a hack to avoid breaking things while we need to co-exist with vesad
-            // Somehow necessary to ensure that creating a resource on the first reinitialization
-            // after this detach doesn't fail.
-            display.init(1).await?;
-            display.detach().await?;
 
             result.push(Arc::new(display));
         }
@@ -357,7 +309,7 @@ impl<'a> Scheme<'a> {
                 for display in &self.displays {
                     log::warn!("virtio-gpu: activating");
 
-                    futures::executor::block_on(display.init(vt_event.vt)).unwrap();
+                    futures::executor::block_on(display.set_scanout(vt_event.vt)).unwrap();
 
                     *display.active_vt.borrow_mut() = vt_event.vt;
                 }
@@ -365,21 +317,7 @@ impl<'a> Scheme<'a> {
 
             VtEventKind::Deactivate => {
                 log::info!("deactivate {}", vt_event.vt);
-
-                for handle in self.handles.values() {
-                    if handle.vt != vt_event.vt {
-                        continue;
-                    }
-
-                    log::warn!("virtio-gpu: deactivating");
-
-                    futures::executor::block_on(handle.display.detach()).unwrap();
-                    break;
-                }
-
-                // for display in self.displays.iter() {
-                //     futures::executor::block_on(display.detach()).unwrap();
-                // }
+                // nothing to do :)
             }
 
             VtEventKind::Resize => {
@@ -448,13 +386,6 @@ impl<'a> SchemeMut for Scheme<'a> {
         _fcntl_flags: u32,
     ) -> syscall::Result<usize> {
         let handle = self.handles.get(&id).ok_or(SysError::new(EINVAL))?;
-
-        // The VT is not active and the device is reseted. Ignore the damage. We will recreate the
-        // backing storage from scratch next time we initialize, which is equivalent to damaging the
-        // entire buffer.
-        if handle.display.is_reseted.load(Ordering::SeqCst) {
-            return Ok(buf.len());
-        }
 
         let damages = unsafe {
             core::slice::from_raw_parts(

@@ -1,3 +1,5 @@
+#![feature(io_error_more)]
+
 use event::EventQueue;
 use orbclient::Event;
 use std::fs::{File, OpenOptions};
@@ -55,7 +57,9 @@ fn inner(daemon: redox_daemon::Daemon, vt_ids: &[usize]) -> ! {
 
     let mut inputd_control_handle = inputd::ControlHandle::new().unwrap();
 
-    libredox::call::setrens(0, 0).expect("fbcond: failed to enter null namespace");
+    // This is not possible for now as fbcond needs to open new displays at runtime for graphics
+    // driver handoff. In the future inputd may directly pass a handle to the display instead.
+    //libredox::call::setrens(0, 0).expect("fbcond: failed to enter null namespace");
 
     daemon.ready().expect("failed to notify parent");
 
@@ -126,6 +130,9 @@ fn handle_event(
                     Ok(0) => break,
                     Err(err) if err.kind() == ErrorKind::WouldBlock => {
                         break;
+                    }
+                    Err(err) if err.kind() == ErrorKind::StaleNetworkFileHandle => {
+                        vt.handle_handoff();
                     }
 
                     Ok(count) => {
