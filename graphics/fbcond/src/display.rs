@@ -50,24 +50,42 @@ pub struct Display {
 
 impl Display {
     pub fn open_vt(vt: usize) -> io::Result<Self> {
-        let mut buffer = [0; 1024];
-
-        let input_handle = OpenOptions::new()
+        let mut input_handle = OpenOptions::new()
             .read(true)
             .custom_flags(O_NONBLOCK as i32)
             .open(format!("/scheme/input/consumer/{vt}"))?;
-        let fd = input_handle.as_raw_fd();
 
+        let display_path = Self::display_path(&mut input_handle)?;
+
+        let (display_file, width, height) = Self::open_display(&display_path)?;
+
+        let offscreen_buffer = display_fd_map(width, height, display_file.as_raw_fd() as usize)
+            .unwrap_or_else(|e| panic!("failed to map display '{display_path}: {e}"));
+        Ok(Self {
+            input_handle,
+            display_file,
+            offscreen: offscreen_buffer,
+            width,
+            height,
+        })
+    }
+
+    fn display_path(input_handle: &mut File) -> io::Result<String> {
+        let mut buffer = [0; 1024];
+        let fd = input_handle.as_raw_fd();
         let written = libredox::call::fpath(fd as usize, &mut buffer)
             .expect("init: failed to get the path to the display device");
 
         assert!(written <= buffer.len());
 
-        let display_path =
-            std::str::from_utf8(&buffer[..written]).expect("init: display path UTF-8 check failed");
+        Ok(std::str::from_utf8(&buffer[..written])
+            .expect("init: display path UTF-8 check failed")
+            .to_owned())
+    }
 
+    fn open_display(display_path: &str) -> io::Result<(File, usize, usize)> {
         let display_file =
-            libredox::call::open(display_path, (O_CLOEXEC | O_NONBLOCK | O_RDWR) as _, 0)
+            libredox::call::open(&display_path, (O_CLOEXEC | O_NONBLOCK | O_RDWR) as _, 0)
                 .map(|socket| unsafe { File::from_raw_fd(socket as RawFd) })
                 .unwrap_or_else(|err| {
                     panic!("failed to open display {}: {}", display_path, err);
@@ -84,15 +102,7 @@ impl Display {
         let path = Self::url_parts(&url)?;
         let (width, height) = Self::parse_display_path(path);
 
-        let offscreen_buffer = display_fd_map(width, height, display_file.as_raw_fd() as usize)
-            .unwrap_or_else(|e| panic!("failed to map display '{display_path}: {e}"));
-        Ok(Self {
-            input_handle,
-            display_file,
-            offscreen: offscreen_buffer,
-            width,
-            height,
-        })
+        Ok((display_file, width, height))
     }
 
     fn url_parts(url: &str) -> io::Result<&str> {
