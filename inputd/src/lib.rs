@@ -90,6 +90,8 @@ pub struct VtEvent {
     pub stride: u32,
 }
 
+// Keep synced with orbital's SyncRect
+#[derive(Debug, Copy, Clone)]
 #[repr(packed)]
 pub struct Damage {
     pub x: i32,
