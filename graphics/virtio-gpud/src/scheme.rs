@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use common::{dma::Dma, sgl};
-use inputd::Damage;
+use inputd::{Damage, VtEvent, VtEventKind};
 
 use redox_scheme::SchemeMut;
 use syscall::{Error as SysError, MapFlags, EAGAIN, EINVAL, PAGE_SIZE};
@@ -246,12 +246,9 @@ impl<'a> Display<'a> {
     }
 }
 
-enum Handle<'a> {
-    Vt {
-        display: Arc<Display<'a>>,
-        vt: usize,
-    },
-    Input,
+struct Handle<'a> {
+    display: Arc<Display<'a>>,
+    vt: usize,
 }
 
 pub struct Scheme<'a> {
@@ -331,17 +328,52 @@ impl<'a> Scheme<'a> {
 
         Ok(response)
     }
+
+    // FIXME wire this up
+    fn handle_vt_event(&mut self, vt_event: VtEvent) {
+        match vt_event.kind {
+            VtEventKind::Activate => {
+                log::info!("activate {}", vt_event.vt);
+
+                for handle in self.handles.values() {
+                    if handle.vt != vt_event.vt {
+                        continue;
+                    }
+
+                    log::warn!("virtio-gpu: activating");
+
+                    futures::executor::block_on(handle.display.init()).unwrap();
+                }
+            }
+
+            VtEventKind::Deactivate => {
+                log::info!("deactivate {}", vt_event.vt);
+
+                for handle in self.handles.values() {
+                    if handle.vt != vt_event.vt {
+                        continue;
+                    }
+
+                    log::warn!("virtio-gpu: deactivating");
+
+                    futures::executor::block_on(handle.display.detach()).unwrap();
+                    break;
+                }
+
+                // for display in self.displays.iter() {
+                //     futures::executor::block_on(display.detach()).unwrap();
+                // }
+            }
+
+            VtEventKind::Resize => {
+                log::warn!("virtio-gpu: resize is not implemented yet")
+            }
+        }
+    }
 }
 
 impl<'a> SchemeMut for Scheme<'a> {
     fn open(&mut self, path: &str, _flags: usize, _uid: u32, _gid: u32) -> syscall::Result<usize> {
-        if path == "handle" {
-            let fd = self.next_id.fetch_add(1, Ordering::SeqCst);
-            self.handles.insert(fd, Handle::Input);
-
-            return Ok(fd);
-        }
-
         let mut parts = path.split('/');
         let mut screen = parts.next().unwrap_or("").split('.');
 
@@ -355,7 +387,7 @@ impl<'a> SchemeMut for Scheme<'a> {
         let fd = self.next_id.fetch_add(1, Ordering::SeqCst);
         self.handles.insert(
             fd,
-            Handle::Vt {
+            Handle {
                 display: display.clone(),
                 vt,
             },
@@ -364,25 +396,15 @@ impl<'a> SchemeMut for Scheme<'a> {
     }
 
     fn fpath(&mut self, id: usize, buf: &mut [u8]) -> syscall::Result<usize> {
-        match self.handles.get(&id).unwrap() {
-            Handle::Vt { display, .. } => {
-                let bytes_copied = futures::executor::block_on(display.get_fpath(buf)).unwrap();
-                Ok(bytes_copied)
-            }
-
-            Handle::Input => unreachable!(),
-        }
+        let handle = self.handles.get(&id).unwrap();
+        let bytes_copied = futures::executor::block_on(handle.display.get_fpath(buf)).unwrap();
+        Ok(bytes_copied)
     }
 
     fn fsync(&mut self, id: usize) -> syscall::Result<usize> {
-        match self.handles.get(&id).ok_or(SysError::new(EINVAL))? {
-            Handle::Vt { display, .. } => {
-                futures::executor::block_on(display.flush(None)).unwrap();
-                Ok(0)
-            }
-
-            _ => unreachable!(),
-        }
+        let handle = self.handles.get(&id).ok_or(SysError::new(EINVAL))?;
+        futures::executor::block_on(handle.display.flush(None)).unwrap();
+        Ok(0)
     }
 
     fn read(
@@ -404,73 +426,26 @@ impl<'a> SchemeMut for Scheme<'a> {
         _offset: u64,
         _fcntl_flags: u32,
     ) -> syscall::Result<usize> {
-        match self.handles.get(&id).ok_or(SysError::new(EINVAL))? {
-            Handle::Vt { display, .. } => {
-                // The VT is not active and the device is reseted. Ask them to try
-                // again later.
-                if display.is_reseted.load(Ordering::SeqCst) {
-                    return Err(SysError::new(EAGAIN));
-                }
+        let handle = self.handles.get(&id).ok_or(SysError::new(EINVAL))?;
 
-                let damages = unsafe {
-                    core::slice::from_raw_parts(
-                        buf.as_ptr() as *const Damage,
-                        buf.len() / core::mem::size_of::<Damage>(),
-                    )
-                };
-
-                for damage in damages {
-                    futures::executor::block_on(display.flush(Some(damage))).unwrap();
-                }
-
-                Ok(buf.len())
-            }
-
-            Handle::Input => {
-                use inputd::Cmd as DisplayCommand;
-
-                let command = inputd::parse_command(buf).unwrap();
-
-                match command {
-                    DisplayCommand::Activate { vt } => {
-                        let target_vt = vt;
-
-                        for handle in self.handles.values() {
-                            if let Handle::Vt { display, vt } = handle {
-                                if *vt != target_vt {
-                                    continue;
-                                }
-
-                                futures::executor::block_on(display.init()).unwrap();
-                            }
-                        }
-                    }
-
-                    DisplayCommand::Deactivate(target_vt) => {
-                        for handle in self.handles.values() {
-                            if let Handle::Vt { display, vt } = handle {
-                                if *vt != target_vt {
-                                    continue;
-                                }
-
-                                futures::executor::block_on(display.detach()).unwrap();
-                                break;
-                            }
-                        }
-
-                        // for display in self.displays.iter() {
-                        //     futures::executor::block_on(display.detach()).unwrap();
-                        // }
-                    }
-
-                    DisplayCommand::Resize { .. } => {
-                        log::warn!("virtio-gpu: resize is not implemented yet")
-                    }
-                }
-
-                Ok(buf.len())
-            }
+        // The VT is not active and the device is reseted. Ask them to try
+        // again later.
+        if handle.display.is_reseted.load(Ordering::SeqCst) {
+            return Err(SysError::new(EAGAIN));
         }
+
+        let damages = unsafe {
+            core::slice::from_raw_parts(
+                buf.as_ptr() as *const Damage,
+                buf.len() / core::mem::size_of::<Damage>(),
+            )
+        };
+
+        for damage in damages {
+            futures::executor::block_on(handle.display.flush(Some(damage))).unwrap();
+        }
+
+        Ok(buf.len())
     }
 
     fn close(&mut self, _id: usize) -> syscall::Result<usize> {
@@ -484,12 +459,8 @@ impl<'a> SchemeMut for Scheme<'a> {
         flags: MapFlags,
     ) -> syscall::Result<usize> {
         log::info!("KSMSG MMAP {} {:?} {} {}", id, flags, offset, size);
-        match self.handles.get(&id).ok_or(SysError::new(EINVAL))? {
-            Handle::Vt { display, .. } => Ok(futures::executor::block_on(
-                display.map_screen(offset as usize),
-            )
-            .unwrap() as usize),
-            _ => unreachable!(),
-        }
+        let handle = self.handles.get(&id).ok_or(SysError::new(EINVAL))?;
+        let ptr = futures::executor::block_on(handle.display.map_screen(offset as usize)).unwrap();
+        Ok(ptr as usize)
     }
 }

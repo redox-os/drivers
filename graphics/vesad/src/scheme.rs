@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::str;
 
+use inputd::{VtEvent, VtEventKind};
 use redox_scheme::SchemeBlockMut;
 use syscall::{Error, EventFlags, MapFlags, Result, EBADF, EINVAL, ENOENT, O_NONBLOCK};
 
@@ -13,14 +14,10 @@ pub struct VtIndex(usize);
 pub struct ScreenIndex(usize);
 
 #[derive(Clone)]
-pub enum HandleKind {
-    Input,
-    Screen(VtIndex, ScreenIndex),
-}
-
-#[derive(Clone)]
 pub struct Handle {
-    pub kind: HandleKind,
+    pub vt: VtIndex,
+    pub screen: ScreenIndex,
+
     pub flags: usize,
     pub events: EventFlags,
     pub notified_read: bool,
@@ -32,12 +29,12 @@ pub struct DisplayScheme {
     pub vts: BTreeMap<VtIndex, BTreeMap<ScreenIndex, GraphicScreen>>,
     next_id: usize,
     pub handles: BTreeMap<usize, Handle>,
-    pub inputd_handle: inputd::Handle,
+    pub inputd_handle: inputd::DisplayHandle,
 }
 
 impl DisplayScheme {
     pub fn new(framebuffers: Vec<FrameBuffer>, spec: &[()]) -> DisplayScheme {
-        let mut inputd_handle = inputd::Handle::new("vesa").unwrap();
+        let mut inputd_handle = inputd::DisplayHandle::new("vesa").unwrap();
 
         let mut vts = BTreeMap::<VtIndex, BTreeMap<ScreenIndex, GraphicScreen>>::new();
 
@@ -47,7 +44,7 @@ impl DisplayScheme {
                 let fb = &framebuffers[fb_i];
                 screens.insert(ScreenIndex(fb_i), GraphicScreen::new(fb.width, fb.height));
             }
-            vts.insert(VtIndex(inputd_handle.register().unwrap()), screens);
+            vts.insert(VtIndex(inputd_handle.register_vt().unwrap()), screens);
         }
 
         DisplayScheme {
@@ -84,6 +81,32 @@ impl DisplayScheme {
             }
         }
     }
+
+    pub fn handle_vt_event(&mut self, vt_event: VtEvent) {
+        match vt_event.kind {
+            VtEventKind::Activate => {
+                let vt_i = VtIndex(vt_event.vt);
+
+                if let Some(screens) = self.vts.get_mut(&vt_i) {
+                    for (screen_i, screen) in screens.iter_mut() {
+                        screen.redraw(&mut self.framebuffers[screen_i.0]);
+                    }
+                }
+
+                self.active = vt_i;
+            }
+            VtEventKind::Deactivate => {
+                // Nothing to do for deactivate :)
+            }
+            VtEventKind::Resize => {
+                self.resize(
+                    vt_event.width as usize,
+                    vt_event.height as usize,
+                    vt_event.stride as usize,
+                );
+            }
+        }
+    }
 }
 
 impl SchemeBlockMut for DisplayScheme {
@@ -94,21 +117,6 @@ impl SchemeBlockMut for DisplayScheme {
         _uid: u32,
         _gid: u32,
     ) -> Result<Option<usize>> {
-        if path_str == "handle" {
-            let id = self.next_id;
-            self.next_id += 1;
-            self.handles.insert(
-                id,
-                Handle {
-                    kind: HandleKind::Input,
-                    flags,
-                    events: EventFlags::empty(),
-                    notified_read: false,
-                },
-            );
-            return Ok(Some(id));
-        }
-
         let mut parts = path_str.split('/');
         let mut vt_screen = parts.next().unwrap_or("").split('.');
         let vt_i = VtIndex(vt_screen.next().unwrap_or("").parse::<usize>().unwrap_or(1));
@@ -121,7 +129,9 @@ impl SchemeBlockMut for DisplayScheme {
                 self.handles.insert(
                     id,
                     Handle {
-                        kind: HandleKind::Screen(vt_i, screen_i),
+                        vt: vt_i,
+                        screen: screen_i,
+
                         flags,
                         events: EventFlags::empty(),
                         notified_read: false,
@@ -164,39 +174,25 @@ impl SchemeBlockMut for DisplayScheme {
         let handle = self.handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
         handle.notified_read = false;
-
-        if let HandleKind::Screen(_vt_i, _screen_i) = handle.kind {
-            handle.events = flags;
-            Ok(Some(syscall::EventFlags::empty()))
-        } else {
-            Err(Error::new(EBADF))
-        }
+        handle.events = flags;
+        Ok(Some(syscall::EventFlags::empty()))
     }
 
     fn fpath(&mut self, id: usize, buf: &mut [u8]) -> Result<Option<usize>> {
         let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
-        let path_str = match handle.kind {
-            HandleKind::Input => {
-                //TODO: allow inputs associated with other framebuffers?
-                format!(
-                    "display:input/{}/{}",
-                    self.framebuffers[0].width, self.framebuffers[0].height
-                )
-            }
-            HandleKind::Screen(vt_i, screen_i) => {
-                if let Some(screens) = self.vts.get(&vt_i) {
-                    if let Some(screen) = screens.get(&screen_i) {
-                        format!(
-                            "display:{}.{}/{}/{}",
-                            vt_i.0, screen_i.0, screen.width, screen.height
-                        )
-                    } else {
-                        return Err(Error::new(EBADF));
-                    }
+        let path_str = {
+            if let Some(screens) = self.vts.get(&handle.vt) {
+                if let Some(screen) = screens.get(&handle.screen) {
+                    format!(
+                        "display:{}.{}/{}/{}",
+                        handle.vt.0, handle.screen.0, screen.width, screen.height
+                    )
                 } else {
                     return Err(Error::new(EBADF));
                 }
+            } else {
+                return Err(Error::new(EBADF));
             }
         };
 
@@ -214,14 +210,12 @@ impl SchemeBlockMut for DisplayScheme {
     fn fsync(&mut self, id: usize) -> Result<Option<usize>> {
         let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
-        if let HandleKind::Screen(vt_i, screen_i) = handle.kind {
-            if let Some(screens) = self.vts.get_mut(&vt_i) {
-                if let Some(screen) = screens.get_mut(&screen_i) {
-                    if vt_i == self.active {
-                        screen.sync(&mut self.framebuffers[screen_i.0]);
-                    }
-                    return Ok(Some(0));
+        if let Some(screens) = self.vts.get_mut(&handle.vt) {
+            if let Some(screen) = screens.get_mut(&handle.screen) {
+                if handle.vt == self.active {
+                    screen.sync(&mut self.framebuffers[handle.screen.0]);
                 }
+                return Ok(Some(0));
             }
         }
 
@@ -237,18 +231,16 @@ impl SchemeBlockMut for DisplayScheme {
     ) -> Result<Option<usize>> {
         let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
-        if let HandleKind::Screen(vt_i, screen_i) = handle.kind {
-            if let Some(screens) = self.vts.get_mut(&vt_i) {
-                if let Some(screen) = screens.get_mut(&screen_i) {
-                    let nread = screen.read(buf)?;
-                    if nread != 0 {
-                        return Ok(Some(nread));
+        if let Some(screens) = self.vts.get_mut(&handle.vt) {
+            if let Some(screen) = screens.get_mut(&handle.screen) {
+                let nread = screen.read(buf)?;
+                if nread != 0 {
+                    return Ok(Some(nread));
+                } else {
+                    if handle.flags & O_NONBLOCK == O_NONBLOCK {
+                        return Ok(Some(0));
                     } else {
-                        if handle.flags & O_NONBLOCK == O_NONBLOCK {
-                            return Ok(Some(0));
-                        } else {
-                            return Ok(None);
-                        }
+                        return Ok(None);
                     }
                 }
             }
@@ -266,56 +258,18 @@ impl SchemeBlockMut for DisplayScheme {
     ) -> Result<Option<usize>> {
         let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
-        match handle.kind {
-            HandleKind::Input => {
-                use inputd::Cmd as DisplayCommand;
-
-                let command = inputd::parse_command(buf).unwrap();
-
-                match command {
-                    DisplayCommand::Activate { vt } => {
-                        let vt_i = VtIndex(vt);
-
-                        if let Some(screens) = self.vts.get_mut(&vt_i) {
-                            for (screen_i, screen) in screens.iter_mut() {
-                                screen.redraw(&mut self.framebuffers[screen_i.0]);
-                            }
-                        }
-
-                        self.active = vt_i;
-                    }
-
-                    DisplayCommand::Resize {
-                        width,
-                        height,
-                        stride,
-                        ..
-                    } => {
-                        self.resize(width as usize, height as usize, stride as usize);
-                    }
-
-                    // Nothing to do for deactivate :)
-                    DisplayCommand::Deactivate(_) => {}
+        if let Some(screens) = self.vts.get_mut(&handle.vt) {
+            if let Some(screen) = screens.get_mut(&handle.screen) {
+                let count = screen.write(buf)?;
+                if handle.vt == self.active {
+                    screen.sync(&mut self.framebuffers[handle.screen.0]);
                 }
-
-                Ok(Some(buf.len()))
+                Ok(Some(count))
+            } else {
+                Err(Error::new(EBADF))
             }
-
-            HandleKind::Screen(vt_i, screen_i) => {
-                if let Some(screens) = self.vts.get_mut(&vt_i) {
-                    if let Some(screen) = screens.get_mut(&screen_i) {
-                        let count = screen.write(buf)?;
-                        if vt_i == self.active {
-                            screen.sync(&mut self.framebuffers[screen_i.0]);
-                        }
-                        Ok(Some(count))
-                    } else {
-                        Err(Error::new(EBADF))
-                    }
-                } else {
-                    Err(Error::new(EBADF))
-                }
-            }
+        } else {
+            Err(Error::new(EBADF))
         }
     }
 
@@ -332,14 +286,12 @@ impl SchemeBlockMut for DisplayScheme {
     ) -> Result<Option<usize>> {
         let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
-        if let HandleKind::Screen(vt_i, screen_i) = handle.kind {
-            if let Some(screens) = self.vts.get(&vt_i) {
-                if let Some(screen) = screens.get(&screen_i) {
-                    if off as usize + size <= screen.offscreen.len() * 4 {
-                        return Ok(Some(screen.offscreen.as_ptr() as usize + off as usize));
-                    } else {
-                        return Err(Error::new(EINVAL));
-                    }
+        if let Some(screens) = self.vts.get(&handle.vt) {
+            if let Some(screen) = screens.get(&handle.screen) {
+                if off as usize + size <= screen.offscreen.len() * 4 {
+                    return Ok(Some(screen.offscreen.as_ptr() as usize + off as usize));
+                } else {
+                    return Err(Error::new(EINVAL));
                 }
             }
         }
