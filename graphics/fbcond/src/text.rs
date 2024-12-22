@@ -2,13 +2,13 @@ extern crate ransid;
 
 use std::collections::{BTreeSet, VecDeque};
 use std::convert::{TryFrom, TryInto};
-use std::os::fd::AsRawFd;
 use std::{cmp, ptr};
 
+use inputd::Damage;
 use orbclient::{Event, EventOption, FONT};
 use syscall::error::*;
 
-use crate::display::{Display, SyncRect};
+use crate::display::{Display, DisplayMap};
 
 pub struct TextScreen {
     console: ransid::Console,
@@ -21,7 +21,8 @@ pub struct TextScreen {
 impl TextScreen {
     pub fn new(display: Display) -> TextScreen {
         TextScreen {
-            console: ransid::Console::new(display.width / 8, display.height / 16),
+            // Width and height will be filled in on the next write to the console
+            console: ransid::Console::new(0, 0),
             display,
             changed: BTreeSet::new(),
             ctrl: false,
@@ -30,16 +31,16 @@ impl TextScreen {
     }
 
     /// Draw a rectangle
-    fn rect(display: &mut Display, x: usize, y: usize, w: usize, h: usize, color: u32) {
-        let start_y = cmp::min(display.height, y);
-        let end_y = cmp::min(display.height, y + h);
+    fn rect(map: &mut DisplayMap, x: usize, y: usize, w: usize, h: usize, color: u32) {
+        let start_y = cmp::min(map.height, y);
+        let end_y = cmp::min(map.height, y + h);
 
-        let start_x = cmp::min(display.width, x);
-        let len = cmp::min(display.width, x + w) - start_x;
+        let start_x = cmp::min(map.width, x);
+        let len = cmp::min(map.width, x + w) - start_x;
 
-        let mut offscreen_ptr = display.offscreen as *mut u8 as usize;
+        let mut offscreen_ptr = map.offscreen as *mut u8 as usize;
 
-        let stride = display.width * 4;
+        let stride = map.width * 4;
 
         let offset = y * stride + start_x * 4;
         offscreen_ptr += offset;
@@ -57,16 +58,16 @@ impl TextScreen {
     }
 
     /// Invert a rectangle
-    fn invert(display: &mut Display, x: usize, y: usize, w: usize, h: usize) {
-        let start_y = cmp::min(display.height, y);
-        let end_y = cmp::min(display.height, y + h);
+    fn invert(map: &mut DisplayMap, x: usize, y: usize, w: usize, h: usize) {
+        let start_y = cmp::min(map.height, y);
+        let end_y = cmp::min(map.height, y + h);
 
-        let start_x = cmp::min(display.width, x);
-        let len = cmp::min(display.width, x + w) - start_x;
+        let start_x = cmp::min(map.width, x);
+        let len = cmp::min(map.width, x + w) - start_x;
 
-        let mut offscreen_ptr = display.offscreen as *mut u8 as usize;
+        let mut offscreen_ptr = map.offscreen as *mut u8 as usize;
 
-        let stride = display.width * 4;
+        let stride = map.width * 4;
 
         let offset = y * stride + start_x * 4;
         offscreen_ptr += offset;
@@ -90,7 +91,7 @@ impl TextScreen {
 
     /// Draw a character
     fn char(
-        display: &mut Display,
+        map: &mut DisplayMap,
         x: usize,
         y: usize,
         character: char,
@@ -98,8 +99,8 @@ impl TextScreen {
         _bold: bool,
         _italic: bool,
     ) {
-        if x + 8 <= display.width && y + 16 <= display.height {
-            let mut dst = display.offscreen as *mut u8 as usize + (y * display.width + x) * 4;
+        if x + 8 <= map.width && y + 16 <= map.height {
+            let mut dst = map.offscreen as *mut u8 as usize + (y * map.width + x) * 4;
 
             let font_i = 16 * (character as usize);
             if font_i + 16 <= FONT.len() {
@@ -112,7 +113,7 @@ impl TextScreen {
                             }
                         }
                     }
-                    dst += display.width * 4;
+                    dst += map.width * 4;
                 }
             }
         }
@@ -121,8 +122,6 @@ impl TextScreen {
     pub fn resize(&mut self, width: usize, height: usize) {
         self.display
             .resize(width.try_into().unwrap(), height.try_into().unwrap());
-        self.console.state.w = width / 8;
-        self.console.state.h = height / 16;
     }
 
     pub fn input(&mut self, event: &Event) {
@@ -223,18 +222,23 @@ impl TextScreen {
     }
 
     pub fn write(&mut self, buf: &[u8]) -> Result<usize> {
+        let mut map = self.display.map.lock().unwrap();
+
+        self.console.state.w = map.width / 8;
+        self.console.state.h = map.height / 16;
+        self.console.state.bottom_margin = (map.height / 16).saturating_sub(1);
+
         if self.console.state.cursor
             && self.console.state.x < self.console.state.w
             && self.console.state.y < self.console.state.h
         {
             let x = self.console.state.x;
             let y = self.console.state.y;
-            Self::invert(&mut self.display, x * 8, y * 16, 8, 16);
+            Self::invert(&mut map, x * 8, y * 16, 8, 16);
             self.changed.insert(y);
         }
 
         {
-            let display = &mut self.display;
             let changed = &mut self.changed;
             let input = &mut self.input;
             self.console.write(buf, |event| match event {
@@ -246,14 +250,14 @@ impl TextScreen {
                     bold,
                     ..
                 } => {
-                    Self::char(display, x * 8, y * 16, c, color.as_rgb(), bold, false);
+                    Self::char(&mut map, x * 8, y * 16, c, color.as_rgb(), bold, false);
                     changed.insert(y);
                 }
                 ransid::Event::Input { data } => {
                     input.extend(data);
                 }
                 ransid::Event::Rect { x, y, w, h, color } => {
-                    Self::rect(display, x * 8, y * 16, w * 8, h * 16, color.as_rgb());
+                    Self::rect(&mut map, x * 8, y * 16, w * 8, h * 16, color.as_rgb());
                     for y2 in y..y + h {
                         changed.insert(y2);
                     }
@@ -267,8 +271,8 @@ impl TextScreen {
                     w,
                     h,
                 } => {
-                    let width = display.width;
-                    let pixels = unsafe { &mut *display.offscreen };
+                    let width = map.width;
+                    let pixels = unsafe { &mut *map.offscreen };
 
                     for raw_y in 0..h {
                         let y = if from_y > to_y { raw_y } else { h - raw_y - 1 };
@@ -306,21 +310,24 @@ impl TextScreen {
         {
             let x = self.console.state.x;
             let y = self.console.state.y;
-            Self::invert(&mut self.display, x * 8, y * 16, 8, 16);
+            Self::invert(&mut map, x * 8, y * 16, 8, 16);
             self.changed.insert(y);
         }
 
-        let width = self.display.width.try_into().unwrap();
-        for &change in self.changed.iter() {
-            self.display.sync_rect(SyncRect {
-                x: 0,
-                y: i32::try_from(change).unwrap() * 16,
-                w: width,
-                h: 16,
-            })?;
-        }
+        let width = map.width.try_into().unwrap();
+        drop(map);
+        self.display.sync_rects(
+            self.changed
+                .iter()
+                .map(|&change| Damage {
+                    x: 0,
+                    y: i32::try_from(change).unwrap() * 16,
+                    width,
+                    height: 16,
+                })
+                .collect(),
+        );
         self.changed.clear();
-        libredox::call::fsync(self.display.display_file.as_raw_fd().as_raw_fd() as usize)?;
 
         Ok(buf.len())
     }

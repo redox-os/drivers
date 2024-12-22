@@ -2,28 +2,19 @@ use std::collections::VecDeque;
 use std::convert::TryInto;
 use std::{cmp, mem, ptr, slice};
 
+use inputd::Damage;
 use orbclient::{Event, ResizeEvent};
 use syscall::error::*;
 
 use crate::display::OffscreenBuffer;
 use crate::framebuffer::FrameBuffer;
 
-// Keep synced with orbital
-#[derive(Clone, Copy)]
-#[repr(C, packed)]
-pub struct SyncRect {
-    pub x: i32,
-    pub y: i32,
-    pub w: i32,
-    pub h: i32,
-}
-
 pub struct GraphicScreen {
     pub width: usize,
     pub height: usize,
     pub offscreen: OffscreenBuffer,
     pub input: VecDeque<Event>,
-    pub sync_rects: Vec<SyncRect>,
+    pub sync_rects: Vec<Damage>,
 }
 
 impl GraphicScreen {
@@ -117,22 +108,22 @@ impl GraphicScreen {
     pub fn write(&mut self, buf: &[u8]) -> Result<usize> {
         let sync_rects = unsafe {
             slice::from_raw_parts(
-                buf.as_ptr() as *const SyncRect,
-                buf.len() / mem::size_of::<SyncRect>(),
+                buf.as_ptr() as *const Damage,
+                buf.len() / mem::size_of::<Damage>(),
             )
         };
 
         self.sync_rects.extend_from_slice(sync_rects);
 
-        Ok(sync_rects.len() * mem::size_of::<SyncRect>())
+        Ok(sync_rects.len() * mem::size_of::<Damage>())
     }
 
     pub fn sync(&mut self, framebuffer: &mut FrameBuffer) {
         for sync_rect in self.sync_rects.drain(..) {
             let x = sync_rect.x.try_into().unwrap_or(0);
             let y = sync_rect.y.try_into().unwrap_or(0);
-            let w = sync_rect.w.try_into().unwrap_or(0);
-            let h = sync_rect.h.try_into().unwrap_or(0);
+            let w = sync_rect.width.try_into().unwrap_or(0);
+            let h = sync_rect.height.try_into().unwrap_or(0);
 
             let start_y = cmp::min(self.height, y);
             let end_y = cmp::min(self.height, y + h);
@@ -161,11 +152,11 @@ impl GraphicScreen {
     pub fn redraw(&mut self, framebuffer: &mut FrameBuffer) {
         let width = self.width.try_into().unwrap();
         let height = self.height.try_into().unwrap();
-        self.sync_rects.push(SyncRect {
+        self.sync_rects.push(Damage {
             x: 0,
             y: 0,
-            w: width,
-            h: height,
+            width,
+            height,
         });
         self.sync(framebuffer);
     }
