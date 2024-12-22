@@ -3,6 +3,8 @@ use libredox::flag;
 use std::fs::OpenOptions;
 use std::mem;
 use std::os::unix::fs::OpenOptionsExt;
+use std::sync::mpsc::{self, Sender};
+use std::sync::{Arc, Mutex};
 use std::{
     fs::File,
     io,
@@ -12,10 +14,14 @@ use std::{
 };
 use syscall::{O_CLOEXEC, O_NONBLOCK, O_RDWR};
 
-fn display_fd_map(width: usize, height: usize, display_fd: usize) -> syscall::Result<*mut [u32]> {
+fn display_fd_map(
+    width: usize,
+    height: usize,
+    display_file: &mut File,
+) -> syscall::Result<DisplayMap> {
     unsafe {
         let display_ptr = libredox::call::mmap(libredox::call::MmapArgs {
-            fd: display_fd,
+            fd: display_file.as_raw_fd() as usize,
             offset: 0,
             length: (width * height * 4),
             prot: flag::PROT_READ | flag::PROT_WRITE,
@@ -23,7 +29,11 @@ fn display_fd_map(width: usize, height: usize, display_fd: usize) -> syscall::Re
             addr: core::ptr::null_mut(),
         })?;
         let display_slice = slice::from_raw_parts_mut(display_ptr as *mut u32, width * height);
-        Ok(display_slice)
+        Ok(DisplayMap {
+            offscreen: display_slice,
+            width,
+            height,
+        })
     }
 }
 
@@ -31,12 +41,32 @@ unsafe fn display_fd_unmap(image: *mut [u32]) {
     let _ = libredox::call::munmap(image as *mut (), image.len());
 }
 
-pub struct Display {
-    pub input_handle: File,
-    pub display_file: File,
+pub struct DisplayMap {
     pub offscreen: *mut [u32],
     pub width: usize,
     pub height: usize,
+}
+
+unsafe impl Send for DisplayMap {}
+unsafe impl Sync for DisplayMap {}
+
+impl Drop for DisplayMap {
+    fn drop(&mut self) {
+        unsafe {
+            display_fd_unmap(self.offscreen);
+        }
+    }
+}
+
+enum DisplayCommand {
+    Resize { width: usize, height: usize },
+    SyncRects(Vec<Damage>),
+}
+
+pub struct Display {
+    pub input_handle: File,
+    cmd_tx: Sender<DisplayCommand>,
+    pub map: Arc<Mutex<DisplayMap>>,
 }
 
 impl Display {
@@ -48,16 +78,55 @@ impl Display {
 
         let display_path = Self::display_path(&mut input_handle)?;
 
-        let (display_file, width, height) = Self::open_display(&display_path)?;
+        let (mut display_file, width, height) = Self::open_display(&display_path)?;
 
-        let offscreen_buffer = display_fd_map(width, height, display_file.as_raw_fd() as usize)
-            .unwrap_or_else(|e| panic!("failed to map display '{display_path}: {e}"));
+        let map = Arc::new(Mutex::new(
+            display_fd_map(width, height, &mut display_file)
+                .unwrap_or_else(|e| panic!("failed to map display '{display_path}: {e}")),
+        ));
+
+        let (cmd_tx, cmd_rx) = mpsc::channel();
+
+        let map_clone = map.clone();
+        std::thread::spawn(move || {
+            while let Ok(cmd) = cmd_rx.recv() {
+                match cmd {
+                    DisplayCommand::Resize { width, height } => {
+                        match display_fd_map(width, height, &mut display_file) {
+                            Ok(ok) => {
+                                *map_clone.lock().unwrap() = ok;
+                            }
+                            Err(err) => {
+                                eprintln!(
+                                    "failed to resize display to {}x{}: {}",
+                                    width, height, err
+                                );
+                            }
+                        }
+                    }
+                    DisplayCommand::SyncRects(sync_rects) => {
+                        for sync_rect in sync_rects {
+                            unsafe {
+                                libredox::call::write(
+                                    display_file.as_raw_fd() as usize,
+                                    slice::from_raw_parts(
+                                        &sync_rect as *const Damage as *const u8,
+                                        mem::size_of::<Damage>(),
+                                    ),
+                                )
+                                .unwrap();
+                            }
+                        }
+                        libredox::call::fsync(display_file.as_raw_fd() as usize).unwrap();
+                    }
+                }
+            }
+        });
+
         Ok(Self {
             input_handle,
-            display_file,
-            offscreen: offscreen_buffer,
-            width,
-            height,
+            cmd_tx,
+            map,
         })
     }
 
@@ -122,39 +191,14 @@ impl Display {
     }
 
     pub fn resize(&mut self, width: usize, height: usize) {
-        match display_fd_map(width, height, self.display_file.as_raw_fd() as usize) {
-            Ok(ok) => {
-                unsafe {
-                    display_fd_unmap(self.offscreen);
-                }
-                self.offscreen = ok;
-                self.width = width;
-                self.height = height;
-            }
-            Err(err) => {
-                eprintln!("failed to resize display to {}x{}: {}", width, height, err);
-            }
-        }
+        self.cmd_tx
+            .send(DisplayCommand::Resize { width, height })
+            .unwrap();
     }
 
-    pub fn sync_rect(&mut self, sync_rect: Damage) -> syscall::Result<()> {
-        unsafe {
-            libredox::call::write(
-                self.display_file.as_raw_fd().as_raw_fd() as usize,
-                slice::from_raw_parts(
-                    &sync_rect as *const Damage as *const u8,
-                    mem::size_of::<Damage>(),
-                ),
-            )?;
-            Ok(())
-        }
-    }
-}
-
-impl Drop for Display {
-    fn drop(&mut self) {
-        unsafe {
-            display_fd_unmap(self.offscreen);
-        }
+    pub fn sync_rects(&mut self, sync_rects: Vec<Damage>) {
+        self.cmd_tx
+            .send(DisplayCommand::SyncRects(sync_rects))
+            .unwrap();
     }
 }
