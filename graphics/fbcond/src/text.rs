@@ -21,7 +21,8 @@ pub struct TextScreen {
 impl TextScreen {
     pub fn new(display: Display) -> TextScreen {
         TextScreen {
-            console: ransid::Console::new(display.width / 8, display.height / 16),
+            // Width and height will be filled in on the next write to the console
+            console: ransid::Console::new(0, 0),
             display,
             changed: BTreeSet::new(),
             ctrl: false,
@@ -121,8 +122,6 @@ impl TextScreen {
     pub fn resize(&mut self, width: usize, height: usize) {
         self.display
             .resize(width.try_into().unwrap(), height.try_into().unwrap());
-        self.console.state.w = width / 8;
-        self.console.state.h = height / 16;
     }
 
     pub fn input(&mut self, event: &Event) {
@@ -223,6 +222,10 @@ impl TextScreen {
     }
 
     pub fn write(&mut self, buf: &[u8]) -> Result<usize> {
+        self.console.state.w = self.display.width / 8;
+        self.console.state.h = self.display.height / 16;
+        self.console.state.bottom_margin = (self.display.height / 16).saturating_sub(1);
+
         if self.console.state.cursor
             && self.console.state.x < self.console.state.w
             && self.console.state.y < self.console.state.h
