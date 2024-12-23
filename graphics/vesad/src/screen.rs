@@ -14,7 +14,6 @@ pub struct GraphicScreen {
     pub height: usize,
     pub offscreen: OffscreenBuffer,
     pub input: VecDeque<Event>,
-    pub sync_rects: Vec<Damage>,
 }
 
 impl GraphicScreen {
@@ -24,7 +23,6 @@ impl GraphicScreen {
             height,
             offscreen: OffscreenBuffer::new(width * height),
             input: VecDeque::new(),
-            sync_rects: Vec::new(),
         }
     }
 }
@@ -105,7 +103,7 @@ impl GraphicScreen {
         !self.input.is_empty()
     }
 
-    pub fn write(&mut self, buf: &[u8]) -> Result<usize> {
+    pub fn write(&mut self, buf: &[u8], framebuffer: Option<&mut FrameBuffer>) -> Result<usize> {
         let sync_rects = unsafe {
             slice::from_raw_parts(
                 buf.as_ptr() as *const Damage,
@@ -113,30 +111,35 @@ impl GraphicScreen {
             )
         };
 
-        self.sync_rects.extend_from_slice(sync_rects);
+        if let Some(framebuffer) = framebuffer {
+            self.sync(framebuffer, sync_rects);
+        }
 
         Ok(sync_rects.len() * mem::size_of::<Damage>())
     }
 
-    pub fn sync(&mut self, framebuffer: &mut FrameBuffer) {
-        for sync_rect in self.sync_rects.drain(..) {
-            let x = sync_rect.x.try_into().unwrap_or(0);
-            let y = sync_rect.y.try_into().unwrap_or(0);
-            let w = sync_rect.width.try_into().unwrap_or(0);
-            let h = sync_rect.height.try_into().unwrap_or(0);
+    pub fn sync(&mut self, framebuffer: &mut FrameBuffer, sync_rects: &[Damage]) {
+        for sync_rect in sync_rects {
+            let sync_rect = sync_rect.clip(
+                self.height.try_into().unwrap(),
+                self.width.try_into().unwrap(),
+            );
 
-            let start_y = cmp::min(self.height, y);
-            let end_y = cmp::min(self.height, y + h);
+            let start_x: usize = sync_rect.x.try_into().unwrap_or(0);
+            let start_y: usize = sync_rect.y.try_into().unwrap_or(0);
+            let w: usize = sync_rect.width.try_into().unwrap_or(0);
+            let h: usize = sync_rect.height.try_into().unwrap_or(0);
 
-            let start_x = cmp::min(self.width, x);
-            let row_pixel_count = cmp::min(self.width, x + w) - start_x;
+            let end_y = start_y + h;
+
+            let row_pixel_count = w;
 
             let mut offscreen_ptr = self.offscreen.as_mut_ptr();
             let mut onscreen_ptr = framebuffer.onscreen as *mut u32; // FIXME use as_mut_ptr once stable
 
             unsafe {
-                offscreen_ptr = offscreen_ptr.add(y * self.width + start_x);
-                onscreen_ptr = onscreen_ptr.add(y * framebuffer.stride + start_x);
+                offscreen_ptr = offscreen_ptr.add(start_y * self.width + start_x);
+                onscreen_ptr = onscreen_ptr.add(start_y * framebuffer.stride + start_x);
 
                 let mut rows = end_y - start_y;
                 while rows > 0 {
@@ -152,12 +155,14 @@ impl GraphicScreen {
     pub fn redraw(&mut self, framebuffer: &mut FrameBuffer) {
         let width = self.width.try_into().unwrap();
         let height = self.height.try_into().unwrap();
-        self.sync_rects.push(Damage {
-            x: 0,
-            y: 0,
-            width,
-            height,
-        });
-        self.sync(framebuffer);
+        self.sync(
+            framebuffer,
+            &[Damage {
+                x: 0,
+                y: 0,
+                width,
+                height,
+            }],
+        );
     }
 }

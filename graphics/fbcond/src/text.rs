@@ -119,6 +119,10 @@ impl TextScreen {
         }
     }
 
+    pub fn handle_handoff(&mut self) {
+        self.display.reopen_for_handoff();
+    }
+
     pub fn resize(&mut self, width: usize, height: usize) {
         self.display
             .resize(width.try_into().unwrap(), height.try_into().unwrap());
