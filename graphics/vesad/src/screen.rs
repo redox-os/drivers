@@ -14,7 +14,6 @@ pub struct GraphicScreen {
     pub height: usize,
     pub offscreen: OffscreenBuffer,
     pub input: VecDeque<Event>,
-    pub sync_rects: Vec<Damage>,
 }
 
 impl GraphicScreen {
@@ -24,7 +23,6 @@ impl GraphicScreen {
             height,
             offscreen: OffscreenBuffer::new(width * height),
             input: VecDeque::new(),
-            sync_rects: Vec::new(),
         }
     }
 }
@@ -105,7 +103,7 @@ impl GraphicScreen {
         !self.input.is_empty()
     }
 
-    pub fn write(&mut self, buf: &[u8]) -> Result<usize> {
+    pub fn write(&mut self, buf: &[u8], framebuffer: Option<&mut FrameBuffer>) -> Result<usize> {
         let sync_rects = unsafe {
             slice::from_raw_parts(
                 buf.as_ptr() as *const Damage,
@@ -113,13 +111,15 @@ impl GraphicScreen {
             )
         };
 
-        self.sync_rects.extend_from_slice(sync_rects);
+        if let Some(framebuffer) = framebuffer {
+            self.sync(framebuffer, sync_rects);
+        }
 
         Ok(sync_rects.len() * mem::size_of::<Damage>())
     }
 
-    pub fn sync(&mut self, framebuffer: &mut FrameBuffer) {
-        for sync_rect in self.sync_rects.drain(..) {
+    pub fn sync(&mut self, framebuffer: &mut FrameBuffer, sync_rects: &[Damage]) {
+        for sync_rect in sync_rects {
             let x = sync_rect.x.try_into().unwrap_or(0);
             let y = sync_rect.y.try_into().unwrap_or(0);
             let w = sync_rect.width.try_into().unwrap_or(0);
@@ -152,12 +152,14 @@ impl GraphicScreen {
     pub fn redraw(&mut self, framebuffer: &mut FrameBuffer) {
         let width = self.width.try_into().unwrap();
         let height = self.height.try_into().unwrap();
-        self.sync_rects.push(Damage {
-            x: 0,
-            y: 0,
-            width,
-            height,
-        });
-        self.sync(framebuffer);
+        self.sync(
+            framebuffer,
+            &[Damage {
+                x: 0,
+                y: 0,
+                width,
+                height,
+            }],
+        );
     }
 }

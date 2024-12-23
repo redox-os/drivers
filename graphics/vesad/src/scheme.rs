@@ -213,7 +213,7 @@ impl SchemeBlockMut for DisplayScheme {
         if let Some(screens) = self.vts.get_mut(&handle.vt) {
             if let Some(screen) = screens.get_mut(&handle.screen) {
                 if handle.vt == self.active {
-                    screen.sync(&mut self.framebuffers[handle.screen.0]);
+                    screen.redraw(&mut self.framebuffers[handle.screen.0]);
                 }
                 return Ok(Some(0));
             }
@@ -260,11 +260,13 @@ impl SchemeBlockMut for DisplayScheme {
 
         if let Some(screens) = self.vts.get_mut(&handle.vt) {
             if let Some(screen) = screens.get_mut(&handle.screen) {
-                let count = screen.write(buf)?;
                 if handle.vt == self.active {
-                    screen.sync(&mut self.framebuffers[handle.screen.0]);
+                    screen
+                        .write(buf, Some(&mut self.framebuffers[handle.screen.0]))
+                        .map(|count| Some(count))
+                } else {
+                    screen.write(buf, None).map(|count| Some(count))
                 }
-                Ok(Some(count))
             } else {
                 Err(Error::new(EBADF))
             }

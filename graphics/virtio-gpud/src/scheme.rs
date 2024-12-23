@@ -177,23 +177,12 @@ impl<'a> Display<'a> {
     }
 
     /// If `damage` is `None`, the entire screen is flushed.
-    async fn flush(&self, vt: usize, damage: Option<&Damage>) -> Result<(), Error> {
+    async fn flush(&self, vt: usize, damage: Option<&[Damage]>) -> Result<(), Error> {
         let Some(&res_id) = self.vts_res.borrow().get(&vt) else {
             // The resource is not yet created. Ignore the damage. We will write the entire backing
             // storage to the resource once we create the resource, which is equivalent to damaging
             // the entire resource.
             return Ok(());
-        };
-
-        let damage = if let Some(damage) = damage {
-            damage.into()
-        } else {
-            GpuRect {
-                x: 0,
-                y: 0,
-                width: self.width,
-                height: self.height,
-            }
         };
 
         let req = Dma::new(XferToHost2d::new(
@@ -208,8 +197,23 @@ impl<'a> Display<'a> {
         let header = self.send_request(req).await?;
         assert_eq!(header.ty.get(), CommandTy::RespOkNodata);
 
-        self.flush_resource(ResourceFlush::new(res_id, damage.clone()))
+        if let Some(damage) = damage {
+            for damage in damage {
+                self.flush_resource(ResourceFlush::new(res_id, damage.into()))
+                    .await?;
+            }
+        } else {
+            self.flush_resource(ResourceFlush::new(
+                res_id,
+                GpuRect {
+                    x: 0,
+                    y: 0,
+                    width: self.width,
+                    height: self.height,
+                },
+            ))
             .await?;
+        }
         Ok(())
     }
 }
@@ -387,16 +391,14 @@ impl<'a> SchemeMut for Scheme<'a> {
     ) -> syscall::Result<usize> {
         let handle = self.handles.get(&id).ok_or(SysError::new(EINVAL))?;
 
-        let damages = unsafe {
+        let damage = unsafe {
             core::slice::from_raw_parts(
                 buf.as_ptr() as *const Damage,
                 buf.len() / core::mem::size_of::<Damage>(),
             )
         };
 
-        for damage in damages {
-            futures::executor::block_on(handle.display.flush(handle.vt, Some(damage))).unwrap();
-        }
+        futures::executor::block_on(handle.display.flush(handle.vt, Some(damage))).unwrap();
 
         Ok(buf.len())
     }
