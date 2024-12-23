@@ -128,18 +128,16 @@ impl Display {
                             }
                         }
                     }
-                    DisplayCommand::SyncRects(sync_rects) => {
-                        unsafe {
-                            libredox::call::write(
-                                display_file.as_raw_fd() as usize,
-                                slice::from_raw_parts(
-                                    sync_rects.as_ptr() as *const u8,
-                                    sync_rects.len() * mem::size_of::<Damage>(),
-                                ),
-                            )
-                            .unwrap();
-                        }
-                    }
+                    DisplayCommand::SyncRects(sync_rects) => unsafe {
+                        libredox::call::write(
+                            display_file.as_raw_fd() as usize,
+                            slice::from_raw_parts(
+                                sync_rects.as_ptr() as *const u8,
+                                sync_rects.len() * mem::size_of::<Damage>(),
+                            ),
+                        )
+                        .unwrap();
+                    },
                 }
             }
         });
