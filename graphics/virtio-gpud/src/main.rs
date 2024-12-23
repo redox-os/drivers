@@ -525,9 +525,7 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
                                 )
                                 .expect("virtio-gpud: failed to write display scheme");
                         }
-                        RequestKind::Cancellation(_cancellation_request) => {
-                            // FIXME handle this
-                        }
+                        RequestKind::Cancellation(_cancellation_request) => {}
                         RequestKind::MsyncMsg | RequestKind::MunmapMsg | RequestKind::MmapMsg => {
                             unreachable!()
                         }

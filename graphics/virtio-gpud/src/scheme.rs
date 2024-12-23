@@ -391,6 +391,10 @@ impl<'a> Scheme<'a> {
 
 impl<'a> SchemeMut for Scheme<'a> {
     fn open(&mut self, path: &str, _flags: usize, _uid: u32, _gid: u32) -> syscall::Result<usize> {
+        if path.is_empty() {
+            return Err(SysError::new(EINVAL));
+        }
+
         let mut parts = path.split('/');
         let mut screen = parts.next().unwrap_or("").split('.');
 
