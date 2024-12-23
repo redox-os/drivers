@@ -193,6 +193,7 @@ impl<'a> Display<'a> {
                 width: self.width,
                 height: self.height,
             },
+            0,
         ))?;
         let header = self.send_request(req).await?;
         assert_eq!(header.ty.get(), CommandTy::RespOkNodata);

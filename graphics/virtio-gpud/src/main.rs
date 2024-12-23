@@ -392,7 +392,7 @@ pub struct XferToHost2d {
 }
 
 impl XferToHost2d {
-    pub fn new(resource_id: ResourceId, rect: GpuRect) -> Self {
+    pub fn new(resource_id: ResourceId, rect: GpuRect, offset: u64) -> Self {
         Self {
             header: ControlHeader {
                 ty: VolatileCell::new(CommandTy::TransferToHost2d),
@@ -400,8 +400,8 @@ impl XferToHost2d {
             },
 
             rect,
+            offset,
             resource_id,
-            offset: 0,
             padding: 0,
         }
     }
