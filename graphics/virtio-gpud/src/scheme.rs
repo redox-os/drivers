@@ -370,6 +370,11 @@ impl<'a> SchemeMut for Scheme<'a> {
 
     fn fsync(&mut self, id: usize) -> syscall::Result<usize> {
         let handle = self.handles.get(&id).ok_or(SysError::new(EINVAL))?;
+        if handle.vt != *handle.display.active_vt.borrow() {
+            // This is a protection against background VT's spamming us with flush requests. We will
+            // flush the resource on the next scanout anyway
+            return Ok(0);
+        }
         futures::executor::block_on(handle.display.flush(handle.vt, None)).unwrap();
         Ok(0)
     }
@@ -394,6 +399,12 @@ impl<'a> SchemeMut for Scheme<'a> {
         _fcntl_flags: u32,
     ) -> syscall::Result<usize> {
         let handle = self.handles.get(&id).ok_or(SysError::new(EINVAL))?;
+
+        if handle.vt != *handle.display.active_vt.borrow() {
+            // This is a protection against background VT's spamming us with flush requests. We will
+            // flush the resource on the next scanout anyway
+            return Ok(buf.len());
+        }
 
         let damage = unsafe {
             core::slice::from_raw_parts(
