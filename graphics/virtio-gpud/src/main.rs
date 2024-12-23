@@ -23,8 +23,12 @@
 #![feature(int_roundings)]
 
 use std::cell::UnsafeCell;
+use std::os::fd::AsRawFd;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
+use event::{user_data, EventQueue};
+use libredox::errno::EAGAIN;
 use pcid_interface::PciFunctionHandle;
 
 use redox_scheme::{RequestKind, SignalBehavior, Socket, V2};
@@ -222,6 +226,18 @@ impl Default for GetDisplayInfo {
     }
 }
 
+static RESOURCE_ALLOC: AtomicU32 = AtomicU32::new(1); // XXX: 0 is reserved for whatever that takes `resource_id`.
+
+#[derive(Debug, Copy, Clone)]
+#[repr(C)]
+pub struct ResourceId(u32);
+
+impl ResourceId {
+    fn alloc() -> Self {
+        ResourceId(RESOURCE_ALLOC.fetch_add(1, Ordering::SeqCst))
+    }
+}
+
 #[derive(Debug, Copy, Clone)]
 #[repr(u32)]
 pub enum ResourceFormat {
@@ -236,14 +252,16 @@ pub enum ResourceFormat {
 pub struct ResourceCreate2d {
     pub header: ControlHeader,
 
-    resource_id: VolatileCell<u32>,
+    // FIXME we can likely use regular loads and stores as the ring buffer should provide the
+    // necessary synchronization.
+    resource_id: VolatileCell<ResourceId>,
     format: VolatileCell<ResourceFormat>,
     width: VolatileCell<u32>,
     height: VolatileCell<u32>,
 }
 
 impl ResourceCreate2d {
-    make_getter_setter!(resource_id: u32, format: ResourceFormat, width: u32, height: u32);
+    make_getter_setter!(resource_id: ResourceId, format: ResourceFormat, width: u32, height: u32);
 }
 
 impl Default for ResourceCreate2d {
@@ -254,7 +272,7 @@ impl Default for ResourceCreate2d {
                 ..Default::default()
             },
 
-            resource_id: VolatileCell::new(0),
+            resource_id: VolatileCell::new(ResourceId(0)),
             format: VolatileCell::new(ResourceFormat::Unknown),
             width: VolatileCell::new(0),
             height: VolatileCell::new(0),
@@ -274,12 +292,12 @@ pub struct MemEntry {
 #[repr(C)]
 pub struct AttachBacking {
     pub header: ControlHeader,
-    pub resource_id: u32,
+    pub resource_id: ResourceId,
     pub num_entries: u32,
 }
 
 impl AttachBacking {
-    pub fn new(resource_id: u32, num_entries: u32) -> Self {
+    pub fn new(resource_id: ResourceId, num_entries: u32) -> Self {
         Self {
             header: ControlHeader::with_ty(CommandTy::ResourceAttachBacking),
             resource_id,
@@ -292,12 +310,12 @@ impl AttachBacking {
 #[repr(C)]
 pub struct DetachBacking {
     pub header: ControlHeader,
-    pub resource_id: u32,
+    pub resource_id: ResourceId,
     pub padding: u32,
 }
 
 impl DetachBacking {
-    pub fn new(resource_id: u32) -> Self {
+    pub fn new(resource_id: ResourceId) -> Self {
         Self {
             header: ControlHeader::with_ty(CommandTy::ResourceDetachBacking),
             resource_id,
@@ -311,12 +329,12 @@ impl DetachBacking {
 pub struct ResourceFlush {
     pub header: ControlHeader,
     pub rect: GpuRect,
-    pub resource_id: u32,
+    pub resource_id: ResourceId,
     pub padding: u32,
 }
 
 impl ResourceFlush {
-    pub fn new(resource_id: u32, rect: GpuRect) -> Self {
+    pub fn new(resource_id: ResourceId, rect: GpuRect) -> Self {
         Self {
             header: ControlHeader::with_ty(CommandTy::ResourceFlush),
             rect,
@@ -330,12 +348,12 @@ impl ResourceFlush {
 #[repr(C)]
 pub struct ResourceUnref {
     pub header: ControlHeader,
-    pub resource_id: u32,
+    pub resource_id: ResourceId,
     pub padding: u32,
 }
 
 impl ResourceUnref {
-    pub fn new(resource_id: u32) -> Self {
+    pub fn new(resource_id: ResourceId) -> Self {
         Self {
             header: ControlHeader::with_ty(CommandTy::ResourceUnref),
             resource_id,
@@ -350,11 +368,11 @@ pub struct SetScanout {
     pub header: ControlHeader,
     pub rect: GpuRect,
     pub scanout_id: u32,
-    pub resource_id: u32,
+    pub resource_id: ResourceId,
 }
 
 impl SetScanout {
-    pub fn new(scanout_id: u32, resource_id: u32, rect: GpuRect) -> Self {
+    pub fn new(scanout_id: u32, resource_id: ResourceId, rect: GpuRect) -> Self {
         Self {
             header: ControlHeader::with_ty(CommandTy::SetScanout),
 
@@ -371,12 +389,12 @@ pub struct XferToHost2d {
     pub header: ControlHeader,
     pub rect: GpuRect,
     pub offset: u64,
-    pub resource_id: u32,
+    pub resource_id: ResourceId,
     pub padding: u32,
 }
 
 impl XferToHost2d {
-    pub fn new(resource_id: u32, rect: GpuRect) -> Self {
+    pub fn new(resource_id: ResourceId, rect: GpuRect) -> Self {
         Self {
             header: ControlHeader {
                 ty: VolatileCell::new(CommandTy::TransferToHost2d),
@@ -436,7 +454,7 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
     device.transport.run_device();
     deamon.ready().unwrap();
 
-    let socket_file: Socket<V2> = Socket::create("display.virtio-gpu")?;
+    let socket: Socket<V2> = Socket::nonblock("display.virtio-gpu")?;
     let mut scheme = futures::executor::block_on(scheme::Scheme::new(
         config,
         control_queue.clone(),
@@ -444,25 +462,80 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
         device.transport.clone(),
     ))?;
 
-    // scheme.inputd_handle.activate(scheme.main_vt)?;
-
-    loop {
-        let Some(request) = socket_file.next_request(SignalBehavior::Restart)? else {
-            // Scheme likely got unmounted
-            return Ok(());
-        };
-
-        match request.kind() {
-            RequestKind::Call(call_request) => {
-                socket_file.write_response(
-                    call_request.handle_scheme_mut(&mut scheme),
-                    SignalBehavior::Restart,
-                )?;
-            }
-            RequestKind::Cancellation(_cancellation_request) => {}
-            RequestKind::MsyncMsg | RequestKind::MunmapMsg | RequestKind::MmapMsg => unreachable!(),
+    user_data! {
+        enum Source {
+            Input,
+            Scheme,
         }
     }
+
+    let event_queue: EventQueue<Source> =
+        EventQueue::new().expect("virtio-gpud: failed to create event queue");
+    event_queue
+        .subscribe(
+            scheme.inputd_handle.inner().as_raw_fd() as usize,
+            Source::Input,
+            event::EventFlags::READ,
+        )
+        .unwrap();
+    event_queue
+        .subscribe(
+            socket.inner().raw(),
+            Source::Scheme,
+            event::EventFlags::READ,
+        )
+        .unwrap();
+
+    //let mut inputd_control_handle = inputd::ControlHandle::new().unwrap();
+    //inputd_control_handle.activate_vt(3).unwrap();
+
+    let all = [Source::Input, Source::Scheme];
+    for event in all
+        .into_iter()
+        .chain(event_queue.map(|e| e.expect("virtio-gpud: failed to get next event").user_data))
+    {
+        match event {
+            Source::Input => {
+                while let Some(vt_event) = scheme
+                    .inputd_handle
+                    .read_vt_event()
+                    .expect("virtio-gpud: failed to read display handle")
+                {
+                    scheme.handle_vt_event(vt_event);
+                }
+            }
+            Source::Scheme => {
+                loop {
+                    let request = match socket.next_request(SignalBehavior::Restart) {
+                        Ok(Some(request)) => request,
+                        Ok(None) => {
+                            // Scheme likely got unmounted
+                            std::process::exit(0);
+                        }
+                        Err(err) if err.errno == EAGAIN => break,
+                        Err(err) => return Err(err.into()),
+                    };
+
+                    match request.kind() {
+                        RequestKind::Call(call_request) => {
+                            socket
+                                .write_response(
+                                    call_request.handle_scheme_mut(&mut scheme),
+                                    SignalBehavior::Restart,
+                                )
+                                .expect("virtio-gpud: failed to write display scheme");
+                        }
+                        RequestKind::Cancellation(_cancellation_request) => {}
+                        RequestKind::MsyncMsg | RequestKind::MunmapMsg | RequestKind::MmapMsg => {
+                            unreachable!()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    std::process::exit(0);
 }
 
 fn daemon_runner(redox_daemon: redox_daemon::Daemon) -> ! {
