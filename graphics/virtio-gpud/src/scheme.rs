@@ -1,22 +1,20 @@
-use std::cell::OnceCell;
-use std::collections::BTreeMap;
+use std::cell::RefCell;
+use std::collections::{BTreeMap, HashMap};
 
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use common::{dma::Dma, sgl};
 use inputd::{Damage, VtEvent, VtEventKind};
 
 use redox_scheme::SchemeMut;
-use syscall::{Error as SysError, MapFlags, EAGAIN, EINVAL, PAGE_SIZE};
+use syscall::{Error as SysError, MapFlags, EINVAL, PAGE_SIZE};
 
 use virtio_core::spec::{Buffer, ChainBuilder, DescriptorFlags};
 use virtio_core::transport::{Error, Queue, Transport};
 use virtio_core::utils::VolatileCell;
 
 use crate::*;
-
-static RESOURCE_ALLOC: AtomicU32 = AtomicU32::new(1); // XXX: 0 is reserved for whatever that takes `resource_id`.
 
 impl Into<GpuRect> for &Damage {
     fn into(self) -> GpuRect {
@@ -34,12 +32,13 @@ pub struct Display<'a> {
     cursor_queue: Arc<Queue<'a>>,
     transport: Arc<dyn Transport>,
 
-    mapped: OnceCell<sgl::Sgl>,
+    active_vt: RefCell<usize>,
+    vts_map: RefCell<HashMap<usize, sgl::Sgl>>,
+    vts_res: RefCell<HashMap<usize, ResourceId>>,
 
     width: u32,
     height: u32,
 
-    resource_id: u32,
     id: usize,
 
     is_reseted: AtomicBool,
@@ -56,22 +55,24 @@ impl<'a> Display<'a> {
             control_queue,
             cursor_queue,
 
-            mapped: OnceCell::new(),
+            active_vt: RefCell::new(0),
+            vts_map: RefCell::new(HashMap::new()),
+            vts_res: RefCell::new(HashMap::new()),
 
             width: 1920,
             height: 1080,
             transport,
 
             id,
-            resource_id: RESOURCE_ALLOC.fetch_add(1, Ordering::SeqCst),
 
             is_reseted: AtomicBool::new(false),
         }
     }
 
-    async fn init(&self) -> Result<(), Error> {
+    async fn init(&self, vt: usize) -> Result<(), Error> {
         if !self.is_reseted.load(Ordering::SeqCst) {
             // The device is already initialized.
+            self.set_scanout(vt).await?;
             return Ok(());
         }
 
@@ -80,7 +81,7 @@ impl<'a> Display<'a> {
         log::info!("virtio-gpu: initializing GPU after a reset");
 
         crate::reinit(self.control_queue.clone(), self.cursor_queue.clone())?;
-        self.remap_screen().await?;
+        self.set_scanout(vt).await?;
 
         Ok(())
     }
@@ -111,20 +112,9 @@ impl<'a> Display<'a> {
         Ok(())
     }
 
-    // TODO: Is this a no-op?
-    async fn remap_screen(&self) -> Result<*mut u8, Error> {
-        let bpp = 32;
-
-        let fb_size = self.width as usize * self.height as usize * bpp / 8;
-
-        let mapped = self.mapped.get().unwrap();
-        self.map_screen_with(0, fb_size, mapped.as_ptr(), mapped.chunks())
-            .await
-    }
-
-    async fn map_screen(&self, offset: usize) -> Result<*mut u8, Error> {
-        if let Some(mapped) = self.mapped.get() {
-            return Ok(mapped.as_ptr().wrapping_add(offset));
+    async fn mmap_screen(&self, vt: usize, offset: usize) -> Result<*mut u8, Error> {
+        if let Some(sgl) = self.vts_map.borrow().get(&vt) {
+            return Ok(sgl.as_ptr().wrapping_add(offset));
         }
 
         let bpp = 32;
@@ -134,35 +124,40 @@ impl<'a> Display<'a> {
         unsafe {
             core::ptr::write_bytes(mapped.as_ptr() as *mut u8, 255, fb_size);
         }
-        let _ = self.mapped.set(mapped);
-        let mapped = self.mapped.get().unwrap();
 
-        self.map_screen_with(offset, fb_size, mapped.as_ptr(), mapped.chunks())
-            .await
+        let mut mapped_vts = self.vts_map.borrow_mut();
+        let sgl = mapped_vts.entry(vt).or_insert(mapped);
+        Ok(sgl.as_ptr().wrapping_add(offset))
     }
 
-    async fn map_screen_with(
-        &self,
-        offset: usize,
-        _size: usize,
-        virt: *mut u8,
-        chunks: &[sgl::Chunk],
-    ) -> Result<*mut u8, Error> {
+    async fn create_res_for_screen(&self, vt: usize) -> Result<ResourceId, Error> {
+        if let Some(&res_id) = self.vts_res.borrow().get(&vt) {
+            return Ok(res_id);
+        }
+
+        self.mmap_screen(vt, 0).await?;
+
+        let vts_map = self.vts_map.borrow();
+        let mapped = &vts_map.get(&vt).unwrap();
+
+        let res_id = ResourceId::alloc();
+
         // Create a host resource using `VIRTIO_GPU_CMD_RESOURCE_CREATE_2D`.
         let mut request = Dma::new(ResourceCreate2d::default())?;
 
         request.set_width(self.width);
         request.set_height(self.height);
         request.set_format(ResourceFormat::Bgrx);
-        request.set_resource_id(self.resource_id);
+        request.set_resource_id(res_id);
 
-        self.send_request(request).await?;
+        let header = self.send_request(request).await?;
+        assert_eq!(header.ty.get(), CommandTy::RespOkNodata);
 
         // Use the allocated framebuffer from tthe guest ram, and attach it as backing
         // storage to the resource just created, using `VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING`.
 
-        let mut mem_entries = unsafe { Dma::zeroed_slice(chunks.len())?.assume_init() };
-        for (entry, chunk) in mem_entries.iter_mut().zip(chunks.iter()) {
+        let mut mem_entries = unsafe { Dma::zeroed_slice(mapped.chunks().len())?.assume_init() };
+        for (entry, chunk) in mem_entries.iter_mut().zip(mapped.chunks().iter()) {
             *entry = MemEntry {
                 address: chunk.phys as u64,
                 length: chunk.length.next_multiple_of(PAGE_SIZE) as u32,
@@ -170,10 +165,7 @@ impl<'a> Display<'a> {
             };
         }
 
-        let attach_request = Dma::new(AttachBacking::new(
-            self.resource_id,
-            mem_entries.len() as u32,
-        ))?;
+        let attach_request = Dma::new(AttachBacking::new(res_id, mem_entries.len() as u32))?;
         let header = Dma::new(ControlHeader::default())?;
         let command = ChainBuilder::new()
             .chain(Buffer::new(&attach_request))
@@ -184,21 +176,33 @@ impl<'a> Display<'a> {
         self.control_queue.send(command).await;
         assert_eq!(header.ty.get(), CommandTy::RespOkNodata);
 
+        let mut mapped_vts = self.vts_res.borrow_mut();
+        mapped_vts.insert(vt, res_id);
+        Ok(res_id)
+    }
+
+    async fn set_scanout(&self, vt: usize) -> Result<(), Error> {
+        let res_id = self.create_res_for_screen(vt).await?;
+
         let scanout_request = Dma::new(SetScanout::new(
             self.id as u32,
-            self.resource_id,
+            res_id,
             GpuRect::new(0, 0, self.width, self.height),
         ))?;
         let header = self.send_request(scanout_request).await?;
         assert_eq!(header.ty.get(), CommandTy::RespOkNodata);
 
-        self.flush(None).await?;
+        self.flush(vt, None).await?;
 
-        Ok(virt.wrapping_add(offset))
+        Ok(())
     }
 
     /// If `damage` is `None`, the entire screen is flushed.
-    async fn flush(&self, damage: Option<&Damage>) -> Result<(), Error> {
+    async fn flush(&self, vt: usize, damage: Option<&Damage>) -> Result<(), Error> {
+        if vt != *self.active_vt.borrow() {
+            return Ok(());
+        }
+
         let damage = if let Some(damage) = damage {
             damage.into()
         } else {
@@ -211,7 +215,7 @@ impl<'a> Display<'a> {
         };
 
         let req = Dma::new(XferToHost2d::new(
-            self.resource_id,
+            self.vts_res.borrow()[&vt],
             GpuRect {
                 x: 0,
                 y: 0,
@@ -222,21 +226,26 @@ impl<'a> Display<'a> {
         let header = self.send_request(req).await?;
         assert_eq!(header.ty.get(), CommandTy::RespOkNodata);
 
-        self.flush_resource(ResourceFlush::new(self.resource_id, damage.clone()))
-            .await?;
+        self.flush_resource(ResourceFlush::new(
+            self.vts_res.borrow()[&vt],
+            damage.clone(),
+        ))
+        .await?;
         Ok(())
     }
 
     /// This detaches any backing pages from the display and unrefs the resource. Also resets the
     /// device, which is required to go back to legacy mode.
     async fn detach(&self) -> Result<(), Error> {
-        let request = Dma::new(DetachBacking::new(self.resource_id))?;
-        let header = self.send_request(request).await?;
-        assert_eq!(header.ty.get(), CommandTy::RespOkNodata);
+        for (_vt, res_id) in self.vts_res.borrow_mut().drain() {
+            let request = Dma::new(DetachBacking::new(res_id))?;
+            let header = self.send_request(request).await?;
+            assert_eq!(header.ty.get(), CommandTy::RespOkNodata);
 
-        let request = Dma::new(ResourceUnref::new(self.resource_id))?;
-        let header = self.send_request(request).await?;
-        assert_eq!(header.ty.get(), CommandTy::RespOkNodata);
+            let request = Dma::new(ResourceUnref::new(res_id))?;
+            let header = self.send_request(request).await?;
+            assert_eq!(header.ty.get(), CommandTy::RespOkNodata);
+        }
 
         // Go back to legacy mode.
         self.transport.reset();
@@ -310,6 +319,11 @@ impl<'a> Scheme<'a> {
                 transport.clone(),
                 id,
             );
+            // FIXME this is a hack to avoid breaking things while we need to co-exist with vesad
+            // Somehow necessary to ensure that creating a resource on the first reinitialization
+            // after this detach doesn't fail.
+            display.init(1).await?;
+            display.detach().await?;
 
             result.push(Arc::new(display));
         }
@@ -340,14 +354,12 @@ impl<'a> Scheme<'a> {
             VtEventKind::Activate => {
                 log::info!("activate {}", vt_event.vt);
 
-                for handle in self.handles.values() {
-                    if handle.vt != vt_event.vt {
-                        continue;
-                    }
-
+                for display in &self.displays {
                     log::warn!("virtio-gpu: activating");
 
-                    futures::executor::block_on(handle.display.init()).unwrap();
+                    futures::executor::block_on(display.init(vt_event.vt)).unwrap();
+
+                    *display.active_vt.borrow_mut() = vt_event.vt;
                 }
             }
 
@@ -408,7 +420,7 @@ impl<'a> SchemeMut for Scheme<'a> {
 
     fn fsync(&mut self, id: usize) -> syscall::Result<usize> {
         let handle = self.handles.get(&id).ok_or(SysError::new(EINVAL))?;
-        futures::executor::block_on(handle.display.flush(None)).unwrap();
+        futures::executor::block_on(handle.display.flush(handle.vt, None)).unwrap();
         Ok(0)
     }
 
@@ -433,10 +445,11 @@ impl<'a> SchemeMut for Scheme<'a> {
     ) -> syscall::Result<usize> {
         let handle = self.handles.get(&id).ok_or(SysError::new(EINVAL))?;
 
-        // The VT is not active and the device is reseted. Ask them to try
-        // again later.
+        // The VT is not active and the device is reseted. Ignore the damage. We will recreate the
+        // backing storage from scratch next time we initialize, which is equivalent to damaging the
+        // entire buffer.
         if handle.display.is_reseted.load(Ordering::SeqCst) {
-            return Err(SysError::new(EAGAIN));
+            return Ok(buf.len());
         }
 
         let damages = unsafe {
@@ -447,7 +460,7 @@ impl<'a> SchemeMut for Scheme<'a> {
         };
 
         for damage in damages {
-            futures::executor::block_on(handle.display.flush(Some(damage))).unwrap();
+            futures::executor::block_on(handle.display.flush(handle.vt, Some(damage))).unwrap();
         }
 
         Ok(buf.len())
@@ -465,7 +478,9 @@ impl<'a> SchemeMut for Scheme<'a> {
     ) -> syscall::Result<usize> {
         log::info!("KSMSG MMAP {} {:?} {} {}", id, flags, offset, size);
         let handle = self.handles.get(&id).ok_or(SysError::new(EINVAL))?;
-        let ptr = futures::executor::block_on(handle.display.map_screen(offset as usize)).unwrap();
+        let ptr =
+            futures::executor::block_on(handle.display.mmap_screen(handle.vt, offset as usize))
+                .unwrap();
         Ok(ptr as usize)
     }
 }
