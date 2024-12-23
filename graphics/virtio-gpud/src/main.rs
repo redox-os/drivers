@@ -169,7 +169,7 @@ impl Default for ControlHeader {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone)]
 #[repr(C)]
 pub struct GpuRect {
     pub x: u32,

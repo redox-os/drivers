@@ -16,7 +16,7 @@ use virtio_core::utils::VolatileCell;
 
 use crate::*;
 
-impl Into<GpuRect> for &Damage {
+impl Into<GpuRect> for Damage {
     fn into(self) -> GpuRect {
         GpuRect {
             x: self.x as u32,
@@ -199,8 +199,11 @@ impl<'a> Display<'a> {
 
         if let Some(damage) = damage {
             for damage in damage {
-                self.flush_resource(ResourceFlush::new(res_id, damage.into()))
-                    .await?;
+                self.flush_resource(ResourceFlush::new(
+                    res_id,
+                    damage.clip(self.width as i32, self.height as i32).into(),
+                ))
+                .await?;
             }
         } else {
             self.flush_resource(ResourceFlush::new(
