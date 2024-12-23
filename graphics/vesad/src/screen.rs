@@ -121,8 +121,8 @@ impl GraphicScreen {
     pub fn sync(&mut self, framebuffer: &mut FrameBuffer, sync_rects: &[Damage]) {
         for sync_rect in sync_rects {
             let sync_rect = sync_rect.clip(
-                self.height.try_into().unwrap(),
                 self.width.try_into().unwrap(),
+                self.height.try_into().unwrap(),
             );
 
             let start_x: usize = sync_rect.x.try_into().unwrap_or(0);
