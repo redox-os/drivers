@@ -1,12 +1,13 @@
 #![feature(io_error_more)]
 
 use event::EventQueue;
+use libredox::errno::ESTALE;
 use orbclient::Event;
 use std::fs::{File, OpenOptions};
 use std::io::{ErrorKind, Read, Write};
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsRawFd, BorrowedFd};
 use std::os::unix::fs::OpenOptionsExt;
-use std::{env, io, mem, slice};
+use std::{env, mem, slice};
 use syscall::{Packet, SchemeMut, EVENT_READ, O_NONBLOCK};
 
 use crate::scheme::{FbconScheme, VtIndex};
@@ -15,12 +16,15 @@ mod display;
 mod scheme;
 mod text;
 
-fn read_to_slice<R: Read, T: Copy>(mut r: R, buf: &mut [T]) -> io::Result<usize> {
+fn read_to_slice<T: Copy>(
+    file: BorrowedFd,
+    buf: &mut [T],
+) -> Result<usize, libredox::error::Error> {
     unsafe {
-        r.read(slice::from_raw_parts_mut(
-            buf.as_mut_ptr() as *mut u8,
-            buf.len() * mem::size_of::<T>(),
-        ))
+        libredox::call::read(
+            file.as_raw_fd() as usize,
+            slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, buf.len() * mem::size_of::<T>()),
+        )
         .map(|count| count / mem::size_of::<T>())
     }
 }
@@ -126,12 +130,9 @@ fn handle_event(
 
             let mut events = [Event::new(); 16];
             loop {
-                match read_to_slice(&mut vt.display.input_handle, &mut events) {
+                match read_to_slice(vt.display.input_handle.inner(), &mut events) {
                     Ok(0) => break,
-                    Err(err) if err.kind() == ErrorKind::WouldBlock => {
-                        break;
-                    }
-                    Err(err) if err.kind() == ErrorKind::StaleNetworkFileHandle => {
+                    Err(err) if err.errno() == ESTALE => {
                         vt.handle_handoff();
                     }
 

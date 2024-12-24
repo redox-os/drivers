@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 use std::str;
 
 use inputd::{VtEvent, VtEventKind};
-use redox_scheme::SchemeBlockMut;
-use syscall::{Error, EventFlags, MapFlags, Result, EBADF, EINVAL, ENOENT, O_NONBLOCK};
+use redox_scheme::SchemeMut;
+use syscall::{Error, MapFlags, Result, EBADF, EINVAL, ENOENT};
 
 use crate::{framebuffer::FrameBuffer, screen::GraphicScreen};
 
@@ -17,10 +17,6 @@ pub struct ScreenIndex(usize);
 pub struct Handle {
     pub vt: VtIndex,
     pub screen: ScreenIndex,
-
-    pub flags: usize,
-    pub events: EventFlags,
-    pub notified_read: bool,
 }
 
 pub struct DisplayScheme {
@@ -109,14 +105,8 @@ impl DisplayScheme {
     }
 }
 
-impl SchemeBlockMut for DisplayScheme {
-    fn open(
-        &mut self,
-        path_str: &str,
-        flags: usize,
-        _uid: u32,
-        _gid: u32,
-    ) -> Result<Option<usize>> {
+impl SchemeMut for DisplayScheme {
+    fn open(&mut self, path_str: &str, _flags: usize, _uid: u32, _gid: u32) -> Result<usize> {
         let mut parts = path_str.split('/');
         let mut vt_screen = parts.next().unwrap_or("").split('.');
         let vt_i = VtIndex(vt_screen.next().unwrap_or("").parse::<usize>().unwrap_or(1));
@@ -131,14 +121,10 @@ impl SchemeBlockMut for DisplayScheme {
                     Handle {
                         vt: vt_i,
                         screen: screen_i,
-
-                        flags,
-                        events: EventFlags::empty(),
-                        notified_read: false,
                     },
                 );
 
-                Ok(Some(id))
+                Ok(id)
             } else {
                 Err(Error::new(ENOENT))
             }
@@ -147,7 +133,7 @@ impl SchemeBlockMut for DisplayScheme {
         }
     }
 
-    fn dup(&mut self, id: usize, buf: &[u8]) -> Result<Option<usize>> {
+    fn dup(&mut self, id: usize, buf: &[u8]) -> Result<usize> {
         if !buf.is_empty() {
             return Err(Error::new(EINVAL));
         }
@@ -163,22 +149,10 @@ impl SchemeBlockMut for DisplayScheme {
 
         self.handles.insert(new_id, handle.clone());
 
-        Ok(Some(new_id))
+        Ok(new_id)
     }
 
-    fn fevent(
-        &mut self,
-        id: usize,
-        flags: syscall::EventFlags,
-    ) -> Result<Option<syscall::EventFlags>> {
-        let handle = self.handles.get_mut(&id).ok_or(Error::new(EBADF))?;
-
-        handle.notified_read = false;
-        handle.events = flags;
-        Ok(Some(syscall::EventFlags::empty()))
-    }
-
-    fn fpath(&mut self, id: usize, buf: &mut [u8]) -> Result<Option<usize>> {
+    fn fpath(&mut self, id: usize, buf: &mut [u8]) -> Result<usize> {
         let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
         let path_str = {
@@ -204,10 +178,10 @@ impl SchemeBlockMut for DisplayScheme {
             i += 1;
         }
 
-        Ok(Some(i))
+        Ok(i)
     }
 
-    fn fsync(&mut self, id: usize) -> Result<Option<usize>> {
+    fn fsync(&mut self, id: usize) -> Result<usize> {
         let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
         if let Some(screens) = self.vts.get_mut(&handle.vt) {
@@ -215,7 +189,7 @@ impl SchemeBlockMut for DisplayScheme {
                 if handle.vt == self.active {
                     screen.redraw(&mut self.framebuffers[handle.screen.0]);
                 }
-                return Ok(Some(0));
+                return Ok(0);
             }
         }
 
@@ -225,47 +199,24 @@ impl SchemeBlockMut for DisplayScheme {
     fn read(
         &mut self,
         id: usize,
-        buf: &mut [u8],
+        _buf: &mut [u8],
         _offset: u64,
         _fcntl_flags: u32,
-    ) -> Result<Option<usize>> {
-        let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
+    ) -> Result<usize> {
+        let _handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
-        if let Some(screens) = self.vts.get_mut(&handle.vt) {
-            if let Some(screen) = screens.get_mut(&handle.screen) {
-                let nread = screen.read(buf)?;
-                if nread != 0 {
-                    return Ok(Some(nread));
-                } else {
-                    if handle.flags & O_NONBLOCK == O_NONBLOCK {
-                        return Ok(Some(0));
-                    } else {
-                        return Ok(None);
-                    }
-                }
-            }
-        }
-
-        Err(Error::new(EBADF))
+        Err(Error::new(EINVAL))
     }
 
-    fn write(
-        &mut self,
-        id: usize,
-        buf: &[u8],
-        _offset: u64,
-        _fcntl_flags: u32,
-    ) -> Result<Option<usize>> {
+    fn write(&mut self, id: usize, buf: &[u8], _offset: u64, _fcntl_flags: u32) -> Result<usize> {
         let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
         if let Some(screens) = self.vts.get_mut(&handle.vt) {
             if let Some(screen) = screens.get_mut(&handle.screen) {
                 if handle.vt == self.active {
-                    screen
-                        .write(buf, Some(&mut self.framebuffers[handle.screen.0]))
-                        .map(|count| Some(count))
+                    screen.write(buf, Some(&mut self.framebuffers[handle.screen.0]))
                 } else {
-                    screen.write(buf, None).map(|count| Some(count))
+                    screen.write(buf, None)
                 }
             } else {
                 Err(Error::new(EBADF))
@@ -275,23 +226,17 @@ impl SchemeBlockMut for DisplayScheme {
         }
     }
 
-    fn close(&mut self, id: usize) -> Result<Option<usize>> {
+    fn close(&mut self, id: usize) -> Result<usize> {
         self.handles.remove(&id).ok_or(Error::new(EBADF))?;
-        Ok(Some(0))
+        Ok(0)
     }
-    fn mmap_prep(
-        &mut self,
-        id: usize,
-        off: u64,
-        size: usize,
-        _flags: MapFlags,
-    ) -> Result<Option<usize>> {
+    fn mmap_prep(&mut self, id: usize, off: u64, size: usize, _flags: MapFlags) -> Result<usize> {
         let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
         if let Some(screens) = self.vts.get(&handle.vt) {
             if let Some(screen) = screens.get(&handle.screen) {
                 if off as usize + size <= screen.offscreen.len() * 4 {
-                    return Ok(Some(screen.offscreen.as_ptr() as usize + off as usize));
+                    return Ok(screen.offscreen.as_ptr() as usize + off as usize);
                 } else {
                     return Err(Error::new(EINVAL));
                 }

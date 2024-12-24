@@ -1,10 +1,13 @@
 #![feature(iter_next_chunk)]
 
 use std::cmp;
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::{Error, Read, Write};
 use std::mem::size_of;
-use std::os::fd::{AsFd, BorrowedFd};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, RawFd};
+use std::os::unix::fs::OpenOptionsExt;
+
+use libredox::flag::{O_CLOEXEC, O_NONBLOCK, O_RDWR};
 
 unsafe fn any_as_u8_slice<T: Sized>(p: &T) -> &[u8] {
     std::slice::from_raw_parts((p as *const T) as *const u8, size_of::<T>())
@@ -12,6 +15,44 @@ unsafe fn any_as_u8_slice<T: Sized>(p: &T) -> &[u8] {
 
 unsafe fn any_as_u8_slice_mut<T: Sized>(p: &mut T) -> &mut [u8] {
     std::slice::from_raw_parts_mut((p as *mut T) as *mut u8, size_of::<T>())
+}
+
+pub struct ConsumerHandle(File);
+
+impl ConsumerHandle {
+    pub fn for_vt(vt: usize) -> Result<Self, Error> {
+        let file = OpenOptions::new()
+            .read(true)
+            .custom_flags(O_NONBLOCK as i32)
+            .open(format!("/scheme/input/consumer/{vt}"))?;
+        Ok(Self(file))
+    }
+
+    pub fn inner(&self) -> BorrowedFd<'_> {
+        self.0.as_fd()
+    }
+
+    pub fn open_display(&self) -> Result<File, Error> {
+        let mut buffer = [0; 1024];
+        let fd = self.0.as_raw_fd();
+        let written = libredox::call::fpath(fd as usize, &mut buffer)
+            .expect("init: failed to get the path to the display device");
+
+        assert!(written <= buffer.len());
+
+        let display_path = std::str::from_utf8(&buffer[..written])
+            .expect("init: display path UTF-8 check failed")
+            .to_owned();
+
+        let display_file =
+            libredox::call::open(&display_path, (O_CLOEXEC | O_NONBLOCK | O_RDWR) as _, 0)
+                .map(|socket| unsafe { File::from_raw_fd(socket as RawFd) })
+                .unwrap_or_else(|err| {
+                    panic!("failed to open display {}: {}", display_path, err);
+                });
+
+        Ok(display_file)
+    }
 }
 
 #[derive(Debug, Clone)]
