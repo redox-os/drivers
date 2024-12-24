@@ -4,6 +4,7 @@ extern crate syscall;
 use std::fs::File;
 use std::io::{Read, Write};
 
+use inputd::ProducerHandle;
 use pcid_interface::PciFunctionHandle;
 use syscall::call::iopl;
 use syscall::data::Packet;
@@ -35,7 +36,7 @@ fn main() {
 
         let mut scheme = BgaScheme {
             bga,
-            display: File::open("/scheme/input/producer").ok(),
+            display: ProducerHandle::new().ok(),
         };
 
         scheme.update_size();

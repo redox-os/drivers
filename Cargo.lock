@@ -190,6 +190,7 @@ name = "bgad"
 version = "0.1.0"
 dependencies = [
  "common",
+ "inputd",
  "libredox",
  "orbclient",
  "pcid",
@@ -423,6 +424,7 @@ dependencies = [
  "orbclient",
  "ransid",
  "redox-daemon",
+ "redox-scheme",
  "redox_event",
  "redox_syscall",
 ]
@@ -1035,10 +1037,12 @@ version = "0.1.0"
 dependencies = [
  "bitflags 1.3.2",
  "common",
+ "inputd",
  "libredox",
  "log",
  "orbclient",
  "redox-daemon",
+ "redox_event",
  "redox_syscall",
 ]
 
@@ -1593,6 +1597,7 @@ version = "0.1.0"
 dependencies = [
  "bitflags 2.6.0",
  "common",
+ "inputd",
  "log",
  "orbclient",
  "redox_syscall",

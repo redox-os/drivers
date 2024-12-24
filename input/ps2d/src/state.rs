@@ -1,8 +1,4 @@
-use std::fs::File;
-use std::io::Write;
-use std::os::unix::io::AsRawFd;
-use std::str;
-
+use inputd::ProducerHandle;
 use log::{error, warn};
 use orbclient::{ButtonEvent, KeyEvent, MouseEvent, MouseRelativeEvent, ScrollEvent};
 
@@ -26,7 +22,7 @@ pub struct Ps2d<F: Fn(u8, bool) -> char> {
     ps2: Ps2,
     vmmouse: bool,
     vmmouse_relative: bool,
-    input: File,
+    input: ProducerHandle,
     extended: bool,
     lshift: bool,
     rshift: bool,
@@ -43,7 +39,7 @@ pub struct Ps2d<F: Fn(u8, bool) -> char> {
 }
 
 impl<F: Fn(u8, bool) -> char> Ps2d<F> {
-    pub fn new(input: File, keymap: F) -> Self {
+    pub fn new(input: ProducerHandle, keymap: F) -> Self {
         let mut ps2 = Ps2::new();
         let extra_packet = ps2.init().expect("ps2d: failed to initialize");
 
@@ -229,8 +225,8 @@ impl<F: Fn(u8, bool) -> char> Ps2d<F> {
 
                 if scancode != 0 {
                     self.input
-                        .write(
-                            &KeyEvent {
+                        .write_event(
+                            KeyEvent {
                                 character: (self.get_char)(
                                     ps2_scancode,
                                     self.lshift || self.rshift,
@@ -263,8 +259,8 @@ impl<F: Fn(u8, bool) -> char> Ps2d<F> {
                 if self.vmmouse_relative {
                     if dx != 0 || dy != 0 {
                         self.input
-                            .write(
-                                &MouseRelativeEvent {
+                            .write_event(
+                                MouseRelativeEvent {
                                     dx: dx as i32,
                                     dy: dy as i32,
                                 }
@@ -279,15 +275,15 @@ impl<F: Fn(u8, bool) -> char> Ps2d<F> {
                         self.mouse_x = x;
                         self.mouse_y = y;
                         self.input
-                            .write(&MouseEvent { x, y }.to_event())
+                            .write_event(MouseEvent { x, y }.to_event())
                             .expect("ps2d: failed to write mouse event");
                     }
                 };
 
                 if dz != 0 {
                     self.input
-                        .write(
-                            &ScrollEvent {
+                        .write_event(
+                            ScrollEvent {
                                 x: 0,
                                 y: -(dz as i32),
                             }
@@ -307,11 +303,11 @@ impl<F: Fn(u8, bool) -> char> Ps2d<F> {
                     self.mouse_middle = middle;
                     self.mouse_right = right;
                     self.input
-                        .write(
-                            &ButtonEvent {
-                                left: left,
-                                middle: middle,
-                                right: right,
+                        .write_event(
+                            ButtonEvent {
+                                left,
+                                middle,
+                                right,
                             }
                             .to_event(),
                         )
@@ -355,13 +351,13 @@ impl<F: Fn(u8, bool) -> char> Ps2d<F> {
 
                     if dx != 0 || dy != 0 {
                         self.input
-                            .write(&MouseRelativeEvent { dx: dx, dy: dy }.to_event())
+                            .write_event(MouseRelativeEvent { dx, dy }.to_event())
                             .expect("ps2d: failed to write mouse event");
                     }
 
                     if dz != 0 {
                         self.input
-                            .write(&ScrollEvent { x: 0, y: dz }.to_event())
+                            .write_event(ScrollEvent { x: 0, y: dz }.to_event())
                             .expect("ps2d: failed to write scroll event");
                     }
 
@@ -376,11 +372,11 @@ impl<F: Fn(u8, bool) -> char> Ps2d<F> {
                         self.mouse_middle = middle;
                         self.mouse_right = right;
                         self.input
-                            .write(
-                                &ButtonEvent {
-                                    left: left,
-                                    middle: middle,
-                                    right: right,
+                            .write_event(
+                                ButtonEvent {
+                                    left,
+                                    middle,
+                                    right,
                                 }
                                 .to_event(),
                             )

@@ -9,5 +9,6 @@ redox-daemon = "0.1"
 redox_syscall = "0.5"
 
 common = { path = "../../common" }
+inputd = { path = "../../inputd" }
 pcid = { path = "../../pcid" }
 libredox = "0.1.3"

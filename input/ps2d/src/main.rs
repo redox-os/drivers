@@ -6,11 +6,13 @@ extern crate orbclient;
 extern crate syscall;
 
 use std::fs::OpenOptions;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::io::AsRawFd;
 use std::{env, process};
 
+use event::{user_data, EventQueue};
+use inputd::ProducerHandle;
 use log::info;
 use syscall::call::iopl;
 
@@ -49,16 +51,17 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     info!("ps2d: using keymap '{}'", keymap_name);
 
-    let input = OpenOptions::new()
-        .write(true)
-        .open("/scheme/input/producer")
-        .expect("ps2d: failed to open /scheme/input/producer");
+    let input = ProducerHandle::new().expect("ps2d: failed to open input producer");
 
-    let mut event_file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open("/scheme/event")
-        .expect("ps2d: failed to open /scheme/event");
+    user_data! {
+        enum Source {
+            Keyboard,
+            Mouse,
+        }
+    }
+
+    let event_queue: EventQueue<Source> =
+        EventQueue::new().expect("ps2d: failed to create event queue");
 
     let mut key_file = OpenOptions::new()
         .read(true)
@@ -67,13 +70,13 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         .open("/scheme/serio/0")
         .expect("ps2d: failed to open /scheme/serio/0");
 
-    event_file
-        .write(&syscall::Event {
-            id: key_file.as_raw_fd() as usize,
-            flags: syscall::EVENT_READ,
-            data: 0,
-        })
-        .expect("ps2d: failed to event /scheme/serio/0");
+    event_queue
+        .subscribe(
+            key_file.as_raw_fd() as usize,
+            Source::Keyboard,
+            event::EventFlags::READ,
+        )
+        .unwrap();
 
     let mut mouse_file = OpenOptions::new()
         .read(true)
@@ -82,13 +85,13 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         .open("/scheme/serio/1")
         .expect("ps2d: failed to open /scheme/serio/1");
 
-    event_file
-        .write(&syscall::Event {
-            id: mouse_file.as_raw_fd() as usize,
-            flags: syscall::EVENT_READ,
-            data: 1,
-        })
-        .expect("ps2d: failed to event /scheme/serio/1");
+    event_queue
+        .subscribe(
+            mouse_file.as_raw_fd() as usize,
+            Source::Mouse,
+            event::EventFlags::READ,
+        )
+        .unwrap();
 
     libredox::call::setrens(0, 0).expect("ps2d: failed to enter null namespace");
 
@@ -99,7 +102,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let mut ps2d = Ps2d::new(input, keymap);
 
     let mut data = [0; 256];
-    loop {
+    for event in event_queue.map(|e| e.expect("ps2d: failed to get next event").user_data) {
         // There are some gotchas with ps/2 controllers that require this weird
         // way of doing things. You read key and mouse data from the same
         // place. There is a status register that may show you which the data
@@ -109,19 +112,9 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         // Due to this, we have a kernel driver doing a small amount of work
         // to grab bytes and sort them based on the source
 
-        let mut event = syscall::Event::default();
-        if event_file
-            .read(&mut event)
-            .expect("ps2d: failed to read event file")
-            == 0
-        {
-            break;
-        }
-
-        let (file, keyboard) = match event.data {
-            0 => (&mut key_file, true),
-            1 => (&mut mouse_file, false),
-            _ => continue,
+        let (file, keyboard) = match event {
+            Source::Keyboard => (&mut key_file, true),
+            Source::Mouse => (&mut mouse_file, false),
         };
 
         loop {

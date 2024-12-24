@@ -1,14 +1,12 @@
 #![feature(io_error_more)]
 
 use event::EventQueue;
-use libredox::errno::ESTALE;
+use libredox::errno::{EAGAIN, EINTR, ESTALE};
 use orbclient::Event;
-use std::fs::{File, OpenOptions};
-use std::io::{ErrorKind, Read, Write};
+use redox_scheme::{CallRequest, RequestKind, Response, SignalBehavior, Socket};
 use std::os::fd::{AsRawFd, BorrowedFd};
-use std::os::unix::fs::OpenOptionsExt;
 use std::{env, mem, slice};
-use syscall::{Packet, SchemeMut, EVENT_READ, O_NONBLOCK};
+use syscall::EVENT_READ;
 
 use crate::scheme::{FbconScheme, VtIndex};
 
@@ -42,16 +40,10 @@ fn inner(daemon: redox_daemon::Daemon, vt_ids: &[usize]) -> ! {
 
     // FIXME listen for resize events from inputd and handle them
 
-    let mut socket = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .custom_flags(O_NONBLOCK as i32)
-        .open(":fbcon")
-        .expect("fbcond: failed to create fbcon scheme");
+    let mut socket = Socket::nonblock("fbcon").expect("fbcond: failed to create fbcon scheme");
     event_queue
         .subscribe(
-            socket.as_raw_fd().as_raw_fd() as usize,
+            socket.inner().raw(),
             VtIndex::SCHEMA_SENTINEL,
             event::EventFlags::READ,
         )
@@ -91,37 +83,49 @@ fn inner(daemon: redox_daemon::Daemon, vt_ids: &[usize]) -> ! {
 }
 
 fn handle_event(
-    socket: &mut File,
+    socket: &mut Socket,
     scheme: &mut FbconScheme,
-    blocked: &mut Vec<Packet>,
+    blocked: &mut Vec<CallRequest>,
     event: VtIndex,
 ) {
     match event {
         VtIndex::SCHEMA_SENTINEL => {
             loop {
-                let mut packet = Packet::default();
-                match socket.read(&mut packet) {
-                    Ok(0) => break,
-                    Err(err) if err.kind() == ErrorKind::WouldBlock => {
-                        break;
+                let request = match socket.next_request(SignalBehavior::Restart) {
+                    Ok(Some(request)) => request,
+                    Ok(None) => {
+                        // Scheme likely got unmounted
+                        std::process::exit(0);
                     }
-                    Ok(_) => {}
-                    Err(err) => {
-                        panic!("fbcond: failed to read display scheme: {err}");
-                    }
-                }
+                    Err(err) if err.errno == EAGAIN => break,
+                    Err(err) => panic!("vesad: failed to read display scheme: {err}"),
+                };
 
-                // If it is a read packet, and there is no data, block it. Otherwise, handle packet
-                if packet.a == syscall::number::SYS_READ
-                    && packet.d > 0
-                    && scheme.can_read(packet.b).is_none()
-                {
-                    blocked.push(packet);
-                } else {
-                    scheme.handle(&mut packet);
-                    socket
-                        .write(&packet)
-                        .expect("fbcond: failed to write display scheme");
+                match request.kind() {
+                    RequestKind::Call(call_request) => {
+                        if let Some(resp) = call_request.handle_scheme_block_mut(scheme) {
+                            socket
+                                .write_response(resp, SignalBehavior::Restart)
+                                .expect("vesad: failed to write display scheme");
+                        } else {
+                            blocked.push(call_request);
+                        }
+                    }
+                    RequestKind::Cancellation(cancellation_request) => {
+                        if let Some(i) = blocked
+                            .iter()
+                            .position(|req| req.request().request_id() == cancellation_request.id)
+                        {
+                            let blocked_req = blocked.remove(i);
+                            let resp = Response::new(&blocked_req, Err(syscall::Error::new(EINTR)));
+                            socket
+                                .write_response(resp, SignalBehavior::Restart)
+                                .expect("vesad: failed to write display scheme");
+                        }
+                    }
+                    RequestKind::MsyncMsg | RequestKind::MunmapMsg | RequestKind::MmapMsg => {
+                        unreachable!()
+                    }
                 }
             }
         }
@@ -150,16 +154,15 @@ fn handle_event(
         }
     }
 
-    // If there are blocked readers, and data is available, handle them
+    // If there are blocked readers, try to handle them.
     {
         let mut i = 0;
         while i < blocked.len() {
-            if scheme.can_read(blocked[i].b).is_some() {
-                let mut packet = blocked.remove(i);
-                scheme.handle(&mut packet);
+            if let Some(resp) = blocked[i].handle_scheme_block_mut(scheme) {
                 socket
-                    .write(&packet)
-                    .expect("fbcond: failed to write display scheme");
+                    .write_response(resp, SignalBehavior::Restart)
+                    .expect("vesad: failed to write display scheme");
+                blocked.remove(i);
             } else {
                 i += 1;
             }
@@ -171,30 +174,16 @@ fn handle_event(
             continue;
         }
 
-        // Can't use scheme.can_read() because we borrow handles as mutable.
-        // (and because it'd treat O_NONBLOCK sockets differently)
-        let count = scheme
+        let can_read = scheme
             .vts
             .get(&handle.vt_i)
-            .and_then(|console| console.can_read())
-            .unwrap_or(0);
+            .map_or(false, |console| console.can_read());
 
-        if count > 0 {
+        if can_read {
             if !handle.notified_read {
                 handle.notified_read = true;
-                let event_packet = Packet {
-                    id: 0,
-                    pid: 0,
-                    uid: 0,
-                    gid: 0,
-                    a: syscall::number::SYS_FEVENT,
-                    b: *handle_id,
-                    c: EVENT_READ.bits(),
-                    d: count,
-                };
-
                 socket
-                    .write(&event_packet)
+                    .post_fevent(*handle_id, EVENT_READ.bits())
                     .expect("fbcond: failed to write display event");
             }
         } else {

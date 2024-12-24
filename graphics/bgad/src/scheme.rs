@@ -1,6 +1,5 @@
-use std::fs::File;
-use std::io::Write;
 use std::str;
+use inputd::ProducerHandle;
 use syscall::data::Stat;
 use syscall::{Error, Result, SchemeMut, EACCES, EINVAL, MODE_CHR};
 
@@ -8,14 +7,14 @@ use crate::bga::Bga;
 
 pub struct BgaScheme {
     pub bga: Bga,
-    pub display: Option<File>,
+    pub display: Option<ProducerHandle>,
 }
 
 impl BgaScheme {
     pub fn update_size(&mut self) {
         if let Some(ref mut display) = self.display {
-            let _ = display.write(
-                &orbclient::ResizeEvent {
+            let _ = display.write_event(
+                orbclient::ResizeEvent {
                     width: self.bga.width() as u32,
                     height: self.bga.height() as u32,
                 }

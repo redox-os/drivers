@@ -157,22 +157,8 @@ impl Display {
 
         let url =
             String::from_utf8(Vec::from(&buf[..count])).expect("Could not create Utf8 Url String");
-        let path = Self::url_parts(&url)?;
-        let (width, height) = Self::parse_display_path(path);
+        let path = url.split(':').nth(1).expect("Could not get path from url");
 
-        Ok((display_file, width, height))
-    }
-
-    fn url_parts(url: &str) -> io::Result<&str> {
-        let mut url_parts = url.split(':');
-        url_parts
-            .next()
-            .expect("Could not get scheme name from url");
-        let path = url_parts.next().expect("Could not get path from url");
-        Ok(path)
-    }
-
-    fn parse_display_path(path: &str) -> (usize, usize) {
         let mut path_parts = path.split('/').skip(1);
         let width = path_parts
             .next()
@@ -185,7 +171,7 @@ impl Display {
             .parse::<usize>()
             .unwrap_or(0);
 
-        (width, height)
+        Ok((display_file, width, height))
     }
 
     pub fn resize(&mut self, width: usize, height: usize) {
