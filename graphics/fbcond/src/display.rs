@@ -1,18 +1,9 @@
-use inputd::Damage;
+use inputd::{ConsumerHandle, Damage};
 use libredox::flag;
-use std::fs::OpenOptions;
 use std::mem;
-use std::os::unix::fs::OpenOptionsExt;
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
-use std::{
-    fs::File,
-    io,
-    os::fd::RawFd,
-    os::unix::io::{AsRawFd, FromRawFd},
-    slice,
-};
-use syscall::{O_CLOEXEC, O_NONBLOCK, O_RDWR};
+use std::{fs::File, io, os::unix::io::AsRawFd, slice};
 
 fn display_fd_map(
     width: usize,
@@ -65,25 +56,20 @@ enum DisplayCommand {
 }
 
 pub struct Display {
-    pub input_handle: Arc<File>,
+    pub input_handle: Arc<ConsumerHandle>,
     cmd_tx: Sender<DisplayCommand>,
     pub map: Arc<Mutex<DisplayMap>>,
 }
 
 impl Display {
     pub fn open_vt(vt: usize) -> io::Result<Self> {
-        let input_handle = Arc::new(
-            OpenOptions::new()
-                .read(true)
-                .custom_flags(O_NONBLOCK as i32)
-                .open(format!("/scheme/input/consumer/{vt}"))?,
-        );
+        let input_handle = Arc::new(ConsumerHandle::for_vt(vt)?);
 
-        let (display_path, mut display_file, width, height) = Self::open_display(&input_handle)?;
+        let (mut display_file, width, height) = Self::open_display(&input_handle)?;
 
         let map = Arc::new(Mutex::new(
             display_fd_map(width, height, &mut display_file)
-                .unwrap_or_else(|e| panic!("failed to map display '{display_path}: {e}")),
+                .unwrap_or_else(|e| panic!("failed to map display for VT #{vt}: {e}")),
         ));
 
         let (cmd_tx, cmd_rx) = mpsc::channel();
@@ -109,17 +95,17 @@ impl Display {
                     DisplayCommand::ReopenForHandoff => {
                         eprintln!("fbcond: Performing handoff");
 
-                        let (display_path, mut new_display_file, width, height) =
+                        let (mut new_display_file, width, height) =
                             Self::open_display(&input_handle_clone).unwrap();
 
-                        eprintln!("fbcond: Opened new display '{display_path}'");
+                        eprintln!("fbcond: Opened new display for VT #{vt}");
 
                         match display_fd_map(width, height, &mut new_display_file) {
                             Ok(ok) => {
                                 *map_clone.lock().unwrap() = ok;
                                 display_file = new_display_file;
 
-                                eprintln!("fbcond: Mapped new display '{display_path}'");
+                                eprintln!("fbcond: Mapped new display for VT #{vt}");
                             }
                             Err(err) => {
                                 eprintln!(
@@ -160,24 +146,8 @@ impl Display {
         self.cmd_tx.send(DisplayCommand::ReopenForHandoff).unwrap();
     }
 
-    fn open_display(input_handle: &File) -> io::Result<(String, File, usize, usize)> {
-        let mut buffer = [0; 1024];
-        let fd = input_handle.as_raw_fd();
-        let written = libredox::call::fpath(fd as usize, &mut buffer)
-            .expect("init: failed to get the path to the display device");
-
-        assert!(written <= buffer.len());
-
-        let display_path = std::str::from_utf8(&buffer[..written])
-            .expect("init: display path UTF-8 check failed")
-            .to_owned();
-
-        let display_file =
-            libredox::call::open(&display_path, (O_CLOEXEC | O_NONBLOCK | O_RDWR) as _, 0)
-                .map(|socket| unsafe { File::from_raw_fd(socket as RawFd) })
-                .unwrap_or_else(|err| {
-                    panic!("failed to open display {}: {}", display_path, err);
-                });
+    fn open_display(input_handle: &ConsumerHandle) -> io::Result<(File, usize, usize)> {
+        let display_file = input_handle.open_display()?;
 
         let mut buf: [u8; 4096] = [0; 4096];
         let count = libredox::call::fpath(display_file.as_raw_fd() as usize, &mut buf)
@@ -190,7 +160,7 @@ impl Display {
         let path = Self::url_parts(&url)?;
         let (width, height) = Self::parse_display_path(path);
 
-        Ok((display_path, display_file, width, height))
+        Ok((display_file, width, height))
     }
 
     fn url_parts(url: &str) -> io::Result<&str> {
