@@ -12,6 +12,7 @@ use std::os::unix::io::AsRawFd;
 use std::{env, process};
 
 use event::{user_data, EventQueue};
+use inputd::ProducerHandle;
 use log::info;
 use syscall::call::iopl;
 
@@ -50,10 +51,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     info!("ps2d: using keymap '{}'", keymap_name);
 
-    let input = OpenOptions::new()
-        .write(true)
-        .open("/scheme/input/producer")
-        .expect("ps2d: failed to open /scheme/input/producer");
+    let input = ProducerHandle::new().expect("ps2d: failed to open input producer");
 
     user_data! {
         enum Source {

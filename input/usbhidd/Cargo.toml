@@ -16,3 +16,4 @@ rehid = { git = "https://gitlab.redox-os.org/redox-os/rehid.git" }
 xhcid = { path = "../../xhcid" }
 
 common = { path = "../../common" }
+inputd = { path = "../../inputd" }
