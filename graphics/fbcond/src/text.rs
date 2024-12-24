@@ -1,19 +1,16 @@
 extern crate ransid;
 
-use std::collections::{BTreeSet, VecDeque};
-use std::convert::{TryFrom, TryInto};
-use std::{cmp, ptr};
+use std::collections::VecDeque;
+use std::convert::TryInto;
 
-use inputd::Damage;
-use orbclient::{Event, EventOption, FONT};
+use orbclient::{Event, EventOption};
 use syscall::error::*;
 
-use crate::display::{Display, DisplayMap};
+use crate::display::Display;
 
 pub struct TextScreen {
-    console: ransid::Console,
     pub display: Display,
-    changed: BTreeSet<usize>,
+    inner: console_draw::TextScreen,
     ctrl: bool,
     input: VecDeque<u8>,
 }
@@ -21,101 +18,10 @@ pub struct TextScreen {
 impl TextScreen {
     pub fn new(display: Display) -> TextScreen {
         TextScreen {
-            // Width and height will be filled in on the next write to the console
-            console: ransid::Console::new(0, 0),
             display,
-            changed: BTreeSet::new(),
+            inner: console_draw::TextScreen::new(),
             ctrl: false,
             input: VecDeque::new(),
-        }
-    }
-
-    /// Draw a rectangle
-    fn rect(map: &mut DisplayMap, x: usize, y: usize, w: usize, h: usize, color: u32) {
-        let start_y = cmp::min(map.height, y);
-        let end_y = cmp::min(map.height, y + h);
-
-        let start_x = cmp::min(map.width, x);
-        let len = cmp::min(map.width, x + w) - start_x;
-
-        let mut offscreen_ptr = map.offscreen as *mut u8 as usize;
-
-        let stride = map.width * 4;
-
-        let offset = y * stride + start_x * 4;
-        offscreen_ptr += offset;
-
-        let mut rows = end_y - start_y;
-        while rows > 0 {
-            for i in 0..len {
-                unsafe {
-                    *(offscreen_ptr as *mut u32).add(i) = color;
-                }
-            }
-            offscreen_ptr += stride;
-            rows -= 1;
-        }
-    }
-
-    /// Invert a rectangle
-    fn invert(map: &mut DisplayMap, x: usize, y: usize, w: usize, h: usize) {
-        let start_y = cmp::min(map.height, y);
-        let end_y = cmp::min(map.height, y + h);
-
-        let start_x = cmp::min(map.width, x);
-        let len = cmp::min(map.width, x + w) - start_x;
-
-        let mut offscreen_ptr = map.offscreen as *mut u8 as usize;
-
-        let stride = map.width * 4;
-
-        let offset = y * stride + start_x * 4;
-        offscreen_ptr += offset;
-
-        let mut rows = end_y - start_y;
-        while rows > 0 {
-            let mut row_ptr = offscreen_ptr;
-            let mut cols = len;
-            while cols > 0 {
-                unsafe {
-                    let color = *(row_ptr as *mut u32);
-                    *(row_ptr as *mut u32) = !color;
-                }
-                row_ptr += 4;
-                cols -= 1;
-            }
-            offscreen_ptr += stride;
-            rows -= 1;
-        }
-    }
-
-    /// Draw a character
-    fn char(
-        map: &mut DisplayMap,
-        x: usize,
-        y: usize,
-        character: char,
-        color: u32,
-        _bold: bool,
-        _italic: bool,
-    ) {
-        if x + 8 <= map.width && y + 16 <= map.height {
-            let mut dst = map.offscreen as *mut u8 as usize + (y * map.width + x) * 4;
-
-            let font_i = 16 * (character as usize);
-            if font_i + 16 <= FONT.len() {
-                for row in 0..16 {
-                    let row_data = FONT[font_i + row];
-                    for col in 0..8 {
-                        if (row_data >> (7 - col)) & 1 == 1 {
-                            unsafe {
-                                *((dst + col * 4) as *mut u32) = color;
-                            }
-                        }
-                    }
-                    dst += map.width * 4;
-                }
-            }
         }
     }
 
@@ -222,112 +128,19 @@ impl TextScreen {
     }
 
     pub fn write(&mut self, buf: &[u8]) -> Result<usize> {
-        let mut map = self.display.map.lock().unwrap();
-
-        self.console.state.w = map.width / 8;
-        self.console.state.h = map.height / 16;
-        self.console.state.bottom_margin = (map.height / 16).saturating_sub(1);
-
-        if self.console.state.cursor
-            && self.console.state.x < self.console.state.w
-            && self.console.state.y < self.console.state.h
-        {
-            let x = self.console.state.x;
-            let y = self.console.state.y;
-            Self::invert(&mut map, x * 8, y * 16, 8, 16);
-            self.changed.insert(y);
-        }
-
-        {
-            let changed = &mut self.changed;
-            let input = &mut self.input;
-            self.console.write(buf, |event| match event {
-                ransid::Event::Char {
-                    x,
-                    y,
-                    c,
-                    color,
-                    bold,
-                    ..
-                } => {
-                    Self::char(&mut map, x * 8, y * 16, c, color.as_rgb(), bold, false);
-                    changed.insert(y);
-                }
-                ransid::Event::Input { data } => {
-                    input.extend(data);
-                }
-                ransid::Event::Rect { x, y, w, h, color } => {
-                    Self::rect(&mut map, x * 8, y * 16, w * 8, h * 16, color.as_rgb());
-                    for y2 in y..y + h {
-                        changed.insert(y2);
-                    }
-                }
-                ransid::Event::ScreenBuffer { .. } => (),
-                ransid::Event::Move {
-                    from_x,
-                    from_y,
-                    to_x,
-                    to_y,
-                    w,
-                    h,
-                } => {
-                    let width = map.width;
-                    let pixels = unsafe { &mut *map.offscreen };
-
-                    for raw_y in 0..h {
-                        let y = if from_y > to_y { raw_y } else { h - raw_y - 1 };
-
-                        for pixel_y in 0..16 {
-                            {
-                                let off_from = ((from_y + y) * 16 + pixel_y) * width + from_x * 8;
-                                let off_to = ((to_y + y) * 16 + pixel_y) * width + to_x * 8;
-                                let len = w * 8;
-
-                                if off_from + len <= pixels.len() && off_to + len <= pixels.len() {
-                                    unsafe {
-                                        let data_ptr = pixels.as_mut_ptr() as *mut u32;
-                                        ptr::copy(
-                                            data_ptr.offset(off_from as isize),
-                                            data_ptr.offset(off_to as isize),
-                                            len,
-                                        );
-                                    }
-                                }
-                            }
-                        }
-
-                        changed.insert(to_y + y);
-                    }
-                }
-                ransid::Event::Resize { .. } => (),
-                ransid::Event::Title { .. } => (),
-            });
-        }
-
-        if self.console.state.cursor
-            && self.console.state.x < self.console.state.w
-            && self.console.state.y < self.console.state.h
-        {
-            let x = self.console.state.x;
-            let y = self.console.state.y;
-            Self::invert(&mut map, x * 8, y * 16, 8, 16);
-            self.changed.insert(y);
-        }
-
-        let width = map.width.try_into().unwrap();
-        drop(map);
-        self.display.sync_rects(
-            self.changed
-                .iter()
-                .map(|&change| Damage {
-                    x: 0,
-                    y: i32::try_from(change).unwrap() * 16,
-                    width,
-                    height: 16,
-                })
-                .collect(),
+        let map = self.display.map.lock().unwrap();
+        let damage = self.inner.write(
+            &mut console_draw::DisplayMap {
+                offscreen: map.offscreen,
+                width: map.width,
+                height: map.height,
+            },
+            buf,
+            &mut self.input,
         );
-        self.changed.clear();
+        drop(map);
+
+        self.display.sync_rects(damage);
 
         Ok(buf.len())
     }

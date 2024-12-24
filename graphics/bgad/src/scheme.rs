@@ -1,5 +1,5 @@
-use std::str;
 use inputd::ProducerHandle;
+use std::str;
 use syscall::data::Stat;
 use syscall::{Error, Result, SchemeMut, EACCES, EINVAL, MODE_CHR};
 
