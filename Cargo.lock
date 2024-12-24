@@ -397,6 +397,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "driver-graphics"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "inputd",
+ "libredox",
+ "log",
+ "redox-scheme",
+ "redox_syscall",
+]
+
+[[package]]
 name = "driver-network"
 version = "0.1.0"
 dependencies = [
@@ -1706,12 +1718,12 @@ name = "vesad"
 version = "0.1.0"
 dependencies = [
  "common",
+ "driver-graphics",
  "inputd",
  "libredox",
  "orbclient",
  "ransid",
  "redox-daemon",
- "redox-scheme",
  "redox_event",
  "redox_syscall",
 ]
@@ -1760,6 +1772,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "common",
+ "driver-graphics",
  "futures",
  "inputd",
  "libredox",
@@ -1768,7 +1781,6 @@ dependencies = [
  "paste",
  "pcid",
  "redox-daemon",
- "redox-scheme",
  "redox_event",
  "redox_syscall",
  "spin",

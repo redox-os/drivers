@@ -1,15 +1,16 @@
-#![feature(int_roundings)]
+#![feature(int_roundings, slice_ptr_get)]
 extern crate orbclient;
 extern crate syscall;
 
+use driver_graphics::GraphicsScheme;
 use event::{user_data, EventQueue};
-use libredox::errno::{EAGAIN, EOPNOTSUPP};
-use redox_scheme::{RequestKind, Response, SignalBehavior, Socket};
+use inputd::DisplayHandle;
 use std::env;
 use std::fs::File;
 use std::os::fd::AsRawFd;
 
-use crate::{framebuffer::FrameBuffer, scheme::DisplayScheme};
+use crate::framebuffer::FrameBuffer;
+use crate::scheme::FbAdapter;
 
 mod display;
 mod framebuffer;
@@ -78,11 +79,14 @@ fn main() {
         .expect("failed to create daemon");
 }
 fn inner(daemon: redox_daemon::Daemon, framebuffers: Vec<FrameBuffer>, spec: &[()]) -> ! {
-    let socket = Socket::nonblock("display.vesa").expect("vesad: failed to create display scheme");
-
-    let mut scheme = DisplayScheme::new(framebuffers, &spec);
-
+    let mut inputd_display_handle = DisplayHandle::new_early("vesa").unwrap();
     let mut inputd_control_handle = inputd::ControlHandle::new().unwrap();
+
+    for &() in spec.iter() {
+        inputd_display_handle.register_vt().unwrap();
+    }
+
+    let mut scheme = GraphicsScheme::new(FbAdapter { framebuffers }, "display.vesa".to_owned());
 
     user_data! {
         enum Source {
@@ -95,14 +99,14 @@ fn inner(daemon: redox_daemon::Daemon, framebuffers: Vec<FrameBuffer>, spec: &[(
         EventQueue::new().expect("vesad: failed to create event queue");
     event_queue
         .subscribe(
-            scheme.inputd_handle.inner().as_raw_fd() as usize,
+            inputd_display_handle.inner().as_raw_fd() as usize,
             Source::Input,
             event::EventFlags::READ,
         )
         .unwrap();
     event_queue
         .subscribe(
-            socket.inner().raw(),
+            scheme.event_handle().raw(),
             Source::Scheme,
             event::EventFlags::READ,
         )
@@ -123,8 +127,7 @@ fn inner(daemon: redox_daemon::Daemon, framebuffers: Vec<FrameBuffer>, spec: &[(
     {
         match event {
             Source::Input => {
-                while let Some(vt_event) = scheme
-                    .inputd_handle
+                while let Some(vt_event) = inputd_display_handle
                     .read_vt_event()
                     .expect("vesad: failed to read display handle")
                 {
@@ -132,43 +135,9 @@ fn inner(daemon: redox_daemon::Daemon, framebuffers: Vec<FrameBuffer>, spec: &[(
                 }
             }
             Source::Scheme => {
-                loop {
-                    let request = match socket.next_request(SignalBehavior::Restart) {
-                        Ok(Some(request)) => request,
-                        Ok(None) => {
-                            // Scheme likely got unmounted
-                            std::process::exit(0);
-                        }
-                        Err(err) if err.errno == EAGAIN => break,
-                        Err(err) => panic!("vesad: failed to read display scheme: {err}"),
-                    };
-
-                    match request.kind() {
-                        RequestKind::Call(call_request) => {
-                            socket
-                                .write_response(
-                                    call_request.handle_scheme(&mut scheme),
-                                    SignalBehavior::Restart,
-                                )
-                                .expect("vesad: failed to write display scheme");
-                        }
-                        RequestKind::SendFd(sendfd_request) => {
-                            socket
-                                .write_response(
-                                    Response::for_sendfd(
-                                        &sendfd_request,
-                                        Err(syscall::Error::new(EOPNOTSUPP)),
-                                    ),
-                                    SignalBehavior::Restart,
-                                )
-                                .expect("vesad: failed to write scheme");
-                        }
-                        RequestKind::Cancellation(_cancellation_request) => {}
-                        RequestKind::MsyncMsg | RequestKind::MunmapMsg | RequestKind::MmapMsg => {
-                            unreachable!()
-                        }
-                    }
-                }
+                scheme
+                    .tick()
+                    .expect("vesad: failed to handle scheme events");
             }
         }
     }
