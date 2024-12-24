@@ -51,15 +51,11 @@ fn inner(daemon: redox_daemon::Daemon, vt_ids: &[usize]) -> ! {
 
     let mut scheme = FbconScheme::new(vt_ids, &mut event_queue);
 
-    let mut inputd_control_handle = inputd::ControlHandle::new().unwrap();
-
     // This is not possible for now as fbcond needs to open new displays at runtime for graphics
     // driver handoff. In the future inputd may directly pass a handle to the display instead.
     //libredox::call::setrens(0, 0).expect("fbcond: failed to enter null namespace");
 
     daemon.ready().expect("failed to notify parent");
-
-    inputd_control_handle.activate_vt(1).unwrap();
 
     let mut blocked = Vec::new();
 
