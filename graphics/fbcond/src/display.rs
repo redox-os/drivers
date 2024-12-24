@@ -60,26 +60,26 @@ impl Drop for DisplayMap {
 
 enum DisplayCommand {
     Resize { width: usize, height: usize },
-    ReopenForHandoff { display_path: String },
+    ReopenForHandoff,
     SyncRects(Vec<Damage>),
 }
 
 pub struct Display {
-    pub input_handle: File,
+    pub input_handle: Arc<File>,
     cmd_tx: Sender<DisplayCommand>,
     pub map: Arc<Mutex<DisplayMap>>,
 }
 
 impl Display {
     pub fn open_vt(vt: usize) -> io::Result<Self> {
-        let mut input_handle = OpenOptions::new()
-            .read(true)
-            .custom_flags(O_NONBLOCK as i32)
-            .open(format!("/scheme/input/consumer/{vt}"))?;
+        let input_handle = Arc::new(
+            OpenOptions::new()
+                .read(true)
+                .custom_flags(O_NONBLOCK as i32)
+                .open(format!("/scheme/input/consumer/{vt}"))?,
+        );
 
-        let display_path = Self::display_path(&mut input_handle)?;
-
-        let (mut display_file, width, height) = Self::open_display(&display_path)?;
+        let (display_path, mut display_file, width, height) = Self::open_display(&input_handle)?;
 
         let map = Arc::new(Mutex::new(
             display_fd_map(width, height, &mut display_file)
@@ -88,6 +88,7 @@ impl Display {
 
         let (cmd_tx, cmd_rx) = mpsc::channel();
 
+        let input_handle_clone = input_handle.clone();
         let map_clone = map.clone();
         std::thread::spawn(move || {
             while let Ok(cmd) = cmd_rx.recv() {
@@ -105,11 +106,11 @@ impl Display {
                             }
                         }
                     }
-                    DisplayCommand::ReopenForHandoff { display_path } => {
-                        eprintln!("fbcond: Performing handoff for '{display_path}'");
+                    DisplayCommand::ReopenForHandoff => {
+                        eprintln!("fbcond: Performing handoff");
 
-                        let (mut new_display_file, width, height) =
-                            Self::open_display(&display_path).unwrap();
+                        let (display_path, mut new_display_file, width, height) =
+                            Self::open_display(&input_handle_clone).unwrap();
 
                         eprintln!("fbcond: Opened new display '{display_path}'");
 
@@ -156,14 +157,10 @@ impl Display {
     /// Warning: This must be called in a background thread to avoid a deadlock when the
     /// graphics driver (indirectly) writes logs to fbcond.
     pub fn reopen_for_handoff(&mut self) {
-        let display_path = Self::display_path(&mut self.input_handle).unwrap();
-
-        self.cmd_tx
-            .send(DisplayCommand::ReopenForHandoff { display_path })
-            .unwrap();
+        self.cmd_tx.send(DisplayCommand::ReopenForHandoff).unwrap();
     }
 
-    fn display_path(input_handle: &mut File) -> io::Result<String> {
+    fn open_display(input_handle: &File) -> io::Result<(String, File, usize, usize)> {
         let mut buffer = [0; 1024];
         let fd = input_handle.as_raw_fd();
         let written = libredox::call::fpath(fd as usize, &mut buffer)
@@ -171,12 +168,10 @@ impl Display {
 
         assert!(written <= buffer.len());
 
-        Ok(std::str::from_utf8(&buffer[..written])
+        let display_path = std::str::from_utf8(&buffer[..written])
             .expect("init: display path UTF-8 check failed")
-            .to_owned())
-    }
+            .to_owned();
 
-    fn open_display(display_path: &str) -> io::Result<(File, usize, usize)> {
         let display_file =
             libredox::call::open(&display_path, (O_CLOEXEC | O_NONBLOCK | O_RDWR) as _, 0)
                 .map(|socket| unsafe { File::from_raw_fd(socket as RawFd) })
@@ -195,7 +190,7 @@ impl Display {
         let path = Self::url_parts(&url)?;
         let (width, height) = Self::parse_display_path(path);
 
-        Ok((display_file, width, height))
+        Ok((display_path, display_file, width, height))
     }
 
     fn url_parts(url: &str) -> io::Result<&str> {
