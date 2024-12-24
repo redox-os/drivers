@@ -1,0 +1,13 @@
+[package]
+name = "console-draw"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+orbclient = "0.3.27"
+ransid = "0.4"
+
+inputd = { path = "../../inputd" }
+
+[features]
+default = []

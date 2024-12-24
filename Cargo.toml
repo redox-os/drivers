@@ -17,6 +17,8 @@ members = [
     "audio/sb16d",
 
     "graphics/bgad",
+    "graphics/console-draw",
+    "graphics/fbbootlogd",
     "graphics/fbcond",
     "graphics/vesad",
     "graphics/virtio-gpud",

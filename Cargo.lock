@@ -323,6 +323,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "console-draw"
+version = "0.1.0"
+dependencies = [
+ "inputd",
+ "orbclient",
+ "ransid",
+]
+
+[[package]]
 name = "core-foundation-sys"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -416,9 +425,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5443807d6dff69373d433ab9ef5378ad8df50ca6298caf15de6e52e24aaf54d5"
 
 [[package]]
+name = "fbbootlogd"
+version = "0.1.0"
+dependencies = [
+ "console-draw",
+ "inputd",
+ "libredox",
+ "orbclient",
+ "ransid",
+ "redox-daemon",
+ "redox-scheme",
+ "redox_event",
+ "redox_syscall",
+]
+
+[[package]]
 name = "fbcond"
 version = "0.1.0"
 dependencies = [
+ "console-draw",
  "inputd",
  "libredox",
  "orbclient",
