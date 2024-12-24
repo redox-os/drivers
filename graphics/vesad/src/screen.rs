@@ -1,9 +1,7 @@
-use std::collections::VecDeque;
 use std::convert::TryInto;
 use std::{cmp, mem, ptr, slice};
 
 use inputd::Damage;
-use orbclient::{Event, ResizeEvent};
 use syscall::error::*;
 
 use crate::display::OffscreenBuffer;
@@ -13,7 +11,6 @@ pub struct GraphicScreen {
     pub width: usize,
     pub height: usize,
     pub offscreen: OffscreenBuffer,
-    pub input: VecDeque<Event>,
 }
 
 impl GraphicScreen {
@@ -22,7 +19,6 @@ impl GraphicScreen {
             width,
             height,
             offscreen: OffscreenBuffer::new(width * height),
-            input: VecDeque::new(),
         }
     }
 }
@@ -71,36 +67,6 @@ impl GraphicScreen {
         } else {
             println!("Display is already {}, {}", width, height);
         };
-
-        self.input.push_back(
-            ResizeEvent {
-                width: width as u32,
-                height: height as u32,
-            }
-            .to_event(),
-        );
-    }
-
-    pub fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
-        let mut i = 0;
-
-        let event_buf = unsafe {
-            slice::from_raw_parts_mut(
-                buf.as_mut_ptr() as *mut Event,
-                buf.len() / mem::size_of::<Event>(),
-            )
-        };
-
-        while i < event_buf.len() && !self.input.is_empty() {
-            event_buf[i] = self.input.pop_front().unwrap();
-            i += 1;
-        }
-
-        Ok(i * mem::size_of::<Event>())
-    }
-
-    pub fn can_read(&self) -> bool {
-        !self.input.is_empty()
     }
 
     pub fn write(&mut self, buf: &[u8], framebuffer: Option<&mut FrameBuffer>) -> Result<usize> {
@@ -117,7 +83,6 @@ impl GraphicScreen {
 
         Ok(sync_rects.len() * mem::size_of::<Damage>())
     }
-
     pub fn sync(&mut self, framebuffer: &mut FrameBuffer, sync_rects: &[Damage]) {
         for sync_rect in sync_rects {
             let sync_rect = sync_rect.clip(
