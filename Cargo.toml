@@ -4,12 +4,10 @@ members = [
     "common",
     "hwd",
     "pcid",
-    "ps2d",
     "vboxd",
     "xhcid",
     "usbctl",
     "usbhubd",
-    "usbhidd",
     "inputd",
     "virtio-core",
 
@@ -22,6 +20,9 @@ members = [
     "graphics/fbcond",
     "graphics/vesad",
     "graphics/virtio-gpud",
+
+    "input/ps2d",
+    "input/usbhidd",
 
     "net/alxd",
     "net/driver-network",

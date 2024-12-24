@@ -1,8 +1,7 @@
 use std::collections::VecDeque;
 use std::env;
-use std::fs::File;
-use std::io::{Read, Write};
 
+use inputd::ProducerHandle;
 use orbclient::KeyEvent as OrbKeyEvent;
 use rehid::{
     report_desc::{self, ReportTy, REPORT_DESC_TY},
@@ -17,7 +16,7 @@ mod keymap;
 mod reqs;
 
 fn send_key_event(
-    display: &mut File,
+    display: &mut ProducerHandle,
     usage_page: u16,
     usage: u16,
     pressed: bool,
@@ -159,7 +158,7 @@ fn send_key_event(
         pressed,
     };
 
-    match display.write(&key_event.to_event()) {
+    match display.write_event(key_event.to_event()) {
         Ok(_) => (),
         Err(err) => {
             log::warn!("failed to send key event to orbital: {}", err);
@@ -277,8 +276,7 @@ fn main() {
     let report_ty = ReportTy::Input;
     let report_id = 0;
 
-    let mut display =
-        File::open("/scheme/input/producer").expect("Failed to open orbital input socket");
+    let mut display = ProducerHandle::new().expect("Failed to open input socket");
     let mut endpoint_opt = match endp_desc_opt {
         Some((endp_num, _endp_desc)) => match handle.open_endpoint(endp_num as u8) {
             Ok(ok) => Some(ok),
@@ -405,7 +403,7 @@ fn main() {
                 y: mouse_pos.1 * 2,
             };
 
-            match display.write(&mouse_event.to_event()) {
+            match display.write_event(mouse_event.to_event()) {
                 Ok(_) => (),
                 Err(err) => {
                     log::warn!("failed to send mouse event to orbital: {}", err);
@@ -419,7 +417,7 @@ fn main() {
                 dy: mouse_dy,
             };
 
-            match display.write(&mouse_event.to_event()) {
+            match display.write_event(mouse_event.to_event()) {
                 Ok(_) => (),
                 Err(err) => {
                     log::warn!("failed to send mouse event to orbital: {}", err);
@@ -430,7 +428,7 @@ fn main() {
         if scroll_y != 0 {
             let scroll_event = orbclient::event::ScrollEvent { x: 0, y: scroll_y };
 
-            match display.write(&scroll_event.to_event()) {
+            match display.write_event(scroll_event.to_event()) {
                 Ok(_) => (),
                 Err(err) => {
                     log::warn!("failed to send scroll event to orbital: {}", err);
@@ -447,7 +445,7 @@ fn main() {
                 middle: buttons[2],
             };
 
-            match display.write(&button_event.to_event()) {
+            match display.write_event(button_event.to_event()) {
                 Ok(_) => (),
                 Err(err) => {
                     log::warn!("failed to send button event to orbital: {}", err);

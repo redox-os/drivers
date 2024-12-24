@@ -2,7 +2,8 @@ use std::collections::BTreeMap;
 use std::os::fd::AsRawFd;
 
 use event::{EventQueue, UserData};
-use syscall::{Error, EventFlags, Result, SchemeMut, EBADF, EINVAL, ENOENT, O_NONBLOCK};
+use redox_scheme::SchemeBlockMut;
+use syscall::{Error, EventFlags, Result, EBADF, EINVAL, ENOENT, O_NONBLOCK};
 
 use crate::display::Display;
 use crate::text::TextScreen;
@@ -61,22 +62,6 @@ impl FbconScheme {
         }
     }
 
-    pub fn can_read(&self, id: usize) -> Option<usize> {
-        if let Some(handle) = self.handles.get(&id) {
-            if let Some(console) = self.vts.get(&handle.vt_i) {
-                console
-                    .can_read()
-                    .or(if handle.flags & O_NONBLOCK == O_NONBLOCK {
-                        Some(0)
-                    } else {
-                        None
-                    });
-            }
-        }
-
-        Some(0)
-    }
-
     fn resize(&mut self, width: usize, height: usize, stride: usize) {
         for console in self.vts.values_mut() {
             console.resize(width, height);
@@ -84,8 +69,14 @@ impl FbconScheme {
     }
 }
 
-impl SchemeMut for FbconScheme {
-    fn open(&mut self, path_str: &str, flags: usize, _uid: u32, _gid: u32) -> Result<usize> {
+impl SchemeBlockMut for FbconScheme {
+    fn open(
+        &mut self,
+        path_str: &str,
+        flags: usize,
+        _uid: u32,
+        _gid: u32,
+    ) -> Result<Option<usize>> {
         let vt_i = VtIndex(path_str.parse::<usize>().map_err(|_| Error::new(ENOENT))?);
         if let Some(_console) = self.vts.get_mut(&vt_i) {
             let id = self.next_id;
@@ -101,13 +92,13 @@ impl SchemeMut for FbconScheme {
                 },
             );
 
-            Ok(id)
+            Ok(Some(id))
         } else {
             Err(Error::new(ENOENT))
         }
     }
 
-    fn dup(&mut self, id: usize, buf: &[u8]) -> Result<usize> {
+    fn dup(&mut self, id: usize, buf: &[u8]) -> Result<Option<usize>> {
         if !buf.is_empty() {
             return Err(Error::new(EINVAL));
         }
@@ -123,19 +114,23 @@ impl SchemeMut for FbconScheme {
 
         self.handles.insert(new_id, handle);
 
-        Ok(new_id)
+        Ok(Some(new_id))
     }
 
-    fn fevent(&mut self, id: usize, flags: syscall::EventFlags) -> Result<syscall::EventFlags> {
+    fn fevent(
+        &mut self,
+        id: usize,
+        flags: syscall::EventFlags,
+    ) -> Result<Option<syscall::EventFlags>> {
         let handle = self.handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
         handle.notified_read = false;
 
         handle.events = flags;
-        Ok(syscall::EventFlags::empty())
+        Ok(Some(syscall::EventFlags::empty()))
     }
 
-    fn fpath(&mut self, id: usize, buf: &mut [u8]) -> Result<usize> {
+    fn fpath(&mut self, id: usize, buf: &mut [u8]) -> Result<Option<usize>> {
         let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
         let path_str = format!("fbcon:{}", handle.vt_i.0);
@@ -148,37 +143,53 @@ impl SchemeMut for FbconScheme {
             i += 1;
         }
 
-        Ok(i)
+        Ok(Some(i))
     }
 
-    fn fsync(&mut self, id: usize) -> Result<usize> {
+    fn fsync(&mut self, id: usize) -> Result<Option<usize>> {
         let _handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
-        return Ok(0);
+        return Ok(Some(0));
     }
 
-    fn read(&mut self, id: usize, buf: &mut [u8]) -> Result<usize> {
+    fn read(
+        &mut self,
+        id: usize,
+        buf: &mut [u8],
+        _offset: u64,
+        _fcntl_flags: u32,
+    ) -> Result<Option<usize>> {
         let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
         if let Some(screen) = self.vts.get_mut(&handle.vt_i) {
-            return screen.read(buf);
+            if !screen.can_read() && handle.flags & O_NONBLOCK != O_NONBLOCK {
+                return Ok(None);
+            } else {
+                return screen.read(buf).map(Some);
+            }
         }
 
         Err(Error::new(EBADF))
     }
 
-    fn write(&mut self, id: usize, buf: &[u8]) -> Result<usize> {
+    fn write(
+        &mut self,
+        id: usize,
+        buf: &[u8],
+        _offset: u64,
+        _fcntl_flags: u32,
+    ) -> Result<Option<usize>> {
         let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
         if let Some(console) = self.vts.get_mut(&handle.vt_i) {
-            console.write(buf)
+            console.write(buf).map(Some)
         } else {
             Err(Error::new(EBADF))
         }
     }
 
-    fn close(&mut self, id: usize) -> Result<usize> {
+    fn close(&mut self, id: usize) -> Result<Option<usize>> {
         self.handles.remove(&id).ok_or(Error::new(EBADF))?;
-        Ok(0)
+        Ok(Some(0))
     }
 }

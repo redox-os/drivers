@@ -162,3 +162,16 @@ impl Damage {
         self
     }
 }
+
+pub struct ProducerHandle(File);
+
+impl ProducerHandle {
+    pub fn new() -> Result<Self, Error> {
+        File::open("/scheme/input/producer").map(ProducerHandle)
+    }
+
+    pub fn write_event(&mut self, event: orbclient::Event) -> Result<(), Error> {
+        self.0.write(&event)?;
+        Ok(())
+    }
+}
