@@ -1039,6 +1039,7 @@ dependencies = [
  "log",
  "orbclient",
  "redox-daemon",
+ "redox_event",
  "redox_syscall",
 ]
 
