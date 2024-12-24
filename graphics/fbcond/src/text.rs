@@ -204,12 +204,8 @@ impl TextScreen {
         }
     }
 
-    pub fn can_read(&self) -> Option<usize> {
-        if self.input.is_empty() {
-            None
-        } else {
-            Some(self.input.len())
-        }
+    pub fn can_read(&self) -> bool {
+        !self.input.is_empty()
     }
 }
 

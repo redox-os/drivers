@@ -424,6 +424,7 @@ dependencies = [
  "orbclient",
  "ransid",
  "redox-daemon",
+ "redox-scheme",
  "redox_event",
  "redox_syscall",
 ]
