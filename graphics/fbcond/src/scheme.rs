@@ -3,7 +3,7 @@ use std::os::fd::AsRawFd;
 
 use event::{EventQueue, UserData};
 use redox_scheme::SchemeBlock;
-use syscall::{Error, EventFlags, Result, EBADF, EINVAL, ENOENT, O_NONBLOCK};
+use syscall::{Error, EventFlags, Result, EBADF, ENOENT, O_NONBLOCK};
 
 use crate::display::Display;
 use crate::text::TextScreen;
@@ -25,7 +25,6 @@ impl UserData for VtIndex {
     }
 }
 
-#[derive(Clone)]
 pub struct Handle {
     pub vt_i: VtIndex,
     pub flags: usize,
@@ -96,25 +95,6 @@ impl SchemeBlock for FbconScheme {
         } else {
             Err(Error::new(ENOENT))
         }
-    }
-
-    fn dup(&mut self, id: usize, buf: &[u8]) -> Result<Option<usize>> {
-        if !buf.is_empty() {
-            return Err(Error::new(EINVAL));
-        }
-
-        let handle = self
-            .handles
-            .get(&id)
-            .map(|handle| handle.clone())
-            .ok_or(Error::new(EBADF))?;
-
-        let new_id = self.next_id;
-        self.next_id += 1;
-
-        self.handles.insert(new_id, handle);
-
-        Ok(Some(new_id))
     }
 
     fn fevent(
