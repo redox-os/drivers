@@ -7,7 +7,7 @@ use std::os::fd::{FromRawFd, RawFd};
 use std::sync::{Arc, Weak};
 
 use libredox::flag;
-use redox_scheme::{RequestKind, SignalBehavior, Socket, V2};
+use redox_scheme::{RequestKind, SignalBehavior, Socket};
 use static_assertions::const_assert_eq;
 
 use pcid_interface::*;
@@ -147,7 +147,7 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
 
     let scheme_name = format!("disk.{}", name);
 
-    let socket_fd = Socket::<V2>::create(&scheme_name).map_err(Error::SyscallError)?;
+    let socket_fd = Socket::create(&scheme_name).map_err(Error::SyscallError)?;
 
     let mut scheme = scheme::DiskScheme::new(queue, device_space);
 
@@ -167,9 +167,7 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
             }
             None => break,
         };
-        let resp = req
-            .handle_scheme_block_mut(&mut scheme)
-            .expect("TODO: block?");
+        let resp = req.handle_scheme_block(&mut scheme).expect("TODO: block?");
         socket_fd
             .write_response(resp, SignalBehavior::Restart)
             .expect("virtio-blkd: failed to write to disk scheme");

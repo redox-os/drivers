@@ -2,7 +2,7 @@
 
 use std::convert::TryInto;
 use std::fs::File;
-use std::io::{Read,  Write};
+use std::io::{Read, Write};
 use std::os::unix::io::AsRawFd;
 use std::ptr::NonNull;
 
@@ -218,8 +218,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         }
     }
 
-    let event_queue =
-        EventQueue::<Source>::new().expect("rtl8139d: Could not create event queue.");
+    let event_queue = EventQueue::<Source>::new().expect("rtl8139d: Could not create event queue.");
     event_queue
         .subscribe(
             irq_file.as_raw_fd() as usize,

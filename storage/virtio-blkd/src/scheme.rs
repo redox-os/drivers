@@ -13,7 +13,7 @@ use partitionlib::PartitionTable;
 
 use redox_scheme::CallerCtx;
 use redox_scheme::OpenResult;
-use redox_scheme::SchemeBlockMut;
+use redox_scheme::SchemeBlock;
 use syscall::error::*;
 use syscall::flag::*;
 use syscall::schemev2::NewFdFlags;
@@ -201,7 +201,7 @@ impl<'a> DiskScheme<'a> {
     }
 }
 
-impl<'a> SchemeBlockMut for DiskScheme<'a> {
+impl<'a> SchemeBlock for DiskScheme<'a> {
     fn xopen(
         &mut self,
         path: &str,

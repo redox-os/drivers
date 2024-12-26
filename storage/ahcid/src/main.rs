@@ -10,7 +10,7 @@ use std::usize;
 
 use event::{EventFlags, RawEventQueue};
 use pcid_interface::PciFunctionHandle;
-use redox_scheme::{RequestKind, Response, SignalBehavior, Socket, V2};
+use redox_scheme::{RequestKind, Response, SignalBehavior, Socket};
 use syscall::error::{Error, ENODEV};
 
 use log::{error, info};
@@ -53,8 +53,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         .as_ptr() as usize;
     {
         let scheme_name = format!("disk.{}", name);
-        let socket =
-            Socket::<V2>::nonblock(&scheme_name).expect("ahcid: failed to create disk scheme");
+        let socket = Socket::nonblock(&scheme_name).expect("ahcid: failed to create disk scheme");
 
         let mut irq_file = irq.irq_handle("ahcid");
         let irq_fd = irq_file.as_raw_fd() as usize;
@@ -109,7 +108,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
                         }
                     };
 
-                    if let Some(response) = sqe.handle_scheme_block_mut(&mut scheme) {
+                    if let Some(response) = sqe.handle_scheme_block(&mut scheme) {
                         // TODO: handle full CQE?
                         socket
                             .write_response(response, SignalBehavior::Restart)
@@ -133,7 +132,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
                         // Handle todos in order to finish previous packets if possible
                         let mut i = 0;
                         while i < todo.len() {
-                            if let Some(resp) = todo[i].handle_scheme_block_mut(&mut scheme) {
+                            if let Some(resp) = todo[i].handle_scheme_block(&mut scheme) {
                                 let _sqe = todo.remove(i);
                                 socket
                                     .write_response(resp, SignalBehavior::Restart)
@@ -151,7 +150,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
             // Handle todos to start new packets if possible
             let mut i = 0;
             while i < todo.len() {
-                if let Some(response) = todo[i].handle_scheme_block_mut(&mut scheme) {
+                if let Some(response) = todo[i].handle_scheme_block(&mut scheme) {
                     let _sqe = todo.remove(i);
                     socket
                         .write_response(response, SignalBehavior::Restart)

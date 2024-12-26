@@ -4,7 +4,7 @@ use std::{cmp, str};
 use crate::protocol::Protocol;
 use crate::scsi::Scsi;
 
-use redox_scheme::{CallerCtx, OpenResult, SchemeMut};
+use redox_scheme::{CallerCtx, OpenResult, Scheme};
 use syscall::error::{Error, Result};
 use syscall::error::{EACCES, EBADF, EINVAL, EIO, ENOENT, ENOSYS};
 use syscall::flag::{MODE_CHR, MODE_DIR};
@@ -39,7 +39,7 @@ impl<'a> ScsiScheme<'a> {
     }
 }
 
-impl SchemeMut for ScsiScheme<'_> {
+impl Scheme for ScsiScheme<'_> {
     fn xopen(&mut self, path_str: &str, flags: usize, ctx: &CallerCtx) -> Result<OpenResult> {
         if ctx.uid != 0 {
             return Err(Error::new(EACCES));

@@ -12,7 +12,7 @@ use std::{slice, usize};
 
 use libredox::flag;
 use pcid_interface::{PciFeature, PciFeatureInfo, PciFunction, PciFunctionHandle};
-use redox_scheme::{CallRequest, RequestKind, SignalBehavior, Socket, V2};
+use redox_scheme::{CallRequest, RequestKind, SignalBehavior, Socket};
 use syscall::{Event, Packet, Result, SchemeBlockMut, PAGE_SIZE};
 
 use self::nvme::{InterruptMethod, InterruptSources, Nvme};
@@ -170,7 +170,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     let address = unsafe { pcid_handle.map_bar(0).expect("nvmed").ptr };
 
-    let socket = Socket::<V2>::create(&scheme_name).expect("nvmed: failed to create disk scheme");
+    let socket = Socket::create(&scheme_name).expect("nvmed: failed to create disk scheme");
 
     daemon.ready().expect("nvmed: failed to signal readiness");
 
@@ -220,7 +220,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
         let mut i = 0;
         while i < todo.len() {
-            if let Some(resp) = todo[i].handle_scheme_block_mut(&mut scheme) {
+            if let Some(resp) = todo[i].handle_scheme_block(&mut scheme) {
                 let _req = todo.remove(i);
                 socket
                     .write_response(resp, SignalBehavior::Restart)

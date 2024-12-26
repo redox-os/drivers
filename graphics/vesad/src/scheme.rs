@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::str;
 
 use inputd::{VtEvent, VtEventKind};
-use redox_scheme::SchemeMut;
+use redox_scheme::Scheme;
 use syscall::{Error, MapFlags, Result, EBADF, EINVAL, ENOENT};
 
 use crate::{framebuffer::FrameBuffer, screen::GraphicScreen};
@@ -105,7 +105,7 @@ impl DisplayScheme {
     }
 }
 
-impl SchemeMut for DisplayScheme {
+impl Scheme for DisplayScheme {
     fn open(&mut self, path_str: &str, _flags: usize, _uid: u32, _gid: u32) -> Result<usize> {
         let mut parts = path_str.split('/');
         let mut vt_screen = parts.next().unwrap_or("").split('.');

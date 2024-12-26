@@ -4,7 +4,7 @@ use std::str;
 
 use common::io::Io as _;
 use driver_block::{Disk, DiskWrapper};
-use redox_scheme::{CallerCtx, OpenResult, SchemeBlockMut};
+use redox_scheme::{CallerCtx, OpenResult, SchemeBlock};
 use syscall::schemev2::NewFdFlags;
 use syscall::{
     Error, Result, Stat, EACCES, EBADF, EINVAL, EISDIR, ENOENT, ENOLCK, EOVERFLOW, MODE_DIR,
@@ -96,7 +96,7 @@ impl DiskScheme {
     }
 }
 
-impl SchemeBlockMut for DiskScheme {
+impl SchemeBlock for DiskScheme {
     fn xopen(&mut self, path: &str, flags: usize, ctx: &CallerCtx) -> Result<Option<OpenResult>> {
         if ctx.uid != 0 {
             return Err(Error::new(EACCES));

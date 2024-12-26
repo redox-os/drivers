@@ -6,7 +6,7 @@ use std::io::prelude::*;
 use std::sync::Arc;
 use std::{cmp, str};
 
-use redox_scheme::{CallerCtx, OpenResult, SchemeBlockMut};
+use redox_scheme::{CallerCtx, OpenResult, SchemeBlock};
 use syscall::schemev2::NewFdFlags;
 use syscall::{
     Error, Result, Stat, EACCES, EBADF, EINVAL, EISDIR, ENOENT, ENOLCK, EOVERFLOW, MODE_DIR,
@@ -192,7 +192,7 @@ impl DiskScheme {
     }
 }
 
-impl SchemeBlockMut for DiskScheme {
+impl SchemeBlock for DiskScheme {
     fn xopen(
         &mut self,
         path_str: &str,

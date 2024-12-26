@@ -7,7 +7,7 @@ use std::os::unix::io::AsRawFd;
 use std::sync::Arc;
 
 use event::{EventFlags, RawEventQueue};
-use redox_scheme::{RequestKind, SignalBehavior, Socket, V2};
+use redox_scheme::{RequestKind, SignalBehavior, Socket};
 use syscall::{EAGAIN, EWOULDBLOCK};
 
 mod acpi;
@@ -66,7 +66,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         .expect("acpid: failed to open `/scheme/kernel.acpi/kstop`");
 
     let mut event_queue = RawEventQueue::new().expect("acpid: failed to create event queue");
-    let socket = Socket::<V2>::nonblock("acpi").expect("acpid: failed to create disk scheme");
+    let socket = Socket::nonblock("acpi").expect("acpid: failed to create disk scheme");
 
     daemon.ready().expect("acpid: failed to notify parent");
 
@@ -114,7 +114,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
                     }
                 };
 
-                let response = sqe.handle_scheme_mut(&mut scheme);
+                let response = sqe.handle_scheme(&mut scheme);
                 socket
                     .write_response(response, SignalBehavior::Restart)
                     .expect("acpid: failed to write response");

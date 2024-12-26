@@ -7,7 +7,7 @@ use std::sync::Arc;
 use common::{dma::Dma, sgl};
 use inputd::{Damage, VtEvent, VtEventKind};
 
-use redox_scheme::SchemeMut;
+use redox_scheme::Scheme;
 use syscall::{Error as SysError, MapFlags, EINVAL, PAGE_SIZE};
 
 use virtio_core::spec::{Buffer, ChainBuilder, DescriptorFlags};
@@ -227,7 +227,7 @@ struct Handle<'a> {
     vt: usize,
 }
 
-pub struct Scheme<'a> {
+pub struct GpuScheme<'a> {
     handles: BTreeMap<usize /* file descriptor */, Handle<'a>>,
     /// Counter used for file descriptor allocation.
     next_id: AtomicUsize,
@@ -235,13 +235,13 @@ pub struct Scheme<'a> {
     pub inputd_handle: inputd::DisplayHandle,
 }
 
-impl<'a> Scheme<'a> {
+impl<'a> GpuScheme<'a> {
     pub async fn new(
         config: &'a mut GpuConfig,
         control_queue: Arc<Queue<'a>>,
         cursor_queue: Arc<Queue<'a>>,
         transport: Arc<dyn Transport>,
-    ) -> Result<Scheme<'a>, Error> {
+    ) -> Result<GpuScheme<'a>, Error> {
         let displays = Self::probe(
             control_queue.clone(),
             cursor_queue.clone(),
@@ -335,7 +335,7 @@ impl<'a> Scheme<'a> {
     }
 }
 
-impl<'a> SchemeMut for Scheme<'a> {
+impl<'a> Scheme for GpuScheme<'a> {
     fn open(&mut self, path: &str, _flags: usize, _uid: u32, _gid: u32) -> syscall::Result<usize> {
         if path.is_empty() {
             return Err(SysError::new(EINVAL));

@@ -10,7 +10,7 @@ use syscall::{
     MODE_FILE, O_DIRECTORY, O_STAT,
 };
 
-use redox_scheme::{CallerCtx, OpenResult, SchemeBlockMut};
+use redox_scheme::{CallerCtx, OpenResult, SchemeBlock};
 
 #[derive(Clone)]
 enum Handle {
@@ -70,7 +70,7 @@ impl DiskScheme {
     }
 }
 
-impl SchemeBlockMut for DiskScheme {
+impl SchemeBlock for DiskScheme {
     fn xopen(&mut self, path: &str, flags: usize, ctx: &CallerCtx) -> Result<Option<OpenResult>> {
         if ctx.uid == 0 {
             let path_str = path.trim_matches('/');
