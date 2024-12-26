@@ -142,68 +142,65 @@ impl TextScreen {
             self.changed.insert(y);
         }
 
-        {
-            let changed = &mut self.changed;
-            self.console.write(buf, |event| match event {
-                ransid::Event::Char {
-                    x,
-                    y,
-                    c,
-                    color,
-                    bold,
-                    ..
-                } => {
-                    Self::char(map, x * 8, y * 16, c, color.as_rgb(), bold, false);
-                    changed.insert(y);
+        self.console.write(buf, |event| match event {
+            ransid::Event::Char {
+                x,
+                y,
+                c,
+                color,
+                bold,
+                ..
+            } => {
+                Self::char(map, x * 8, y * 16, c, color.as_rgb(), bold, false);
+                self.changed.insert(y);
+            }
+            ransid::Event::Input { data } => input.extend(data),
+            ransid::Event::Rect { x, y, w, h, color } => {
+                Self::rect(map, x * 8, y * 16, w * 8, h * 16, color.as_rgb());
+                for y2 in y..y + h {
+                    self.changed.insert(y2);
                 }
-                ransid::Event::Input { data } => input.extend(data),
-                ransid::Event::Rect { x, y, w, h, color } => {
-                    Self::rect(map, x * 8, y * 16, w * 8, h * 16, color.as_rgb());
-                    for y2 in y..y + h {
-                        changed.insert(y2);
-                    }
-                }
-                ransid::Event::ScreenBuffer { .. } => (),
-                ransid::Event::Move {
-                    from_x,
-                    from_y,
-                    to_x,
-                    to_y,
-                    w,
-                    h,
-                } => {
-                    let width = map.width;
-                    let pixels = unsafe { &mut *map.offscreen };
+            }
+            ransid::Event::ScreenBuffer { .. } => (),
+            ransid::Event::Move {
+                from_x,
+                from_y,
+                to_x,
+                to_y,
+                w,
+                h,
+            } => {
+                let width = map.width;
+                let pixels = unsafe { &mut *map.offscreen };
 
-                    for raw_y in 0..h {
-                        let y = if from_y > to_y { raw_y } else { h - raw_y - 1 };
+                for raw_y in 0..h {
+                    let y = if from_y > to_y { raw_y } else { h - raw_y - 1 };
 
-                        for pixel_y in 0..16 {
-                            {
-                                let off_from = ((from_y + y) * 16 + pixel_y) * width + from_x * 8;
-                                let off_to = ((to_y + y) * 16 + pixel_y) * width + to_x * 8;
-                                let len = w * 8;
+                    for pixel_y in 0..16 {
+                        {
+                            let off_from = ((from_y + y) * 16 + pixel_y) * width + from_x * 8;
+                            let off_to = ((to_y + y) * 16 + pixel_y) * width + to_x * 8;
+                            let len = w * 8;
 
-                                if off_from + len <= pixels.len() && off_to + len <= pixels.len() {
-                                    unsafe {
-                                        let data_ptr = pixels.as_mut_ptr() as *mut u32;
-                                        ptr::copy(
-                                            data_ptr.offset(off_from as isize),
-                                            data_ptr.offset(off_to as isize),
-                                            len,
-                                        );
-                                    }
+                            if off_from + len <= pixels.len() && off_to + len <= pixels.len() {
+                                unsafe {
+                                    let data_ptr = pixels.as_mut_ptr() as *mut u32;
+                                    ptr::copy(
+                                        data_ptr.offset(off_from as isize),
+                                        data_ptr.offset(off_to as isize),
+                                        len,
+                                    );
                                 }
                             }
                         }
-
-                        changed.insert(to_y + y);
                     }
+
+                    self.changed.insert(to_y + y);
                 }
-                ransid::Event::Resize { .. } => (),
-                ransid::Event::Title { .. } => (),
-            });
-        }
+            }
+            ransid::Event::Resize { .. } => (),
+            ransid::Event::Title { .. } => (),
+        });
 
         if self.console.state.cursor
             && self.console.state.x < self.console.state.w
