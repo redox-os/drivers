@@ -124,9 +124,13 @@ impl TextScreen {
         buf: &[u8],
         input: &mut VecDeque<u8>,
     ) -> Vec<Damage> {
-        self.console.state.w = map.width / 8;
-        self.console.state.h = map.height / 16;
-        self.console.state.bottom_margin = (map.height / 16).saturating_sub(1);
+        self.console.resize(map.width / 8, map.height / 16);
+        if self.console.state.x > self.console.state.w {
+            self.console.state.x = self.console.state.w;
+        }
+        if self.console.state.y > self.console.state.h {
+            self.console.state.y = self.console.state.h;
+        }
 
         if self.console.state.cursor
             && self.console.state.x < self.console.state.w
