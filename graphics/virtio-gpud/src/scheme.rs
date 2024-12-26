@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -32,39 +31,18 @@ struct GpuResource {
     sgl: sgl::Sgl,
 }
 
-pub struct Display<'a> {
-    control_queue: Arc<Queue<'a>>,
-    cursor_queue: Arc<Queue<'a>>,
-    transport: Arc<dyn Transport>,
-
-    active_vt: RefCell<usize>,
-    vts: RefCell<HashMap<usize, GpuResource>>,
-
+#[derive(Debug, Copy, Clone)]
+pub struct Display {
     width: u32,
     height: u32,
-
-    id: usize,
 }
 
-impl<'a> Display<'a> {
-    pub fn new(
-        control_queue: Arc<Queue<'a>>,
-        cursor_queue: Arc<Queue<'a>>,
-        transport: Arc<dyn Transport>,
-        id: usize,
-    ) -> Self {
+impl Display {
+    pub fn new() -> Self {
         Self {
-            control_queue,
-            cursor_queue,
-
-            active_vt: RefCell::new(0),
-            vts: RefCell::new(HashMap::new()),
-
+            // FIXME use the actual screen size
             width: 1920,
             height: 1080,
-            transport,
-
-            id,
         }
     }
 
@@ -75,7 +53,9 @@ impl<'a> Display<'a> {
         buffer[..path.len()].copy_from_slice(path.as_bytes());
         Ok(path.len())
     }
+}
 
+impl GpuScheme<'_> {
     async fn send_request<T>(&self, request: Dma<T>) -> Result<Dma<ControlHeader>, Error> {
         let header = Dma::new(ControlHeader::default())?;
         let command = ChainBuilder::new()
@@ -94,13 +74,18 @@ impl<'a> Display<'a> {
         Ok(())
     }
 
-    async fn res_for_screen(&self, vt: usize) -> Result<(ResourceId, *mut u8), Error> {
-        if let Some(res) = self.vts.borrow().get(&vt) {
+    async fn res_for_screen(
+        &mut self,
+        vt: usize,
+        screen: usize,
+    ) -> Result<(ResourceId, *mut u8), Error> {
+        if let Some(res) = self.vts.entry(vt).or_default().get(&screen) {
             return Ok((res.id, res.sgl.as_ptr()));
         }
 
         let bpp = 32;
-        let fb_size = self.width as usize * self.height as usize * bpp / 8;
+        let fb_size =
+            self.displays[screen].width as usize * self.displays[screen].height as usize * bpp / 8;
         let sgl = sgl::Sgl::new(fb_size)?;
 
         unsafe {
@@ -112,8 +97,8 @@ impl<'a> Display<'a> {
         // Create a host resource using `VIRTIO_GPU_CMD_RESOURCE_CREATE_2D`.
         let mut request = Dma::new(ResourceCreate2d::default())?;
 
-        request.set_width(self.width);
-        request.set_height(self.height);
+        request.set_width(self.displays[screen].width);
+        request.set_height(self.displays[screen].height);
         request.set_format(ResourceFormat::Bgrx);
         request.set_resource_id(res_id);
 
@@ -143,40 +128,52 @@ impl<'a> Display<'a> {
         self.control_queue.send(command).await;
         assert_eq!(header.ty.get(), CommandTy::RespOkNodata);
 
-        let mut mapped_vts = self.vts.borrow_mut();
-        let res = mapped_vts
+        let res = self
+            .vts
             .entry(vt)
+            .or_default()
+            .entry(screen)
             .or_insert(GpuResource { id: res_id, sgl });
         Ok((res.id, res.sgl.as_ptr()))
     }
 
-    async fn set_scanout(&self, vt: usize) -> Result<(), Error> {
-        let (res_id, _) = self.res_for_screen(vt).await?;
+    async fn set_scanout(&mut self, vt: usize, screen: usize) -> Result<(), Error> {
+        let (res_id, _) = self.res_for_screen(vt, screen).await?;
 
         let scanout_request = Dma::new(SetScanout::new(
-            self.id as u32,
+            screen as u32,
             res_id,
-            GpuRect::new(0, 0, self.width, self.height),
+            GpuRect::new(
+                0,
+                0,
+                self.displays[screen].width,
+                self.displays[screen].height,
+            ),
         ))?;
         let header = self.send_request(scanout_request).await?;
         assert_eq!(header.ty.get(), CommandTy::RespOkNodata);
 
-        self.flush(vt, None).await?;
+        self.flush(vt, screen, None).await?;
 
         Ok(())
     }
 
     /// If `damage` is `None`, the entire screen is flushed.
-    async fn flush(&self, vt: usize, damage: Option<&[Damage]>) -> Result<(), Error> {
-        let (res_id, _) = self.res_for_screen(vt).await?;
+    async fn flush(
+        &mut self,
+        vt: usize,
+        screen: usize,
+        damage: Option<&[Damage]>,
+    ) -> Result<(), Error> {
+        let (res_id, _) = self.res_for_screen(vt, screen).await?;
 
         let req = Dma::new(XferToHost2d::new(
             res_id,
             GpuRect {
                 x: 0,
                 y: 0,
-                width: self.width,
-                height: self.height,
+                width: self.displays[screen].width,
+                height: self.displays[screen].height,
             },
             0,
         ))?;
@@ -187,7 +184,12 @@ impl<'a> Display<'a> {
             for damage in damage {
                 self.flush_resource(ResourceFlush::new(
                     res_id,
-                    damage.clip(self.width as i32, self.height as i32).into(),
+                    damage
+                        .clip(
+                            self.displays[screen].width as i32,
+                            self.displays[screen].height as i32,
+                        )
+                        .into(),
                 ))
                 .await?;
             }
@@ -197,8 +199,8 @@ impl<'a> Display<'a> {
                 GpuRect {
                     x: 0,
                     y: 0,
-                    width: self.width,
-                    height: self.height,
+                    width: self.displays[screen].width,
+                    height: self.displays[screen].height,
                 },
             ))
             .await?;
@@ -207,17 +209,24 @@ impl<'a> Display<'a> {
     }
 }
 
-struct Handle<'a> {
-    display: Arc<Display<'a>>,
+struct Handle {
+    screen: usize,
     vt: usize,
 }
 
 pub struct GpuScheme<'a> {
-    handles: BTreeMap<usize /* file descriptor */, Handle<'a>>,
+    control_queue: Arc<Queue<'a>>,
+    cursor_queue: Arc<Queue<'a>>,
+    transport: Arc<dyn Transport>,
+    pub inputd_handle: inputd::DisplayHandle,
+
+    handles: BTreeMap<usize /* file descriptor */, Handle>,
     /// Counter used for file descriptor allocation.
     next_id: AtomicUsize,
-    displays: Vec<Arc<Display<'a>>>,
-    pub inputd_handle: inputd::DisplayHandle,
+
+    active_vt: usize,
+    vts: HashMap<usize, HashMap<usize, GpuResource>>,
+    displays: Vec<Display>,
 }
 
 impl<'a> GpuScheme<'a> {
@@ -227,50 +236,42 @@ impl<'a> GpuScheme<'a> {
         cursor_queue: Arc<Queue<'a>>,
         transport: Arc<dyn Transport>,
     ) -> Result<GpuScheme<'a>, Error> {
-        let displays = Self::probe(
-            control_queue.clone(),
-            cursor_queue.clone(),
-            transport.clone(),
-            config,
-        )
-        .await?;
+        let displays = Self::probe(control_queue.clone(), config).await?;
 
         let inputd_handle = inputd::DisplayHandle::new("virtio-gpu").unwrap();
 
         Ok(Self {
+            control_queue,
+            cursor_queue,
+            transport,
+            inputd_handle,
+
             handles: BTreeMap::new(),
             next_id: AtomicUsize::new(0),
+
+            active_vt: 0,
+            vts: HashMap::new(),
             displays,
-            inputd_handle,
         })
     }
 
     async fn probe(
         control_queue: Arc<Queue<'a>>,
-        cursor_queue: Arc<Queue<'a>>,
-        transport: Arc<dyn Transport>,
         config: &GpuConfig,
-    ) -> Result<Vec<Arc<Display<'a>>>, Error> {
+    ) -> Result<Vec<Display>, Error> {
         let mut display_info = Self::get_display_info(control_queue.clone()).await?;
         let displays = &mut display_info.display_info[..config.num_scanouts() as usize];
 
         let mut result = vec![];
 
-        for (id, info) in displays.iter().enumerate() {
+        for info in displays.iter() {
             log::info!(
                 "virtio-gpu: opening display ({}x{}px)",
                 info.rect().width,
                 info.rect().height
             );
 
-            let display = Display::new(
-                control_queue.clone(),
-                cursor_queue.clone(),
-                transport.clone(),
-                id,
-            );
-
-            result.push(Arc::new(display));
+            result.push(Display::new());
         }
 
         Ok(result)
@@ -299,13 +300,13 @@ impl<'a> GpuScheme<'a> {
             VtEventKind::Activate => {
                 log::info!("activate {}", vt_event.vt);
 
-                for display in &self.displays {
+                for id in 0..self.displays.len() {
                     log::warn!("virtio-gpu: activating");
 
-                    futures::executor::block_on(display.set_scanout(vt_event.vt)).unwrap();
-
-                    *display.active_vt.borrow_mut() = vt_event.vt;
+                    futures::executor::block_on(self.set_scanout(vt_event.vt, id)).unwrap();
                 }
+
+                self.active_vt = vt_event.vt;
             }
 
             VtEventKind::Deactivate => {
@@ -334,33 +335,30 @@ impl<'a> Scheme for GpuScheme<'a> {
 
         dbg!(vt, id);
 
-        let display = self.displays.get(id).ok_or(SysError::new(EINVAL))?;
+        if id >= self.displays.len() {
+            return Err(SysError::new(EINVAL));
+        };
 
         let fd = self.next_id.fetch_add(1, Ordering::SeqCst);
-        self.handles.insert(
-            fd,
-            Handle {
-                display: display.clone(),
-                vt,
-            },
-        );
+        self.handles.insert(fd, Handle { screen: id, vt });
         Ok(fd)
     }
 
     fn fpath(&mut self, id: usize, buf: &mut [u8]) -> syscall::Result<usize> {
         let handle = self.handles.get(&id).unwrap();
-        let bytes_copied = futures::executor::block_on(handle.display.get_fpath(buf)).unwrap();
+        let bytes_copied =
+            futures::executor::block_on(self.displays[handle.screen].get_fpath(buf)).unwrap();
         Ok(bytes_copied)
     }
 
     fn fsync(&mut self, id: usize) -> syscall::Result<usize> {
         let handle = self.handles.get(&id).ok_or(SysError::new(EINVAL))?;
-        if handle.vt != *handle.display.active_vt.borrow() {
+        if handle.vt != self.active_vt {
             // This is a protection against background VT's spamming us with flush requests. We will
             // flush the resource on the next scanout anyway
             return Ok(0);
         }
-        futures::executor::block_on(handle.display.flush(handle.vt, None)).unwrap();
+        futures::executor::block_on(self.flush(handle.vt, handle.screen, None)).unwrap();
         Ok(0)
     }
 
@@ -385,7 +383,7 @@ impl<'a> Scheme for GpuScheme<'a> {
     ) -> syscall::Result<usize> {
         let handle = self.handles.get(&id).ok_or(SysError::new(EINVAL))?;
 
-        if handle.vt != *handle.display.active_vt.borrow() {
+        if handle.vt != self.active_vt {
             // This is a protection against background VT's spamming us with flush requests. We will
             // flush the resource on the next scanout anyway
             return Ok(buf.len());
@@ -398,7 +396,7 @@ impl<'a> Scheme for GpuScheme<'a> {
             )
         };
 
-        futures::executor::block_on(handle.display.flush(handle.vt, Some(damage))).unwrap();
+        futures::executor::block_on(self.flush(handle.vt, handle.screen, Some(damage))).unwrap();
 
         Ok(buf.len())
     }
@@ -416,7 +414,7 @@ impl<'a> Scheme for GpuScheme<'a> {
         log::info!("KSMSG MMAP {} {:?} {} {}", id, flags, offset, size);
         let handle = self.handles.get(&id).ok_or(SysError::new(EINVAL))?;
         let (_, ptr) =
-            futures::executor::block_on(handle.display.res_for_screen(handle.vt)).unwrap();
+            futures::executor::block_on(self.res_for_screen(handle.vt, handle.screen)).unwrap();
         Ok(unsafe { ptr.offset(offset as isize) } as usize)
     }
 }
