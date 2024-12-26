@@ -38,14 +38,6 @@ pub struct Display {
 }
 
 impl Display {
-    pub fn new() -> Self {
-        Self {
-            // FIXME use the actual screen size
-            width: 1920,
-            height: 1080,
-        }
-    }
-
     async fn get_fpath(&self, buffer: &mut [u8]) -> Result<usize, Error> {
         let path = format!("display.virtio-gpu:3.0/{}/{}", self.width, self.height);
 
@@ -271,7 +263,10 @@ impl<'a> GpuScheme<'a> {
                 info.rect().height
             );
 
-            result.push(Display::new());
+            result.push(Display {
+                width: info.rect().width,
+                height: info.rect().height,
+            });
         }
 
         Ok(result)
