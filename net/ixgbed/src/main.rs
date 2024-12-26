@@ -1,13 +1,9 @@
-use std::cell::RefCell;
-use std::convert::Infallible;
-use std::io::{Read, Result, Write};
+use std::io::{Read, Write};
 use std::os::unix::io::AsRawFd;
-use std::rc::Rc;
 
 use driver_network::NetworkScheme;
 use event::{user_data, EventQueue};
 use pcid_interface::PciFunctionHandle;
-use syscall::EventFlags;
 
 pub mod device;
 #[rustfmt::skip]
@@ -47,7 +43,7 @@ fn main() {
             }
         }
 
-        let mut event_queue =
+        let event_queue =
             EventQueue::<Source>::new().expect("ixgbed: Could not create event queue.");
         event_queue
             .subscribe(
@@ -58,7 +54,7 @@ fn main() {
             .unwrap();
         event_queue
             .subscribe(
-                scheme.event_handle() as usize,
+                scheme.event_handle().raw(),
                 Source::Scheme,
                 event::EventFlags::READ,
             )

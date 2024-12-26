@@ -1,12 +1,10 @@
 #![feature(int_roundings)]
 
-use std::cell::RefCell;
-use std::convert::{Infallible, TryInto};
+use std::convert::TryInto;
 use std::fs::File;
-use std::io::{Read, Result, Write};
+use std::io::{Read,  Write};
 use std::os::unix::io::AsRawFd;
 use std::ptr::NonNull;
-use std::rc::Rc;
 
 use driver_network::NetworkScheme;
 use event::{user_data, EventQueue};
@@ -18,7 +16,6 @@ use pcid_interface::{
     MsiSetFeatureInfo, PciFeature, PciFeatureInfo, PciFunctionHandle, SetFeatureInfo,
     SubdriverArguments,
 };
-use syscall::EventFlags;
 
 pub mod device;
 
@@ -221,7 +218,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         }
     }
 
-    let mut event_queue =
+    let event_queue =
         EventQueue::<Source>::new().expect("rtl8139d: Could not create event queue.");
     event_queue
         .subscribe(
@@ -232,7 +229,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         .unwrap();
     event_queue
         .subscribe(
-            scheme.event_handle() as usize,
+            scheme.event_handle().raw(),
             Source::Scheme,
             event::EventFlags::READ,
         )

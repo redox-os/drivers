@@ -1,13 +1,9 @@
-use std::cell::RefCell;
-use std::convert::Infallible;
-use std::io::{Read, Result, Write};
+use std::io::{Read, Write};
 use std::os::unix::io::AsRawFd;
-use std::rc::Rc;
 
 use driver_network::NetworkScheme;
 use event::{user_data, EventQueue};
 use pcid_interface::PciFunctionHandle;
-use syscall::EventFlags;
 
 pub mod device;
 
@@ -46,7 +42,7 @@ fn main() {
             }
         }
 
-        let mut event_queue =
+        let event_queue =
             EventQueue::<Source>::new().expect("e1000d: failed to create event queue");
 
         event_queue
@@ -58,7 +54,7 @@ fn main() {
             .expect("e1000d: failed to subscribe to IRQ fd");
         event_queue
             .subscribe(
-                scheme.event_handle() as usize,
+                scheme.event_handle().raw(),
                 Source::Scheme,
                 event::EventFlags::READ,
             )
