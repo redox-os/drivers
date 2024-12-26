@@ -65,6 +65,10 @@ impl Display {
 
         match display_fd_map(width, height, &mut new_display_file) {
             Ok(offscreen) => {
+                unsafe {
+                    display_fd_unmap(self.offscreen);
+                }
+
                 self.offscreen = offscreen;
                 self.width = width;
                 self.height = height;
@@ -109,6 +113,10 @@ impl Display {
     pub fn resize(&mut self, width: usize, height: usize) {
         match display_fd_map(width, height, &mut self.display_file) {
             Ok(offscreen) => {
+                unsafe {
+                    display_fd_unmap(self.offscreen);
+                }
+
                 self.offscreen = offscreen;
                 self.width = width;
                 self.height = height;
