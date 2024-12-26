@@ -61,11 +61,17 @@ impl Display {
 
         let (mut new_display_file, width, height) = Self::open_display(&self.input_handle).unwrap();
 
-        eprintln!("fbcond: Opened new display");
+        eprintln!("fbcond: Opened new display with size {width}x{height}");
 
         match display_fd_map(width, height, &mut new_display_file) {
             Ok(offscreen) => {
+                unsafe {
+                    display_fd_unmap(self.offscreen);
+                }
+
                 self.offscreen = offscreen;
+                self.width = width;
+                self.height = height;
                 self.display_file = new_display_file;
 
                 eprintln!("fbcond: Mapped new display");
@@ -107,7 +113,13 @@ impl Display {
     pub fn resize(&mut self, width: usize, height: usize) {
         match display_fd_map(width, height, &mut self.display_file) {
             Ok(offscreen) => {
+                unsafe {
+                    display_fd_unmap(self.offscreen);
+                }
+
                 self.offscreen = offscreen;
+                self.width = width;
+                self.height = height;
             }
             Err(err) => {
                 eprintln!("failed to resize display to {}x{}: {}", width, height, err);
