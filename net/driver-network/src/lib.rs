@@ -1,11 +1,15 @@
 use std::collections::BTreeMap;
 use std::{cmp, io};
 
+use libredox::flag::O_NONBLOCK;
 use libredox::Fd;
-use redox_scheme::{CallRequest, RequestKind, Response, SchemeBlockMut, SignalBehavior, Socket};
+use redox_scheme::{
+    CallRequest, CallerCtx, OpenResult, RequestKind, Response, SchemeBlockMut, SignalBehavior,
+    Socket,
+};
+use syscall::schemev2::NewFdFlags;
 use syscall::{
     Error, EventFlags, Result, Stat, EACCES, EAGAIN, EBADF, EINTR, EINVAL, EWOULDBLOCK, MODE_FILE,
-    O_NONBLOCK,
 };
 
 pub trait NetworkAdapter {
@@ -38,8 +42,8 @@ pub struct NetworkScheme<T: NetworkAdapter> {
 
 #[derive(Copy, Clone)]
 enum Handle {
-    Data { flags: usize },
-    Mac { offset: usize },
+    Data,
+    Mac,
 }
 
 impl<T: NetworkAdapter> NetworkScheme<T> {
@@ -143,20 +147,28 @@ impl<T: NetworkAdapter> NetworkScheme<T> {
 }
 
 impl<T: NetworkAdapter> SchemeBlockMut for NetworkScheme<T> {
-    fn open(&mut self, path: &str, flags: usize, uid: u32, _gid: u32) -> Result<Option<usize>> {
-        if uid != 0 {
+    fn xopen(
+        &mut self,
+        path: &str,
+        _flags: usize,
+        caller_ctx: &CallerCtx,
+    ) -> Result<Option<OpenResult>> {
+        if caller_ctx.uid != 0 {
             return Err(Error::new(EACCES));
         }
 
-        let handle = match path {
-            "" => Handle::Data { flags },
-            "mac" => Handle::Mac { offset: 0 },
+        let (handle, flags) = match path {
+            "" => (Handle::Data, NewFdFlags::empty()),
+            "mac" => (Handle::Mac, NewFdFlags::POSITIONED),
             _ => return Err(Error::new(EINVAL)),
         };
 
         self.next_id += 1;
         self.handles.insert(self.next_id, handle);
-        Ok(Some(self.next_id))
+        Ok(Some(OpenResult::ThisScheme {
+            number: self.next_id,
+            flags,
+        }))
     }
 
     fn dup(&mut self, id: usize, buf: &[u8]) -> Result<Option<usize>> {
@@ -174,18 +186,17 @@ impl<T: NetworkAdapter> SchemeBlockMut for NetworkScheme<T> {
         &mut self,
         id: usize,
         buf: &mut [u8],
-        _offset: u64,
-        _fcntl_flags: u32,
+        offset: u64,
+        fcntl_flags: u32,
     ) -> Result<Option<usize>> {
         let handle = self.handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
-        let flags = match *handle {
-            Handle::Data { flags } => flags,
-            Handle::Mac { ref mut offset } => {
-                let data = &self.adapter.mac_address()[*offset..];
+        match *handle {
+            Handle::Data => {}
+            Handle::Mac => {
+                let data = &self.adapter.mac_address()[offset as usize..];
                 let i = cmp::min(buf.len(), data.len());
                 buf[..i].copy_from_slice(&data[..i]);
-                *offset += i;
                 return Ok(Some(i));
             }
         };
@@ -193,7 +204,7 @@ impl<T: NetworkAdapter> SchemeBlockMut for NetworkScheme<T> {
         match self.adapter.read_packet(buf)? {
             Some(count) => Ok(Some(count)),
             None => {
-                if flags & O_NONBLOCK == O_NONBLOCK {
+                if fcntl_flags & O_NONBLOCK as u32 != 0 {
                     Err(Error::new(EWOULDBLOCK))
                 } else {
                     Ok(None)
@@ -212,7 +223,7 @@ impl<T: NetworkAdapter> SchemeBlockMut for NetworkScheme<T> {
         let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
         match handle {
-            Handle::Data { .. } => {}
+            Handle::Data => {}
             Handle::Mac { .. } => return Err(Error::new(EINVAL)),
         }
 
