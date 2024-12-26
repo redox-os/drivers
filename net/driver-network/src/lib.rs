@@ -1,13 +1,15 @@
 use std::collections::BTreeMap;
-use std::fs::File;
-use std::io::{ErrorKind, Read, Write};
-use std::os::fd::{AsRawFd, FromRawFd, RawFd};
 use std::{cmp, io};
 
-use libredox::flag;
+use libredox::flag::O_NONBLOCK;
+use libredox::Fd;
+use redox_scheme::{
+    CallRequest, CallerCtx, OpenResult, RequestKind, Response, SchemeBlockMut, SignalBehavior,
+    Socket,
+};
+use syscall::schemev2::NewFdFlags;
 use syscall::{
-    Error, EventFlags, Packet, Result, SchemeBlockMut, Stat, EACCES, EBADF, EINVAL, EWOULDBLOCK,
-    MODE_FILE, O_NONBLOCK,
+    Error, EventFlags, Result, Stat, EACCES, EAGAIN, EBADF, EINTR, EINVAL, EWOULDBLOCK, MODE_FILE,
 };
 
 pub trait NetworkAdapter {
@@ -32,41 +34,35 @@ pub trait NetworkAdapter {
 pub struct NetworkScheme<T: NetworkAdapter> {
     adapter: T,
     scheme_name: String,
-    scheme: File,
+    socket: Socket,
     next_id: usize,
     handles: BTreeMap<usize, Handle>,
-    todo_packets: Vec<Packet>,
+    blocked: Vec<CallRequest>,
 }
 
 #[derive(Copy, Clone)]
 enum Handle {
-    Data { flags: usize },
-    Mac { offset: usize },
+    Data,
+    Mac,
 }
 
 impl<T: NetworkAdapter> NetworkScheme<T> {
     pub fn new(adapter: T, scheme_name: String) -> Self {
         assert!(scheme_name.starts_with("network"));
-        let scheme_fd = libredox::call::open(
-            format!(":{scheme_name}"),
-            flag::O_RDWR | flag::O_CREAT | flag::O_NONBLOCK,
-            0,
-        )
-        .expect("failed to create network scheme");
-        let scheme = unsafe { File::from_raw_fd(scheme_fd as RawFd) };
+        let socket = Socket::nonblock(&scheme_name).expect("failed to create network scheme");
 
         NetworkScheme {
             adapter,
             scheme_name,
-            scheme,
+            socket,
             next_id: 0,
             handles: BTreeMap::new(),
-            todo_packets: vec![],
+            blocked: vec![],
         }
     }
 
-    pub fn event_handle(&self) -> RawFd {
-        self.scheme.as_raw_fd()
+    pub fn event_handle(&self) -> &Fd {
+        self.socket.inner()
     }
 
     pub fn adapter(&self) -> &T {
@@ -86,41 +82,53 @@ impl<T: NetworkAdapter> NetworkScheme<T> {
     // to call when an irq is received to indicate that blocked packets can
     // be processed.
     pub fn tick(&mut self) -> io::Result<()> {
-        // Handle any blocked packets
+        // Handle any blocked requests
         let mut i = 0;
-        while i < self.todo_packets.len() {
-            let mut packet = self.todo_packets[i].clone();
-            if let Some(a) = self.handle(&packet) {
-                self.todo_packets.remove(i);
-                packet.a = a;
-                self.scheme.write(&packet)?;
+        while i < self.blocked.len() {
+            if let Some(resp) = self.blocked[i].handle_scheme_block_mut(self) {
+                self.socket
+                    .write_response(resp, SignalBehavior::Restart)
+                    .expect("vesad: failed to write display scheme");
+                self.blocked.remove(i);
             } else {
                 i += 1;
             }
         }
 
-        // Handle new scheme packets
+        // Handle new scheme requests
         loop {
-            let mut packet = Packet::default();
-            match self.scheme.read(&mut packet) {
-                Ok(0) => {
-                    return Err(io::Error::new(
-                        ErrorKind::BrokenPipe,
-                        "scheme has been closed by the kernel",
-                    ));
+            let request = match self.socket.next_request(SignalBehavior::Restart) {
+                Ok(Some(request)) => request,
+                Ok(None) => {
+                    // Scheme likely got unmounted
+                    std::process::exit(0);
                 }
-                Ok(_) => {}
-                Err(err) if err.kind() == ErrorKind::WouldBlock => break,
-                Err(err) => {
-                    return Err(err);
-                }
-            }
+                Err(err) if err.errno == EAGAIN => break,
+                Err(err) => return Err(err.into()),
+            };
 
-            if let Some(a) = self.handle(&packet) {
-                packet.a = a;
-                self.scheme.write(&packet)?;
-            } else {
-                self.todo_packets.push(packet);
+            match request.kind() {
+                RequestKind::Call(call_request) => {
+                    if let Some(resp) = call_request.handle_scheme_block_mut(self) {
+                        self.socket.write_response(resp, SignalBehavior::Restart)?;
+                    } else {
+                        self.blocked.push(call_request);
+                    }
+                }
+                RequestKind::Cancellation(cancellation_request) => {
+                    if let Some(i) = self
+                        .blocked
+                        .iter()
+                        .position(|req| req.request().request_id() == cancellation_request.id)
+                    {
+                        let blocked_req = self.blocked.remove(i);
+                        let resp = Response::new(&blocked_req, Err(syscall::Error::new(EINTR)));
+                        self.socket.write_response(resp, SignalBehavior::Restart)?;
+                    }
+                }
+                RequestKind::MsyncMsg | RequestKind::MunmapMsg | RequestKind::MmapMsg => {
+                    unreachable!()
+                }
             }
         }
 
@@ -128,16 +136,8 @@ impl<T: NetworkAdapter> NetworkScheme<T> {
         let available_for_read = self.adapter.available_for_read();
         if available_for_read > 0 {
             for &handle_id in self.handles.keys() {
-                self.scheme.write(&Packet {
-                    id: 0,
-                    pid: 0,
-                    uid: 0,
-                    gid: 0,
-                    a: syscall::number::SYS_FEVENT,
-                    b: handle_id,
-                    c: syscall::flag::EVENT_READ.bits(),
-                    d: available_for_read,
-                })?;
+                self.socket
+                    .post_fevent(handle_id, syscall::flag::EVENT_READ.bits())?;
             }
             return Ok(());
         }
@@ -147,20 +147,28 @@ impl<T: NetworkAdapter> NetworkScheme<T> {
 }
 
 impl<T: NetworkAdapter> SchemeBlockMut for NetworkScheme<T> {
-    fn open(&mut self, path: &str, flags: usize, uid: u32, _gid: u32) -> Result<Option<usize>> {
-        if uid != 0 {
+    fn xopen(
+        &mut self,
+        path: &str,
+        _flags: usize,
+        caller_ctx: &CallerCtx,
+    ) -> Result<Option<OpenResult>> {
+        if caller_ctx.uid != 0 {
             return Err(Error::new(EACCES));
         }
 
-        let handle = match path {
-            "" => Handle::Data { flags },
-            "mac" => Handle::Mac { offset: 0 },
+        let (handle, flags) = match path {
+            "" => (Handle::Data, NewFdFlags::empty()),
+            "mac" => (Handle::Mac, NewFdFlags::POSITIONED),
             _ => return Err(Error::new(EINVAL)),
         };
 
         self.next_id += 1;
         self.handles.insert(self.next_id, handle);
-        Ok(Some(self.next_id))
+        Ok(Some(OpenResult::ThisScheme {
+            number: self.next_id,
+            flags,
+        }))
     }
 
     fn dup(&mut self, id: usize, buf: &[u8]) -> Result<Option<usize>> {
@@ -174,16 +182,21 @@ impl<T: NetworkAdapter> SchemeBlockMut for NetworkScheme<T> {
         Ok(Some(self.next_id))
     }
 
-    fn read(&mut self, id: usize, buf: &mut [u8]) -> Result<Option<usize>> {
+    fn read(
+        &mut self,
+        id: usize,
+        buf: &mut [u8],
+        offset: u64,
+        fcntl_flags: u32,
+    ) -> Result<Option<usize>> {
         let handle = self.handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
-        let flags = match *handle {
-            Handle::Data { flags } => flags,
-            Handle::Mac { ref mut offset } => {
-                let data = &self.adapter.mac_address()[*offset..];
+        match *handle {
+            Handle::Data => {}
+            Handle::Mac => {
+                let data = &self.adapter.mac_address()[offset as usize..];
                 let i = cmp::min(buf.len(), data.len());
                 buf[..i].copy_from_slice(&data[..i]);
-                *offset += i;
                 return Ok(Some(i));
             }
         };
@@ -191,7 +204,7 @@ impl<T: NetworkAdapter> SchemeBlockMut for NetworkScheme<T> {
         match self.adapter.read_packet(buf)? {
             Some(count) => Ok(Some(count)),
             None => {
-                if flags & O_NONBLOCK == O_NONBLOCK {
+                if fcntl_flags & O_NONBLOCK as u32 != 0 {
                     Err(Error::new(EWOULDBLOCK))
                 } else {
                     Ok(None)
@@ -200,11 +213,17 @@ impl<T: NetworkAdapter> SchemeBlockMut for NetworkScheme<T> {
         }
     }
 
-    fn write(&mut self, id: usize, buf: &[u8]) -> Result<Option<usize>> {
+    fn write(
+        &mut self,
+        id: usize,
+        buf: &[u8],
+        _offset: u64,
+        _fcntl_flags: u32,
+    ) -> Result<Option<usize>> {
         let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
         match handle {
-            Handle::Data { .. } => {}
+            Handle::Data => {}
             Handle::Mac { .. } => return Err(Error::new(EINVAL)),
         }
 
