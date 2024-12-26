@@ -2,18 +2,13 @@
 #![cfg_attr(target_arch = "riscv64", feature(riscv_ext_intrinsics))] // Required for pause instruction
 #![feature(int_roundings)]
 
-use std::convert::TryInto;
-use std::fs::File;
-use std::io::{ErrorKind, Read, Write};
-use std::os::unix::io::{FromRawFd, RawFd};
 use std::ptr::NonNull;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::{slice, usize};
 
-use libredox::flag;
 use pcid_interface::{PciFeature, PciFeatureInfo, PciFunction, PciFunctionHandle};
-use redox_scheme::{CallRequest, RequestKind, SignalBehavior, Socket};
-use syscall::{Event, Packet, Result, SchemeBlockMut, PAGE_SIZE};
+use redox_scheme::{RequestKind, SignalBehavior, Socket};
+use syscall::Result;
 
 use self::nvme::{InterruptMethod, InterruptSources, Nvme};
 use self::scheme::DiskScheme;

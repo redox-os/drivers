@@ -2,7 +2,7 @@ use crate::spec::*;
 use crate::utils::align;
 
 use common::dma::Dma;
-use event::{EventQueue, RawEventQueue};
+use event::RawEventQueue;
 
 use core::mem::size_of;
 use core::sync::atomic::{AtomicU16, Ordering};

@@ -1,10 +1,9 @@
-use std::collections::VecDeque;
 use std::env;
 
 use inputd::ProducerHandle;
 use orbclient::KeyEvent as OrbKeyEvent;
 use rehid::{
-    report_desc::{self, ReportTy, REPORT_DESC_TY},
+    report_desc::{ReportTy, REPORT_DESC_TY},
     report_handler::ReportHandler,
     usage_tables::{GenericDesktopUsage, UsagePage},
 };

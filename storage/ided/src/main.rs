@@ -3,23 +3,17 @@ use driver_block::Disk;
 use event::{EventFlags, RawEventQueue};
 use libredox::flag;
 use log::{error, info};
-use pcid_interface::{PciBar, PciFunctionHandle};
+use pcid_interface::PciFunctionHandle;
 use redox_scheme::{RequestKind, Response, SignalBehavior, Socket};
 use std::{
     fs::File,
-    io::{ErrorKind, Read, Write},
+    io::{Read, Write},
     os::unix::io::{FromRawFd, RawFd},
     sync::{Arc, Mutex},
     thread::{self, sleep},
     time::Duration,
 };
-use syscall::{
-    data::{Event, Packet},
-    error::{Error, ENODEV},
-    flag::EVENT_READ,
-    scheme::SchemeBlockMut,
-    EAGAIN, EINTR, EWOULDBLOCK,
-};
+use syscall::error::{Error, EAGAIN, EINTR, ENODEV, EWOULDBLOCK};
 
 use crate::{
     ide::{AtaCommand, AtaDisk, Channel},

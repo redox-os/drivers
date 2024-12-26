@@ -1,19 +1,13 @@
 #![deny(trivial_numeric_casts, unused_allocation)]
 #![feature(int_roundings)]
 
-use std::fs::File;
-use std::io::{Read, Write};
-use std::os::fd::{FromRawFd, RawFd};
 use std::sync::{Arc, Weak};
 
-use libredox::flag;
 use redox_scheme::{RequestKind, SignalBehavior, Socket};
 use static_assertions::const_assert_eq;
 
 use pcid_interface::*;
 use virtio_core::spec::*;
-
-use syscall::{Packet, SchemeBlockMut};
 
 use virtio_core::transport::Transport;
 use virtio_core::utils::VolatileCell;

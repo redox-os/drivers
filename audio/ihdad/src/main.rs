@@ -7,13 +7,11 @@ extern crate spin;
 extern crate syscall;
 
 use libredox::flag;
-use std::cell::RefCell;
 use std::fs::File;
-use std::io::{ErrorKind, Read, Result, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
-use std::sync::Arc;
 use std::usize;
-use syscall::{EventFlags, Packet, SchemeBlockMut};
+use syscall::{Packet, SchemeBlockMut};
 
 use event::{user_data, EventQueue};
 #[cfg(target_arch = "x86_64")]
@@ -136,7 +134,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
             }
         }
 
-        let mut event_queue =
+        let event_queue =
             EventQueue::<Source>::new().expect("ihdad: Could not create event queue.");
         let mut device = unsafe {
             hda::IntelHDA::new(address, vend_prod).expect("ihdad: failed to allocate device")

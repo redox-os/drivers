@@ -1,4 +1,3 @@
-use std::cmp;
 use std::collections::BTreeMap;
 use std::io::Read;
 use std::io::Result as IoResult;
