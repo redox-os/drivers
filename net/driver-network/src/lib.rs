@@ -1,11 +1,11 @@
 use std::collections::BTreeMap;
 use std::{cmp, io};
 
+use libredox::errno::EOPNOTSUPP;
 use libredox::flag::O_NONBLOCK;
 use libredox::Fd;
 use redox_scheme::{
-    CallRequest, CallerCtx, OpenResult, RequestKind, Response, SchemeBlockMut, SignalBehavior,
-    Socket,
+    CallRequest, CallerCtx, OpenResult, RequestKind, Response, SchemeBlock, SignalBehavior, Socket,
 };
 use syscall::schemev2::NewFdFlags;
 use syscall::{
@@ -85,10 +85,10 @@ impl<T: NetworkAdapter> NetworkScheme<T> {
         // Handle any blocked requests
         let mut i = 0;
         while i < self.blocked.len() {
-            if let Some(resp) = self.blocked[i].handle_scheme_block_mut(self) {
+            if let Some(resp) = self.blocked[i].handle_scheme_block(self) {
                 self.socket
                     .write_response(resp, SignalBehavior::Restart)
-                    .expect("vesad: failed to write display scheme");
+                    .expect("driver-network: failed to write scheme");
                 self.blocked.remove(i);
             } else {
                 i += 1;
@@ -109,11 +109,17 @@ impl<T: NetworkAdapter> NetworkScheme<T> {
 
             match request.kind() {
                 RequestKind::Call(call_request) => {
-                    if let Some(resp) = call_request.handle_scheme_block_mut(self) {
+                    if let Some(resp) = call_request.handle_scheme_block(self) {
                         self.socket.write_response(resp, SignalBehavior::Restart)?;
                     } else {
                         self.blocked.push(call_request);
                     }
+                }
+                RequestKind::SendFd(sendfd_request) => {
+                    self.socket.write_response(
+                        Response::for_sendfd(&sendfd_request, Err(syscall::Error::new(EOPNOTSUPP))),
+                        SignalBehavior::Restart,
+                    )?;
                 }
                 RequestKind::Cancellation(cancellation_request) => {
                     if let Some(i) = self
@@ -146,7 +152,7 @@ impl<T: NetworkAdapter> NetworkScheme<T> {
     }
 }
 
-impl<T: NetworkAdapter> SchemeBlockMut for NetworkScheme<T> {
+impl<T: NetworkAdapter> SchemeBlock for NetworkScheme<T> {
     fn xopen(
         &mut self,
         path: &str,

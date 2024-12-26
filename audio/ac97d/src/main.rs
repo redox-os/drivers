@@ -5,17 +5,15 @@ extern crate event;
 extern crate spin;
 extern crate syscall;
 
-use std::cell::RefCell;
 use std::fs::File;
-use std::io::{ErrorKind, Read, Result, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
-use std::sync::Arc;
 use std::usize;
 
 use event::{user_data, EventQueue};
 use libredox::flag;
-use pcid_interface::{PciBar, PciFunctionHandle};
-use syscall::{EventFlags, Packet, SchemeBlockMut};
+use pcid_interface::PciFunctionHandle;
+use syscall::{Packet, SchemeBlockMut};
 
 pub mod device;
 
@@ -69,7 +67,7 @@ fn main() {
             }
         }
 
-        let mut event_queue =
+        let event_queue =
             EventQueue::<Source>::new().expect("ac97d: Could not create event queue.");
         event_queue
             .subscribe(

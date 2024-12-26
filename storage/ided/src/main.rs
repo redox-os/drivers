@@ -3,23 +3,17 @@ use driver_block::Disk;
 use event::{EventFlags, RawEventQueue};
 use libredox::flag;
 use log::{error, info};
-use pcid_interface::{PciBar, PciFunctionHandle};
-use redox_scheme::{RequestKind, Response, SignalBehavior, Socket, V2};
+use pcid_interface::PciFunctionHandle;
+use redox_scheme::{RequestKind, Response, SignalBehavior, Socket};
 use std::{
     fs::File,
-    io::{ErrorKind, Read, Write},
+    io::{Read, Write},
     os::unix::io::{FromRawFd, RawFd},
     sync::{Arc, Mutex},
     thread::{self, sleep},
     time::Duration,
 };
-use syscall::{
-    data::{Event, Packet},
-    error::{Error, ENODEV},
-    flag::EVENT_READ,
-    scheme::SchemeBlockMut,
-    EAGAIN, EINTR, EWOULDBLOCK,
-};
+use syscall::error::{Error, EAGAIN, EINTR, ENODEV, EWOULDBLOCK};
 
 use crate::{
     ide::{AtaCommand, AtaDisk, Channel},
@@ -200,8 +194,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     }
 
     let scheme_name = format!("disk.{}", name);
-    let socket_fd =
-        Socket::<V2>::nonblock(&scheme_name).expect("ided: failed to create disk scheme");
+    let socket_fd = Socket::nonblock(&scheme_name).expect("ided: failed to create disk scheme");
 
     let primary_irq_fd = libredox::call::open(
         &format!("/scheme/irq/{}", primary_irq),
@@ -267,7 +260,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
                         }
                     }
                 };
-                if let Some(resp) = req.handle_scheme_block_mut(&mut scheme) {
+                if let Some(resp) = req.handle_scheme_block(&mut scheme) {
                     socket_fd
                         .write_response(resp, SignalBehavior::Restart)
                         .expect("ided: failed to write disk scheme");
@@ -290,7 +283,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
                     // Handle todos in order to finish previous packets if possible
                     let mut i = 0;
                     while i < todo.len() {
-                        if let Some(resp) = todo[i].handle_scheme_block_mut(&mut scheme) {
+                        if let Some(resp) = todo[i].handle_scheme_block(&mut scheme) {
                             socket_fd
                                 .write_response(resp, SignalBehavior::Restart)
                                 .expect("ided: failed to write disk scheme");
@@ -315,7 +308,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
                     // Handle todos in order to finish previous packets if possible
                     let mut i = 0;
                     while i < todo.len() {
-                        if let Some(resp) = todo[i].handle_scheme_block_mut(&mut scheme) {
+                        if let Some(resp) = todo[i].handle_scheme_block(&mut scheme) {
                             socket_fd
                                 .write_response(resp, SignalBehavior::Restart)
                                 .expect("ided: failed to write disk scheme");
@@ -332,7 +325,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         // Handle todos to start new packets if possible
         let mut i = 0;
         while i < todo.len() {
-            if let Some(resp) = todo[i].handle_scheme_block_mut(&mut scheme) {
+            if let Some(resp) = todo[i].handle_scheme_block(&mut scheme) {
                 socket_fd
                     .write_response(resp, SignalBehavior::Restart)
                     .expect("ided: failed to write disk scheme");

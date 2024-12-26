@@ -9,7 +9,7 @@ use std::str;
 
 use libredox::call::MmapArgs;
 use libredox::flag;
-use redox_scheme::{CallerCtx, OpenResult, RequestKind, SchemeMut, SignalBehavior, Socket, V2};
+use redox_scheme::{CallerCtx, OpenResult, RequestKind, Scheme, SignalBehavior, Socket};
 
 use syscall::data::Stat;
 use syscall::error::*;
@@ -97,7 +97,7 @@ impl DiskScheme {
     }
 }
 
-impl SchemeMut for DiskScheme {
+impl Scheme for DiskScheme {
     fn fsize(&mut self, id: usize) -> Result<u64> {
         Ok(
             match HandleType::try_from_raw(id).ok_or(Error::new(EBADF))? {
@@ -195,7 +195,7 @@ impl SchemeMut for DiskScheme {
 }
 fn main() -> anyhow::Result<()> {
     redox_daemon::Daemon::new(move |daemon| {
-        let socket_fd = Socket::<V2>::create("disk.live").expect("failed to open scheme");
+        let socket_fd = Socket::create("disk.live").expect("failed to open scheme");
         let mut scheme = DiskScheme::new().unwrap_or_else(|err| {
             eprintln!("failed to initialize livedisk scheme: {}", err);
             std::process::exit(1)
@@ -216,7 +216,7 @@ fn main() -> anyhow::Result<()> {
                 }
                 None => break,
             };
-            let resp = req.handle_scheme_mut(&mut scheme);
+            let resp = req.handle_scheme(&mut scheme);
             socket_fd
                 .write_response(resp, SignalBehavior::Restart)
                 .expect("failed to write packet");

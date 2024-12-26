@@ -3,8 +3,8 @@ extern crate orbclient;
 extern crate syscall;
 
 use event::{user_data, EventQueue};
-use libredox::errno::EAGAIN;
-use redox_scheme::{RequestKind, SignalBehavior, Socket, V2};
+use libredox::errno::{EAGAIN, EOPNOTSUPP};
+use redox_scheme::{RequestKind, Response, SignalBehavior, Socket};
 use std::env;
 use std::fs::File;
 use std::os::fd::AsRawFd;
@@ -78,8 +78,7 @@ fn main() {
         .expect("failed to create daemon");
 }
 fn inner(daemon: redox_daemon::Daemon, framebuffers: Vec<FrameBuffer>, spec: &[()]) -> ! {
-    let socket: Socket<V2> =
-        Socket::nonblock("display.vesa").expect("vesad: failed to create display scheme");
+    let socket = Socket::nonblock("display.vesa").expect("vesad: failed to create display scheme");
 
     let mut scheme = DisplayScheme::new(framebuffers, &spec);
 
@@ -148,10 +147,21 @@ fn inner(daemon: redox_daemon::Daemon, framebuffers: Vec<FrameBuffer>, spec: &[(
                         RequestKind::Call(call_request) => {
                             socket
                                 .write_response(
-                                    call_request.handle_scheme_mut(&mut scheme),
+                                    call_request.handle_scheme(&mut scheme),
                                     SignalBehavior::Restart,
                                 )
                                 .expect("vesad: failed to write display scheme");
+                        }
+                        RequestKind::SendFd(sendfd_request) => {
+                            socket
+                                .write_response(
+                                    Response::for_sendfd(
+                                        &sendfd_request,
+                                        Err(syscall::Error::new(EOPNOTSUPP)),
+                                    ),
+                                    SignalBehavior::Restart,
+                                )
+                                .expect("vesad: failed to write scheme");
                         }
                         RequestKind::Cancellation(_cancellation_request) => {}
                         RequestKind::MsyncMsg | RequestKind::MunmapMsg | RequestKind::MmapMsg => {

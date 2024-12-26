@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use redox_scheme::SchemeMut;
+use redox_scheme::Scheme;
 use syscall::{Error, EventFlags, Result, EBADF, EINVAL, ENOENT};
 
 use crate::display::Display;
@@ -31,7 +31,7 @@ impl FbbootlogScheme {
     }
 }
 
-impl SchemeMut for FbbootlogScheme {
+impl Scheme for FbbootlogScheme {
     fn open(&mut self, path_str: &str, _flags: usize, _uid: u32, _gid: u32) -> Result<usize> {
         if !path_str.is_empty() {
             return Err(Error::new(ENOENT));

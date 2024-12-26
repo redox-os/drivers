@@ -1,7 +1,6 @@
 use common::dma::Dma;
 use common::io::{Io, Mmio};
 use std::cmp::min;
-use std::ptr;
 use std::ptr::copy_nonoverlapping;
 use std::result;
 use syscall::error::{Error, Result, EIO};

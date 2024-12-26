@@ -2,7 +2,6 @@ use std::sync::Mutex;
 use std::{fs, io, mem};
 
 use common::{MemoryType, PhysBorrowed, Prot};
-use fdt::node::CellSizes;
 use fdt::Fdt;
 use pci_types::{ConfigRegionAccess, PciAddress};
 

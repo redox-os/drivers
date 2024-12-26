@@ -1,6 +1,5 @@
 use super::context::StreamContextType;
 use crate::usb;
-use crate::xhci::trb::TrbType::PortStatusChange;
 use common::io::{Io, Mmio};
 use log::trace;
 use std::{fmt, mem};

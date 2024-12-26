@@ -1,28 +1,24 @@
-use std::collections::BTreeMap;
 use std::fs::File;
 use std::future::Future;
 use std::io::prelude::*;
 use std::pin::Pin;
-use std::sync::atomic::{self, AtomicUsize};
 use std::sync::{Arc, Mutex};
-use std::{io, mem, task, thread};
+use std::task;
 
 use std::os::unix::io::AsRawFd;
 
 use crossbeam_channel::{Receiver, Sender};
-use futures::Stream;
 use log::{debug, error, info, trace, warn};
 
 use super::doorbell::Doorbell;
 use super::event::EventRing;
 use super::ring::Ring;
 use super::trb::{Trb, TrbCompletionCode, TrbType};
-use super::{port, Xhci};
+use super::Xhci;
 use crate::xhci::device_enumerator::DeviceEnumerationRequest;
 use crate::xhci::port::PortFlags;
-use crate::xhci::scheme::AnyDescriptor::Device;
 use common::io::Io as _;
-use event::{Event, EventQueue, RawEventQueue};
+use event::RawEventQueue;
 
 /// Short-term states (as in, they are removed when the waker is consumed, but probably pushed back
 /// by the future unless it completed).

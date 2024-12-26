@@ -1,16 +1,14 @@
 use std::collections::BTreeMap;
 use std::convert::TryFrom;
 use std::fs::File;
-use std::ptr;
-use std::sync::atomic::{AtomicU16, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU16, AtomicU64};
 use std::sync::{Mutex, RwLock};
-use std::thread;
 
 use crossbeam_channel::Sender;
 use smallvec::{smallvec, SmallVec};
 
 use common::io::{Io, Mmio};
-use syscall::error::{Error, Result, EINVAL, EIO};
+use syscall::error::{Error, Result, EIO};
 
 use common::dma::Dma;
 
@@ -526,7 +524,7 @@ impl Nvme {
                     return entry;
                 }
             }
-            thread::yield_now();
+            std::thread::yield_now();
         }
     }
 
