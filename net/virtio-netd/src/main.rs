@@ -97,7 +97,7 @@ fn deamon(daemon: redox_daemon::Daemon) -> Result<(), Box<dyn std::error::Error>
 
     let mut event_queue = File::open("/scheme/event")?;
     event_queue.write(&syscall::Event {
-        id: scheme.event_handle() as usize,
+        id: scheme.event_handle().raw(),
         flags: syscall::EVENT_READ,
         data: 0,
     })?;
