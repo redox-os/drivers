@@ -7,7 +7,7 @@ use common::{dma::Dma, sgl};
 use inputd::{Damage, VtEvent, VtEventKind};
 
 use redox_scheme::Scheme;
-use syscall::{Error as SysError, MapFlags, EINVAL, PAGE_SIZE};
+use syscall::{Error as SysError, MapFlags, EBADF, EINVAL, PAGE_SIZE};
 
 use virtio_core::spec::{Buffer, ChainBuilder, DescriptorFlags};
 use virtio_core::transport::{Error, Queue, Transport};
@@ -35,16 +35,6 @@ struct GpuResource {
 pub struct Display {
     width: u32,
     height: u32,
-}
-
-impl Display {
-    async fn get_fpath(&self, buffer: &mut [u8]) -> Result<usize, Error> {
-        let path = format!("display.virtio-gpu:3.0/{}/{}", self.width, self.height);
-
-        // Copy the path into the target buffer.
-        buffer[..path.len()].copy_from_slice(path.as_bytes());
-        Ok(path.len())
-    }
 }
 
 impl GpuScheme<'_> {
@@ -341,13 +331,16 @@ impl<'a> Scheme for GpuScheme<'a> {
 
     fn fpath(&mut self, id: usize, buf: &mut [u8]) -> syscall::Result<usize> {
         let handle = self.handles.get(&id).unwrap();
-        let bytes_copied =
-            futures::executor::block_on(self.displays[handle.screen].get_fpath(buf)).unwrap();
-        Ok(bytes_copied)
+        let path = format!(
+            "display.virtio-gpu:3.0/{}/{}",
+            self.displays[handle.screen].width, self.displays[handle.screen].height
+        );
+        buf[..path.len()].copy_from_slice(path.as_bytes());
+        Ok(path.len())
     }
 
     fn fsync(&mut self, id: usize) -> syscall::Result<usize> {
-        let handle = self.handles.get(&id).ok_or(SysError::new(EINVAL))?;
+        let handle = self.handles.get(&id).ok_or(SysError::new(EBADF))?;
         if handle.vt != self.active_vt {
             // This is a protection against background VT's spamming us with flush requests. We will
             // flush the resource on the next scanout anyway
@@ -359,14 +352,13 @@ impl<'a> Scheme for GpuScheme<'a> {
 
     fn read(
         &mut self,
-        _id: usize,
+        id: usize,
         _buf: &mut [u8],
         _offset: u64,
         _fcntl_flags: u32,
     ) -> syscall::Result<usize> {
-        // TODO: figure out how to get input lol
-        log::warn!("virtio_gpu::read is a stub!");
-        Ok(0)
+        let _handle = self.handles.get(&id).ok_or(SysError::new(EBADF))?;
+        Err(SysError::new(EINVAL))
     }
 
     fn write(
@@ -376,7 +368,7 @@ impl<'a> Scheme for GpuScheme<'a> {
         _offset: u64,
         _fcntl_flags: u32,
     ) -> syscall::Result<usize> {
-        let handle = self.handles.get(&id).ok_or(SysError::new(EINVAL))?;
+        let handle = self.handles.get(&id).ok_or(SysError::new(EBADF))?;
 
         if handle.vt != self.active_vt {
             // This is a protection against background VT's spamming us with flush requests. We will
@@ -396,7 +388,8 @@ impl<'a> Scheme for GpuScheme<'a> {
         Ok(buf.len())
     }
 
-    fn close(&mut self, _id: usize) -> syscall::Result<usize> {
+    fn close(&mut self, id: usize) -> syscall::Result<usize> {
+        self.handles.remove(&id).ok_or(SysError::new(EBADF))?;
         Ok(0)
     }
     fn mmap_prep(
