@@ -15,6 +15,8 @@ use crate::dma::phys_contiguous_fd;
 pub struct Sgl {
     /// A raw pointer to the SGL in virtual memory
     virt: *mut u8,
+    /// The length of the allocated memory, guaranteed to be a multiple of [PAGE_SIZE].
+    aligned_length: usize,
     /// The length of the allocated memory. This value is NOT guaranteed to be a multiple of [PAGE_SIZE]
     unaligned_length: NonZeroUsize,
     /// The vector of chunks tracked by this [Sgl] object. This is the sparsely-populated vector in the SGL algorithm.
@@ -39,15 +41,20 @@ impl Sgl {
     ///
     /// # Arguments
     ///
-    /// 'unaligned_length: [usize]' - The length of the SGL, not aligned to the nearest page.
+    /// 'unaligned_length: [usize]' - The length of the SGL, not necessarily aligned to the nearest
+    /// page.
     pub fn new(unaligned_length: usize) -> Result<Self> {
         let unaligned_length = NonZeroUsize::new(unaligned_length).ok_or(Error::new(EINVAL))?;
+
+        // TODO: Both PAGE_SIZE and MAX_ALLOC_SIZE should be dynamic.
+        let aligned_length = unaligned_length.get().next_multiple_of(PAGE_SIZE);
+        const MAX_ALLOC_SIZE: usize = 1 << 22;
 
         unsafe {
             let virt = libredox::call::mmap(MmapArgs {
                 flags: MAP_PRIVATE,
                 prot: PROT_READ | PROT_WRITE,
-                length: unaligned_length.get(),
+                length: aligned_length,
 
                 offset: 0,
                 fd: !0,
@@ -57,21 +64,23 @@ impl Sgl {
 
             let mut this = Self {
                 virt,
+                aligned_length,
                 unaligned_length,
                 chunks: Vec::new(),
             };
 
             let phys_contiguous_fd = phys_contiguous_fd()?;
 
-            // TODO: Both PAGE_SIZE and MAX_ALLOC_SIZE should be dynamic.
-            let aligned_length = unaligned_length.get().next_multiple_of(PAGE_SIZE);
-            const MAX_ALLOC_SIZE: usize = 1 << 22;
-
             let mut offset = 0;
-            while offset < unaligned_length.get() {
-                let chunk_length = (aligned_length - offset)
+            while offset < aligned_length {
+                let preferred_chunk_length = (aligned_length - offset)
                     .min(MAX_ALLOC_SIZE)
                     .next_power_of_two();
+                let chunk_length = if preferred_chunk_length > aligned_length - offset {
+                    preferred_chunk_length / 2
+                } else {
+                    preferred_chunk_length
+                };
                 libredox::call::mmap(MmapArgs {
                     addr: virt.add(offset).cast(),
                     flags: MAP_PRIVATE | (MAP_FIXED.bits() as u32),
@@ -112,7 +121,7 @@ impl Sgl {
 impl Drop for Sgl {
     fn drop(&mut self) {
         unsafe {
-            let _ = libredox::call::munmap(self.virt.cast(), self.unaligned_length.get());
+            let _ = libredox::call::munmap(self.virt.cast(), self.aligned_length);
         }
     }
 }
