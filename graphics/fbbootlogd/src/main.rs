@@ -11,7 +11,8 @@
 
 #![feature(io_error_more)]
 
-use redox_scheme::{RequestKind, SignalBehavior, Socket, V2};
+use libredox::errno::EOPNOTSUPP;
+use redox_scheme::{RequestKind, Response, SignalBehavior, Socket};
 
 use crate::scheme::FbbootlogScheme;
 
@@ -23,7 +24,7 @@ fn main() {
     redox_daemon::Daemon::new(|daemon| inner(daemon)).expect("failed to create daemon");
 }
 fn inner(daemon: redox_daemon::Daemon) -> ! {
-    let socket: Socket<V2> =
+    let socket =
         Socket::create("fbbootlog").expect("fbbootlogd: failed to create fbbootlog scheme");
 
     let mut scheme = FbbootlogScheme::new();
@@ -54,10 +55,18 @@ fn inner(daemon: redox_daemon::Daemon) -> ! {
             RequestKind::Call(call_request) => {
                 socket
                     .write_response(
-                        call_request.handle_scheme_mut(&mut scheme),
+                        call_request.handle_scheme(&mut scheme),
                         SignalBehavior::Restart,
                     )
                     .expect("fbbootlogd: failed to write display scheme");
+            }
+            RequestKind::SendFd(sendfd_request) => {
+                socket
+                    .write_response(
+                        Response::for_sendfd(&sendfd_request, Err(syscall::Error::new(EOPNOTSUPP))),
+                        SignalBehavior::Restart,
+                    )
+                    .expect("fbbootlogd: failed to write scheme");
             }
             RequestKind::Cancellation(_cancellation_request) => {}
             RequestKind::MsyncMsg | RequestKind::MunmapMsg | RequestKind::MmapMsg => {

@@ -1,6 +1,5 @@
 use rustc_hash::FxHashMap;
 use std::convert::{TryFrom, TryInto};
-use std::fmt::Write;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex};
 use std::{fmt, mem};

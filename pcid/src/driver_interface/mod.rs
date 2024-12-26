@@ -4,7 +4,6 @@ use std::io::prelude::*;
 use std::ptr::NonNull;
 use std::{env, io};
 
-use log::info;
 use std::os::unix::io::{FromRawFd, RawFd};
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};

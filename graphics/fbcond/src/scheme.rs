@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::os::fd::AsRawFd;
 
 use event::{EventQueue, UserData};
-use redox_scheme::SchemeBlockMut;
+use redox_scheme::SchemeBlock;
 use syscall::{Error, EventFlags, Result, EBADF, EINVAL, ENOENT, O_NONBLOCK};
 
 use crate::display::Display;
@@ -69,7 +69,7 @@ impl FbconScheme {
     }
 }
 
-impl SchemeBlockMut for FbconScheme {
+impl SchemeBlock for FbconScheme {
     fn open(
         &mut self,
         path_str: &str,

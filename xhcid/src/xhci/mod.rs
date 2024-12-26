@@ -12,28 +12,24 @@
 use std::collections::BTreeMap;
 use std::convert::TryFrom;
 use std::fs::File;
-use std::future::Future;
-use std::pin::Pin;
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicBool, AtomicUsize};
-use std::sync::{Arc, Mutex, MutexGuard, Weak};
+use std::sync::atomic::AtomicUsize;
+use std::sync::{Arc, Mutex, MutexGuard};
 
-use std::time::Duration;
-use std::{mem, process, slice, sync::atomic, task, thread};
+use std::{mem, process, slice, thread};
 use syscall::error::{Error, Result, EBADF, EBADMSG, EIO, ENOENT};
 use syscall::{EAGAIN, PAGE_SIZE};
 
 use chashmap::CHashMap;
 use common::{dma::Dma, io::Io};
 use crossbeam_channel::{Receiver, Sender};
-use futures::AsyncReadExt;
 use log::{debug, error, info, trace, warn};
 use serde::Deserialize;
 
 use crate::usb;
 
 use pcid_interface::msi::{MsixInfo, MsixTableEntry};
-use pcid_interface::{PciFeature, PciFunctionHandle};
+use pcid_interface::PciFunctionHandle;
 
 mod capability;
 mod context;
@@ -58,8 +54,8 @@ use self::irq_reactor::{EventDoorbell, IrqReactor, NewPendingTrb, RingId};
 use self::operational::OperationalRegs;
 use self::port::Port;
 use self::ring::Ring;
-use self::runtime::{Interrupter, RuntimeRegs};
-use self::trb::{TransferKind, Trb, TrbCompletionCode, TrbType};
+use self::runtime::RuntimeRegs;
+use self::trb::{TransferKind, Trb, TrbCompletionCode};
 
 use self::scheme::EndpIfState;
 

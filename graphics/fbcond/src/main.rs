@@ -1,7 +1,7 @@
 #![feature(io_error_more)]
 
 use event::EventQueue;
-use libredox::errno::{EAGAIN, EINTR, ESTALE};
+use libredox::errno::{EAGAIN, EINTR, EOPNOTSUPP, ESTALE};
 use orbclient::Event;
 use redox_scheme::{CallRequest, RequestKind, Response, SignalBehavior, Socket};
 use std::os::fd::{AsRawFd, BorrowedFd};
@@ -99,13 +99,24 @@ fn handle_event(
 
                 match request.kind() {
                     RequestKind::Call(call_request) => {
-                        if let Some(resp) = call_request.handle_scheme_block_mut(scheme) {
+                        if let Some(resp) = call_request.handle_scheme_block(scheme) {
                             socket
                                 .write_response(resp, SignalBehavior::Restart)
-                                .expect("vesad: failed to write display scheme");
+                                .expect("fbcond: failed to write display scheme");
                         } else {
                             blocked.push(call_request);
                         }
+                    }
+                    RequestKind::SendFd(sendfd_request) => {
+                        socket
+                            .write_response(
+                                Response::for_sendfd(
+                                    &sendfd_request,
+                                    Err(syscall::Error::new(EOPNOTSUPP)),
+                                ),
+                                SignalBehavior::Restart,
+                            )
+                            .expect("fbcond: failed to write scheme");
                     }
                     RequestKind::Cancellation(cancellation_request) => {
                         if let Some(i) = blocked
@@ -154,7 +165,7 @@ fn handle_event(
     {
         let mut i = 0;
         while i < blocked.len() {
-            if let Some(resp) = blocked[i].handle_scheme_block_mut(scheme) {
+            if let Some(resp) = blocked[i].handle_scheme_block(scheme) {
                 socket
                     .write_response(resp, SignalBehavior::Restart)
                     .expect("vesad: failed to write display scheme");

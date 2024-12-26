@@ -27,10 +27,10 @@ use std::os::fd::AsRawFd;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use event::{user_data, EventQueue};
-use libredox::errno::EAGAIN;
+use libredox::errno::{EAGAIN, EOPNOTSUPP};
 use pcid_interface::PciFunctionHandle;
 
-use redox_scheme::{RequestKind, SignalBehavior, Socket, V2};
+use redox_scheme::{RequestKind, Response, SignalBehavior, Socket};
 use virtio_core::utils::VolatileCell;
 use virtio_core::MSIX_PRIMARY_VECTOR;
 
@@ -439,8 +439,8 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
     device.transport.run_device();
     deamon.ready().unwrap();
 
-    let socket: Socket<V2> = Socket::nonblock("display.virtio-gpu")?;
-    let mut scheme = futures::executor::block_on(scheme::Scheme::new(
+    let socket = Socket::nonblock("display.virtio-gpu")?;
+    let mut scheme = futures::executor::block_on(scheme::GpuScheme::new(
         config,
         control_queue.clone(),
         cursor_queue.clone(),
@@ -505,10 +505,21 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
                         RequestKind::Call(call_request) => {
                             socket
                                 .write_response(
-                                    call_request.handle_scheme_mut(&mut scheme),
+                                    call_request.handle_scheme(&mut scheme),
                                     SignalBehavior::Restart,
                                 )
                                 .expect("virtio-gpud: failed to write display scheme");
+                        }
+                        RequestKind::SendFd(sendfd_request) => {
+                            socket
+                                .write_response(
+                                    Response::for_sendfd(
+                                        &sendfd_request,
+                                        Err(syscall::Error::new(EOPNOTSUPP)),
+                                    ),
+                                    SignalBehavior::Restart,
+                                )
+                                .expect("virtio-gpud: failed to write scheme");
                         }
                         RequestKind::Cancellation(_cancellation_request) => {}
                         RequestKind::MsyncMsg | RequestKind::MunmapMsg | RequestKind::MmapMsg => {

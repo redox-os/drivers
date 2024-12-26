@@ -18,8 +18,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use inputd::{VtActivate, VtEvent, VtEventKind};
 
-use libredox::errno::ESTALE;
-use redox_scheme::{RequestKind, SchemeMut, SignalBehavior, Socket, V2};
+use libredox::errno::{EOPNOTSUPP, ESTALE};
+use redox_scheme::{RequestKind, Response, Scheme, SignalBehavior, Socket};
 
 use orbclient::{Event, EventOption};
 use syscall::{Error as SysError, EventFlags, EINVAL};
@@ -154,7 +154,7 @@ impl InputScheme {
     }
 }
 
-impl SchemeMut for InputScheme {
+impl Scheme for InputScheme {
     fn open(&mut self, path: &str, _flags: usize, _uid: u32, _gid: u32) -> syscall::Result<usize> {
         let mut path_parts = path.split('/');
 
@@ -483,7 +483,7 @@ impl SchemeMut for InputScheme {
 
 fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
     // Create the ":input" scheme.
-    let socket_file: Socket<V2> = Socket::create("input")?;
+    let socket_file = Socket::create("input")?;
     let mut scheme = InputScheme::new();
 
     deamon.ready().unwrap();
@@ -498,7 +498,13 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
         match request.kind() {
             RequestKind::Call(call_request) => {
                 socket_file.write_response(
-                    call_request.handle_scheme_mut(&mut scheme),
+                    call_request.handle_scheme(&mut scheme),
+                    SignalBehavior::Restart,
+                )?;
+            }
+            RequestKind::SendFd(sendfd_request) => {
+                socket_file.write_response(
+                    Response::for_sendfd(&sendfd_request, Err(syscall::Error::new(EOPNOTSUPP))),
                     SignalBehavior::Restart,
                 )?;
             }

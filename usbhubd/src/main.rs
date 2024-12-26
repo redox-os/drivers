@@ -1,11 +1,7 @@
-use std::collections::VecDeque;
 use std::env;
-use std::fs::File;
-use std::io::{Read, Write};
 
 use xhcid_interface::{
-    plain, usb, ConfigureEndpointsReq, DevDesc, DeviceReqData, EndpDirection, EndpointTy,
-    PortReqRecipient, PortReqTy, XhciClientHandle,
+    plain, usb, DevDesc, DeviceReqData, PortReqRecipient, PortReqTy, XhciClientHandle,
 };
 
 fn main() {

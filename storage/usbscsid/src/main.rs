@@ -1,6 +1,6 @@
 use std::env;
 
-use redox_scheme::{RequestKind, SignalBehavior, Socket, V2};
+use redox_scheme::{RequestKind, SignalBehavior, Socket};
 use xhcid_interface::{ConfigureEndpointsReq, XhciClientHandle};
 
 pub mod protocol;
@@ -83,7 +83,7 @@ fn daemon(daemon: redox_daemon::Daemon, scheme: String, port: usize, protocol: u
     // TODO: Let all of the USB drivers fork or be managed externally, and xhcid won't have to keep
     // track of all the drivers.
     let socket_fd =
-        Socket::<V2>::create(&disk_scheme_name).expect("usbscsid: failed to create disk scheme");
+        Socket::create(&disk_scheme_name).expect("usbscsid: failed to create disk scheme");
 
     //libredox::call::setrens(0, 0).expect("scsid: failed to enter null namespace");
     let mut scsi = Scsi::new(&mut *protocol).expect("usbscsid: failed to setup SCSI");
@@ -109,7 +109,7 @@ fn daemon(daemon: redox_daemon::Daemon, scheme: String, port: usize, protocol: u
             }
             None => break,
         };
-        let resp = req.handle_scheme_mut(&mut scsi_scheme);
+        let resp = req.handle_scheme(&mut scsi_scheme);
         socket_fd
             .write_response(resp, SignalBehavior::Restart)
             .expect("scsid: failed to write cqe");

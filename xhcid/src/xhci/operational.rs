@@ -1,8 +1,4 @@
 use common::io::{Io, Mmio};
-use std::num::NonZeroU8;
-use std::slice;
-
-use super::CapabilityRegs;
 
 /// The XHCI Operational Registers
 ///

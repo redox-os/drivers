@@ -2,13 +2,12 @@
 
 use event::{user_data, EventQueue};
 use std::fs::File;
-use std::io::{Read, Result, Write};
+use std::io::{Read, Write};
 use std::os::unix::io::AsRawFd;
 use std::{iter, mem};
 
 use common::io::{Io, Mmio, Pio};
-use pcid_interface::{PciBar, PciFunctionHandle};
-use syscall::flag::EventFlags;
+use pcid_interface::PciFunctionHandle;
 
 use common::dma::Dma;
 

@@ -1,6 +1,6 @@
 use core::str;
 use parking_lot::RwLockReadGuard;
-use redox_scheme::{CallerCtx, OpenResult, SchemeMut};
+use redox_scheme::{CallerCtx, OpenResult, Scheme};
 use std::collections::BTreeMap;
 use std::convert::{TryFrom, TryInto};
 use syscall::dirent::{DirEntry, DirentBuf, DirentKind};
@@ -141,7 +141,7 @@ fn parse_table(table: &[u8]) -> Option<SdtSignature> {
     })
 }
 
-impl SchemeMut for AcpiScheme<'_> {
+impl Scheme for AcpiScheme<'_> {
     fn xopen(&mut self, path: &str, flags: usize, _ctx: &CallerCtx) -> Result<OpenResult> {
         let path = path.trim_start_matches('/');
 

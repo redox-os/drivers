@@ -6,11 +6,11 @@ use std::io::prelude::*;
 use std::sync::Arc;
 use std::{cmp, str};
 
-use redox_scheme::{CallerCtx, OpenResult, SchemeBlockMut};
+use redox_scheme::{CallerCtx, OpenResult, SchemeBlock};
 use syscall::schemev2::NewFdFlags;
 use syscall::{
     Error, Result, Stat, EACCES, EBADF, EINVAL, EISDIR, ENOENT, ENOLCK, EOVERFLOW, MODE_DIR,
-    MODE_FILE, O_DIRECTORY, O_STAT, SEEK_CUR, SEEK_END, SEEK_SET,
+    MODE_FILE, O_DIRECTORY, O_STAT,
 };
 
 use crate::nvme::{Nvme, NvmeNamespace};
@@ -192,7 +192,7 @@ impl DiskScheme {
     }
 }
 
-impl SchemeBlockMut for DiskScheme {
+impl SchemeBlock for DiskScheme {
     fn xopen(
         &mut self,
         path_str: &str,

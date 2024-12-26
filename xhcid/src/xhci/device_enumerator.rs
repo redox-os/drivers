@@ -1,11 +1,9 @@
 use crate::xhci::port::PortFlags;
-use crate::xhci::scheme::Handle::Port;
 use crate::xhci::Xhci;
 use common::io::Io;
 use crossbeam_channel;
-use crossbeam_channel::RecvError;
-use log::{debug, error, info, trace, warn};
-use std::sync::{Arc, Mutex};
+use log::{debug, info, warn};
+use std::sync::Arc;
 use std::time::Duration;
 use syscall::EAGAIN;
 

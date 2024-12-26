@@ -1,7 +1,6 @@
 #![allow(dead_code)]
 
 use std::collections::BTreeMap;
-use std::mem;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use common::io::Pio;

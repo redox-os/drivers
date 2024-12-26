@@ -1157,8 +1157,8 @@ dependencies = [
 
 [[package]]
 name = "redox-scheme"
-version = "0.2.4"
-source = "git+https://gitlab.redox-os.org/redox-os/redox-scheme.git#efe7addc3d6c54149694f875ed51467f8c4aa8b9"
+version = "0.3.0"
+source = "git+https://gitlab.redox-os.org/redox-os/redox-scheme.git#d2bfa80a1072facb2662d0bc73656247f0b254b4"
 dependencies = [
  "libredox",
  "redox_syscall",

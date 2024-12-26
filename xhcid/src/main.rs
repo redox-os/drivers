@@ -26,13 +26,9 @@
 #[macro_use]
 extern crate bitflags;
 
-use std::convert::{TryFrom, TryInto};
-use std::env;
-use std::fs::{self, File};
-use std::future::Future;
-use std::io::{self, Read, Write};
-use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
-use std::pin::Pin;
+use std::fs::File;
+use std::io::{Read, Write};
+use std::os::unix::io::{FromRawFd, RawFd};
 use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
 
@@ -45,12 +41,8 @@ use pcid_interface::{
     MsiSetFeatureInfo, PciFeature, PciFeatureInfo, PciFunctionHandle, SetFeatureInfo,
 };
 
-use common::io::Io;
-use event::{Event, RawEventQueue};
-use log::info;
 use syscall::data::Packet;
 use syscall::error::EWOULDBLOCK;
-use syscall::flag::EventFlags;
 use syscall::scheme::Scheme;
 
 use crate::xhci::{InterruptMethod, Xhci};

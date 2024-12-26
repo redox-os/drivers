@@ -20,38 +20,30 @@ use std::convert::TryFrom;
 use std::io::prelude::*;
 use std::ops::Deref;
 use std::sync::atomic;
-use std::{cmp, fmt, io, mem, path, str};
+use std::{cmp, fmt, io, mem, str};
 
 use common::dma::Dma;
 use futures::executor::block_on;
 use log::{debug, error, info, trace, warn};
-use serde::{Deserialize, Serialize};
-use smallvec::{smallvec, SmallVec};
+use smallvec::SmallVec;
 
 use common::io::Io;
 use syscall::scheme::Scheme;
 use syscall::{
-    Error, Result, Stat, EACCES, EBADF, EBADFD, EBADMSG, EEXIST, EINVAL, EIO, EISDIR, ENOENT,
-    ENOSYS, ENOTDIR, ENXIO, EOPNOTSUPP, EOVERFLOW, EPERM, EPROTO, ESPIPE, MODE_CHR, MODE_DIR,
-    MODE_FILE, O_CREAT, O_DIRECTORY, O_RDONLY, O_RDWR, O_STAT, O_WRONLY, SEEK_CUR, SEEK_END,
-    SEEK_SET,
+    Error, Result, Stat, EACCES, EBADF, EBADFD, EBADMSG, EINVAL, EIO, EISDIR, ENOENT, ENOSYS,
+    ENOTDIR, EPROTO, ESPIPE, MODE_CHR, MODE_DIR, MODE_FILE, O_DIRECTORY, O_RDWR, O_STAT, O_WRONLY,
+    SEEK_CUR, SEEK_END, SEEK_SET,
 };
 
 use super::{port, usb};
 use super::{EndpointState, Xhci};
 
-use super::context::{
-    InputContext, SlotState, StreamContext, StreamContextArray, StreamContextType,
-    ENDPOINT_CONTEXT_STATUS_MASK,
-};
-use super::doorbell::Doorbell;
+use super::context::{SlotState, StreamContextArray, StreamContextType};
 use super::extended::ProtocolSpeed;
 use super::irq_reactor::{EventDoorbell, RingId};
-use super::operational::OperationalRegs;
 use super::ring::Ring;
-use super::runtime::RuntimeRegs;
 use super::trb::{TransferKind, Trb, TrbCompletionCode, TrbType};
-use super::usb::endpoint::{EndpointTy, ENDP_ATTR_TY_MASK};
+use super::usb::endpoint::EndpointTy;
 
 use crate::driver_interface::*;
 use regex::Regex;
@@ -2696,7 +2688,6 @@ pub fn handle_transfer_event_trb(name: &str, event_trb: &Trb, transfer_trb: &Trb
 }
 use lazy_static::lazy_static;
 use std::ops::{Add, Div, Rem};
-use std::path::Path;
 
 pub fn div_round_up<T>(a: T, b: T) -> T
 where

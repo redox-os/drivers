@@ -1,5 +1,5 @@
 use std::convert::TryFrom;
-use std::{mem, ops};
+use std::mem;
 
 pub mod cmds;
 pub mod opcodes;
@@ -8,8 +8,7 @@ use thiserror::Error;
 use xhcid_interface::DeviceReqData;
 
 use crate::protocol::{Protocol, ProtocolError, SendCommandStatus, SendCommandStatusKind};
-use cmds::{SenseKey, StandardInquiryData};
-use opcodes::Opcode;
+use cmds::StandardInquiryData;
 
 pub struct Scsi {
     command_buffer: [u8; 16],

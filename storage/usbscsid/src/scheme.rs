@@ -1,15 +1,14 @@
 use std::collections::BTreeMap;
-use std::{cmp, str};
+use std::str;
 
 use crate::protocol::Protocol;
 use crate::scsi::Scsi;
 
-use redox_scheme::{CallerCtx, OpenResult, SchemeMut};
+use redox_scheme::{CallerCtx, OpenResult, Scheme};
 use syscall::error::{Error, Result};
-use syscall::error::{EACCES, EBADF, EINVAL, EIO, ENOENT, ENOSYS};
+use syscall::error::{EACCES, EBADF, EINVAL, EIO, ENOSYS};
 use syscall::flag::{MODE_CHR, MODE_DIR};
 use syscall::flag::{O_DIRECTORY, O_STAT};
-use syscall::flag::{SEEK_CUR, SEEK_END, SEEK_SET};
 use syscall::schemev2::NewFdFlags;
 
 // TODO: Only one disk, right?
@@ -39,7 +38,7 @@ impl<'a> ScsiScheme<'a> {
     }
 }
 
-impl SchemeMut for ScsiScheme<'_> {
+impl Scheme for ScsiScheme<'_> {
     fn xopen(&mut self, path_str: &str, flags: usize, ctx: &CallerCtx) -> Result<OpenResult> {
         if ctx.uid != 0 {
             return Err(Error::new(EACCES));

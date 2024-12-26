@@ -9,7 +9,7 @@ use std::{
 use driver_block::Disk;
 use event::{EventFlags, RawEventQueue};
 use fdt::{node::FdtNode, Fdt};
-use redox_scheme::{RequestKind, Response, SignalBehavior, Socket, V2};
+use redox_scheme::{RequestKind, Response, SignalBehavior, Socket};
 use syscall::{
     data::{Event, Packet},
     error::{Error, ENODEV},
@@ -115,7 +115,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     }
 
     let scheme_name = "disk.mmc";
-    let socket_fd = Socket::<V2>::create(&scheme_name).expect("mmcd: failed to create disk scheme");
+    let socket_fd = Socket::create(&scheme_name).expect("mmcd: failed to create disk scheme");
 
     let mut event_queue = RawEventQueue::new().expect("mmcd: failed to open event file");
     event_queue
@@ -158,7 +158,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
                         }
                     }
                 };
-                if let Some(resp) = req.handle_scheme_block_mut(&mut scheme) {
+                if let Some(resp) = req.handle_scheme_block(&mut scheme) {
                     socket_fd
                         .write_response(resp, SignalBehavior::Restart)
                         .expect("mmcd: failed to write disk scheme");
@@ -173,7 +173,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         // Handle todos to start new packets if possible
         let mut i = 0;
         while i < todo.len() {
-            if let Some(resp) = todo[i].handle_scheme_block_mut(&mut scheme) {
+            if let Some(resp) = todo[i].handle_scheme_block(&mut scheme) {
                 socket_fd
                     .write_response(resp, SignalBehavior::Restart)
                     .expect("mmcd: failed to write disk scheme");
