@@ -27,14 +27,18 @@ impl Into<GpuRect> for Damage {
     }
 }
 
+struct GpuResource {
+    id: ResourceId,
+    sgl: sgl::Sgl,
+}
+
 pub struct Display<'a> {
     control_queue: Arc<Queue<'a>>,
     cursor_queue: Arc<Queue<'a>>,
     transport: Arc<dyn Transport>,
 
     active_vt: RefCell<usize>,
-    vts_map: RefCell<HashMap<usize, sgl::Sgl>>,
-    vts_res: RefCell<HashMap<usize, ResourceId>>,
+    vts: RefCell<HashMap<usize, GpuResource>>,
 
     width: u32,
     height: u32,
@@ -54,8 +58,7 @@ impl<'a> Display<'a> {
             cursor_queue,
 
             active_vt: RefCell::new(0),
-            vts_map: RefCell::new(HashMap::new()),
-            vts_res: RefCell::new(HashMap::new()),
+            vts: RefCell::new(HashMap::new()),
 
             width: 1920,
             height: 1080,
@@ -91,33 +94,18 @@ impl<'a> Display<'a> {
         Ok(())
     }
 
-    async fn mmap_screen(&self, vt: usize, offset: usize) -> Result<*mut u8, Error> {
-        if let Some(sgl) = self.vts_map.borrow().get(&vt) {
-            return Ok(sgl.as_ptr().wrapping_add(offset));
+    async fn res_for_screen(&self, vt: usize) -> Result<(ResourceId, *mut u8), Error> {
+        if let Some(res) = self.vts.borrow().get(&vt) {
+            return Ok((res.id, res.sgl.as_ptr()));
         }
 
         let bpp = 32;
         let fb_size = self.width as usize * self.height as usize * bpp / 8;
-        let mapped = sgl::Sgl::new(fb_size)?;
+        let sgl = sgl::Sgl::new(fb_size)?;
 
         unsafe {
-            core::ptr::write_bytes(mapped.as_ptr() as *mut u8, 255, fb_size);
+            core::ptr::write_bytes(sgl.as_ptr() as *mut u8, 255, fb_size);
         }
-
-        let mut mapped_vts = self.vts_map.borrow_mut();
-        let sgl = mapped_vts.entry(vt).or_insert(mapped);
-        Ok(sgl.as_ptr().wrapping_add(offset))
-    }
-
-    async fn create_res_for_screen(&self, vt: usize) -> Result<ResourceId, Error> {
-        if let Some(&res_id) = self.vts_res.borrow().get(&vt) {
-            return Ok(res_id);
-        }
-
-        self.mmap_screen(vt, 0).await?;
-
-        let vts_map = self.vts_map.borrow();
-        let mapped = &vts_map.get(&vt).unwrap();
 
         let res_id = ResourceId::alloc();
 
@@ -135,8 +123,8 @@ impl<'a> Display<'a> {
         // Use the allocated framebuffer from tthe guest ram, and attach it as backing
         // storage to the resource just created, using `VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING`.
 
-        let mut mem_entries = unsafe { Dma::zeroed_slice(mapped.chunks().len())?.assume_init() };
-        for (entry, chunk) in mem_entries.iter_mut().zip(mapped.chunks().iter()) {
+        let mut mem_entries = unsafe { Dma::zeroed_slice(sgl.chunks().len())?.assume_init() };
+        for (entry, chunk) in mem_entries.iter_mut().zip(sgl.chunks().iter()) {
             *entry = MemEntry {
                 address: chunk.phys as u64,
                 length: chunk.length.next_multiple_of(PAGE_SIZE) as u32,
@@ -155,13 +143,15 @@ impl<'a> Display<'a> {
         self.control_queue.send(command).await;
         assert_eq!(header.ty.get(), CommandTy::RespOkNodata);
 
-        let mut mapped_vts = self.vts_res.borrow_mut();
-        mapped_vts.insert(vt, res_id);
-        Ok(res_id)
+        let mut mapped_vts = self.vts.borrow_mut();
+        let res = mapped_vts
+            .entry(vt)
+            .or_insert(GpuResource { id: res_id, sgl });
+        Ok((res.id, res.sgl.as_ptr()))
     }
 
     async fn set_scanout(&self, vt: usize) -> Result<(), Error> {
-        let res_id = self.create_res_for_screen(vt).await?;
+        let (res_id, _) = self.res_for_screen(vt).await?;
 
         let scanout_request = Dma::new(SetScanout::new(
             self.id as u32,
@@ -178,12 +168,7 @@ impl<'a> Display<'a> {
 
     /// If `damage` is `None`, the entire screen is flushed.
     async fn flush(&self, vt: usize, damage: Option<&[Damage]>) -> Result<(), Error> {
-        let Some(&res_id) = self.vts_res.borrow().get(&vt) else {
-            // The resource is not yet created. Ignore the damage. We will write the entire backing
-            // storage to the resource once we create the resource, which is equivalent to damaging
-            // the entire resource.
-            return Ok(());
-        };
+        let (res_id, _) = self.res_for_screen(vt).await?;
 
         let req = Dma::new(XferToHost2d::new(
             res_id,
@@ -430,9 +415,8 @@ impl<'a> Scheme for GpuScheme<'a> {
     ) -> syscall::Result<usize> {
         log::info!("KSMSG MMAP {} {:?} {} {}", id, flags, offset, size);
         let handle = self.handles.get(&id).ok_or(SysError::new(EINVAL))?;
-        let ptr =
-            futures::executor::block_on(handle.display.mmap_screen(handle.vt, offset as usize))
-                .unwrap();
-        Ok(ptr as usize)
+        let (_, ptr) =
+            futures::executor::block_on(handle.display.res_for_screen(handle.vt)).unwrap();
+        Ok(unsafe { ptr.offset(offset as isize) } as usize)
     }
 }
