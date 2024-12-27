@@ -1802,14 +1802,6 @@ impl scheme::SchemeMut for Alx {
         }
     }
 
-    fn dup(&mut self, id: usize, buf: &[u8]) -> Result<usize> {
-        if !buf.is_empty() {
-            return Err(Error::new(EINVAL));
-        }
-
-        Ok(id)
-    }
-
     fn read(&mut self, id: usize, _buf: &mut [u8]) -> Result<usize> {
         /*
         let head = unsafe { self.read(RDH) };

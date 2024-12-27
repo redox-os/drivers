@@ -28,10 +28,6 @@ impl SchemeMut for PcspkrScheme {
         }
     }
 
-    fn dup(&mut self, _id: usize, _buf: &[u8]) -> Result<usize> {
-        Err(Error::new(EPERM))
-    }
-
     fn read(&mut self, _id: usize, _buf: &mut [u8]) -> Result<usize> {
         Err(Error::new(EPERM))
     }
