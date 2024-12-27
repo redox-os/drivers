@@ -1,8 +1,8 @@
 use std::convert::TryInto;
-use std::{cmp, mem, ptr, slice};
+use std::{cmp, ptr};
 
+use driver_graphics::Resource;
 use inputd::Damage;
-use syscall::error::*;
 
 use crate::display::OffscreenBuffer;
 use crate::framebuffer::FrameBuffer;
@@ -20,6 +20,16 @@ impl GraphicScreen {
             height,
             offscreen: OffscreenBuffer::new(width * height),
         }
+    }
+}
+
+impl Resource for GraphicScreen {
+    fn width(&self) -> u32 {
+        self.width as u32
+    }
+
+    fn height(&self) -> u32 {
+        self.height as u32
     }
 }
 
@@ -69,21 +79,7 @@ impl GraphicScreen {
         };
     }
 
-    pub fn write(&mut self, buf: &[u8], framebuffer: Option<&mut FrameBuffer>) -> Result<usize> {
-        let sync_rects = unsafe {
-            slice::from_raw_parts(
-                buf.as_ptr() as *const Damage,
-                buf.len() / mem::size_of::<Damage>(),
-            )
-        };
-
-        if let Some(framebuffer) = framebuffer {
-            self.sync(framebuffer, sync_rects);
-        }
-
-        Ok(sync_rects.len() * mem::size_of::<Damage>())
-    }
-    pub fn sync(&mut self, framebuffer: &mut FrameBuffer, sync_rects: &[Damage]) {
+    pub fn sync(&self, framebuffer: &mut FrameBuffer, sync_rects: &[Damage]) {
         for sync_rect in sync_rects {
             let sync_rect = sync_rect.clip(
                 self.width.try_into().unwrap(),
@@ -99,7 +95,7 @@ impl GraphicScreen {
 
             let row_pixel_count = w;
 
-            let mut offscreen_ptr = self.offscreen.as_mut_ptr();
+            let mut offscreen_ptr = self.offscreen.as_ptr();
             let mut onscreen_ptr = framebuffer.onscreen as *mut u32; // FIXME use as_mut_ptr once stable
 
             unsafe {
@@ -117,7 +113,7 @@ impl GraphicScreen {
         }
     }
 
-    pub fn redraw(&mut self, framebuffer: &mut FrameBuffer) {
+    pub fn redraw(&self, framebuffer: &mut FrameBuffer) {
         let width = self.width.try_into().unwrap();
         let height = self.height.try_into().unwrap();
         self.sync(
