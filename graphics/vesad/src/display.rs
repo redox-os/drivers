@@ -21,6 +21,10 @@ impl OffscreenBuffer {
         let ptr = NonNull::new(ptr).unwrap_or_else(|| alloc::handle_alloc_error(layout));
         OffscreenBuffer { ptr }
     }
+
+    pub fn ptr(&self) -> *mut u8 {
+        self.ptr.as_mut_ptr().cast::<u8>()
+    }
 }
 impl Drop for OffscreenBuffer {
     fn drop(&mut self) {

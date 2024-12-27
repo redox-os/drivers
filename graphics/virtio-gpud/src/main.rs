@@ -27,10 +27,8 @@ use std::os::fd::AsRawFd;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use event::{user_data, EventQueue};
-use libredox::errno::{EAGAIN, EOPNOTSUPP};
 use pcid_interface::PciFunctionHandle;
 
-use redox_scheme::{RequestKind, Response, SignalBehavior, Socket};
 use virtio_core::utils::VolatileCell;
 use virtio_core::MSIX_PRIMARY_VECTOR;
 
@@ -439,7 +437,6 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
     device.transport.run_device();
     deamon.ready().unwrap();
 
-    let socket = Socket::nonblock("display.virtio-gpu")?;
     let mut scheme = futures::executor::block_on(scheme::GpuScheme::new(
         config,
         control_queue.clone(),
@@ -465,14 +462,11 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
         .unwrap();
     event_queue
         .subscribe(
-            socket.inner().raw(),
+            scheme.inner.event_handle().raw(),
             Source::Scheme,
             event::EventFlags::READ,
         )
         .unwrap();
-
-    //let mut inputd_control_handle = inputd::ControlHandle::new().unwrap();
-    //inputd_control_handle.activate_vt(3).unwrap();
 
     let all = [Source::Input, Source::Scheme];
     for event in all
@@ -486,47 +480,14 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
                     .read_vt_event()
                     .expect("virtio-gpud: failed to read display handle")
                 {
-                    scheme.handle_vt_event(vt_event);
+                    scheme.inner.handle_vt_event(vt_event);
                 }
             }
             Source::Scheme => {
-                loop {
-                    let request = match socket.next_request(SignalBehavior::Restart) {
-                        Ok(Some(request)) => request,
-                        Ok(None) => {
-                            // Scheme likely got unmounted
-                            std::process::exit(0);
-                        }
-                        Err(err) if err.errno == EAGAIN => break,
-                        Err(err) => return Err(err.into()),
-                    };
-
-                    match request.kind() {
-                        RequestKind::Call(call_request) => {
-                            socket
-                                .write_response(
-                                    call_request.handle_scheme(&mut scheme),
-                                    SignalBehavior::Restart,
-                                )
-                                .expect("virtio-gpud: failed to write display scheme");
-                        }
-                        RequestKind::SendFd(sendfd_request) => {
-                            socket
-                                .write_response(
-                                    Response::for_sendfd(
-                                        &sendfd_request,
-                                        Err(syscall::Error::new(EOPNOTSUPP)),
-                                    ),
-                                    SignalBehavior::Restart,
-                                )
-                                .expect("virtio-gpud: failed to write scheme");
-                        }
-                        RequestKind::Cancellation(_cancellation_request) => {}
-                        RequestKind::MsyncMsg | RequestKind::MunmapMsg | RequestKind::MmapMsg => {
-                            unreachable!()
-                        }
-                    }
-                }
+                scheme
+                    .inner
+                    .tick()
+                    .expect("virtio-gpud: failed to process scheme events");
             }
         }
     }

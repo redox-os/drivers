@@ -19,6 +19,7 @@ members = [
     "graphics/bgad",
     "graphics/console-draw",
     "graphics/fbbootlogd",
+    "graphics/driver-graphics",
     "graphics/fbcond",
     "graphics/vesad",
     "graphics/virtio-gpud",
