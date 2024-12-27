@@ -1,5 +1,5 @@
 use std::convert::TryInto;
-use std::{cmp, ptr};
+use std::ptr;
 
 use driver_graphics::Resource;
 use inputd::Damage;
@@ -34,51 +34,6 @@ impl Resource for GraphicScreen {
 }
 
 impl GraphicScreen {
-    pub fn resize(&mut self, width: usize, height: usize) {
-        //TODO: Fix issue with mapped screens
-
-        if width != self.width || height != self.height {
-            println!("Resize display to {}, {}", width, height);
-
-            let size = width * height;
-            let mut offscreen = OffscreenBuffer::new(size);
-
-            let mut old_ptr = self.offscreen.as_ptr();
-            let mut new_ptr = offscreen.as_mut_ptr();
-
-            for _y in 0..cmp::min(height, self.height) {
-                unsafe {
-                    ptr::copy(old_ptr, new_ptr, cmp::min(width, self.width));
-                    if width > self.width {
-                        ptr::write_bytes(
-                            new_ptr.offset(self.width as isize),
-                            0,
-                            width - self.width,
-                        );
-                    }
-                    old_ptr = old_ptr.offset(self.width as isize);
-                    new_ptr = new_ptr.offset(width as isize);
-                }
-            }
-
-            if height > self.height {
-                for _y in self.height..height {
-                    unsafe {
-                        ptr::write_bytes(new_ptr, 0, width);
-                        new_ptr = new_ptr.offset(width as isize);
-                    }
-                }
-            }
-
-            self.width = width;
-            self.height = height;
-
-            self.offscreen = offscreen;
-        } else {
-            println!("Display is already {}, {}", width, height);
-        };
-    }
-
     pub fn sync(&self, framebuffer: &mut FrameBuffer, sync_rects: &[Damage]) {
         for sync_rect in sync_rects {
             let sync_rect = sync_rect.clip(
