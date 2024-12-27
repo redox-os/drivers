@@ -263,10 +263,20 @@ impl<'a> GpuScheme<'a> {
                 info.rect().height
             );
 
-            result.push(Display {
-                width: info.rect().width,
-                height: info.rect().height,
-            });
+            if info.rect().width == 0 || info.rect().height == 0 {
+                // QEMU gives all displays other than the first a zero width and height, but trying
+                // to attach a zero sized framebuffer to the display will result an error, so
+                // default to 640x480px.
+                result.push(Display {
+                    width: 640,
+                    height: 480,
+                });
+            } else {
+                result.push(Display {
+                    width: info.rect().width,
+                    height: info.rect().height,
+                });
+            }
         }
 
         Ok(result)
