@@ -1,4 +1,3 @@
-#![feature(int_roundings, slice_ptr_get)]
 extern crate orbclient;
 extern crate syscall;
 

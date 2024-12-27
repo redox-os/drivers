@@ -23,7 +23,7 @@ impl OffscreenBuffer {
     }
 
     pub fn ptr(&self) -> *mut u8 {
-        self.ptr.as_mut_ptr().cast::<u8>()
+        self.ptr.as_ptr().cast::<u8>()
     }
 }
 impl Drop for OffscreenBuffer {
