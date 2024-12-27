@@ -6,14 +6,13 @@ use std::sync::{Arc, Mutex};
 use driver_block::{Disk, DiskWrapper};
 use syscall::schemev2::NewFdFlags;
 use syscall::{
-    Error, Result, Stat, EACCES, EBADF, EINVAL, EISDIR, ENOENT, ENOLCK, EOVERFLOW, MODE_DIR,
-    MODE_FILE, O_DIRECTORY, O_STAT,
+    Error, Result, Stat, EACCES, EBADF, EISDIR, ENOENT, ENOLCK, EOVERFLOW, MODE_DIR, MODE_FILE,
+    O_DIRECTORY, O_STAT,
 };
 
 use crate::ide::Channel;
 use redox_scheme::{CallerCtx, OpenResult, SchemeBlock};
 
-#[derive(Clone)]
 enum Handle {
     List(Vec<u8>),         // Dir contents buffer
     Disk(usize),           // Disk index
@@ -166,22 +165,6 @@ impl SchemeBlock for DiskScheme {
         } else {
             Err(Error::new(EACCES))
         }
-    }
-
-    fn dup(&mut self, id: usize, buf: &[u8]) -> Result<Option<usize>> {
-        if !buf.is_empty() {
-            return Err(Error::new(EINVAL));
-        }
-
-        let new_handle = {
-            let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
-            handle.clone()
-        };
-
-        let new_id = self.next_id;
-        self.next_id += 1;
-        self.handles.insert(new_id, new_handle);
-        Ok(Some(new_id))
     }
 
     fn fstat(&mut self, id: usize, stat: &mut Stat) -> Result<Option<usize>> {

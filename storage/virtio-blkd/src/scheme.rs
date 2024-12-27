@@ -384,10 +384,6 @@ impl<'a> SchemeBlock for DiskScheme<'a> {
         }
     }
 
-    fn dup(&mut self, _old_id: usize, _buf: &[u8]) -> Result<Option<usize>> {
-        todo!()
-    }
-
     fn close(&mut self, id: usize) -> syscall::Result<Option<usize>> {
         self.handles
             .remove(&id)

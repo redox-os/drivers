@@ -6,7 +6,6 @@ use syscall::{Error, EventFlags, Result, EBADF, EINVAL, ENOENT};
 use crate::display::Display;
 use crate::text::TextScreen;
 
-#[derive(Clone)]
 pub struct Handle {
     pub events: EventFlags,
     pub notified_read: bool,
@@ -49,25 +48,6 @@ impl Scheme for FbbootlogScheme {
         );
 
         Ok(id)
-    }
-
-    fn dup(&mut self, id: usize, buf: &[u8]) -> Result<usize> {
-        if !buf.is_empty() {
-            return Err(Error::new(EINVAL));
-        }
-
-        let handle = self
-            .handles
-            .get(&id)
-            .map(|handle| handle.clone())
-            .ok_or(Error::new(EBADF))?;
-
-        let new_id = self.next_id;
-        self.next_id += 1;
-
-        self.handles.insert(new_id, handle);
-
-        Ok(new_id)
     }
 
     fn fevent(&mut self, id: usize, flags: syscall::EventFlags) -> Result<syscall::EventFlags> {

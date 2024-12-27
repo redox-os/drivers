@@ -40,7 +40,6 @@ pub struct NetworkScheme<T: NetworkAdapter> {
     blocked: Vec<CallRequest>,
 }
 
-#[derive(Copy, Clone)]
 enum Handle {
     Data,
     Mac,
@@ -175,17 +174,6 @@ impl<T: NetworkAdapter> SchemeBlock for NetworkScheme<T> {
             number: self.next_id,
             flags,
         }))
-    }
-
-    fn dup(&mut self, id: usize, buf: &[u8]) -> Result<Option<usize>> {
-        if !buf.is_empty() {
-            return Err(Error::new(EINVAL));
-        }
-
-        let handle = *self.handles.get(&id).ok_or(Error::new(EBADF))?;
-        self.next_id += 1;
-        self.handles.insert(self.next_id, handle);
-        Ok(Some(self.next_id))
     }
 
     fn read(

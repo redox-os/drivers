@@ -33,14 +33,6 @@ impl SchemeMut for BgaScheme {
         }
     }
 
-    fn dup(&mut self, file: usize, buf: &[u8]) -> Result<usize> {
-        if !buf.is_empty() {
-            return Err(Error::new(EINVAL));
-        }
-
-        Ok(file)
-    }
-
     fn read(&mut self, _file: usize, buf: &mut [u8]) -> Result<usize> {
         let mut i = 0;
         let data = format!("{},{}\n", self.bga.width(), self.bga.height()).into_bytes();
