@@ -8,7 +8,6 @@ use syscall::PAGE_SIZE;
 
 use virtio_core::spec::{Buffer, ChainBuilder, DescriptorFlags};
 use virtio_core::transport::{Error, Queue, Transport};
-use virtio_core::utils::VolatileCell;
 
 use crate::*;
 
@@ -67,7 +66,7 @@ impl VirtGpuAdapter<'_> {
 
     async fn flush_resource_inner(&self, flush: ResourceFlush) -> Result<(), Error> {
         let header = self.send_request(Dma::new(flush)?).await?;
-        assert_eq!(header.ty.get(), CommandTy::RespOkNodata);
+        assert_eq!(header.ty, CommandTy::RespOkNodata);
 
         Ok(())
     }
@@ -108,7 +107,7 @@ impl GraphicsAdapter for VirtGpuAdapter<'_> {
             request.set_resource_id(res_id);
 
             let header = self.send_request(request).await.unwrap();
-            assert_eq!(header.ty.get(), CommandTy::RespOkNodata);
+            assert_eq!(header.ty, CommandTy::RespOkNodata);
 
             // Use the allocated framebuffer from tthe guest ram, and attach it as backing
             // storage to the resource just created, using `VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING`.
@@ -133,7 +132,7 @@ impl GraphicsAdapter for VirtGpuAdapter<'_> {
                 .build();
 
             self.control_queue.send(command).await;
-            assert_eq!(header.ty.get(), CommandTy::RespOkNodata);
+            assert_eq!(header.ty, CommandTy::RespOkNodata);
 
             VirtGpuResource {
                 id: res_id,
@@ -162,7 +161,7 @@ impl GraphicsAdapter for VirtGpuAdapter<'_> {
             ))
             .unwrap();
             let header = self.send_request(scanout_request).await.unwrap();
-            assert_eq!(header.ty.get(), CommandTy::RespOkNodata);
+            assert_eq!(header.ty, CommandTy::RespOkNodata);
         });
 
         self.flush_resource(display_id, resource, None);
@@ -187,7 +186,7 @@ impl GraphicsAdapter for VirtGpuAdapter<'_> {
             ))
             .unwrap();
             let header = self.send_request(req).await.unwrap();
-            assert_eq!(header.ty.get(), CommandTy::RespOkNodata);
+            assert_eq!(header.ty, CommandTy::RespOkNodata);
 
             if let Some(damage) = damage {
                 for damage in damage {
@@ -259,11 +258,11 @@ impl<'a> GpuScheme<'a> {
         for info in displays.iter() {
             log::info!(
                 "virtio-gpu: opening display ({}x{}px)",
-                info.rect().width,
-                info.rect().height
+                info.rect.width,
+                info.rect.height
             );
 
-            if info.rect().width == 0 || info.rect().height == 0 {
+            if info.rect.width == 0 || info.rect.height == 0 {
                 // QEMU gives all displays other than the first a zero width and height, but trying
                 // to attach a zero sized framebuffer to the display will result an error, so
                 // default to 640x480px.
@@ -273,8 +272,8 @@ impl<'a> GpuScheme<'a> {
                 });
             } else {
                 result.push(Display {
-                    width: info.rect().width,
-                    height: info.rect().height,
+                    width: info.rect.width,
+                    height: info.rect.height,
                 });
             }
         }
@@ -283,10 +282,7 @@ impl<'a> GpuScheme<'a> {
     }
 
     async fn get_display_info(control_queue: Arc<Queue<'a>>) -> Result<Dma<GetDisplayInfo>, Error> {
-        let header = Dma::new(ControlHeader {
-            ty: VolatileCell::new(CommandTy::GetDisplayInfo),
-            ..Default::default()
-        })?;
+        let header = Dma::new(ControlHeader::with_ty(CommandTy::GetDisplayInfo))?;
 
         let response = Dma::new(GetDisplayInfo::default())?;
         let command = ChainBuilder::new()
@@ -295,7 +291,7 @@ impl<'a> GpuScheme<'a> {
             .build();
 
         control_queue.send(command).await;
-        assert!(response.header.ty.get() == CommandTy::RespOkDisplayInfo);
+        assert!(response.header.ty == CommandTy::RespOkDisplayInfo);
 
         Ok(response)
     }
