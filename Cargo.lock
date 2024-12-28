@@ -326,7 +326,7 @@ dependencies = [
 name = "console-draw"
 version = "0.1.0"
 dependencies = [
- "inputd",
+ "graphics-ipc",
  "orbclient",
  "ransid",
 ]
@@ -401,6 +401,7 @@ name = "driver-graphics"
 version = "0.1.0"
 dependencies = [
  "common",
+ "graphics-ipc",
  "inputd",
  "libredox",
  "log",
@@ -442,6 +443,7 @@ name = "fbbootlogd"
 version = "0.1.0"
 dependencies = [
  "console-draw",
+ "graphics-ipc",
  "inputd",
  "libredox",
  "orbclient",
@@ -457,6 +459,7 @@ name = "fbcond"
 version = "0.1.0"
 dependencies = [
  "console-draw",
+ "graphics-ipc",
  "inputd",
  "libredox",
  "orbclient",
@@ -600,6 +603,15 @@ dependencies = [
  "crc",
  "log",
  "uuid",
+]
+
+[[package]]
+name = "graphics-ipc"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "libredox",
+ "log",
 ]
 
 [[package]]
@@ -1713,6 +1725,7 @@ version = "0.1.0"
 dependencies = [
  "common",
  "driver-graphics",
+ "graphics-ipc",
  "inputd",
  "libredox",
  "orbclient",
@@ -1768,6 +1781,7 @@ dependencies = [
  "common",
  "driver-graphics",
  "futures",
+ "graphics-ipc",
  "inputd",
  "libredox",
  "log",

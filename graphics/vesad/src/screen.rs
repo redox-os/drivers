@@ -3,7 +3,7 @@ use std::convert::TryInto;
 use std::ptr::{self, NonNull};
 
 use driver_graphics::Resource;
-use inputd::Damage;
+use graphics_ipc::legacy::Damage;
 use syscall::PAGE_SIZE;
 
 use crate::framebuffer::FrameBuffer;

@@ -12,6 +12,7 @@ redox_event = "0.4.1"
 
 common = { path = "../../common" }
 driver-graphics = { path = "../driver-graphics" }
+graphics-ipc = { path = "../graphics-ipc" }
 inputd = { path = "../../inputd" }
 libredox = "0.1.3"
 

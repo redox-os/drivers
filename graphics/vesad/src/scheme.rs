@@ -1,4 +1,5 @@
 use driver_graphics::GraphicsAdapter;
+use graphics_ipc::legacy::Damage;
 
 use crate::{framebuffer::FrameBuffer, screen::GraphicScreen};
 
@@ -36,7 +37,7 @@ impl GraphicsAdapter for FbAdapter {
         &mut self,
         display_id: usize,
         resource: &Self::Resource,
-        damage: Option<&[inputd::Damage]>,
+        damage: Option<&[Damage]>,
     ) {
         if let Some(damage) = damage {
             resource.sync(&mut self.framebuffers[display_id], damage)
