@@ -326,7 +326,7 @@ dependencies = [
 name = "console-draw"
 version = "0.1.0"
 dependencies = [
- "inputd",
+ "graphics-ipc",
  "orbclient",
  "ransid",
 ]
@@ -401,6 +401,7 @@ name = "driver-graphics"
 version = "0.1.0"
 dependencies = [
  "common",
+ "graphics-ipc",
  "inputd",
  "libredox",
  "log",
@@ -609,7 +610,6 @@ name = "graphics-ipc"
 version = "0.1.0"
 dependencies = [
  "common",
- "inputd",
  "libredox",
  "log",
 ]
@@ -1725,6 +1725,7 @@ version = "0.1.0"
 dependencies = [
  "common",
  "driver-graphics",
+ "graphics-ipc",
  "inputd",
  "libredox",
  "orbclient",
@@ -1780,6 +1781,7 @@ dependencies = [
  "common",
  "driver-graphics",
  "futures",
+ "graphics-ipc",
  "inputd",
  "libredox",
  "log",

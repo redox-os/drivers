@@ -1,5 +1,5 @@
-use graphics_ipc::legacy::{DisplayMap, LegacyGraphicsHandle};
-use inputd::{ConsumerHandle, Damage};
+use graphics_ipc::legacy::{Damage, DisplayMap, LegacyGraphicsHandle};
+use inputd::ConsumerHandle;
 use std::io;
 
 pub struct Display {

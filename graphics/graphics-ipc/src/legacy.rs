@@ -1,8 +1,7 @@
 use std::fs::File;
 use std::os::unix::io::AsRawFd;
-use std::{io, mem, ptr, slice};
+use std::{cmp, io, mem, ptr, slice};
 
-use inputd::Damage;
 use libredox::flag;
 
 /// A graphics handle using the legacy graphics API.
@@ -108,5 +107,31 @@ impl Drop for DisplayMap {
         unsafe {
             let _ = libredox::call::munmap(self.offscreen as *mut (), self.offscreen.len());
         }
+    }
+}
+
+// Keep synced with orbital's SyncRect
+#[derive(Debug, Copy, Clone)]
+#[repr(packed)]
+pub struct Damage {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
+impl Damage {
+    #[must_use]
+    pub fn clip(mut self, width: i32, height: i32) -> Self {
+        // Clip damage
+        self.x = cmp::min(self.x, width);
+        if self.x + self.width > width {
+            self.width -= cmp::min(self.width, width - self.x);
+        }
+        self.y = cmp::min(self.y, height);
+        if self.y + self.height > height {
+            self.height = cmp::min(self.height, height - self.y);
+        }
+        self
     }
 }

@@ -1,6 +1,6 @@
 use event::{user_data, EventQueue};
-use graphics_ipc::legacy::LegacyGraphicsHandle;
-use inputd::{ConsumerHandle, Damage};
+use graphics_ipc::legacy::{Damage, LegacyGraphicsHandle};
+use inputd::ConsumerHandle;
 use libredox::errno::ESTALE;
 use orbclient::Event;
 use std::mem;

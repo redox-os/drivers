@@ -12,6 +12,7 @@ anyhow = "1.0.71"
 
 common = { path = "../../common" }
 driver-graphics = { path = "../driver-graphics" }
+graphics-ipc = { path = "../graphics-ipc" }
 virtio-core = { path = "../../virtio-core" }
 pcid = { path = "../../pcid" }
 inputd = { path = "../../inputd" }
