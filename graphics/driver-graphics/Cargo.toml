@@ -10,4 +10,5 @@ redox_syscall = "0.5"
 libredox = "0.1.3"
 
 common = { path = "../../common" }
+graphics-ipc = { path = "../graphics-ipc" }
 inputd = { path = "../../inputd" }

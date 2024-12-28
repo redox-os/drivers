@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use common::{dma::Dma, sgl};
 use driver_graphics::{GraphicsAdapter, GraphicsScheme, Resource};
-use inputd::{Damage, DisplayHandle};
+use graphics_ipc::legacy::Damage;
+use inputd::DisplayHandle;
 
 use syscall::PAGE_SIZE;
 

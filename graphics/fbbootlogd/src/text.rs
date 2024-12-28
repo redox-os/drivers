@@ -22,12 +22,12 @@ impl TextScreen {
 
 impl TextScreen {
     pub fn write(&mut self, buf: &[u8]) -> Result<usize> {
-        let map = self.display.map.lock().unwrap();
+        let mut map = self.display.map.lock().unwrap();
         let damage = self.inner.write(
             &mut console_draw::DisplayMap {
-                offscreen: map.offscreen,
-                width: map.width,
-                height: map.height,
+                offscreen: map.inner.ptr_mut(),
+                width: map.inner.width(),
+                height: map.inner.height(),
             },
             buf,
             &mut VecDeque::new(),

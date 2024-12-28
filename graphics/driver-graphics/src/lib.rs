@@ -1,7 +1,8 @@
 use std::collections::{BTreeMap, HashMap};
 use std::io;
 
-use inputd::{Damage, VtEvent, VtEventKind};
+use graphics_ipc::legacy::Damage;
+use inputd::{VtEvent, VtEventKind};
 use libredox::errno::EOPNOTSUPP;
 use libredox::Fd;
 use redox_scheme::{RequestKind, Response, Scheme, SignalBehavior, Socket};

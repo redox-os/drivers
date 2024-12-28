@@ -60,12 +60,6 @@ impl FbconScheme {
             handles: BTreeMap::new(),
         }
     }
-
-    fn resize(&mut self, width: usize, height: usize, stride: usize) {
-        for console in self.vts.values_mut() {
-            console.resize(width, height);
-        }
-    }
 }
 
 impl SchemeBlock for FbconScheme {

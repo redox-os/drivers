@@ -7,7 +7,7 @@ edition = "2021"
 orbclient = "0.3.27"
 ransid = "0.4"
 
-inputd = { path = "../../inputd" }
+graphics-ipc = { path = "../graphics-ipc" }
 
 [features]
 default = []

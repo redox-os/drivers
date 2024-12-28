@@ -21,6 +21,7 @@ members = [
     "graphics/fbbootlogd",
     "graphics/driver-graphics",
     "graphics/fbcond",
+    "graphics/graphics-ipc",
     "graphics/vesad",
     "graphics/virtio-gpud",
 

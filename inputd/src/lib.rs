@@ -1,6 +1,3 @@
-#![feature(iter_next_chunk)]
-
-use std::cmp;
 use std::fs::{File, OpenOptions};
 use std::io::{Error, Read, Write};
 use std::mem::size_of;
@@ -135,32 +132,6 @@ pub struct VtEvent {
     pub width: u32,
     pub height: u32,
     pub stride: u32,
-}
-
-// Keep synced with orbital's SyncRect
-#[derive(Debug, Copy, Clone)]
-#[repr(packed)]
-pub struct Damage {
-    pub x: i32,
-    pub y: i32,
-    pub width: i32,
-    pub height: i32,
-}
-
-impl Damage {
-    #[must_use]
-    pub fn clip(mut self, width: i32, height: i32) -> Self {
-        // Clip damage
-        self.x = cmp::min(self.x, width);
-        if self.x + self.width > width {
-            self.width -= cmp::min(self.width, width - self.x);
-        }
-        self.y = cmp::min(self.y, height);
-        if self.y + self.height > height {
-            self.height = cmp::min(self.height, height - self.y);
-        }
-        self
-    }
 }
 
 pub struct ProducerHandle(File);
