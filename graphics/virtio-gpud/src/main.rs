@@ -22,7 +22,6 @@
 
 #![feature(int_roundings)]
 
-use std::cell::UnsafeCell;
 use std::os::fd::AsRawFd;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -36,28 +35,6 @@ mod scheme;
 
 // const VIRTIO_GPU_EVENT_DISPLAY: u32 = 1 << 0;
 const VIRTIO_GPU_MAX_SCANOUTS: usize = 16;
-
-macro_rules! make_getter_setter {
-    ($($field:ident: $return_ty:ty),*) => {
-        $(
-            pub fn $field(&self) -> $return_ty {
-                self.$field.get()
-            }
-
-            paste::item! {
-                pub fn [<set_ $field>](&mut self, value: $return_ty) {
-                    self.$field.set(value)
-                }
-            }
-        )*
-    };
-
-    (@$field:ident: $return_ty:ty) => {
-        pub fn $field(&mut self, value: $return_ty) {
-            self.$field.set(value)
-        }
-    };
-}
 
 #[repr(C)]
 pub struct GpuConfig {
@@ -137,18 +114,18 @@ static_assertions::const_assert_eq!(core::mem::size_of::<CommandTy>(), 4);
 #[derive(Debug)]
 #[repr(C)]
 pub struct ControlHeader {
-    pub ty: VolatileCell<CommandTy>,
-    pub flags: VolatileCell<u32>,
-    pub fence_id: VolatileCell<u64>,
-    pub ctx_id: VolatileCell<u32>,
-    pub ring_index: VolatileCell<u8>,
+    pub ty: CommandTy,
+    pub flags: u32,
+    pub fence_id: u64,
+    pub ctx_id: u32,
+    pub ring_index: u8,
     padding: [u8; 3],
 }
 
 impl ControlHeader {
     pub fn with_ty(ty: CommandTy) -> Self {
         Self {
-            ty: VolatileCell::new(ty),
+            ty,
             ..Default::default()
         }
     }
@@ -157,11 +134,11 @@ impl ControlHeader {
 impl Default for ControlHeader {
     fn default() -> Self {
         Self {
-            ty: VolatileCell::new(CommandTy::Undefined),
-            flags: VolatileCell::new(0),
-            fence_id: VolatileCell::new(0),
-            ctx_id: VolatileCell::new(0),
-            ring_index: VolatileCell::new(0),
+            ty: CommandTy::Undefined,
+            flags: 0,
+            fence_id: 0,
+            ctx_id: 0,
+            ring_index: 0,
             padding: [0; 3],
         }
     }
@@ -190,16 +167,9 @@ impl GpuRect {
 #[derive(Debug)]
 #[repr(C)]
 pub struct DisplayInfo {
-    rect: UnsafeCell<GpuRect>,
-    pub enabled: VolatileCell<u32>,
-    pub flags: VolatileCell<u32>,
-}
-
-impl DisplayInfo {
-    pub fn rect(&self) -> &GpuRect {
-        // SAFETY: We never give out mutable references to `self.rect`.
-        unsafe { &*self.rect.get() }
-    }
+    rect: GpuRect,
+    pub enabled: u32,
+    pub flags: u32,
 }
 
 #[derive(Debug)]
@@ -213,7 +183,7 @@ impl Default for GetDisplayInfo {
     fn default() -> Self {
         Self {
             header: ControlHeader {
-                ty: VolatileCell::new(CommandTy::GetDisplayInfo),
+                ty: CommandTy::GetDisplayInfo,
                 ..Default::default()
             },
 
@@ -247,31 +217,20 @@ pub enum ResourceFormat {
 #[repr(C)]
 pub struct ResourceCreate2d {
     pub header: ControlHeader,
-
-    // FIXME we can likely use regular loads and stores as the ring buffer should provide the
-    // necessary synchronization.
-    resource_id: VolatileCell<ResourceId>,
-    format: VolatileCell<ResourceFormat>,
-    width: VolatileCell<u32>,
-    height: VolatileCell<u32>,
+    resource_id: ResourceId,
+    format: ResourceFormat,
+    width: u32,
+    height: u32,
 }
 
 impl ResourceCreate2d {
-    make_getter_setter!(resource_id: ResourceId, format: ResourceFormat, width: u32, height: u32);
-}
-
-impl Default for ResourceCreate2d {
-    fn default() -> Self {
+    fn new(resource_id: ResourceId, format: ResourceFormat, width: u32, height: u32) -> Self {
         Self {
-            header: ControlHeader {
-                ty: VolatileCell::new(CommandTy::ResourceCreate2d),
-                ..Default::default()
-            },
-
-            resource_id: VolatileCell::new(ResourceId(0)),
-            format: VolatileCell::new(ResourceFormat::Unknown),
-            width: VolatileCell::new(0),
-            height: VolatileCell::new(0),
+            header: ControlHeader::with_ty(CommandTy::ResourceCreate2d),
+            resource_id,
+            format,
+            width,
+            height,
         }
     }
 }
@@ -392,11 +351,7 @@ pub struct XferToHost2d {
 impl XferToHost2d {
     pub fn new(resource_id: ResourceId, rect: GpuRect, offset: u64) -> Self {
         Self {
-            header: ControlHeader {
-                ty: VolatileCell::new(CommandTy::TransferToHost2d),
-                ..Default::default()
-            },
-
+            header: ControlHeader::with_ty(CommandTy::TransferToHost2d),
             rect,
             offset,
             resource_id,
@@ -437,7 +392,7 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
     device.transport.run_device();
     deamon.ready().unwrap();
 
-    let mut scheme = futures::executor::block_on(scheme::GpuScheme::new(
+    let (mut scheme, mut inputd_handle) = futures::executor::block_on(scheme::GpuScheme::new(
         config,
         control_queue.clone(),
         cursor_queue.clone(),
@@ -455,14 +410,14 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
         EventQueue::new().expect("virtio-gpud: failed to create event queue");
     event_queue
         .subscribe(
-            scheme.inputd_handle.inner().as_raw_fd() as usize,
+            inputd_handle.inner().as_raw_fd() as usize,
             Source::Input,
             event::EventFlags::READ,
         )
         .unwrap();
     event_queue
         .subscribe(
-            scheme.inner.event_handle().raw(),
+            scheme.event_handle().raw(),
             Source::Scheme,
             event::EventFlags::READ,
         )
@@ -475,17 +430,15 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
     {
         match event {
             Source::Input => {
-                while let Some(vt_event) = scheme
-                    .inputd_handle
+                while let Some(vt_event) = inputd_handle
                     .read_vt_event()
                     .expect("virtio-gpud: failed to read display handle")
                 {
-                    scheme.inner.handle_vt_event(vt_event);
+                    scheme.handle_vt_event(vt_event);
                 }
             }
             Source::Scheme => {
                 scheme
-                    .inner
                     .tick()
                     .expect("virtio-gpud: failed to process scheme events");
             }
