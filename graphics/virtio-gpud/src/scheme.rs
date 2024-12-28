@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use common::{dma::Dma, sgl};
 use driver_graphics::{GraphicsAdapter, GraphicsScheme, Resource};
-use inputd::Damage;
+use inputd::{Damage, DisplayHandle};
 
 use syscall::PAGE_SIZE;
 
@@ -69,6 +69,21 @@ impl VirtGpuAdapter<'_> {
         assert_eq!(header.ty, CommandTy::RespOkNodata);
 
         Ok(())
+    }
+
+    async fn get_display_info(&self) -> Result<Dma<GetDisplayInfo>, Error> {
+        let header = Dma::new(ControlHeader::with_ty(CommandTy::GetDisplayInfo))?;
+
+        let response = Dma::new(GetDisplayInfo::default())?;
+        let command = ChainBuilder::new()
+            .chain(Buffer::new(&header))
+            .chain(Buffer::new(&response).flags(DescriptorFlags::WRITE_ONLY))
+            .build();
+
+        self.control_queue.send(command).await;
+        assert!(response.header.ty == CommandTy::RespOkDisplayInfo);
+
+        Ok(response)
     }
 }
 
@@ -217,46 +232,26 @@ impl GraphicsAdapter for VirtGpuAdapter<'_> {
     }
 }
 
-pub struct GpuScheme<'a> {
-    pub inner: GraphicsScheme<VirtGpuAdapter<'a>>,
-    pub inputd_handle: inputd::DisplayHandle,
-}
+pub struct GpuScheme {}
 
-impl<'a> GpuScheme<'a> {
+impl<'a> GpuScheme {
     pub async fn new(
         config: &'a mut GpuConfig,
         control_queue: Arc<Queue<'a>>,
         cursor_queue: Arc<Queue<'a>>,
         transport: Arc<dyn Transport>,
-    ) -> Result<GpuScheme<'a>, Error> {
-        let displays = Self::probe(control_queue.clone(), config).await?;
+    ) -> Result<(GraphicsScheme<VirtGpuAdapter<'a>>, DisplayHandle), Error> {
+        let mut adapter = VirtGpuAdapter {
+            control_queue,
+            cursor_queue,
+            transport,
+            displays: vec![],
+        };
 
-        let inputd_handle = inputd::DisplayHandle::new("virtio-gpu").unwrap();
+        let mut display_info = adapter.get_display_info().await?;
+        let raw_displays = &mut display_info.display_info[..config.num_scanouts() as usize];
 
-        Ok(Self {
-            inner: GraphicsScheme::new(
-                VirtGpuAdapter {
-                    control_queue,
-                    cursor_queue,
-                    transport,
-                    displays,
-                },
-                "display.virtio-gpu".to_owned(),
-            ),
-            inputd_handle,
-        })
-    }
-
-    async fn probe(
-        control_queue: Arc<Queue<'a>>,
-        config: &GpuConfig,
-    ) -> Result<Vec<Display>, Error> {
-        let mut display_info = Self::get_display_info(control_queue.clone()).await?;
-        let displays = &mut display_info.display_info[..config.num_scanouts() as usize];
-
-        let mut result = vec![];
-
-        for info in displays.iter() {
+        for info in raw_displays.iter() {
             log::info!(
                 "virtio-gpu: opening display ({}x{}px)",
                 info.rect.width,
@@ -267,33 +262,23 @@ impl<'a> GpuScheme<'a> {
                 // QEMU gives all displays other than the first a zero width and height, but trying
                 // to attach a zero sized framebuffer to the display will result an error, so
                 // default to 640x480px.
-                result.push(Display {
+                adapter.displays.push(Display {
                     width: 640,
                     height: 480,
                 });
             } else {
-                result.push(Display {
+                adapter.displays.push(Display {
                     width: info.rect.width,
                     height: info.rect.height,
                 });
             }
         }
 
-        Ok(result)
-    }
+        let inputd_handle = DisplayHandle::new("virtio-gpu").unwrap();
 
-    async fn get_display_info(control_queue: Arc<Queue<'a>>) -> Result<Dma<GetDisplayInfo>, Error> {
-        let header = Dma::new(ControlHeader::with_ty(CommandTy::GetDisplayInfo))?;
-
-        let response = Dma::new(GetDisplayInfo::default())?;
-        let command = ChainBuilder::new()
-            .chain(Buffer::new(&header))
-            .chain(Buffer::new(&response).flags(DescriptorFlags::WRITE_ONLY))
-            .build();
-
-        control_queue.send(command).await;
-        assert!(response.header.ty == CommandTy::RespOkDisplayInfo);
-
-        Ok(response)
+        Ok((
+            GraphicsScheme::new(adapter, "display.virtio-gpu".to_owned()),
+            inputd_handle,
+        ))
     }
 }

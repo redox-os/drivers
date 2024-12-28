@@ -392,7 +392,7 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
     device.transport.run_device();
     deamon.ready().unwrap();
 
-    let mut scheme = futures::executor::block_on(scheme::GpuScheme::new(
+    let (mut scheme, mut inputd_handle) = futures::executor::block_on(scheme::GpuScheme::new(
         config,
         control_queue.clone(),
         cursor_queue.clone(),
@@ -410,14 +410,14 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
         EventQueue::new().expect("virtio-gpud: failed to create event queue");
     event_queue
         .subscribe(
-            scheme.inputd_handle.inner().as_raw_fd() as usize,
+            inputd_handle.inner().as_raw_fd() as usize,
             Source::Input,
             event::EventFlags::READ,
         )
         .unwrap();
     event_queue
         .subscribe(
-            scheme.inner.event_handle().raw(),
+            scheme.event_handle().raw(),
             Source::Scheme,
             event::EventFlags::READ,
         )
@@ -430,17 +430,15 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
     {
         match event {
             Source::Input => {
-                while let Some(vt_event) = scheme
-                    .inputd_handle
+                while let Some(vt_event) = inputd_handle
                     .read_vt_event()
                     .expect("virtio-gpud: failed to read display handle")
                 {
-                    scheme.inner.handle_vt_event(vt_event);
+                    scheme.handle_vt_event(vt_event);
                 }
             }
             Source::Scheme => {
                 scheme
-                    .inner
                     .tick()
                     .expect("virtio-gpud: failed to process scheme events");
             }
