@@ -1,25 +1,44 @@
+use std::alloc::{self, Layout};
 use std::convert::TryInto;
-use std::ptr;
+use std::ptr::{self, NonNull};
 
 use driver_graphics::Resource;
 use inputd::Damage;
+use syscall::PAGE_SIZE;
 
-use crate::display::OffscreenBuffer;
 use crate::framebuffer::FrameBuffer;
 
 pub struct GraphicScreen {
     pub width: usize,
     pub height: usize,
-    pub offscreen: OffscreenBuffer,
+    ptr: NonNull<[u32]>,
 }
 
 impl GraphicScreen {
     pub fn new(width: usize, height: usize) -> GraphicScreen {
-        GraphicScreen {
-            width,
-            height,
-            offscreen: OffscreenBuffer::new(width * height),
-        }
+        let len = width * height;
+        let layout = Self::layout(len);
+        let ptr = unsafe { alloc::alloc_zeroed(layout) };
+        let ptr = ptr::slice_from_raw_parts_mut(ptr.cast(), len);
+        let ptr = NonNull::new(ptr).unwrap_or_else(|| alloc::handle_alloc_error(layout));
+
+        GraphicScreen { width, height, ptr }
+    }
+
+    #[inline]
+    fn layout(len: usize) -> Layout {
+        // optimizes to an integer mul
+        Layout::array::<u32>(len)
+            .unwrap()
+            .align_to(PAGE_SIZE)
+            .unwrap()
+    }
+}
+
+impl Drop for GraphicScreen {
+    fn drop(&mut self) {
+        let layout = Self::layout(self.ptr.len());
+        unsafe { alloc::dealloc(self.ptr.as_ptr().cast(), layout) };
     }
 }
 
@@ -34,6 +53,10 @@ impl Resource for GraphicScreen {
 }
 
 impl GraphicScreen {
+    pub fn ptr(&self) -> *mut u8 {
+        self.ptr.as_ptr().cast::<u8>()
+    }
+
     pub fn sync(&self, framebuffer: &mut FrameBuffer, sync_rects: &[Damage]) {
         for sync_rect in sync_rects {
             let sync_rect = sync_rect.clip(
@@ -50,7 +73,7 @@ impl GraphicScreen {
 
             let row_pixel_count = w;
 
-            let mut offscreen_ptr = self.offscreen.as_ptr();
+            let mut offscreen_ptr = self.ptr.as_ptr() as *mut u32;
             let mut onscreen_ptr = framebuffer.onscreen as *mut u32; // FIXME use as_mut_ptr once stable
 
             unsafe {

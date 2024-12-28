@@ -11,7 +11,6 @@ use std::os::fd::AsRawFd;
 use crate::framebuffer::FrameBuffer;
 use crate::scheme::FbAdapter;
 
-mod display;
 mod framebuffer;
 mod scheme;
 mod screen;
