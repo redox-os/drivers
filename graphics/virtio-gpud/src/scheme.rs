@@ -125,7 +125,7 @@ impl GraphicsAdapter for VirtGpuAdapter<'_> {
             let header = self.send_request(request).await.unwrap();
             assert_eq!(header.ty, CommandTy::RespOkNodata);
 
-            // Use the allocated framebuffer from tthe guest ram, and attach it as backing
+            // Use the allocated framebuffer from the guest ram, and attach it as backing
             // storage to the resource just created, using `VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING`.
 
             let mut mem_entries =
@@ -168,12 +168,7 @@ impl GraphicsAdapter for VirtGpuAdapter<'_> {
             let scanout_request = Dma::new(SetScanout::new(
                 display_id as u32,
                 resource.id,
-                GpuRect::new(
-                    0,
-                    0,
-                    self.displays[display_id].width,
-                    self.displays[display_id].height,
-                ),
+                GpuRect::new(0, 0, resource.width, resource.height),
             ))
             .unwrap();
             let header = self.send_request(scanout_request).await.unwrap();
