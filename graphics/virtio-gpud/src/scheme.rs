@@ -99,12 +99,13 @@ impl GraphicsAdapter for VirtGpuAdapter<'_> {
             let res_id = ResourceId::alloc();
 
             // Create a host resource using `VIRTIO_GPU_CMD_RESOURCE_CREATE_2D`.
-            let mut request = Dma::new(ResourceCreate2d::default()).unwrap();
-
-            request.set_width(width);
-            request.set_height(height);
-            request.set_format(ResourceFormat::Bgrx);
-            request.set_resource_id(res_id);
+            let request = Dma::new(ResourceCreate2d::new(
+                res_id,
+                ResourceFormat::Bgrx,
+                width,
+                height,
+            ))
+            .unwrap();
 
             let header = self.send_request(request).await.unwrap();
             assert_eq!(header.ty, CommandTy::RespOkNodata);

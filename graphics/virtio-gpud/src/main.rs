@@ -36,22 +36,6 @@ mod scheme;
 // const VIRTIO_GPU_EVENT_DISPLAY: u32 = 1 << 0;
 const VIRTIO_GPU_MAX_SCANOUTS: usize = 16;
 
-macro_rules! make_getter_setter {
-    ($($field:ident: $return_ty:ty),*) => {
-        $(
-            pub fn $field(&self) -> $return_ty {
-                self.$field
-            }
-
-            paste::item! {
-                pub fn [<set_ $field>](&mut self, value: $return_ty) {
-                    self.$field = value;
-                }
-            }
-        )*
-    };
-}
-
 #[repr(C)]
 pub struct GpuConfig {
     /// Signals pending events to the driver.
@@ -240,17 +224,13 @@ pub struct ResourceCreate2d {
 }
 
 impl ResourceCreate2d {
-    make_getter_setter!(resource_id: ResourceId, format: ResourceFormat, width: u32, height: u32);
-}
-
-impl Default for ResourceCreate2d {
-    fn default() -> Self {
+    fn new(resource_id: ResourceId, format: ResourceFormat, width: u32, height: u32) -> Self {
         Self {
             header: ControlHeader::with_ty(CommandTy::ResourceCreate2d),
-            resource_id: ResourceId(0),
-            format: ResourceFormat::Unknown,
-            width: 0,
-            height: 0,
+            resource_id,
+            format,
+            width,
+            height,
         }
     }
 }
