@@ -213,16 +213,21 @@ impl TextScreen {
         }
 
         let width = map.width.try_into().unwrap();
-        let damage = self
-            .changed
-            .iter()
-            .map(|&change| Damage {
-                x: 0,
-                y: i32::try_from(change).unwrap() * 16,
-                width,
-                height: 16,
-            })
-            .collect();
+        let mut damage: Vec<Damage> = vec![];
+        let mut last_change = usize::MAX - 1;
+        for &change in &self.changed {
+            if change == last_change + 1 {
+                damage.last_mut().unwrap().height += 16;
+            } else {
+                damage.push(Damage {
+                    x: 0,
+                    y: i32::try_from(change).unwrap() * 16,
+                    width,
+                    height: 16,
+                });
+            }
+            last_change = change;
+        }
 
         self.changed.clear();
 
