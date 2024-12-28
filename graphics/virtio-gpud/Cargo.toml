@@ -9,7 +9,6 @@ log = "0.4"
 static_assertions = "1.1.0"
 futures = { version = "0.3.28", features = ["executor"] }
 anyhow = "1.0.71"
-paste = "1.0.13"
 
 common = { path = "../../common" }
 driver-graphics = { path = "../driver-graphics" }

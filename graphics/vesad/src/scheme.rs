@@ -25,7 +25,7 @@ impl GraphicsAdapter for FbAdapter {
     }
 
     fn map_resource(&mut self, resource: &Self::Resource) -> *mut u8 {
-        resource.offscreen.ptr()
+        resource.ptr()
     }
 
     fn set_scanout(&mut self, display_id: usize, resource: &Self::Resource) {

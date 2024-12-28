@@ -1,4 +1,3 @@
-#![feature(int_roundings, slice_ptr_get)]
 extern crate orbclient;
 extern crate syscall;
 
@@ -12,7 +11,6 @@ use std::os::fd::AsRawFd;
 use crate::framebuffer::FrameBuffer;
 use crate::scheme::FbAdapter;
 
-mod display;
 mod framebuffer;
 mod scheme;
 mod screen;
