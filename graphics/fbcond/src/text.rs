@@ -1,7 +1,4 @@
-extern crate ransid;
-
 use std::collections::VecDeque;
-use std::convert::TryInto;
 
 use orbclient::{Event, EventOption};
 use syscall::error::*;
@@ -27,11 +24,6 @@ impl TextScreen {
 
     pub fn handle_handoff(&mut self) {
         self.display.reopen_for_handoff();
-    }
-
-    pub fn resize(&mut self, width: usize, height: usize) {
-        self.display
-            .resize(width.try_into().unwrap(), height.try_into().unwrap());
     }
 
     pub fn input(&mut self, event: &Event) {
@@ -130,9 +122,9 @@ impl TextScreen {
     pub fn write(&mut self, buf: &[u8]) -> Result<usize> {
         let damage = self.inner.write(
             &mut console_draw::DisplayMap {
-                offscreen: self.display.offscreen,
-                width: self.display.width,
-                height: self.display.height,
+                offscreen: self.display.map.ptr_mut(),
+                width: self.display.map.width(),
+                height: self.display.map.height(),
             },
             buf,
             &mut self.input,

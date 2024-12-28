@@ -442,6 +442,7 @@ name = "fbbootlogd"
 version = "0.1.0"
 dependencies = [
  "console-draw",
+ "graphics-ipc",
  "inputd",
  "libredox",
  "orbclient",
@@ -457,6 +458,7 @@ name = "fbcond"
 version = "0.1.0"
 dependencies = [
  "console-draw",
+ "graphics-ipc",
  "inputd",
  "libredox",
  "orbclient",
@@ -600,6 +602,16 @@ dependencies = [
  "crc",
  "log",
  "uuid",
+]
+
+[[package]]
+name = "graphics-ipc"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "inputd",
+ "libredox",
+ "log",
 ]
 
 [[package]]

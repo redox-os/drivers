@@ -1,13 +1,13 @@
 use event::{user_data, EventQueue};
+use graphics_ipc::legacy::LegacyGraphicsHandle;
 use inputd::{ConsumerHandle, Damage};
 use libredox::errno::ESTALE;
-use libredox::flag;
 use orbclient::Event;
 use std::mem;
 use std::os::fd::BorrowedFd;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
-use std::{fs::File, io, os::unix::io::AsRawFd, slice};
+use std::{io, os::unix::io::AsRawFd, slice};
 
 fn read_to_slice<T: Copy>(
     file: BorrowedFd,
@@ -22,46 +22,17 @@ fn read_to_slice<T: Copy>(
     }
 }
 
-fn display_fd_map(width: usize, height: usize, display_file: File) -> syscall::Result<DisplayMap> {
-    unsafe {
-        let display_ptr = libredox::call::mmap(libredox::call::MmapArgs {
-            fd: display_file.as_raw_fd() as usize,
-            offset: 0,
-            length: (width * height * 4),
-            prot: flag::PROT_READ | flag::PROT_WRITE,
-            flags: flag::MAP_SHARED,
-            addr: core::ptr::null_mut(),
-        })?;
-        let display_slice = slice::from_raw_parts_mut(display_ptr as *mut u32, width * height);
-        Ok(DisplayMap {
-            display_file: Arc::new(display_file),
-            offscreen: display_slice,
-            width,
-            height,
-        })
-    }
-}
-
-unsafe fn display_fd_unmap(image: *mut [u32]) {
-    let _ = libredox::call::munmap(image as *mut (), image.len());
+fn display_fd_map(display_handle: LegacyGraphicsHandle) -> io::Result<DisplayMap> {
+    let display_map = display_handle.map_display()?;
+    Ok(DisplayMap {
+        display_handle: Arc::new(display_handle),
+        inner: display_map,
+    })
 }
 
 pub struct DisplayMap {
-    display_file: Arc<File>,
-    pub offscreen: *mut [u32],
-    pub width: usize,
-    pub height: usize,
-}
-
-unsafe impl Send for DisplayMap {}
-unsafe impl Sync for DisplayMap {}
-
-impl Drop for DisplayMap {
-    fn drop(&mut self) {
-        unsafe {
-            display_fd_unmap(self.offscreen);
-        }
-    }
+    display_handle: Arc<LegacyGraphicsHandle>,
+    pub inner: graphics_ipc::legacy::DisplayMap,
 }
 
 enum DisplayCommand {
@@ -77,11 +48,10 @@ impl Display {
     pub fn open_first_vt() -> io::Result<Self> {
         let input_handle = ConsumerHandle::for_vt(1)?;
 
-        let (display_file, width, height) = Self::open_display(&input_handle)?;
+        let display_handle = LegacyGraphicsHandle::from_file(input_handle.open_display()?)?;
 
         let map = Arc::new(Mutex::new(
-            display_fd_map(width, height, display_file)
-                .unwrap_or_else(|e| panic!("failed to map display: {e}")),
+            display_fd_map(display_handle).unwrap_or_else(|e| panic!("failed to map display: {e}")),
         ));
 
         let map_clone = map.clone();
@@ -96,34 +66,6 @@ impl Display {
         });
 
         Ok(Self { cmd_tx, map })
-    }
-
-    fn open_display(input_handle: &ConsumerHandle) -> io::Result<(File, usize, usize)> {
-        let display_file = input_handle.open_display()?;
-
-        let mut buf: [u8; 4096] = [0; 4096];
-        let count = libredox::call::fpath(display_file.as_raw_fd() as usize, &mut buf)
-            .unwrap_or_else(|e| {
-                panic!("Could not read display path with fpath(): {e}");
-            });
-
-        let url =
-            String::from_utf8(Vec::from(&buf[..count])).expect("Could not create Utf8 Url String");
-        let path = url.split(':').nth(1).expect("Could not get path from url");
-
-        let mut path_parts = path.split('/').skip(1);
-        let width = path_parts
-            .next()
-            .unwrap_or("")
-            .parse::<usize>()
-            .unwrap_or(0);
-        let height = path_parts
-            .next()
-            .unwrap_or("")
-            .parse::<usize>()
-            .unwrap_or(0);
-
-        Ok((display_file, width, height))
     }
 
     fn handle_input_events(map: Arc<Mutex<DisplayMap>>, input_handle: ConsumerHandle) {
@@ -151,10 +93,11 @@ impl Display {
                 Err(err) if err.errno() == ESTALE => {
                     eprintln!("fbbootlogd: handoff requested");
 
-                    let (new_display_file, width, height) =
-                        Self::open_display(&input_handle).unwrap();
+                    let new_display_handle =
+                        LegacyGraphicsHandle::from_file(input_handle.open_display().unwrap())
+                            .unwrap();
 
-                    match display_fd_map(width, height, new_display_file) {
+                    match display_fd_map(new_display_handle) {
                         Ok(ok) => {
                             *map.lock().unwrap() = ok;
 
@@ -177,19 +120,12 @@ impl Display {
     fn handle_sync_rect(map: Arc<Mutex<DisplayMap>>, cmd_rx: Receiver<DisplayCommand>) {
         while let Ok(cmd) = cmd_rx.recv() {
             match cmd {
-                DisplayCommand::SyncRects(sync_rects) => unsafe {
+                DisplayCommand::SyncRects(sync_rects) => {
                     // We may not hold this lock across the write call to avoid deadlocking if the
                     // graphics driver tries to write to the bootlog.
-                    let display_file = map.lock().unwrap().display_file.clone();
-                    libredox::call::write(
-                        display_file.as_raw_fd() as usize,
-                        slice::from_raw_parts(
-                            sync_rects.as_ptr() as *const u8,
-                            sync_rects.len() * mem::size_of::<Damage>(),
-                        ),
-                    )
-                    .unwrap();
-                },
+                    let display_handle = map.lock().unwrap().display_handle.clone();
+                    display_handle.sync_rects(&sync_rects).unwrap();
+                }
             }
         }
     }
