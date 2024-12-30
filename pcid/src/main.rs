@@ -194,8 +194,9 @@ fn handle_parsed_header(
     }
 }
 
-#[paw::main]
-fn main(args: Args) {
+fn main() {
+    let args = Args::from_args();
+
     let mut config = Config::default();
 
     if let Some(config_path) = args.config_path {
