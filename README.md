@@ -71,7 +71,7 @@ If you don't have datasheets, we recommend you to do reverse-engineering of avai
 
 You can use the [example](https://gitlab.redox-os.org/redox-os/exampled) driver or read the code of other drivers with the same type of your device.
 
-Before testing your changes, be aware of [this](https://doc.redox-os.org/book/ch09-02-coding-and-building.html#a-note-about-drivers).
+Before testing your changes, be aware of [this](https://doc.redox-os.org/book/coding-and-building.html#a-note-about-drivers).
 
 ### Driver References
 
