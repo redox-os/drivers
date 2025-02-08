@@ -118,8 +118,11 @@ impl Corb {
         assert!(self.corb_count != 0);
         let addr = self.corb_base_phys;
         self.set_address(addr);
-        self.regs.corbwp.write(0);
+        self.regs.corbsize.write((corbsize_reg & 0xFC) | corbsize);
+
         self.reset_read_pointer();
+        let old_wp = self.regs.corbwp.read();
+        self.regs.corbwp.write(old_wp & 0xFF00);
     }
 
     pub fn start(&mut self) {
@@ -129,7 +132,7 @@ impl Corb {
     #[inline(never)]
     pub fn stop(&mut self) {
         while self.regs.corbctl.readf(CORBRUN) {
-            self.regs.corbctl.write(0);
+            self.regs.corbctl.writef(CORBRUN, false);
         }
     }
 
@@ -139,38 +142,29 @@ impl Corb {
     }
 
     pub fn reset_read_pointer(&mut self) {
-        /*
-         * FIRST ISSUE/PATCH
-         * This will loop forever in virtualbox
-         * So maybe just resetting the read pointer
-         * and leaving for the specific model?
-         */
-        if true {
+        // 3.3.21
+
+        self.stop();
+
+        // Set CORBRPRST to 1
+        log::trace!("CORBRP {:X}", self.regs.corbrp.read());
+        self.regs.corbrp.writef(CORBRPRST, true);
+        log::trace!("CORBRP {:X}", self.regs.corbrp.read());
+
+        // Wait for it to become 1
+        while !self.regs.corbrp.readf(CORBRPRST) {
             self.regs.corbrp.writef(CORBRPRST, true);
-        } else {
-            // 3.3.21
+        }
 
-            self.stop();
-            // Set CORBRPRST to 1
-            log::trace!("CORBRP {:X}", self.regs.corbrp.read());
-            self.regs.corbrp.writef(CORBRPRST, true);
-            log::trace!("CORBRP {:X}", self.regs.corbrp.read());
+        // Clear the bit again
+        self.regs.corbrp.writef(CORBRPRST, false);
 
-            // Wait for it to become 1
-            while !self.regs.corbrp.readf(CORBRPRST) {
-                self.regs.corbrp.writef(CORBRPRST, true);
+        // Read back the bit until zero to verify that it is cleared.
+        loop {
+            if !self.regs.corbrp.readf(CORBRPRST) {
+                break;
             }
-            // Clear the bit again
-            self.regs.corbrp.write(0);
-
-            // Read back the bit until zero to verify that it is cleared.
-
-            loop {
-                if !self.regs.corbrp.readf(CORBRPRST) {
-                    break;
-                }
-                self.regs.corbrp.write(0);
-            }
+            self.regs.corbrp.writef(CORBRPRST, false);
         }
     }
 
@@ -262,9 +256,9 @@ impl Rirb {
     }
 
     pub fn stop(&mut self) {
-        let mut val = self.regs.rirbctl.read();
-        val &= !(RIRBDMAEN);
-        self.regs.rirbctl.write(val);
+        while self.regs.rirbctl.readf(RIRBDMAEN) {
+            self.regs.rirbctl.writef(RIRBDMAEN, false);
+        }
     }
 
     pub fn set_address(&mut self, addr: usize) {
@@ -382,6 +376,11 @@ impl CommandBuffer {
         self.corb.init();
         self.rirb.init();
         self.set_use_imm_cmds(use_imm_cmds);
+    }
+
+    pub fn stop(&mut self) {
+        self.corb.stop();
+        self.rirb.stop();
     }
 
     pub fn cmd12(&mut self, addr: WidgetAddr, command: u32, data: u8) -> u64 {
