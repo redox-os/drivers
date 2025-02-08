@@ -6,6 +6,8 @@ use std::collections::HashMap;
 use std::fmt::Write;
 use std::str;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::thread;
+use std::time::Duration;
 
 use common::dma::Dma;
 use common::io::{Io, Mmio};
@@ -651,7 +653,9 @@ impl IntelHDA {
     }
 
     pub fn reset_controller(&mut self) -> bool {
-        self.regs.statests.write(0xFFFF);
+        self.cmd.stop();
+
+        self.regs.statests.write(0x7FFF);
 
         // 3.3.7
         self.regs.gctl.writef(CRST, false);
@@ -660,12 +664,17 @@ impl IntelHDA {
                 break;
             }
         }
+
+        thread::sleep(Duration::from_millis(1));
+
         self.regs.gctl.writef(CRST, true);
         loop {
             if self.regs.gctl.readf(CRST) {
                 break;
             }
         }
+
+        thread::sleep(Duration::from_millis(2));
 
         let mut ticks: u32 = 0;
         while self.regs.statests.read() == 0 {
