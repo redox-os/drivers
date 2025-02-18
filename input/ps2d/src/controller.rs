@@ -1,7 +1,7 @@
 use common::io::{Io, Pio, ReadOnly, WriteOnly};
 use log::{debug, error, info, trace};
 
-use std::fmt;
+use std::{fmt, thread, time::Duration};
 
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
@@ -133,29 +133,25 @@ impl Ps2 {
     }
 
     fn wait_read(&mut self) -> Result<(), Error> {
-        let mut timeout = 100_000;
+        let mut timeout = 500;
         while timeout > 0 {
             if self.status().contains(StatusFlags::OUTPUT_FULL) {
                 return Ok(());
             }
-            unsafe {
-                pause();
-            }
             timeout -= 1;
+            thread::sleep(Duration::from_millis(1));
         }
         Err(Error::ReadTimeout)
     }
 
     fn wait_write(&mut self) -> Result<(), Error> {
-        let mut timeout = 100_000;
+        let mut timeout = 500;
         while timeout > 0 {
             if !self.status().contains(StatusFlags::INPUT_FULL) {
                 return Ok(());
             }
-            unsafe {
-                pause();
-            }
             timeout -= 1;
+            thread::sleep(Duration::from_millis(1));
         }
         Err(Error::WriteTimeout)
     }
