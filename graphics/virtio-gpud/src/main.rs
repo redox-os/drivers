@@ -20,8 +20,6 @@
 // cc https://docs.mesa3d.org/drivers/venus.html
 // cc https://docs.mesa3d.org/drivers/virgl.html
 
-#![feature(int_roundings)]
-
 use std::os::fd::AsRawFd;
 use std::sync::atomic::{AtomicU32, Ordering};
 

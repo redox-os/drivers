@@ -1,5 +1,3 @@
-#![feature(int_roundings)]
-
 pub mod spec;
 pub mod transport;
 pub mod utils;

@@ -1,5 +1,3 @@
-#![feature(int_roundings)]
-
 use std::convert::TryInto;
 use std::fs::File;
 use std::io::{Read, Write};
