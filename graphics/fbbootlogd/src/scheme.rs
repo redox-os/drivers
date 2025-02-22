@@ -1,10 +1,9 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
 use redox_scheme::Scheme;
 use syscall::{Error, EventFlags, Result, EBADF, EINVAL, ENOENT};
 
 use crate::display::Display;
-use crate::text::TextScreen;
 
 pub struct Handle {
     pub events: EventFlags,
@@ -12,18 +11,17 @@ pub struct Handle {
 }
 
 pub struct FbbootlogScheme {
-    pub screen: TextScreen,
+    display: Display,
+    text_screen: console_draw::TextScreen,
     next_id: usize,
     pub handles: BTreeMap<usize, Handle>,
 }
 
 impl FbbootlogScheme {
     pub fn new() -> FbbootlogScheme {
-        let display = Display::open_first_vt().expect("Failed to open display for vt");
-        let screen = TextScreen::new(display);
-
         FbbootlogScheme {
-            screen,
+            display: Display::open_first_vt().expect("Failed to open display for vt"),
+            text_screen: console_draw::TextScreen::new(),
             next_id: 0,
             handles: BTreeMap::new(),
         }
@@ -94,7 +92,21 @@ impl Scheme for FbbootlogScheme {
     fn write(&mut self, id: usize, buf: &[u8], _offset: u64, _fcntl_flags: u32) -> Result<usize> {
         let _handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
-        self.screen.write(buf)
+        let mut map = self.display.map.lock().unwrap();
+        let damage = self.text_screen.write(
+            &mut console_draw::DisplayMap {
+                offscreen: map.inner.ptr_mut(),
+                width: map.inner.width(),
+                height: map.inner.height(),
+            },
+            buf,
+            &mut VecDeque::new(),
+        );
+        drop(map);
+
+        self.display.sync_rects(damage);
+
+        Ok(buf.len())
     }
 
     fn close(&mut self, id: usize) -> Result<usize> {

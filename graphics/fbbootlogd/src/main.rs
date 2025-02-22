@@ -16,7 +16,6 @@ use crate::scheme::FbbootlogScheme;
 
 mod display;
 mod scheme;
-mod text;
 
 fn main() {
     redox_daemon::Daemon::new(|daemon| inner(daemon)).expect("failed to create daemon");
