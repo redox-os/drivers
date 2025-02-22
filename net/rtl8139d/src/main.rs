@@ -1,8 +1,8 @@
-use std::convert::TryInto;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::os::unix::io::AsRawFd;
 use std::ptr::NonNull;
+use std::rc::Rc;
 
 use driver_network::NetworkScheme;
 use event::{user_data, EventQueue};
@@ -11,8 +11,7 @@ use pcid_interface::irq_helpers::allocate_single_interrupt_vector_for_msi;
 use pcid_interface::irq_helpers::read_bsp_apic_id;
 use pcid_interface::msi::{MsixInfo, MsixTableEntry};
 use pcid_interface::{
-    MsiSetFeatureInfo, PciFeature, PciFeatureInfo, PciFunctionHandle, SetFeatureInfo,
-    SubdriverArguments,
+    MappedBar, MsiSetFeatureInfo, PciFeature, PciFeatureInfo, PciFunctionHandle, SetFeatureInfo,
 };
 
 pub mod device;
@@ -155,20 +154,23 @@ fn get_int_method(pcid_handle: &mut PciFunctionHandle) -> File {
     }
 }
 
-fn find_bar(pci_config: &SubdriverArguments) -> Option<(usize, usize)> {
+fn map_bar(pcid_handle: &mut PciFunctionHandle) -> *mut u8 {
+    let config = pcid_handle.config();
+
     // RTL8139 uses BAR2, RTL8169 uses BAR1, search in that order
     for &barnum in &[2, 1] {
-        match pci_config.func.bars[barnum] {
-            pcid_interface::PciBar::Memory32 { addr, size } => {
-                return Some((addr.try_into().unwrap(), size.try_into().unwrap()))
-            }
-            pcid_interface::PciBar::Memory64 { addr, size } => {
-                return Some((addr.try_into().unwrap(), size.try_into().unwrap()))
-            }
+        match config.func.bars[usize::from(barnum)] {
+            pcid_interface::PciBar::Memory32 { .. } | pcid_interface::PciBar::Memory64 { .. } => unsafe {
+                return pcid_handle
+                    .map_bar(barnum)
+                    .expect("rtl8139d: failed to map address")
+                    .ptr
+                    .as_ptr();
+            },
             other => log::warn!("BAR {} is {:?} instead of memory BAR", barnum, other),
         }
     }
-    None
+    panic!("rtl8139d: failed to find BAR");
 }
 
 fn daemon(daemon: redox_daemon::Daemon) -> ! {
@@ -188,24 +190,15 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let mut name = pci_config.func.name();
     name.push_str("_rtl8139");
 
-    let (bar_ptr, bar_size) = find_bar(&pci_config).expect("rtl8139d: failed to find BAR");
     log::info!(" + RTL8139 {}", pci_config.func.display());
 
-    let address = unsafe {
-        common::physmap(
-            bar_ptr,
-            bar_size,
-            common::Prot::RW,
-            common::MemoryType::Uncacheable,
-        )
-        .expect("rtl8139d: failed to map address") as usize
-    };
+    let bar = map_bar(&mut pcid_handle);
 
     //TODO: MSI-X
     let mut irq_file = get_int_method(&mut pcid_handle);
 
     let device =
-        unsafe { device::Rtl8139::new(address).expect("rtl8139d: failed to allocate device") };
+        unsafe { device::Rtl8139::new(bar as usize).expect("rtl8139d: failed to allocate device") };
 
     let mut scheme = NetworkScheme::new(device, format!("network.{name}"));
 
