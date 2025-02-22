@@ -1,109 +1,48 @@
-use std::fs::File;
-use std::os::unix::io::{FromRawFd, RawFd};
-use std::process::Command;
 use std::sync::Arc;
-use std::thread;
 
-use log::{error, info};
 use pci_types::capability::{MultipleMessageSupport, PciCapability};
-use pci_types::{ConfigRegionAccess, PciAddress};
+use pci_types::{ConfigRegionAccess, EndpointHeader};
+use pcid_interface::PciFunction;
 
 use crate::State;
 
-pub struct DriverHandler {
-    addr: PciAddress,
+pub struct DriverHandler<'a> {
+    func: PciFunction,
+    endpoint_header: &'a mut EndpointHeader,
     capabilities: Vec<PciCapability>,
 
     state: Arc<State>,
 }
 
-impl DriverHandler {
-    pub fn spawn(
-        state: Arc<State>,
-        func: pcid_interface::PciFunction,
+impl<'a> DriverHandler<'a> {
+    pub fn new(
+        func: PciFunction,
+        endpoint_header: &'a mut EndpointHeader,
         capabilities: Vec<PciCapability>,
-        args: &[String],
-    ) {
-        let subdriver_args = pcid_interface::SubdriverArguments { func };
-
-        let mut args = args.iter();
-        if let Some(program) = args.next() {
-            let program = if program.starts_with('/') {
-                program.to_owned()
-            } else {
-                "/usr/lib/drivers/".to_owned() + program
-            };
-            let mut command = Command::new(program);
-            for arg in args {
-                if arg.starts_with("$") {
-                    panic!("support for $VARIABLE has been removed. use pcid_interface instead");
-                }
-                command.arg(arg);
-            }
-
-            info!("PCID SPAWN {:?}", command);
-
-            // TODO: libc wrapper?
-            let [fds1, fds2] = unsafe {
-                let mut fds1 = [0 as libc::c_int; 2];
-                let mut fds2 = [0 as libc::c_int; 2];
-
-                assert_eq!(
-                    libc::pipe(fds1.as_mut_ptr()),
-                    0,
-                    "pcid: failed to create pcid->client pipe"
-                );
-                assert_eq!(
-                    libc::pipe(fds2.as_mut_ptr()),
-                    0,
-                    "pcid: failed to create client->pcid pipe"
-                );
-
-                [fds1.map(|c| c as usize), fds2.map(|c| c as usize)]
-            };
-
-            let [pcid_to_client_read, pcid_to_client_write] = fds1;
-            let [pcid_from_client_read, pcid_from_client_write] = fds2;
-
-            let envs = vec![
-                ("PCID_TO_CLIENT_FD", format!("{}", pcid_to_client_read)),
-                ("PCID_FROM_CLIENT_FD", format!("{}", pcid_from_client_write)),
-            ];
-
-            match command.envs(envs).spawn() {
-                Ok(mut child) => {
-                    let driver_handler = DriverHandler {
-                        addr: func.addr,
-                        state: state.clone(),
-                        capabilities,
-                    };
-                    let handle = thread::spawn(move || {
-                        driver_handler.handle_spawn(
-                            pcid_to_client_write,
-                            pcid_from_client_read,
-                            subdriver_args,
-                        );
-                    });
-                    state.threads.lock().unwrap().push(handle);
-                    match child.wait() {
-                        Ok(_status) => (),
-                        Err(err) => error!("pcid: failed to wait for {:?}: {}", command, err),
-                    }
-                }
-                Err(err) => error!("pcid: failed to execute {:?}: {}", command, err),
-            }
+        state: Arc<State>,
+    ) -> Self {
+        DriverHandler {
+            func,
+            endpoint_header,
+            capabilities,
+            state,
         }
     }
 
-    fn respond(
+    pub fn respond(
         &mut self,
         request: pcid_interface::PcidClientRequest,
-        args: &pcid_interface::SubdriverArguments,
     ) -> pcid_interface::PcidClientResponse {
         use pcid_interface::*;
 
         #[forbid(non_exhaustive_omitted_patterns)]
         match request {
+            PcidClientRequest::EnableDevice => {
+                self.func.legacy_interrupt_line =
+                    crate::enable_function(&self.state, &mut self.endpoint_header);
+
+                PcidClientResponse::EnabledDevice
+            }
             PcidClientRequest::RequestVendorCapabilities => PcidClientResponse::VendorCapabilities(
                 self.capabilities
                     .iter()
@@ -115,7 +54,9 @@ impl DriverHandler {
                     })
                     .collect::<Vec<_>>(),
             ),
-            PcidClientRequest::RequestConfig => PcidClientResponse::Config(args.clone()),
+            PcidClientRequest::RequestConfig => {
+                PcidClientResponse::Config(SubdriverArguments { func: self.func })
+            }
             PcidClientRequest::RequestFeatures => PcidClientResponse::AllFeatures(
                 self.capabilities
                     .iter()
@@ -327,32 +268,16 @@ impl DriverHandler {
                 _ => unreachable!(),
             },
             PcidClientRequest::ReadConfig(offset) => {
-                let value = unsafe { self.state.pcie.read(self.addr, offset) };
+                let value = unsafe { self.state.pcie.read(self.func.addr, offset) };
                 return PcidClientResponse::ReadConfig(value);
             }
             PcidClientRequest::WriteConfig(offset, value) => {
                 unsafe {
-                    self.state.pcie.write(self.addr, offset, value);
+                    self.state.pcie.write(self.func.addr, offset, value);
                 }
                 return PcidClientResponse::WriteConfig;
             }
             _ => unreachable!(),
-        }
-    }
-    fn handle_spawn(
-        mut self,
-        pcid_to_client_write: usize,
-        pcid_from_client_read: usize,
-        args: pcid_interface::SubdriverArguments,
-    ) {
-        use pcid_interface::*;
-
-        let mut pcid_to_client = unsafe { File::from_raw_fd(pcid_to_client_write as RawFd) };
-        let mut pcid_from_client = unsafe { File::from_raw_fd(pcid_from_client_read as RawFd) };
-
-        while let Ok(msg) = recv(&mut pcid_from_client) {
-            let response = self.respond(msg, &args);
-            send(&mut pcid_to_client, &response).unwrap();
         }
     }
 }

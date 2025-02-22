@@ -4,6 +4,7 @@ members = [
     "common",
     "hwd",
     "pcid",
+    "pcid-spawner",
     "vboxd",
     "xhcid",
     "usbctl",

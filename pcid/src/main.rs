@@ -1,123 +1,120 @@
+#![feature(array_chunks)]
 #![feature(non_exhaustive_omitted_patterns_lint)]
 #![feature(iter_next_chunk)]
 #![feature(if_let_guard)]
 
-use std::fs::{metadata, read_dir, File};
-use std::io::prelude::*;
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
-use std::thread;
+use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use log::{debug, info, trace, warn};
+use pci_types::capability::PciCapability;
 use pci_types::{
     Bar as TyBar, CommandRegister, EndpointHeader, HeaderType, PciAddress,
     PciHeader as TyPciHeader, PciPciBridgeHeader,
 };
+use redox_scheme::{RequestKind, SignalBehavior};
 
 use crate::cfg_access::Pcie;
-use pcid_interface::{config::Config, FullDeviceId, LegacyInterruptLine, PciBar};
+use pcid_interface::{FullDeviceId, LegacyInterruptLine, PciBar, PciFunction};
 
 mod cfg_access;
 mod driver_handler;
+mod scheme;
 
 pub struct State {
-    threads: Mutex<Vec<thread::JoinHandle<()>>>,
     pcie: Pcie,
 }
 
+pub struct Func {
+    inner: PciFunction,
+
+    capabilities: Vec<PciCapability>,
+    endpoint_header: EndpointHeader,
+    enabled: bool,
+}
+
 fn handle_parsed_header(
-    state: Arc<State>,
-    config: &Config,
-    mut endpoint_header: EndpointHeader,
+    state: &State,
+    tree: &mut BTreeMap<PciAddress, Func>,
+    endpoint_header: EndpointHeader,
     full_device_id: FullDeviceId,
 ) {
-    for driver in config.drivers.iter() {
-        if !driver.match_function(&full_device_id) {
+    let mut bars = [PciBar::None; 6];
+    let mut skip = false;
+    for i in 0..6 {
+        if skip {
+            skip = false;
             continue;
         }
-
-        let Some(ref args) = driver.command else {
-            continue;
-        };
-
-        let mut bars = [PciBar::None; 6];
-        let mut skip = false;
-        for i in 0..6 {
-            if skip {
-                skip = false;
-                continue;
-            }
-            match endpoint_header.bar(i, &state.pcie) {
-                Some(TyBar::Io { port }) => {
-                    bars[i as usize] = PciBar::Port(port.try_into().unwrap())
-                }
-                Some(TyBar::Memory32 {
-                    address,
+        match endpoint_header.bar(i, &state.pcie) {
+            Some(TyBar::Io { port }) => bars[i as usize] = PciBar::Port(port.try_into().unwrap()),
+            Some(TyBar::Memory32 {
+                address,
+                size,
+                prefetchable: _,
+            }) => {
+                bars[i as usize] = PciBar::Memory32 {
+                    addr: address,
                     size,
-                    prefetchable: _,
-                }) => {
-                    bars[i as usize] = PciBar::Memory32 {
-                        addr: address,
-                        size,
-                    }
                 }
-                Some(TyBar::Memory64 {
-                    address,
+            }
+            Some(TyBar::Memory64 {
+                address,
+                size,
+                prefetchable: _,
+            }) => {
+                bars[i as usize] = PciBar::Memory64 {
+                    addr: address,
                     size,
-                    prefetchable: _,
-                }) => {
-                    bars[i as usize] = PciBar::Memory64 {
-                        addr: address,
-                        size,
-                    };
-                    skip = true; // Each 64bit memory BAR occupies two slots
-                }
-                None => bars[i as usize] = PciBar::None,
+                };
+                skip = true; // Each 64bit memory BAR occupies two slots
             }
+            None => bars[i as usize] = PciBar::None,
         }
+    }
 
-        let mut string = String::new();
-        for (i, bar) in bars.iter().enumerate() {
-            if !bar.is_none() {
-                string.push_str(&format!(" {i}={}", bar.display()));
-            }
+    let mut string = String::new();
+    for (i, bar) in bars.iter().enumerate() {
+        if !bar.is_none() {
+            string.push_str(&format!(" {i}={}", bar.display()));
         }
+    }
 
-        if !string.is_empty() {
-            info!("    BAR{}", string);
-        }
+    if !string.is_empty() {
+        info!("    BAR{}", string);
+    }
 
-        let legacy_interrupt_line = enable_function(&state, &mut endpoint_header);
+    let capabilities = if endpoint_header.status(&state.pcie).has_capability_list() {
+        endpoint_header
+            .capabilities(&state.pcie)
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    debug!(
+        "PCI DEVICE CAPABILITIES for {}: {:?}",
+        endpoint_header.header().address(),
+        capabilities
+    );
 
-        let capabilities = if endpoint_header.status(&state.pcie).has_capability_list() {
-            endpoint_header
-                .capabilities(&state.pcie)
-                .collect::<Vec<_>>()
-        } else {
-            Vec::new()
-        };
-        debug!(
-            "PCI DEVICE CAPABILITIES for {}: {:?}",
-            args.iter()
-                .map(|string| string.as_ref())
-                .nth(0)
-                .unwrap_or("[unknown]"),
-            capabilities
-        );
-
-        let func = pcid_interface::PciFunction {
+    let func = Func {
+        inner: pcid_interface::PciFunction {
             bars,
             addr: endpoint_header.header().address(),
-            legacy_interrupt_line,
+            legacy_interrupt_line: None, // Will be filled in when enabling the device
             full_device_id: full_device_id.clone(),
-        };
+        },
 
-        driver_handler::DriverHandler::spawn(Arc::clone(&state), func, capabilities, args);
-    }
+        capabilities,
+        endpoint_header,
+        enabled: false,
+    };
+
+    tree.insert(func.inner.addr, func);
 }
 
 fn enable_function(
-    state: &Arc<State>,
+    state: &State,
     endpoint_header: &mut EndpointHeader,
 ) -> Option<LegacyInterruptLine> {
     // Enable bus mastering, memory space, and I/O space
@@ -187,34 +184,6 @@ fn enable_function(
 
 fn main() {
     let mut args = pico_args::Arguments::from_env();
-
-    let mut config = Config::default();
-
-    if let Ok(config_path) = args.free_from_str::<PathBuf>() {
-        if metadata(&config_path).unwrap().is_file() {
-            if let Ok(mut config_file) = File::open(&config_path) {
-                let mut config_data = String::new();
-                if let Ok(_) = config_file.read_to_string(&mut config_data) {
-                    config = toml::from_str(&config_data).unwrap_or(Config::default());
-                }
-            }
-        } else {
-            let paths = read_dir(&config_path).unwrap();
-
-            let mut config_data = String::new();
-
-            for path in paths {
-                if let Ok(mut config_file) = File::open(&path.unwrap().path()) {
-                    let mut tmp = String::new();
-                    if let Ok(_) = config_file.read_to_string(&mut tmp) {
-                        config_data.push_str(&tmp);
-                    }
-                }
-            }
-            config = toml::from_str(&config_data).unwrap_or(Config::default());
-        }
-    }
-
     let verbosity = (0..).find(|_| !args.contains("-v")).unwrap_or(0);
     let log_level = match verbosity {
         0 => log::LevelFilter::Info,
@@ -224,14 +193,12 @@ fn main() {
 
     common::setup_logging("bus", "pci", "pcid", log_level, log::LevelFilter::Trace);
 
-    redox_daemon::Daemon::new(move |daemon| main_inner(config, daemon)).unwrap();
+    redox_daemon::Daemon::new(move |daemon| main_inner(daemon)).unwrap();
 }
 
-fn main_inner(config: Config, daemon: redox_daemon::Daemon) -> ! {
-    let state = Arc::new(State {
-        pcie: Pcie::new(),
-        threads: Mutex::new(Vec::new()),
-    });
+fn main_inner(daemon: redox_daemon::Daemon) -> ! {
+    let state = Arc::new(State { pcie: Pcie::new() });
+    let mut tree = BTreeMap::new();
 
     info!("PCI SG-BS:DV.F VEND:DEVI CL.SC.IN.RV");
 
@@ -245,22 +212,45 @@ fn main_inner(config: Config, daemon: redox_daemon::Daemon) -> ! {
         bus_i += 1;
 
         for dev_num in 0..32 {
-            scan_device(&config, &state, &mut bus_nums, bus_num, dev_num);
+            scan_device(&mut tree, &state, &mut bus_nums, bus_num, dev_num);
+        }
+    }
+    info!("Enumeration complete, now starting pci scheme");
+
+    let mut scheme = scheme::PciScheme::new(state, tree);
+    let socket = redox_scheme::Socket::create("pci").expect("failed to open pci scheme socket");
+
+    let _ = daemon.ready();
+
+    loop {
+        let Some(request) = socket
+            .next_request(SignalBehavior::Restart)
+            .expect("pcid: failed to get next scheme request")
+        else {
+            break;
+        };
+        match request.kind() {
+            RequestKind::Call(call) => {
+                let response = call.handle_scheme(&mut scheme);
+
+                socket
+                    .write_responses(&[response], SignalBehavior::Restart)
+                    .expect("pcid: failed to write next scheme response");
+            }
+            RequestKind::OnClose { id } => {
+                scheme.on_close(id);
+            }
+            _ => (),
         }
     }
 
-    daemon.ready().unwrap();
-
-    for thread in state.threads.lock().unwrap().drain(..) {
-        thread.join().unwrap();
-    }
-
+    println!("pcid: exit");
     std::process::exit(0);
 }
 
 fn scan_device(
-    config: &Config,
-    state: &Arc<State>,
+    tree: &mut BTreeMap<PciAddress, Func>,
+    state: &State,
     bus_nums: &mut Vec<u8>,
     bus_num: u8,
     dev_num: u8,
@@ -295,8 +285,8 @@ fn scan_device(
         match header.header_type(&state.pcie) {
             HeaderType::Endpoint => {
                 handle_parsed_header(
-                    Arc::clone(state),
-                    config,
+                    state,
+                    tree,
                     EndpointHeader::from_header(header, &state.pcie).unwrap(),
                     full_device_id,
                 );
