@@ -49,7 +49,7 @@ impl Drop for DrhdPage {
     }
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct DrhdFault {
     pub sts: Mmio<u32>,
     pub ctrl: Mmio<u32>,
@@ -59,7 +59,7 @@ pub struct DrhdFault {
     pub log: Mmio<u64>,
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct DrhdProtectedMemory {
     pub en: Mmio<u32>,
     pub low_base: Mmio<u32>,
@@ -68,7 +68,7 @@ pub struct DrhdProtectedMemory {
     pub high_limit: Mmio<u64>,
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct DrhdInvalidation {
     pub queue_head: Mmio<u64>,
     pub queue_tail: Mmio<u64>,
@@ -80,7 +80,7 @@ pub struct DrhdInvalidation {
     pub cmpl_addr: [Mmio<u32>; 2],
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct DrhdPageRequest {
     pub queue_head: Mmio<u64>,
     pub queue_tail: Mmio<u64>,
@@ -92,13 +92,13 @@ pub struct DrhdPageRequest {
     pub addr: [Mmio<u32>; 2],
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct DrhdMtrrVariable {
     pub base: Mmio<u64>,
     pub mask: Mmio<u64>,
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct DrhdMtrr {
     pub cap: Mmio<u64>,
     pub def_type: Mmio<u64>,
@@ -106,7 +106,7 @@ pub struct DrhdMtrr {
     pub variable: [DrhdMtrrVariable; 10],
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct Drhd {
     pub version: Mmio<u32>,
     _rsv: Mmio<u32>,

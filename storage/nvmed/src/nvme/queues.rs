@@ -5,7 +5,7 @@ use common::dma::Dma;
 
 /// A submission queue entry.
 #[derive(Clone, Copy, Debug, Default)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct NvmeCmd {
     /// Opcode
     pub opcode: u8,
@@ -37,7 +37,7 @@ pub struct NvmeCmd {
 
 /// A completion queue entry.
 #[derive(Clone, Copy, Debug)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct NvmeComp {
     pub command_specific: u32,
     pub _rsvd: u32,

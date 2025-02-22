@@ -21,7 +21,7 @@ use crate::aml_physmem::{AmlPageCache, AmlPhysMemHandler};
 
 /// The raw SDT header struct, as defined by the ACPI specification.
 #[derive(Copy, Clone, Debug)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct SdtHeader {
     pub signature: [u8; 4],
     pub length: u32,
@@ -601,7 +601,7 @@ impl AcpiContext {
     }
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
 pub struct FadtStruct {
     pub header: SdtHeader,
@@ -652,7 +652,7 @@ pub struct FadtStruct {
 }
 unsafe impl plain::Plain for FadtStruct {}
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct GenericAddressStructure {
     address_space: u8,
@@ -662,7 +662,7 @@ pub struct GenericAddressStructure {
     address: u64,
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
 pub struct FadtAcpi2Struct {
     // 12 byte structure; see below for details

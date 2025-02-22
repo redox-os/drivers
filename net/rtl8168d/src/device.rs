@@ -7,7 +7,7 @@ use syscall::error::{Error, Result, EMSGSIZE};
 
 use common::dma::Dma;
 
-#[repr(packed)]
+#[repr(C, packed)]
 struct Regs {
     mac: [Mmio<u32>; 2],
     _mar: [Mmio<u32>; 2],
@@ -51,7 +51,7 @@ const EOR: u32 = 1 << 30;
 const FS: u32 = 1 << 29;
 const LS: u32 = 1 << 28;
 
-#[repr(packed)]
+#[repr(C, packed)]
 struct Rd {
     ctrl: Mmio<u32>,
     _vlan: Mmio<u32>,
@@ -59,7 +59,7 @@ struct Rd {
     buffer_high: Mmio<u32>,
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 struct Td {
     ctrl: Mmio<u32>,
     _vlan: Mmio<u32>,

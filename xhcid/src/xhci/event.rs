@@ -7,7 +7,7 @@ use super::ring::Ring;
 use super::trb::Trb;
 use super::Xhci;
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct EventRingSte {
     pub address_low: Mmio<u32>,
     pub address_high: Mmio<u32>,

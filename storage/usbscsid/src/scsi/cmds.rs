@@ -2,7 +2,7 @@ use super::opcodes::Opcode;
 use std::convert::TryInto;
 use std::{fmt, mem, slice};
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct Inquiry {
     pub opcode: u8,
     /// bits 7:2 are reserved, bit 1 (CMDDT) is obsolete, bit 0 is EVPD
@@ -26,7 +26,7 @@ impl Inquiry {
     }
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
 pub struct StandardInquiryData {
     /// Peripheral device type (bits 4:0), and peripheral device qualifier (bits 7:5).
@@ -78,7 +78,7 @@ pub enum InquiryVersion {
     Spc5,
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
 pub struct RequestSense {
     pub opcode: u8,
@@ -103,7 +103,7 @@ impl RequestSense {
     }
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
 pub struct FixedFormatSenseData {
     pub a: u8,
@@ -165,7 +165,7 @@ impl Default for SenseKey {
 
 pub const ADD_SENSE_CODE05_INVAL_CDB_FIELD: u8 = 0x24;
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
 pub struct Read16 {
     pub opcode: u8,
@@ -193,7 +193,7 @@ impl Read16 {
     }
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
 pub struct Write16 {
     pub opcode: u8,
@@ -219,7 +219,7 @@ impl Write16 {
     }
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
 pub struct ModeSense6 {
     pub opcode: u8,
@@ -251,7 +251,7 @@ impl ModeSense6 {
     }
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
 pub struct ModeSense10 {
     pub opcode: u8,
@@ -305,7 +305,7 @@ pub enum ModePageControl {
     SavedValue,
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy)]
 pub struct ShortLbaModeParamBlkDesc {
     pub block_count: u32,
@@ -336,7 +336,7 @@ const fn u24_be_to_u32(u24: [u8; 3]) -> u32 {
 }
 
 /// From SPC-3, when LONGLBA is not set, and the peripheral device type of the INQUIRY data indicates that the device is not a direct access device. Otherwise, `ShortLbaModeParamBlkDesc` is used instead.
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy)]
 pub struct GeneralModeParamBlkDesc {
     pub density_code: u8,
@@ -365,7 +365,7 @@ impl fmt::Debug for GeneralModeParamBlkDesc {
     }
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
 pub struct LongLbaModeParamBlkDesc {
     pub block_count: u64,
@@ -383,7 +383,7 @@ impl LongLbaModeParamBlkDesc {
     }
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
 pub struct ModeParamHeader6 {
     pub mode_data_len: u8,
@@ -393,7 +393,7 @@ pub struct ModeParamHeader6 {
 }
 unsafe impl plain::Plain for ModeParamHeader6 {}
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
 pub struct ModeParamHeader10 {
     pub mode_data_len: u16,
@@ -416,7 +416,7 @@ impl ModeParamHeader10 {
     }
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
 pub struct ReadCapacity10 {
     pub opcode: u8,
@@ -440,7 +440,7 @@ impl ReadCapacity10 {
 }
 // TODO: ReadCapacity16
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
 pub struct ReadCapacity10ParamData {
     pub max_lba: u32,
@@ -457,7 +457,7 @@ impl ReadCapacity10ParamData {
     }
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
 pub struct RwErrorRecoveryPage {
     pub a: u8,
@@ -470,7 +470,7 @@ pub struct RwErrorRecoveryPage {
 }
 unsafe impl plain::Plain for RwErrorRecoveryPage {}
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
 pub struct CachingModePage {
     pub a: u8,

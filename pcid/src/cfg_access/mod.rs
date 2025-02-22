@@ -116,7 +116,7 @@ unsafe impl plain::Plain for Mcfg {}
 
 /// The "Memory Mapped Enhanced Configuration Space Base Address Allocation Structure" (yes, it's
 /// called that).
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
 pub struct PcieAlloc {
     pub base_addr: u64,

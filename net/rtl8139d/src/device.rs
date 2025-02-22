@@ -35,7 +35,7 @@ const RCR_AM: u32 = 1 << 2;
 const RCR_APM: u32 = 1 << 1;
 const RCR_AAP: u32 = 1 << 0;
 
-#[repr(packed)]
+#[repr(C, packed)]
 struct Regs {
     mac: [Mmio<u32>; 2],
     mar: [Mmio<u32>; 2],

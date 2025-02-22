@@ -20,7 +20,7 @@ pub enum FisType {
     DevBits = 0xA1,
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct FisRegH2D {
     // DWORD 0
     pub fis_type: Mmio<u8>, // FIS_TYPE_REG_H2D
@@ -52,7 +52,7 @@ pub struct FisRegH2D {
     pub rsv1: [Mmio<u8>; 4], // Reserved
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct FisRegD2H {
     // DWORD 0
     pub fis_type: Mmio<u8>, // FIS_TYPE_REG_D2H
@@ -83,7 +83,7 @@ pub struct FisRegD2H {
     pub rsv4: [Mmio<u8>; 4], // Reserved
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct FisData {
     // DWORD 0
     pub fis_type: Mmio<u8>, // FIS_TYPE_DATA
@@ -96,7 +96,7 @@ pub struct FisData {
     pub data: [Mmio<u8>; 252], // Payload
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct FisPioSetup {
     // DWORD 0
     pub fis_type: Mmio<u8>, // FIS_TYPE_PIO_SETUP
@@ -129,7 +129,7 @@ pub struct FisPioSetup {
     pub rsv4: [Mmio<u8>; 2], // Reserved
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct FisDmaSetup {
     // DWORD 0
     pub fis_type: Mmio<u8>, // FIS_TYPE_DMA_SETUP

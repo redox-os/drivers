@@ -1,4 +1,4 @@
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
 pub struct HubDescriptor {
     pub length: u8,
