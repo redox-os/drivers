@@ -1,5 +1,4 @@
 #![deny(trivial_numeric_casts, unused_allocation)]
-#![feature(int_roundings)]
 
 use std::sync::{Arc, Weak};
 

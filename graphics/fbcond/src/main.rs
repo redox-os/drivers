@@ -1,5 +1,3 @@
-#![feature(io_error_more)]
-
 use event::EventQueue;
 use libredox::errno::{EAGAIN, EINTR, EOPNOTSUPP, ESTALE};
 use orbclient::Event;

@@ -2,7 +2,6 @@
 //!
 //! This includes direct memory access via [dma], and Scatter-Gather List support via [sgl].  It also
 //! provides various memory management structures for use with drivers, and some logging support.
-#![feature(int_roundings)]
 #![warn(missing_docs)]
 
 use libredox::call::MmapArgs;

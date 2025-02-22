@@ -9,8 +9,6 @@
 //!   to get new input. Fbbootlogd does all blocking operations in background threads such that the
 //!   main thread will always keep accepting new input and writing it to the framebuffer.
 
-#![feature(io_error_more)]
-
 use libredox::errno::EOPNOTSUPP;
 use redox_scheme::{RequestKind, Response, SignalBehavior, Socket};
 
