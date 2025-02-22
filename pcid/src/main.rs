@@ -15,11 +15,9 @@ use pci_types::{
 use structopt::StructOpt;
 
 use crate::cfg_access::Pcie;
-use crate::config::Config;
-use pcid_interface::{FullDeviceId, LegacyInterruptLine, PciBar};
+use pcid_interface::{config::Config, FullDeviceId, LegacyInterruptLine, PciBar};
 
 mod cfg_access;
-mod config;
 mod driver_handler;
 
 #[derive(StructOpt)]
