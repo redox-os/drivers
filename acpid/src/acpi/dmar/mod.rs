@@ -20,7 +20,7 @@ use crate::acpi::{AcpiContext, Sdt, SdtHeader};
 
 pub mod drhd;
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct DmarStruct {
     pub sdt_header: SdtHeader,
     pub host_addr_width: u8,
@@ -116,7 +116,7 @@ impl Dmar {
 
 /// DMAR DMA Remapping Hardware Unit Definition
 #[derive(Clone, Copy, Debug)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct DmarDrhdHeader {
     pub kind: u16,
     pub length: u16,
@@ -129,7 +129,7 @@ pub struct DmarDrhdHeader {
 unsafe impl plain::Plain for DmarDrhdHeader {}
 
 #[derive(Clone, Copy, Debug)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct DeviceScopeHeader {
     pub ty: u8,
     pub len: u8,
@@ -225,7 +225,7 @@ impl fmt::Debug for DmarDrhd {
 
 /// DMAR Reserved Memory Region Reporting
 #[derive(Clone, Copy, Debug)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct DmarRmrrHeader {
     pub kind: u16,
     pub length: u16,
@@ -267,7 +267,7 @@ impl fmt::Debug for DmarRmrr {
 
 /// DMAR Root Port ATS Capability Reporting
 #[derive(Clone, Copy, Debug)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct DmarAtsrHeader {
     kind: u16,
     length: u16,
@@ -308,7 +308,7 @@ impl fmt::Debug for DmarAtsr {
 
 /// DMAR Remapping Hardware Static Affinity
 #[derive(Clone, Copy, Debug)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct DmarRhsa {
     pub kind: u16,
     pub length: u16,
@@ -331,7 +331,7 @@ impl DmarRhsa {
 
 /// DMAR ACPI Name-space Device Declaration
 #[derive(Clone, Copy, Debug)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct DmarAnddHeader {
     pub kind: u16,
     pub length: u16,
@@ -372,7 +372,7 @@ impl fmt::Debug for DmarAndd {
 
 /// DMAR ACPI Name-space Device Declaration
 #[derive(Clone, Copy, Debug)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct DmarSatcHeader {
     pub kind: u16,
     pub length: u16,

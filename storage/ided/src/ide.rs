@@ -30,7 +30,7 @@ pub enum AtaCommand {
     Identify = 0xEC,
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 struct PrdtEntry {
     phys: u32,
     size: u16,

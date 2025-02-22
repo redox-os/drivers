@@ -137,7 +137,7 @@ pub struct MappedMsixRegs {
     pub table: &'static mut [MsixTableEntry],
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct NvmeRegs {
     /// Controller Capabilities
     cap_low: Mmio<u32>,

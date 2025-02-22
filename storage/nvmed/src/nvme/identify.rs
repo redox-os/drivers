@@ -4,7 +4,7 @@ use common::dma::Dma;
 
 /// See NVME spec section 5.15.2.2.
 #[derive(Clone, Copy)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct IdentifyControllerData {
     /// PCI vendor ID, always the same as in the PCI function header.
     pub vid: u16,
@@ -22,7 +22,7 @@ pub struct IdentifyControllerData {
 
 /// See NVME spec section 5.15.2.1.
 #[derive(Clone, Copy)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct IdentifyNamespaceData {
     pub nsze: u64,
     pub ncap: u64,
@@ -96,7 +96,7 @@ impl IdentifyNamespaceData {
 }
 
 #[derive(Clone, Copy)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct LbaFormat(pub u32);
 
 #[repr(u8)]

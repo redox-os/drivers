@@ -108,7 +108,7 @@ pub enum TransferKind {
     In,
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct Trb {
     pub data_low: Mmio<u32>,
     pub data_high: Mmio<u32>,

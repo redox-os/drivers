@@ -10,7 +10,7 @@
 /// A given device will only have one device descriptor.
 ///
 /// USB32 Table 9-11 describes the USB packet offsets of the fields described by this structure.
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct DeviceDescriptor {
     /// The length of this descriptor in bytes.
@@ -101,7 +101,7 @@ impl DeviceDescriptor {
 /// at a later point.
 ///
 /// See [DeviceDescriptor]
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct DeviceDescriptor8Byte {
     /// See [DeviceDescriptor]
@@ -147,7 +147,7 @@ impl DeviceDescriptor8Byte {
 /// See USB2 section 9.6.2
 ///
 /// The packet offsets are described in USB2 Table 9-9
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct DeviceQualifier {
     /// The size of the descriptor.
     ///

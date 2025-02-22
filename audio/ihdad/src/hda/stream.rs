@@ -108,7 +108,7 @@ pub fn format_to_u16(sr: &SampleRate, bps: BitsPerSample, channels: u8) -> u16 {
     val
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct StreamDescriptorRegs {
     ctrl_lo: Mmio<u16>,
     ctrl_hi: Mmio<u8>,
@@ -271,7 +271,7 @@ impl OutputStream {
     }
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct BufferDescriptorListEntry {
     addr_low: Mmio<u32>,
     addr_high: Mmio<u32>,

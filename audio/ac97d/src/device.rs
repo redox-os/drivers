@@ -139,7 +139,7 @@ impl BusRegs {
     }
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct BufferDescriptor {
     /* 0x00 */ addr: Mmio<u32>,
     /* 0x04 */ samples: Mmio<u16>,

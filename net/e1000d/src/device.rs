@@ -56,7 +56,7 @@ const RAL0: u32 = 0x5400;
 const RAH0: u32 = 0x5404;
 
 #[derive(Debug, Copy, Clone)]
-#[repr(packed)]
+#[repr(C, packed)]
 struct Rd {
     buffer: u64,
     length: u16,
@@ -79,7 +79,7 @@ const TDH: u32 = 0x3810;
 const TDT: u32 = 0x3818;
 
 #[derive(Debug, Copy, Clone)]
-#[repr(packed)]
+#[repr(C, packed)]
 struct Td {
     buffer: u64,
     length: u16,

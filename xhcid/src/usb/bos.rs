@@ -1,6 +1,6 @@
 use std::slice;
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct BosDescriptor {
     pub len: u8,
@@ -11,7 +11,7 @@ pub struct BosDescriptor {
 
 unsafe impl plain::Plain for BosDescriptor {}
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct BosDevDescriptorBase {
     pub len: u8,
@@ -21,7 +21,7 @@ pub struct BosDevDescriptorBase {
 
 unsafe impl plain::Plain for BosDevDescriptorBase {}
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct BosSuperSpeedDesc {
     pub len: u8,
@@ -34,7 +34,7 @@ pub struct BosSuperSpeedDesc {
     pub u1_dev_exit_lat: u8,
     pub u2_dev_exit_lat: u16,
 }
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct BosSuperSpeedPlusDesc {
     pub len: u8,
@@ -48,7 +48,7 @@ pub struct BosSuperSpeedPlusDesc {
 
 unsafe impl plain::Plain for BosSuperSpeedPlusDesc {}
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct BosUsb2ExtDesc {
     pub len: u8,

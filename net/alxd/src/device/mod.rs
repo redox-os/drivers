@@ -194,7 +194,7 @@ fn ethtool_adv_to_mii_ctrl1000_t(ethadv: u32) -> u32 {
 }
 
 /// Transmit packet descriptor
-#[repr(packed)]
+#[repr(C, packed)]
 struct Tpd {
     blen: Mmio<u16>,
     vlan: Mmio<u16>,
@@ -204,14 +204,14 @@ struct Tpd {
 }
 
 /// Receive free descriptor
-#[repr(packed)]
+#[repr(C, packed)]
 struct Rfd {
     addr_low: Mmio<u32>,
     addr_high: Mmio<u32>,
 }
 
 /// Receive return descriptor
-#[repr(packed)]
+#[repr(C, packed)]
 struct Rrd {
     checksum: Mmio<u16>,
     rfd: Mmio<u16>,

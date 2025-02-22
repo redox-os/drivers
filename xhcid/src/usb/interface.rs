@@ -1,7 +1,7 @@
 use plain::Plain;
 
 ///
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct InterfaceDescriptor {
     pub length: u8,

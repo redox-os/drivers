@@ -1,7 +1,7 @@
 use super::DescriptorKind;
 use crate::driver_interface::*;
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Setup {
     pub kind: u8,

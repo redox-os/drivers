@@ -1,6 +1,6 @@
 use common::io::Mmio;
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct Interrupter {
     pub iman: Mmio<u32>,
     pub imod: Mmio<u32>,
@@ -12,7 +12,7 @@ pub struct Interrupter {
     pub erdp_high: Mmio<u32>,
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct RuntimeRegs {
     pub mfindex: Mmio<u32>,
     _rsvd: [Mmio<u32>; 7],

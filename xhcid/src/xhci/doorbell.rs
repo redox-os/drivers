@@ -1,6 +1,6 @@
 use common::io::{Io, Mmio};
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct Doorbell(Mmio<u32>);
 
 impl Doorbell {

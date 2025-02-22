@@ -10,7 +10,7 @@ use common::dma::Dma;
 use super::ring::Ring;
 use super::Xhci;
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct SlotContext {
     pub a: Mmio<u32>,
     pub b: Mmio<u32>,
@@ -36,7 +36,7 @@ pub enum SlotState {
     Configured = 3,
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct EndpointContext {
     pub a: Mmio<u32>,
     pub b: Mmio<u32>,
@@ -48,13 +48,13 @@ pub struct EndpointContext {
 
 pub const ENDPOINT_CONTEXT_STATUS_MASK: u32 = 0x7;
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct DeviceContext {
     pub slot: SlotContext,
     pub endpoints: [EndpointContext; 31],
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct InputContext {
     pub drop_context: Mmio<u32>,
     pub add_context: Mmio<u32>,
@@ -106,7 +106,7 @@ impl DeviceContextList {
     }
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct StreamContext {
     trl: Mmio<u32>,
     trh: Mmio<u32>,
@@ -165,7 +165,7 @@ impl StreamContextArray {
     }
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct ScratchpadBufferEntry {
     pub value_low: Mmio<u32>,
     pub value_high: Mmio<u32>,

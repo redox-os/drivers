@@ -67,7 +67,7 @@ enum Handle {
     StrBuf(Vec<u8>, usize),
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[allow(dead_code)]
 struct Regs {
     gcap: Mmio<u16>,

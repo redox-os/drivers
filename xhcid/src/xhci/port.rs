@@ -27,7 +27,7 @@ bitflags! {
     }
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct Port {
     pub portsc: Mmio<u32>,
     pub portpmsc: Mmio<u32>,

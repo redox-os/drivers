@@ -22,7 +22,7 @@ const VBOX_EVENT_DISPLAY: u32 = 1 << 2;
 const VBOX_EVENT_MOUSE: u32 = 1 << 9;
 
 /// VBox VMMDevMemory
-#[repr(packed)]
+#[repr(C, packed)]
 struct VboxVmmDev {
     size: Mmio<u32>,
     version: Mmio<u32>,
@@ -31,7 +31,7 @@ struct VboxVmmDev {
 }
 
 /// VBox Guest packet header
-#[repr(packed)]
+#[repr(C, packed)]
 struct VboxHeader {
     /// Size of the entire packet (including this header)
     size: Mmio<u32>,
@@ -46,7 +46,7 @@ struct VboxHeader {
 }
 
 /// VBox Get Mouse
-#[repr(packed)]
+#[repr(C, packed)]
 struct VboxGetMouse {
     header: VboxHeader,
     features: Mmio<u32>,
@@ -71,7 +71,7 @@ impl VboxGetMouse {
 }
 
 /// VBox Set Mouse
-#[repr(packed)]
+#[repr(C, packed)]
 struct VboxSetMouse {
     header: VboxHeader,
     features: Mmio<u32>,
@@ -96,7 +96,7 @@ impl VboxSetMouse {
 }
 
 /// VBox Acknowledge Events packet
-#[repr(packed)]
+#[repr(C, packed)]
 struct VboxAckEvents {
     header: VboxHeader,
     events: Mmio<u32>,
@@ -119,7 +119,7 @@ impl VboxAckEvents {
 }
 
 /// VBox Guest Capabilities packet
-#[repr(packed)]
+#[repr(C, packed)]
 struct VboxGuestCaps {
     header: VboxHeader,
     caps: Mmio<u32>,
@@ -167,7 +167,7 @@ impl VboxDisplayChange {
 }
 
 /// VBox Guest Info packet (legacy)
-#[repr(packed)]
+#[repr(C, packed)]
 struct VboxGuestInfo {
     header: VboxHeader,
     version: Mmio<u32>,

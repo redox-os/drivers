@@ -52,7 +52,7 @@ pub enum CapabilityId {
     // bits 192-255 are vendor-defined
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct SupportedProtoCap {
     a: Mmio<u32>,
     b: Mmio<u32>,
@@ -61,7 +61,7 @@ pub struct SupportedProtoCap {
     protocol_speeds: [u8; 0],
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct ProtocolSpeed {
     a: Mmio<u32>,
 }

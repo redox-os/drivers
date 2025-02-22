@@ -78,7 +78,7 @@ impl MsixInfo {
     }
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct MsixTableEntry {
     pub addr_lo: Mmio<u32>,
     pub addr_hi: Mmio<u32>,
