@@ -3,7 +3,7 @@ use core::{mem::MaybeUninit, ptr};
 use super::Io;
 
 /// MMIO abstraction
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct Mmio<T> {
     value: MaybeUninit<T>,
 }

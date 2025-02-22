@@ -212,7 +212,7 @@ pub fn IXGBE_IVAR(i: u32) -> u32 {
 } /* 24 at 0x900-0x960 */
 
 #[derive(Debug, Copy, Clone)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct ixgbe_adv_rx_desc_read {
     pub pkt_addr: u64,
     /* Packet buffer address */
@@ -222,7 +222,7 @@ pub struct ixgbe_adv_rx_desc_read {
 
 /* Receive Descriptor - Advanced */
 #[derive(Debug, Copy, Clone)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct ixgbe_adv_rx_desc_wb_lower_lo_dword_hs_rss {
     pub pkt_info: u16,
     /* RSS, Pkt type */
@@ -231,14 +231,14 @@ pub struct ixgbe_adv_rx_desc_wb_lower_lo_dword_hs_rss {
 }
 
 #[derive(Copy, Clone)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub union ixgbe_adv_rx_desc_wb_lower_lo_dword {
     pub data: u32,
     pub hs_rss: ixgbe_adv_rx_desc_wb_lower_lo_dword_hs_rss,
 }
 
 #[derive(Debug, Copy, Clone)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct ixgbe_adv_rx_desc_wb_lower_hi_dword_csum_ip {
     pub ip_id: u16,
     /* IP id */
@@ -247,7 +247,7 @@ pub struct ixgbe_adv_rx_desc_wb_lower_hi_dword_csum_ip {
 }
 
 #[derive(Copy, Clone)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub union ixgbe_adv_rx_desc_wb_lower_hi_dword {
     pub rss: u32,
     /* RSS Hash */
@@ -255,14 +255,14 @@ pub union ixgbe_adv_rx_desc_wb_lower_hi_dword {
 }
 
 #[derive(Copy, Clone)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct ixgbe_adv_rx_desc_wb_lower {
     pub lo_dword: ixgbe_adv_rx_desc_wb_lower_lo_dword,
     pub hi_dword: ixgbe_adv_rx_desc_wb_lower_hi_dword,
 }
 
 #[derive(Debug, Copy, Clone)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct ixgbe_adv_rx_desc_wb_upper {
     pub status_error: u32,
     /* ext status/error */
@@ -273,14 +273,14 @@ pub struct ixgbe_adv_rx_desc_wb_upper {
 }
 
 #[derive(Copy, Clone)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct ixgbe_adv_rx_desc_wb {
     pub lower: ixgbe_adv_rx_desc_wb_lower,
     pub upper: ixgbe_adv_rx_desc_wb_upper,
 }
 
 #[derive(Copy, Clone)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub union ixgbe_adv_rx_desc {
     pub read: ixgbe_adv_rx_desc_read,
     pub wb: ixgbe_adv_rx_desc_wb, /* writeback */
@@ -289,7 +289,7 @@ pub union ixgbe_adv_rx_desc {
 
 /* Transmit Descriptor - Advanced */
 #[derive(Debug, Copy, Clone)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct ixgbe_adv_tx_desc_read {
     pub buffer_addr: u64,
     /* Address of descriptor's data buf */
@@ -298,7 +298,7 @@ pub struct ixgbe_adv_tx_desc_read {
 }
 
 #[derive(Debug, Copy, Clone)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct ixgbe_adv_tx_desc_wb {
     pub rsvd: u64,
     /* Reserved */
@@ -307,7 +307,7 @@ pub struct ixgbe_adv_tx_desc_wb {
 }
 
 #[derive(Copy, Clone)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub union ixgbe_adv_tx_desc {
     pub read: ixgbe_adv_tx_desc_read,
     pub wb: ixgbe_adv_tx_desc_wb,

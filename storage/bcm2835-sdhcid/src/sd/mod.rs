@@ -115,7 +115,7 @@ const SCR_SUPP_SET_BLKCNT: u32 = 0x0200_0000;
 //added by bztsrc driver
 const SCR_SUPP_CCS: u32 = 0x0000_0001;
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct SdHostCtrlRegs {
     //LSB
 

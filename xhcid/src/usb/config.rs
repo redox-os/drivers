@@ -1,4 +1,4 @@
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ConfigDescriptor {
     pub length: u8,
@@ -13,7 +13,7 @@ pub struct ConfigDescriptor {
 
 unsafe impl plain::Plain for ConfigDescriptor {}
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct OtherSpeedConfig {
     pub length: u8,

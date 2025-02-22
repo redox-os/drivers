@@ -11,7 +11,7 @@ use plain::Plain;
 /// See USB32 9.6.6
 ///
 /// The offsets for the fields in the packet are described in USB32 Table 9-26
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct EndpointDescriptor {
     pub length: u8,
@@ -48,7 +48,7 @@ impl EndpointDescriptor {
 
 unsafe impl Plain for EndpointDescriptor {}
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SuperSpeedCompanionDescriptor {
     pub length: u8,
@@ -59,7 +59,7 @@ pub struct SuperSpeedCompanionDescriptor {
 }
 unsafe impl Plain for SuperSpeedCompanionDescriptor {}
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SuperSpeedPlusIsochCmpDescriptor {
     pub length: u8,
@@ -69,7 +69,7 @@ pub struct SuperSpeedPlusIsochCmpDescriptor {
 }
 unsafe impl Plain for SuperSpeedPlusIsochCmpDescriptor {}
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct HidDescriptor {
     pub length: u8,

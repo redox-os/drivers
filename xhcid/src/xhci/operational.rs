@@ -7,7 +7,7 @@ use common::io::{Io, Mmio};
 /// "length" field of the [CapabilityRegs]
 ///
 /// See XHCI section 5.4. Table 5-18 describes the offset of these registers in memory.
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct OperationalRegs {
     /// The USB Command Register (USBCMD)
     ///

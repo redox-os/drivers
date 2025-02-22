@@ -39,7 +39,7 @@ pub enum HbaPortType {
     SEMB,
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct HbaPort {
     pub clb: [Mmio<u32>; 2], // 0x00, command list base address, 1K-byte aligned
     pub fb: [Mmio<u32>; 2],  // 0x08, FIS base address, 256-byte aligned
@@ -441,7 +441,7 @@ impl HbaPort {
     }
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct HbaMem {
     pub cap: Mmio<u32>,         // 0x00, Host capability
     pub ghc: Mmio<u32>,         // 0x04, Global host control
@@ -482,7 +482,7 @@ impl HbaMem {
     }
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct HbaPrdtEntry {
     dba_low: Mmio<u32>,  // Data base address (low
     dba_high: Mmio<u32>, // Data base address (high)
@@ -490,7 +490,7 @@ pub struct HbaPrdtEntry {
     dbc: Mmio<u32>,      // Byte count, 4M max, interrupt = 1
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct HbaCmdTable {
     // 0x00
     cfis: [Mmio<u8>; 64], // Command FIS
@@ -507,7 +507,7 @@ pub struct HbaCmdTable {
 const CMD_TBL_SIZE: usize = 256 * 4096;
 const PRDT_ENTRIES: usize = (CMD_TBL_SIZE - 128) / size_of::<HbaPrdtEntry>();
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct HbaCmdHeader {
     // DW0
     cfl: Mmio<u8>, /* Command FIS length in DWORDS, 2 ~ 16, atapi: 4, write - host to device: 2, prefetchable: 1 */

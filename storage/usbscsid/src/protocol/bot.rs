@@ -15,7 +15,7 @@ pub const CBW_SIGNATURE: u32 = 0x43425355;
 pub const CBW_FLAGS_DIRECTION_BIT: u8 = 1 << CBW_FLAGS_DIRECTION_SHIFT;
 pub const CBW_FLAGS_DIRECTION_SHIFT: u8 = 7;
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct CommandBlockWrapper {
     pub signature: u32,
@@ -66,7 +66,7 @@ pub enum CswStatus {
     // the rest are reserved
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct CommandStatusWrapper {
     pub signature: u32,

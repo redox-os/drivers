@@ -10,7 +10,7 @@ use common::io::{Io, Mmio};
 ///
 /// See XHCI Section 5.3. Table 5-9 describes the offsets of the registers
 /// in memory.
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct CapabilityRegs {
     /// The length of the Capability Registers data structure in XHCI memory.
     ///
