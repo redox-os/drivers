@@ -252,51 +252,8 @@ fn main_inner(config: Config, daemon: redox_daemon::Daemon) -> ! {
         let bus_num = bus_nums[bus_i];
         bus_i += 1;
 
-        'dev: for dev_num in 0..32 {
-            for func_num in 0..8 {
-                let header = TyPciHeader::new(PciAddress::new(0, bus_num, dev_num, func_num));
-
-                let (vendor_id, device_id) = header.id(&state.pcie);
-                if vendor_id == 0xffff && device_id == 0xffff {
-                    if func_num == 0 {
-                        trace!("PCI {:>02X}:{:>02X}: no dev", bus_num, dev_num);
-                        continue 'dev;
-                    }
-
-                    continue;
-                }
-
-                let (revision, class, subclass, interface) = header.revision_and_class(&state.pcie);
-                let full_device_id = FullDeviceId {
-                    vendor_id,
-                    device_id,
-                    class,
-                    subclass,
-                    interface,
-                    revision,
-                };
-
-                info!("PCI {} {}", header.address(), full_device_id.display());
-
-                match header.header_type(&state.pcie) {
-                    HeaderType::Endpoint => {
-                        handle_parsed_header(
-                            Arc::clone(&state),
-                            &config,
-                            EndpointHeader::from_header(header, &state.pcie).unwrap(),
-                            full_device_id,
-                        );
-                    }
-                    HeaderType::PciPciBridge => {
-                        let bridge_header =
-                            PciPciBridgeHeader::from_header(header, &state.pcie).unwrap();
-                        bus_nums.push(bridge_header.secondary_bus_number(&state.pcie));
-                    }
-                    ty => {
-                        warn!("pcid: unknown header type: {ty:?}");
-                    }
-                }
-            }
+        for dev_num in 0..32 {
+            scan_device(&config, &state, &mut bus_nums, bus_num, dev_num);
         }
     }
 
@@ -307,4 +264,62 @@ fn main_inner(config: Config, daemon: redox_daemon::Daemon) -> ! {
     }
 
     std::process::exit(0);
+}
+
+fn scan_device(
+    config: &Config,
+    state: &Arc<State>,
+    bus_nums: &mut Vec<u8>,
+    bus_num: u8,
+    dev_num: u8,
+) {
+    for func_num in 0..8 {
+        let header = TyPciHeader::new(PciAddress::new(0, bus_num, dev_num, func_num));
+
+        let (vendor_id, device_id) = header.id(&state.pcie);
+        if vendor_id == 0xffff && device_id == 0xffff {
+            if func_num == 0 {
+                trace!("PCI {:>02X}:{:>02X}: no dev", bus_num, dev_num);
+                return;
+            }
+
+            continue;
+        }
+
+        let (revision, class, subclass, interface) = header.revision_and_class(&state.pcie);
+        let full_device_id = FullDeviceId {
+            vendor_id,
+            device_id,
+            class,
+            subclass,
+            interface,
+            revision,
+        };
+
+        info!("PCI {} {}", header.address(), full_device_id.display());
+
+        let has_multiple_functions = header.has_multiple_functions(&state.pcie);
+
+        match header.header_type(&state.pcie) {
+            HeaderType::Endpoint => {
+                handle_parsed_header(
+                    Arc::clone(state),
+                    config,
+                    EndpointHeader::from_header(header, &state.pcie).unwrap(),
+                    full_device_id,
+                );
+            }
+            HeaderType::PciPciBridge => {
+                let bridge_header = PciPciBridgeHeader::from_header(header, &state.pcie).unwrap();
+                bus_nums.push(bridge_header.secondary_bus_number(&state.pcie));
+            }
+            ty => {
+                warn!("pcid: unknown header type: {ty:?}");
+            }
+        }
+
+        if func_num == 0 && !has_multiple_functions {
+            return;
+        }
+    }
 }
