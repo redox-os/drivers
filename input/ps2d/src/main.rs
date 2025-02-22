@@ -1,5 +1,3 @@
-#![feature(asm_const)]
-
 #[macro_use]
 extern crate bitflags;
 extern crate orbclient;

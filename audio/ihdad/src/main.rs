@@ -1,6 +1,3 @@
-//#![deny(warnings)]
-#![feature(int_roundings)]
-
 extern crate bitflags;
 extern crate event;
 extern crate spin;

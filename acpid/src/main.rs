@@ -1,5 +1,3 @@
-#![feature(if_let_guard, int_roundings)]
-
 use std::convert::TryFrom;
 use std::fs::File;
 use std::mem;
