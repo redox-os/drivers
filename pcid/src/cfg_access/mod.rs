@@ -97,7 +97,7 @@ fn locate_ecam_dtb<T>(
 
 pub const MCFG_NAME: [u8; 4] = *b"MCFG";
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
 pub struct Mcfg {
     // base sdt fields
