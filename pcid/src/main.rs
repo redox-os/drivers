@@ -106,62 +106,7 @@ fn handle_parsed_header(
             info!("    BAR{}", string);
         }
 
-        // Enable bus mastering, memory space, and I/O space
-        endpoint_header.update_command(&state.pcie, |cmd| {
-            cmd | CommandRegister::BUS_MASTER_ENABLE
-                | CommandRegister::MEMORY_ENABLE
-                | CommandRegister::IO_ENABLE
-        });
-
-        // Set IRQ line to 9 if not set
-        let mut irq = 0xFF;
-        let mut interrupt_pin = 0xFF;
-
-        endpoint_header.update_interrupt(&state.pcie, |(pin, mut line)| {
-            if line == 0xFF {
-                line = 9;
-            }
-            irq = line;
-            interrupt_pin = pin;
-            (pin, line)
-        });
-
-        let legacy_interrupt_enabled = match interrupt_pin {
-            0 => false,
-            1 | 2 | 3 | 4 => true,
-
-            other => {
-                warn!("pcid: invalid interrupt pin: {}", other);
-                false
-            }
-        };
-
-        let mut phandled: Option<(u32, [u32; 3], usize)> = None;
-        if legacy_interrupt_enabled {
-            let pci_address = endpoint_header.header().address();
-            let dt_address = ((pci_address.bus() as u32) << 16)
-                | ((pci_address.device() as u32) << 11)
-                | ((pci_address.function() as u32) << 8);
-            let addr = [
-                dt_address & state.pcie.interrupt_map_mask[0],
-                0u32,
-                0u32,
-                interrupt_pin as u32 & state.pcie.interrupt_map_mask[3],
-            ];
-            let mapping = state
-                .pcie
-                .interrupt_map
-                .iter()
-                .find(|x| x.addr == addr[0..3] && x.interrupt == addr[3]);
-            if let Some(mapping) = mapping {
-                phandled = Some((
-                    mapping.parent_phandle,
-                    mapping.parent_interrupt,
-                    mapping.parent_interrupt_cells,
-                ));
-                debug!("found mapping: addr={:?} => {:?}", addr, phandled);
-            }
-        }
+        let legacy_interrupt_line = enable_function(&state, &mut endpoint_header);
 
         let capabilities = if endpoint_header.status(&state.pcie).has_capability_list() {
             endpoint_header
@@ -182,15 +127,80 @@ fn handle_parsed_header(
         let func = pcid_interface::PciFunction {
             bars,
             addr: endpoint_header.header().address(),
-            legacy_interrupt_line: if legacy_interrupt_enabled {
-                Some(LegacyInterruptLine { irq, phandled })
-            } else {
-                None
-            },
+            legacy_interrupt_line,
             full_device_id: full_device_id.clone(),
         };
 
         driver_handler::DriverHandler::spawn(Arc::clone(&state), func, capabilities, args);
+    }
+}
+
+fn enable_function(
+    state: &Arc<State>,
+    endpoint_header: &mut EndpointHeader,
+) -> Option<LegacyInterruptLine> {
+    // Enable bus mastering, memory space, and I/O space
+    endpoint_header.update_command(&state.pcie, |cmd| {
+        cmd | CommandRegister::BUS_MASTER_ENABLE
+            | CommandRegister::MEMORY_ENABLE
+            | CommandRegister::IO_ENABLE
+    });
+
+    // Set IRQ line to 9 if not set
+    let mut irq = 0xFF;
+    let mut interrupt_pin = 0xFF;
+
+    endpoint_header.update_interrupt(&state.pcie, |(pin, mut line)| {
+        if line == 0xFF {
+            line = 9;
+        }
+        irq = line;
+        interrupt_pin = pin;
+        (pin, line)
+    });
+
+    let legacy_interrupt_enabled = match interrupt_pin {
+        0 => false,
+        1 | 2 | 3 | 4 => true,
+
+        other => {
+            warn!("pcid: invalid interrupt pin: {}", other);
+            false
+        }
+    };
+
+    if legacy_interrupt_enabled {
+        let pci_address = endpoint_header.header().address();
+        let dt_address = ((pci_address.bus() as u32) << 16)
+            | ((pci_address.device() as u32) << 11)
+            | ((pci_address.function() as u32) << 8);
+        let addr = [
+            dt_address & state.pcie.interrupt_map_mask[0],
+            0u32,
+            0u32,
+            interrupt_pin as u32 & state.pcie.interrupt_map_mask[3],
+        ];
+        let mapping = state
+            .pcie
+            .interrupt_map
+            .iter()
+            .find(|x| x.addr == addr[0..3] && x.interrupt == addr[3]);
+        let phandled = if let Some(mapping) = mapping {
+            Some((
+                mapping.parent_phandle,
+                mapping.parent_interrupt,
+                mapping.parent_interrupt_cells,
+            ))
+        } else {
+            None
+        };
+        if mapping.is_some() {
+            debug!("found mapping: addr={:?} => {:?}", addr, phandled);
+        }
+
+        Some(LegacyInterruptLine { irq, phandled })
+    } else {
+        None
     }
 }
 
