@@ -17,10 +17,10 @@ fdt = "0.1.5"
 libc = "0.2"
 log = "0.4"
 pci_types = "0.10"
+pico-args = { version = "0.5", features = ["combined-flags"] }
 plain = "0.2"
 redox-daemon = "0.1"
 serde = { version = "1", features = ["derive"] }
-structopt = { version = "0.3", default-features = false }
 thiserror = "1"
 toml = "0.5"
 

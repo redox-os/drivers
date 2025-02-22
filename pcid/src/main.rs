@@ -4,6 +4,7 @@
 
 use std::fs::{metadata, read_dir, File};
 use std::io::prelude::*;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -12,30 +13,12 @@ use pci_types::{
     Bar as TyBar, CommandRegister, EndpointHeader, HeaderType, PciAddress,
     PciHeader as TyPciHeader, PciPciBridgeHeader,
 };
-use structopt::StructOpt;
 
 use crate::cfg_access::Pcie;
 use pcid_interface::{config::Config, FullDeviceId, LegacyInterruptLine, PciBar};
 
 mod cfg_access;
 mod driver_handler;
-
-#[derive(StructOpt)]
-#[structopt(about)]
-struct Args {
-    #[structopt(
-        short,
-        long,
-        help = "Increase logging level once for each arg.",
-        parse(from_occurrences)
-    )]
-    verbose: u8,
-
-    #[structopt(
-        help = "A path to a pcid config file or a directory that contains pcid config files."
-    )]
-    config_path: Option<String>,
-}
 
 pub struct State {
     threads: Mutex<Vec<thread::JoinHandle<()>>>,
@@ -203,11 +186,11 @@ fn enable_function(
 }
 
 fn main() {
-    let args = Args::from_args();
+    let mut args = pico_args::Arguments::from_env();
 
     let mut config = Config::default();
 
-    if let Some(config_path) = args.config_path {
+    if let Ok(config_path) = args.free_from_str::<PathBuf>() {
         if metadata(&config_path).unwrap().is_file() {
             if let Ok(mut config_file) = File::open(&config_path) {
                 let mut config_data = String::new();
@@ -232,7 +215,8 @@ fn main() {
         }
     }
 
-    let log_level = match args.verbose {
+    let verbosity = (0..).find(|_| !args.contains("-v")).unwrap_or(0);
+    let log_level = match verbosity {
         0 => log::LevelFilter::Info,
         1 => log::LevelFilter::Debug,
         _ => log::LevelFilter::Trace,
