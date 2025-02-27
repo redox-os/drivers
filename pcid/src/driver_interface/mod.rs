@@ -16,6 +16,7 @@ pub use pci_types::PciAddress;
 
 mod bar;
 pub mod cap;
+pub mod config;
 mod id;
 pub mod irq_helpers;
 pub mod msi;
