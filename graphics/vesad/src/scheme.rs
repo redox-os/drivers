@@ -64,13 +64,13 @@ impl GraphicsAdapter for FbAdapter {
 }
 
 pub struct GraphicScreen {
-    pub width: usize,
-    pub height: usize,
+    width: usize,
+    height: usize,
     ptr: NonNull<[u32]>,
 }
 
 impl GraphicScreen {
-    pub fn new(width: usize, height: usize) -> GraphicScreen {
+    fn new(width: usize, height: usize) -> GraphicScreen {
         let len = width * height;
         let layout = Self::layout(len);
         let ptr = unsafe { alloc::alloc_zeroed(layout) };
