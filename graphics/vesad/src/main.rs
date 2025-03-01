@@ -13,7 +13,6 @@ use crate::scheme::FbAdapter;
 
 mod framebuffer;
 mod scheme;
-mod screen;
 
 fn main() {
     let mut spec = Vec::new();
