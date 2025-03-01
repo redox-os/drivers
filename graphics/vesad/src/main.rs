@@ -13,13 +13,17 @@ use crate::scheme::FbAdapter;
 
 mod framebuffer;
 mod scheme;
-mod screen;
 
 fn main() {
     let mut spec = Vec::new();
 
     for _ in env::args().skip(1) {
         spec.push(());
+    }
+
+    if env::var("FRAMEBUFFER_WIDTH").is_err() {
+        println!("vesad: No boot framebuffer");
+        return;
     }
 
     let width = usize::from_str_radix(
@@ -49,6 +53,7 @@ fn main() {
     );
 
     if phys == 0 {
+        println!("vesad: Boot framebuffer at address 0");
         return;
     }
 

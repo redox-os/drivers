@@ -8,7 +8,7 @@ authors = ["Anhad Singh <andypython@protonmail.com>"]
 anyhow = "1.0.71"
 log = "0.4.19"
 redox-daemon = "0.1.2"
-redox_syscall = "0.5"
+redox_syscall = { version = "0.5", features = ["std"] }
 orbclient = "0.3.27"
 libredox = "0.1.3"
 

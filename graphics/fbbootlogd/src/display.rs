@@ -41,18 +41,26 @@ enum DisplayCommand {
 
 pub struct Display {
     cmd_tx: Sender<DisplayCommand>,
-    pub map: Arc<Mutex<DisplayMap>>,
+    pub map: Arc<Mutex<Option<DisplayMap>>>,
 }
 
 impl Display {
     pub fn open_first_vt() -> io::Result<Self> {
         let input_handle = ConsumerHandle::for_vt(1)?;
 
-        let display_handle = LegacyGraphicsHandle::from_file(input_handle.open_display()?)?;
-
-        let map = Arc::new(Mutex::new(
-            display_fd_map(display_handle).unwrap_or_else(|e| panic!("failed to map display: {e}")),
-        ));
+        let map = match input_handle.open_display() {
+            Ok(display) => {
+                let display_handle = LegacyGraphicsHandle::from_file(display)?;
+                Arc::new(Mutex::new(Some(
+                    display_fd_map(display_handle)
+                        .unwrap_or_else(|e| panic!("failed to map display: {e}")),
+                )))
+            }
+            Err(err) => {
+                println!("fbbootlogd: No display present yet: {err}");
+                Arc::new(Mutex::new(None))
+            }
+        };
 
         let map_clone = map.clone();
         std::thread::spawn(move || {
@@ -68,7 +76,7 @@ impl Display {
         Ok(Self { cmd_tx, map })
     }
 
-    fn handle_input_events(map: Arc<Mutex<DisplayMap>>, input_handle: ConsumerHandle) {
+    fn handle_input_events(map: Arc<Mutex<Option<DisplayMap>>>, input_handle: ConsumerHandle) {
         let event_queue = EventQueue::new().expect("fbbootlogd: failed to create event queue");
 
         user_data! {
@@ -93,13 +101,17 @@ impl Display {
                 Err(err) if err.errno() == ESTALE => {
                     eprintln!("fbbootlogd: handoff requested");
 
-                    let new_display_handle =
-                        LegacyGraphicsHandle::from_file(input_handle.open_display().unwrap())
-                            .unwrap();
+                    let new_display_handle = match input_handle.open_display() {
+                        Ok(display) => LegacyGraphicsHandle::from_file(display).unwrap(),
+                        Err(err) => {
+                            println!("fbbootlogd: No display present yet: {err}");
+                            continue;
+                        }
+                    };
 
                     match display_fd_map(new_display_handle) {
                         Ok(ok) => {
-                            *map.lock().unwrap() = ok;
+                            *map.lock().unwrap() = Some(ok);
 
                             eprintln!("fbbootlogd: handoff finished");
                         }
@@ -117,13 +129,17 @@ impl Display {
         }
     }
 
-    fn handle_sync_rect(map: Arc<Mutex<DisplayMap>>, cmd_rx: Receiver<DisplayCommand>) {
+    fn handle_sync_rect(map: Arc<Mutex<Option<DisplayMap>>>, cmd_rx: Receiver<DisplayCommand>) {
         while let Ok(cmd) = cmd_rx.recv() {
             match cmd {
                 DisplayCommand::SyncRects(sync_rects) => {
                     // We may not hold this lock across the write call to avoid deadlocking if the
                     // graphics driver tries to write to the bootlog.
-                    let display_handle = map.lock().unwrap().display_handle.clone();
+                    let display_handle = if let Some(map) = &*map.lock().unwrap() {
+                        map.display_handle.clone()
+                    } else {
+                        continue;
+                    };
                     display_handle.sync_rects(&sync_rects).unwrap();
                 }
             }
