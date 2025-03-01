@@ -1,0 +1,17 @@
+[package]
+name = "pcid-spawner"
+version = "0.1.0"
+authors = ["4lDO2 <4lDO2@protonmail.com>"]
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+anyhow = "1"
+log = "0.4"
+pico-args = "0.5"
+redox_syscall = "0.5.9"
+serde = { version = "1", features = ["derive"] }
+toml = "0.5"
+
+common = { path = "../common" }
+pcid = { path = "../pcid" }

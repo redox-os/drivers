@@ -1,10 +1,10 @@
 use std::fmt;
 use std::fs::File;
 use std::io::prelude::*;
+use std::os::fd::{FromRawFd, IntoRawFd, RawFd};
+use std::path::Path;
 use std::ptr::NonNull;
 use std::{env, io};
-
-use std::os::unix::io::{FromRawFd, RawFd};
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use thiserror::Error;
@@ -240,6 +240,7 @@ pub enum SetFeatureInfo {
 #[derive(Debug, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum PcidClientRequest {
+    EnableDevice,
     RequestConfig,
     RequestFeatures,
     RequestVendorCapabilities,
@@ -260,6 +261,7 @@ pub enum PcidServerResponseError {
 #[derive(Debug, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum PcidClientResponse {
+    EnabledDevice,
     Config(SubdriverArguments),
     AllFeatures(Vec<PciFeature>),
     VendorCapabilities(Vec<VendorSpecificCapability>),
@@ -277,14 +279,9 @@ pub struct MappedBar {
     pub bar_size: usize,
 }
 
-// TODO: Ideally, pcid might have its own scheme, like lots of other Redox drivers, where this kind of IPC is done. Otherwise, instead of writing serde messages over
-// a channel, the communication could potentially be done via mmap, using a channel
-// very similar to crossbeam-channel or libstd's mpsc (except the cycle, enqueue and dequeue fields
-// are stored in the same buffer as the actual data).
 /// A handle from a `pcid` client (e.g. `ahcid`) to `pcid`.
 pub struct PciFunctionHandle {
-    pcid_to_client: File,
-    pcid_from_client: File,
+    channel: File,
     config: SubdriverArguments,
     mapped_bars: [Option<MappedBar>; 6],
 }
@@ -293,9 +290,7 @@ pub struct PciFunctionHandle {
 pub fn send<W: Write, T: Serialize>(w: &mut W, message: &T) -> Result<()> {
     let mut data = Vec::new();
     bincode::serialize_into(&mut data, message)?;
-    let length_bytes = u64::to_le_bytes(data.len() as u64);
-    w.write_all(&length_bytes)?;
-    w.write_all(&data)?;
+    assert_eq!(w.write(&data)?, data.len());
     Ok(())
 }
 #[doc(hidden)]
@@ -314,42 +309,69 @@ pub fn recv<R: Read, T: DeserializeOwned>(r: &mut R) -> Result<T> {
 
 impl PciFunctionHandle {
     pub fn connect_default() -> Result<Self> {
-        let pcid_to_client_fd = env::var("PCID_TO_CLIENT_FD")?
+        let channel_fd = env::var("PCID_CLIENT_CHANNEL")?
             .parse::<RawFd>()
             .map_err(PcidClientHandleError::EnvValidityError)?;
-        let pcid_from_client_fd = env::var("PCID_FROM_CLIENT_FD")?
-            .parse::<RawFd>()
-            .map_err(PcidClientHandleError::EnvValidityError)?;
+        Self::connect_common(channel_fd)
+    }
 
-        let mut pcid_to_client = unsafe { File::from_raw_fd(pcid_to_client_fd) };
-        let mut pcid_from_client = unsafe { File::from_raw_fd(pcid_from_client_fd) };
+    pub fn connect_by_path(device_path: &Path) -> Result<Self> {
+        let channel_fd = syscall::open(
+            device_path.join("channel").to_str().unwrap(),
+            syscall::O_RDWR,
+        )
+        .map_err(|err| {
+            PcidClientHandleError::IoError(io::Error::other(format!(
+                "failed to open pcid channel: {}",
+                err
+            )))
+        })?;
+        Self::connect_common(channel_fd as RawFd)
+    }
 
-        send(&mut pcid_from_client, &PcidClientRequest::RequestConfig)?;
-        let config = match recv(&mut pcid_to_client)? {
+    fn connect_common(
+        channel_fd: i32,
+    ) -> std::result::Result<PciFunctionHandle, PcidClientHandleError> {
+        let mut channel = unsafe { File::from_raw_fd(channel_fd) };
+
+        send(&mut channel, &PcidClientRequest::RequestConfig)?;
+        let config = match recv(&mut channel)? {
             PcidClientResponse::Config(a) => a,
             other => return Err(PcidClientHandleError::InvalidResponse(other)),
         };
 
         Ok(Self {
-            pcid_to_client,
-            pcid_from_client,
+            channel,
             config,
             mapped_bars: [const { None }; 6],
         })
     }
+
+    pub fn into_inner_fd(self) -> RawFd {
+        self.channel.into_raw_fd()
+    }
+
     fn send(&mut self, req: &PcidClientRequest) -> Result<()> {
-        send(&mut self.pcid_from_client, req)
+        send(&mut self.channel, req)
     }
     fn recv(&mut self) -> Result<PcidClientResponse> {
-        recv(&mut self.pcid_to_client)
+        recv(&mut self.channel)
     }
+
     pub fn config(&self) -> SubdriverArguments {
         self.config.clone()
     }
 
+    pub fn enable_device(&mut self) -> Result<()> {
+        self.send(&PcidClientRequest::EnableDevice)?;
+        match self.recv()? {
+            PcidClientResponse::EnabledDevice => Ok(()),
+            other => Err(PcidClientHandleError::InvalidResponse(other)),
+        }
+    }
+
     pub fn get_vendor_capabilities(&mut self) -> Result<Vec<VendorSpecificCapability>> {
         self.send(&PcidClientRequest::RequestVendorCapabilities)?;
-
         match self.recv()? {
             PcidClientResponse::VendorCapabilities(a) => Ok(a),
             other => Err(PcidClientHandleError::InvalidResponse(other)),

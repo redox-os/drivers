@@ -20,7 +20,7 @@ pub struct DriverConfig {
     pub vendor: Option<u16>,
     pub device: Option<u16>,
     pub device_id_range: Option<Range<u16>>,
-    pub command: Option<Vec<String>>,
+    pub command: Vec<String>,
 }
 
 impl DriverConfig {
