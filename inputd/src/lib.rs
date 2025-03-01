@@ -32,8 +32,7 @@ impl ConsumerHandle {
     pub fn open_display(&self) -> Result<File, Error> {
         let mut buffer = [0; 1024];
         let fd = self.0.as_raw_fd();
-        let written = libredox::call::fpath(fd as usize, &mut buffer)
-            .expect("init: failed to get the path to the display device");
+        let written = libredox::call::fpath(fd as usize, &mut buffer)?;
 
         assert!(written <= buffer.len());
 
