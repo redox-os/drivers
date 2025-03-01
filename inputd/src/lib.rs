@@ -118,7 +118,6 @@ impl ControlHandle {
 #[repr(usize)]
 pub enum VtEventKind {
     Activate,
-    Deactivate,
     Resize,
 }
 

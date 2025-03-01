@@ -120,19 +120,6 @@ impl InputScheme {
                     device,
                     ..
                 } => {
-                    if let Some(active_vt) = self.active_vt {
-                        if &self.vts[&active_vt].display == &*device {
-                            pending.push(VtEvent {
-                                kind: VtEventKind::Deactivate,
-                                vt: self.active_vt.unwrap(),
-                                width: 0,
-                                height: 0,
-                                stride: 0,
-                            });
-                            *notified = false;
-                        }
-                    }
-
                     if &self.vts[&new_active].display == &*device {
                         pending.push(VtEvent {
                             kind: VtEventKind::Activate,
