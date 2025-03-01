@@ -120,23 +120,16 @@ impl GraphicScreen {
             let w: usize = sync_rect.width.try_into().unwrap_or(0);
             let h: usize = sync_rect.height.try_into().unwrap_or(0);
 
-            let end_y = start_y + h;
+            let offscreen_ptr = self.ptr.as_ptr() as *mut u32;
+            let onscreen_ptr = framebuffer.onscreen as *mut u32; // FIXME use as_mut_ptr once stable
 
-            let row_pixel_count = w;
-
-            let mut offscreen_ptr = self.ptr.as_ptr() as *mut u32;
-            let mut onscreen_ptr = framebuffer.onscreen as *mut u32; // FIXME use as_mut_ptr once stable
-
-            unsafe {
-                offscreen_ptr = offscreen_ptr.add(start_y * self.width + start_x);
-                onscreen_ptr = onscreen_ptr.add(start_y * framebuffer.stride + start_x);
-
-                let mut rows = end_y - start_y;
-                while rows > 0 {
-                    ptr::copy(offscreen_ptr, onscreen_ptr, row_pixel_count);
-                    offscreen_ptr = offscreen_ptr.add(self.width);
-                    onscreen_ptr = onscreen_ptr.add(framebuffer.stride);
-                    rows -= 1;
+            for row in start_y..start_y + h {
+                unsafe {
+                    ptr::copy(
+                        offscreen_ptr.add(row * self.width + start_x),
+                        onscreen_ptr.add(row * framebuffer.stride + start_x),
+                        w,
+                    );
                 }
             }
         }
