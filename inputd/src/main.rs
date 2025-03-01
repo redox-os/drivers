@@ -420,23 +420,24 @@ impl Scheme for InputScheme {
         let handle = self.handles.get_mut(&id).ok_or(SysError::new(EINVAL))?;
         assert!(handle.is_producer());
 
-        let active_vt = self.active_vt.unwrap();
-        for handle in self.handles.values_mut() {
-            match handle {
-                Handle::Consumer {
-                    pending,
-                    notified,
-                    vt,
-                    ..
-                } => {
-                    if *vt != active_vt {
-                        continue;
-                    }
+        if let Some(active_vt) = self.active_vt {
+            for handle in self.handles.values_mut() {
+                match handle {
+                    Handle::Consumer {
+                        pending,
+                        notified,
+                        vt,
+                        ..
+                    } => {
+                        if *vt != active_vt {
+                            continue;
+                        }
 
-                    pending.extend_from_slice(buf);
-                    *notified = false;
+                        pending.extend_from_slice(buf);
+                        *notified = false;
+                    }
+                    _ => continue,
                 }
-                _ => continue,
             }
         }
 
