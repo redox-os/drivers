@@ -21,6 +21,11 @@ fn main() {
         spec.push(());
     }
 
+    if env::var("FRAMEBUFFER_WIDTH").is_err() {
+        println!("vesad: No boot framebuffer");
+        return;
+    }
+
     let width = usize::from_str_radix(
         &env::var("FRAMEBUFFER_WIDTH").expect("FRAMEBUFFER_WIDTH not set"),
         16,
@@ -48,6 +53,7 @@ fn main() {
     );
 
     if phys == 0 {
+        println!("vesad: Boot framebuffer at address 0");
         return;
     }
 
