@@ -52,6 +52,7 @@ pub struct VirtGpuAdapter<'a> {
     cursor_queue: Arc<Queue<'a>>,
     transport: Arc<dyn Transport>,
     displays: Vec<Display>,
+    cursor_set: bool,
 }
 
 impl VirtGpuAdapter<'_> {
@@ -92,6 +93,59 @@ impl VirtGpuAdapter<'_> {
 
         Ok(response)
     }
+
+    fn setup_cursor(&mut self, x: u32, y: u32) {
+        let resource = self.create_resource(64, 64);
+        for display_id in self.displays() {
+            //self.set_scanout(display_id, &resource);
+            self.flush_resource(display_id, &resource, Option::None);
+            self.update_cursor(x, y, resource.id);
+        }
+    }
+
+    fn update_cursor(&self, x: u32, y: u32, resource_id: ResourceId) -> Result<Dma<ControlHeader>, Error>  {
+        println!("UPDATING CURSOR TO x{x}, y{y}");
+
+        let header = Dma::new(ControlHeader::default())?;
+        let request = Dma::new(UpdateCursor::update_cursor(x, y, resource_id))?;
+
+        futures::executor::block_on(async {
+
+            let command = ChainBuilder::new()
+            .chain(Buffer::new(&request))
+            .chain(Buffer::new(&header).flags(DescriptorFlags::WRITE_ONLY))
+            .build();
+            self.cursor_queue.send(command).await;
+            
+        });
+
+        println!("UPDATE CURSOR RETURNED RESPONSE {:?}", request.header.ty); //Dimitar: debug
+        println!("UPDATE CURSOR RETURNED HEADER {:?}", header.ty); //Dimitar: debug
+        assert!(header.ty == CommandTy::RespOkNodata);
+        Ok(header)
+
+    }
+
+    fn move_cursor(&self, x: u32, y: u32) -> Result<Dma<ControlHeader>, Error>  {
+        println!("MOVING CURSOR TO x{x}, y{y}");
+
+        let header = Dma::new(ControlHeader::default())?;
+        let request = Dma::new(UpdateCursor::move_cursor(x, y))?;
+
+        futures::executor::block_on(async {
+     
+            let command = ChainBuilder::new()
+            .chain(Buffer::new(&request))
+            .chain(Buffer::new(&header).flags(DescriptorFlags::WRITE_ONLY))
+            .build();
+            self.cursor_queue.send(command).await;
+        });
+
+        assert!(header.ty == CommandTy::RespOkNodata);
+        println!("MOVE CURSOR RETURNED HEADER {:?}", header.ty); //Dimitar: debug
+        Ok(header)
+    }
+
 }
 
 impl GraphicsAdapter for VirtGpuAdapter<'_> {
@@ -206,6 +260,22 @@ impl GraphicsAdapter for VirtGpuAdapter<'_> {
             let header = self.send_request(Dma::new(flush).unwrap()).await.unwrap();
             assert_eq!(header.ty, CommandTy::RespOkNodata);
         });
+
+        if let Some(damage) = damage {
+            for damage in damage {
+                if(self.cursor_set){
+                    let x: u32 = damage.x as u32;
+                    let y: u32 = damage.y as u32;
+                    self.move_cursor(x, y);
+                }else{
+                    let x: u32 = damage.x as u32;
+                    let y: u32 = damage.y as u32;
+                    println!("SETTING CURSOR TO x{x}, y{y}");
+                    self.setup_cursor(x, y);
+                    self.cursor_set = true;
+                }
+            }
+        } 
     }
 }
 
@@ -223,6 +293,7 @@ impl<'a> GpuScheme {
             cursor_queue,
             transport,
             displays: vec![],
+            cursor_set: false,
         };
 
         let mut display_info = adapter.get_display_info().await?;
