@@ -120,19 +120,6 @@ impl InputScheme {
                     device,
                     ..
                 } => {
-                    if let Some(active_vt) = self.active_vt {
-                        if &self.vts[&active_vt].display == &*device {
-                            pending.push(VtEvent {
-                                kind: VtEventKind::Deactivate,
-                                vt: self.active_vt.unwrap(),
-                                width: 0,
-                                height: 0,
-                                stride: 0,
-                            });
-                            *notified = false;
-                        }
-                    }
-
                     if &self.vts[&new_active].display == &*device {
                         pending.push(VtEvent {
                             kind: VtEventKind::Activate,
@@ -420,23 +407,24 @@ impl Scheme for InputScheme {
         let handle = self.handles.get_mut(&id).ok_or(SysError::new(EINVAL))?;
         assert!(handle.is_producer());
 
-        let active_vt = self.active_vt.unwrap();
-        for handle in self.handles.values_mut() {
-            match handle {
-                Handle::Consumer {
-                    pending,
-                    notified,
-                    vt,
-                    ..
-                } => {
-                    if *vt != active_vt {
-                        continue;
-                    }
+        if let Some(active_vt) = self.active_vt {
+            for handle in self.handles.values_mut() {
+                match handle {
+                    Handle::Consumer {
+                        pending,
+                        notified,
+                        vt,
+                        ..
+                    } => {
+                        if *vt != active_vt {
+                            continue;
+                        }
 
-                    pending.extend_from_slice(buf);
-                    *notified = false;
+                        pending.extend_from_slice(buf);
+                        *notified = false;
+                    }
+                    _ => continue,
                 }
-                _ => continue,
             }
         }
 

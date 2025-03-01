@@ -96,11 +96,6 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
                 }
             }
 
-            VtEventKind::Deactivate => {
-                log::info!("deactivate {}", vt_event.vt);
-                // nothing to do :)
-            }
-
             VtEventKind::Resize => {
                 log::warn!("driver-graphics: resize is not implemented yet")
             }
