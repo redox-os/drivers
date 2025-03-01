@@ -46,7 +46,7 @@ pub struct Display {
 
 impl Display {
     pub fn open_first_vt() -> io::Result<Self> {
-        let input_handle = ConsumerHandle::for_vt(1)?;
+        let input_handle = ConsumerHandle::new_vt()?;
 
         let map = match input_handle.open_display() {
             Ok(display) => {

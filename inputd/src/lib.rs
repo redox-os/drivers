@@ -17,11 +17,11 @@ unsafe fn any_as_u8_slice_mut<T: Sized>(p: &mut T) -> &mut [u8] {
 pub struct ConsumerHandle(File);
 
 impl ConsumerHandle {
-    pub fn for_vt(vt: usize) -> Result<Self, Error> {
+    pub fn new_vt() -> Result<Self, Error> {
         let file = OpenOptions::new()
             .read(true)
             .custom_flags(O_NONBLOCK as i32)
-            .open(format!("/scheme/input/consumer/{vt}"))?;
+            .open(format!("/scheme/input/consumer"))?;
         Ok(Self(file))
     }
 
@@ -68,12 +68,6 @@ impl DisplayHandle {
     pub fn new_early<S: Into<String>>(device_name: S) -> Result<Self, Error> {
         let path = format!("/scheme/input/handle_early/display/{}", device_name.into());
         Ok(Self(File::open(path)?))
-    }
-
-    // The return value is the display identifier. It will be used to uniquely
-    // identify the display on activation events.
-    pub fn register_vt(&mut self) -> Result<usize, Error> {
-        self.0.read(&mut [])
     }
 
     pub fn read_vt_event(&mut self) -> Result<Option<VtEvent>, Error> {
