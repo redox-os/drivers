@@ -1,5 +1,4 @@
 use std::collections::{BTreeMap, VecDeque};
-use std::sync::Arc;
 
 use pci_types::PciAddress;
 use redox_scheme::{CallerCtx, OpenResult, Scheme};
@@ -9,12 +8,12 @@ use syscall::flag::{MODE_CHR, MODE_DIR, O_DIRECTORY, O_STAT};
 use syscall::schemev2::NewFdFlags;
 use syscall::ENOLCK;
 
-use crate::State;
+use crate::cfg_access::Pcie;
 
 pub struct PciScheme {
     handles: BTreeMap<usize, HandleWrapper>,
     next_id: usize,
-    state: Arc<State>,
+    pcie: Pcie,
     tree: BTreeMap<PciAddress, crate::Func>,
 }
 enum Handle {
@@ -184,7 +183,7 @@ impl Scheme for PciScheme {
 
         match handle.inner {
             Handle::Channel { addr, ref mut st } => {
-                Self::write_channel(&self.state, &mut self.tree, addr, st, buf)
+                Self::write_channel(&self.pcie, &mut self.tree, addr, st, buf)
             }
 
             _ => Err(Error::new(EBADF)),
@@ -210,11 +209,11 @@ impl PciScheme {
 }
 
 impl PciScheme {
-    pub fn new(state: Arc<State>, tree: BTreeMap<PciAddress, crate::Func>) -> Self {
+    pub fn new(pcie: Pcie, tree: BTreeMap<PciAddress, crate::Func>) -> Self {
         Self {
             handles: BTreeMap::new(),
             next_id: 0,
-            state,
+            pcie,
             tree,
         }
     }
@@ -235,7 +234,7 @@ impl PciScheme {
                         return Err(Error::new(ENOLCK));
                     }
                     func.inner.legacy_interrupt_line =
-                        crate::enable_function(&self.state, &mut func.endpoint_header);
+                        crate::enable_function(&self.pcie, &mut func.endpoint_header);
                     func.enabled = true;
                     Handle::Channel {
                         addr,
@@ -264,7 +263,7 @@ impl PciScheme {
         }
     }
     fn write_channel(
-        pci_state: &Arc<State>,
+        pci_state: &Pcie,
         tree: &mut BTreeMap<PciAddress, crate::Func>,
         addr: PciAddress,
         state: &mut ChannelState,
@@ -280,7 +279,7 @@ impl PciScheme {
                     func.inner.clone(),
                     &mut func.endpoint_header,
                     func.capabilities.clone(),
-                    Arc::clone(pci_state),
+                    &*pci_state,
                 )
                 .respond(request);
 

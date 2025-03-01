@@ -1,17 +1,15 @@
-use std::sync::Arc;
-
 use pci_types::capability::{MultipleMessageSupport, PciCapability};
 use pci_types::{ConfigRegionAccess, EndpointHeader};
 use pcid_interface::PciFunction;
 
-use crate::State;
+use crate::cfg_access::Pcie;
 
 pub struct DriverHandler<'a> {
     func: PciFunction,
     endpoint_header: &'a mut EndpointHeader,
     capabilities: Vec<PciCapability>,
 
-    state: Arc<State>,
+    pcie: &'a Pcie,
 }
 
 impl<'a> DriverHandler<'a> {
@@ -19,13 +17,13 @@ impl<'a> DriverHandler<'a> {
         func: PciFunction,
         endpoint_header: &'a mut EndpointHeader,
         capabilities: Vec<PciCapability>,
-        state: Arc<State>,
+        pcie: &'a Pcie,
     ) -> Self {
         DriverHandler {
             func,
             endpoint_header,
             capabilities,
-            state,
+            pcie,
         }
     }
 
@@ -39,7 +37,7 @@ impl<'a> DriverHandler<'a> {
         match request {
             PcidClientRequest::EnableDevice => {
                 self.func.legacy_interrupt_line =
-                    crate::enable_function(&self.state, &mut self.endpoint_header);
+                    crate::enable_function(&self.pcie, &mut self.endpoint_header);
 
                 PcidClientResponse::EnabledDevice
             }
@@ -48,7 +46,7 @@ impl<'a> DriverHandler<'a> {
                     .iter()
                     .filter_map(|capability| match capability {
                         PciCapability::Vendor(addr) => unsafe {
-                            Some(VendorSpecificCapability::parse(*addr, &self.state.pcie))
+                            Some(VendorSpecificCapability::parse(*addr, self.pcie))
                         },
                         _ => None,
                     })
@@ -80,7 +78,7 @@ impl<'a> DriverHandler<'a> {
                         {
                             // If MSI-X is supported disable it before enabling MSI as they can't be
                             // active at the same time.
-                            msix_capability.set_enabled(false, &self.state.pcie);
+                            msix_capability.set_enabled(false, self.pcie);
                         }
 
                         let capability = match self.capabilities.iter_mut().find_map(|capability| {
@@ -96,7 +94,7 @@ impl<'a> DriverHandler<'a> {
                                 )
                             }
                         };
-                        capability.set_enabled(true, &self.state.pcie);
+                        capability.set_enabled(true, self.pcie);
                         PcidClientResponse::FeatureEnabled(feature)
                     }
                     PciFeature::MsiX => {
@@ -110,7 +108,7 @@ impl<'a> DriverHandler<'a> {
                         {
                             // If MSI is supported disable it before enabling MSI-X as they can't be
                             // active at the same time.
-                            msi_capability.set_enabled(false, &self.state.pcie);
+                            msi_capability.set_enabled(false, self.pcie);
                         }
 
                         let capability = match self.capabilities.iter_mut().find_map(|capability| {
@@ -126,7 +124,7 @@ impl<'a> DriverHandler<'a> {
                                 )
                             }
                         };
-                        capability.set_enabled(true, &self.state.pcie);
+                        capability.set_enabled(true, self.pcie);
                         PcidClientResponse::FeatureEnabled(feature)
                     }
                 }
@@ -209,7 +207,7 @@ impl<'a> DriverHandler<'a> {
                                         )
                                     }
                                 },
-                                &self.state.pcie,
+                                self.pcie,
                             );
                         }
                         if let Some(message_addr_and_data) = info_to_set.message_address_and_data {
@@ -220,7 +218,7 @@ impl<'a> DriverHandler<'a> {
                                 );
                             }
                             if message_addr_and_data.data
-                                & ((1 << info.multiple_message_enable(&self.state.pcie) as u8) - 1)
+                                & ((1 << info.multiple_message_enable(self.pcie) as u8) - 1)
                                 != 0
                             {
                                 return PcidClientResponse::Error(
@@ -233,11 +231,11 @@ impl<'a> DriverHandler<'a> {
                                     .data
                                     .try_into()
                                     .expect("pcid: MSI message data too big"),
-                                &self.state.pcie,
+                                self.pcie,
                             );
                         }
                         if let Some(mask_bits) = info_to_set.mask_bits {
-                            info.set_message_mask(mask_bits, &self.state.pcie);
+                            info.set_message_mask(mask_bits, self.pcie);
                         }
                         PcidClientResponse::SetFeatureInfo(PciFeature::Msi)
                     } else {
@@ -256,7 +254,7 @@ impl<'a> DriverHandler<'a> {
                             })
                     {
                         if let Some(mask) = function_mask {
-                            info.set_function_mask(mask, &self.state.pcie);
+                            info.set_function_mask(mask, self.pcie);
                         }
                         PcidClientResponse::SetFeatureInfo(PciFeature::MsiX)
                     } else {
@@ -268,12 +266,12 @@ impl<'a> DriverHandler<'a> {
                 _ => unreachable!(),
             },
             PcidClientRequest::ReadConfig(offset) => {
-                let value = unsafe { self.state.pcie.read(self.func.addr, offset) };
+                let value = unsafe { self.pcie.read(self.func.addr, offset) };
                 return PcidClientResponse::ReadConfig(value);
             }
             PcidClientRequest::WriteConfig(offset, value) => {
                 unsafe {
-                    self.state.pcie.write(self.func.addr, offset, value);
+                    self.pcie.write(self.func.addr, offset, value);
                 }
                 return PcidClientResponse::WriteConfig;
             }

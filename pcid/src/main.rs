@@ -4,7 +4,6 @@
 #![feature(if_let_guard)]
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
 
 use log::{debug, info, trace, warn};
 use pci_types::capability::PciCapability;
@@ -21,10 +20,6 @@ mod cfg_access;
 mod driver_handler;
 mod scheme;
 
-pub struct State {
-    pcie: Pcie,
-}
-
 pub struct Func {
     inner: PciFunction,
 
@@ -34,7 +29,7 @@ pub struct Func {
 }
 
 fn handle_parsed_header(
-    state: &State,
+    pcie: &Pcie,
     tree: &mut BTreeMap<PciAddress, Func>,
     endpoint_header: EndpointHeader,
     full_device_id: FullDeviceId,
@@ -46,7 +41,7 @@ fn handle_parsed_header(
             skip = false;
             continue;
         }
-        match endpoint_header.bar(i, &state.pcie) {
+        match endpoint_header.bar(i, pcie) {
             Some(TyBar::Io { port }) => bars[i as usize] = PciBar::Port(port.try_into().unwrap()),
             Some(TyBar::Memory32 {
                 address,
@@ -84,10 +79,8 @@ fn handle_parsed_header(
         info!("    BAR{}", string);
     }
 
-    let capabilities = if endpoint_header.status(&state.pcie).has_capability_list() {
-        endpoint_header
-            .capabilities(&state.pcie)
-            .collect::<Vec<_>>()
+    let capabilities = if endpoint_header.status(pcie).has_capability_list() {
+        endpoint_header.capabilities(pcie).collect::<Vec<_>>()
     } else {
         Vec::new()
     };
@@ -114,11 +107,11 @@ fn handle_parsed_header(
 }
 
 fn enable_function(
-    state: &State,
+    pcie: &Pcie,
     endpoint_header: &mut EndpointHeader,
 ) -> Option<LegacyInterruptLine> {
     // Enable bus mastering, memory space, and I/O space
-    endpoint_header.update_command(&state.pcie, |cmd| {
+    endpoint_header.update_command(pcie, |cmd| {
         cmd | CommandRegister::BUS_MASTER_ENABLE
             | CommandRegister::MEMORY_ENABLE
             | CommandRegister::IO_ENABLE
@@ -128,7 +121,7 @@ fn enable_function(
     let mut irq = 0xFF;
     let mut interrupt_pin = 0xFF;
 
-    endpoint_header.update_interrupt(&state.pcie, |(pin, mut line)| {
+    endpoint_header.update_interrupt(pcie, |(pin, mut line)| {
         if line == 0xFF {
             line = 9;
         }
@@ -153,13 +146,12 @@ fn enable_function(
             | ((pci_address.device() as u32) << 11)
             | ((pci_address.function() as u32) << 8);
         let addr = [
-            dt_address & state.pcie.interrupt_map_mask[0],
+            dt_address & pcie.interrupt_map_mask[0],
             0u32,
             0u32,
-            interrupt_pin as u32 & state.pcie.interrupt_map_mask[3],
+            interrupt_pin as u32 & pcie.interrupt_map_mask[3],
         ];
-        let mapping = state
-            .pcie
+        let mapping = pcie
             .interrupt_map
             .iter()
             .find(|x| x.addr == addr[0..3] && x.interrupt == addr[3]);
@@ -197,7 +189,7 @@ fn main() {
 }
 
 fn main_inner(daemon: redox_daemon::Daemon) -> ! {
-    let state = Arc::new(State { pcie: Pcie::new() });
+    let pcie = Pcie::new();
     let mut tree = BTreeMap::new();
 
     info!("PCI SG-BS:DV.F VEND:DEVI CL.SC.IN.RV");
@@ -212,12 +204,12 @@ fn main_inner(daemon: redox_daemon::Daemon) -> ! {
         bus_i += 1;
 
         for dev_num in 0..32 {
-            scan_device(&mut tree, &state, &mut bus_nums, bus_num, dev_num);
+            scan_device(&mut tree, &pcie, &mut bus_nums, bus_num, dev_num);
         }
     }
     info!("Enumeration complete, now starting pci scheme");
 
-    let mut scheme = scheme::PciScheme::new(state, tree);
+    let mut scheme = scheme::PciScheme::new(pcie, tree);
     let socket = redox_scheme::Socket::create("pci").expect("failed to open pci scheme socket");
 
     let _ = daemon.ready();
@@ -250,7 +242,7 @@ fn main_inner(daemon: redox_daemon::Daemon) -> ! {
 
 fn scan_device(
     tree: &mut BTreeMap<PciAddress, Func>,
-    state: &State,
+    pcie: &Pcie,
     bus_nums: &mut Vec<u8>,
     bus_num: u8,
     dev_num: u8,
@@ -258,7 +250,7 @@ fn scan_device(
     for func_num in 0..8 {
         let header = TyPciHeader::new(PciAddress::new(0, bus_num, dev_num, func_num));
 
-        let (vendor_id, device_id) = header.id(&state.pcie);
+        let (vendor_id, device_id) = header.id(pcie);
         if vendor_id == 0xffff && device_id == 0xffff {
             if func_num == 0 {
                 trace!("PCI {:>02X}:{:>02X}: no dev", bus_num, dev_num);
@@ -268,7 +260,7 @@ fn scan_device(
             continue;
         }
 
-        let (revision, class, subclass, interface) = header.revision_and_class(&state.pcie);
+        let (revision, class, subclass, interface) = header.revision_and_class(pcie);
         let full_device_id = FullDeviceId {
             vendor_id,
             device_id,
@@ -280,20 +272,20 @@ fn scan_device(
 
         info!("PCI {} {}", header.address(), full_device_id.display());
 
-        let has_multiple_functions = header.has_multiple_functions(&state.pcie);
+        let has_multiple_functions = header.has_multiple_functions(pcie);
 
-        match header.header_type(&state.pcie) {
+        match header.header_type(pcie) {
             HeaderType::Endpoint => {
                 handle_parsed_header(
-                    state,
+                    pcie,
                     tree,
-                    EndpointHeader::from_header(header, &state.pcie).unwrap(),
+                    EndpointHeader::from_header(header, pcie).unwrap(),
                     full_device_id,
                 );
             }
             HeaderType::PciPciBridge => {
-                let bridge_header = PciPciBridgeHeader::from_header(header, &state.pcie).unwrap();
-                bus_nums.push(bridge_header.secondary_bus_number(&state.pcie));
+                let bridge_header = PciPciBridgeHeader::from_header(header, pcie).unwrap();
+                bus_nums.push(bridge_header.secondary_bus_number(pcie));
             }
             ty => {
                 warn!("pcid: unknown header type: {ty:?}");
