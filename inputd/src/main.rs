@@ -146,45 +146,23 @@ impl Scheme for InputScheme {
                     vt: target,
                 }
             }
-            "handle_early" => {
+            "handle" | "handle_early" => {
                 let display = path_parts.collect::<Vec<_>>().join(".");
-                if self.display.is_none() {
-                    self.has_new_events = true;
-                    self.display = Some(display.clone());
 
-                    for handle in self.handles.values_mut() {
-                        match handle {
-                            Handle::Consumer {
-                                needs_handoff,
-                                notified,
+                let needs_handoff = match command {
+                    "handle_early" => self.display.is_none(),
+                    "handle" => self.handles.values().all(|handle| {
+                        !matches!(
+                            handle,
+                            Handle::Display {
+                                is_earlyfb: false,
                                 ..
-                            } => {
-                                *needs_handoff = true;
-                                *notified = false;
                             }
-                            _ => continue,
-                        }
-                    }
-                }
-                Handle::Display {
-                    events: EventFlags::empty(),
-                    pending: Vec::new(),
-                    notified: false,
-                    device: display,
-                    is_earlyfb: true,
-                }
-            }
-            "handle" => {
-                let display = path_parts.collect::<Vec<_>>().join(".");
-                let needs_handoff = self.handles.values().all(|handle| {
-                    !matches!(
-                        handle,
-                        Handle::Display {
-                            is_earlyfb: false,
-                            ..
-                        }
-                    )
-                });
+                        )
+                    }),
+                    _ => unreachable!(),
+                };
+
                 if needs_handoff {
                     self.has_new_events = true;
                     self.display = Some(display.clone());
@@ -203,6 +181,7 @@ impl Scheme for InputScheme {
                         }
                     }
                 }
+
                 Handle::Display {
                     events: EventFlags::empty(),
                     pending: if let Some(active_vt) = self.active_vt {
@@ -218,7 +197,7 @@ impl Scheme for InputScheme {
                     },
                     notified: false,
                     device: display,
-                    is_earlyfb: false,
+                    is_earlyfb: command == "handle_early",
                 }
             }
             "control" => Handle::Control,
