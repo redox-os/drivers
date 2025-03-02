@@ -12,13 +12,13 @@ pub fn enable_msix(pcid_handle: &mut PciFunctionHandle) -> Result<File, Error> {
     let pci_config = pcid_handle.config();
 
     // Extended message signaled interrupts.
-    let msix_info = match pcid_handle.feature_info(PciFeature::MsiX)? {
+    let msix_info = match pcid_handle.feature_info(PciFeature::MsiX) {
         PciFeatureInfo::MsiX(capability) => capability,
         _ => unreachable!(),
     };
     msix_info.validate(pci_config.func.bars);
 
-    let bar_address = unsafe { pcid_handle.map_bar(msix_info.table_bar)? }
+    let bar_address = unsafe { pcid_handle.map_bar(msix_info.table_bar) }
         .ptr
         .as_ptr() as usize;
     let virt_table_base = (bar_address + msix_info.table_offset as usize) as *mut MsixTableEntry;
@@ -43,7 +43,7 @@ pub fn enable_msix(pcid_handle: &mut PciFunctionHandle) -> Result<File, Error> {
         interrupt_handle
     };
 
-    pcid_handle.enable_feature(PciFeature::MsiX)?;
+    pcid_handle.enable_feature(PciFeature::MsiX);
 
     log::info!("virtio: using MSI-X (interrupt_handle={interrupt_handle:?})");
     Ok(interrupt_handle)

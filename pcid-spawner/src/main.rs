@@ -83,7 +83,7 @@ fn main() -> Result<()> {
 
         log::info!("pcid-spawner: spawn {:?}", command);
 
-        handle.enable_device()?;
+        handle.enable_device();
 
         let channel_fd = handle.into_inner_fd();
         command.env("PCID_CLIENT_CHANNEL", channel_fd.to_string());
