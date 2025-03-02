@@ -77,16 +77,16 @@ impl InputScheme {
         }
     }
 
-    fn switch_vt(&mut self, new_active: usize) -> syscall::Result<()> {
+    fn switch_vt(&mut self, new_active: usize) {
         if let Some(active_vt) = self.active_vt {
             if new_active == active_vt {
-                return Ok(());
+                return;
             }
         }
 
         if !self.vts.contains(&new_active) {
             log::warn!("inputd: switch to non-existent VT #{new_active} was requested");
-            return Ok(());
+            return;
         }
 
         log::info!(
@@ -118,8 +118,6 @@ impl InputScheme {
         }
 
         self.active_vt = Some(new_active);
-
-        Ok(())
     }
 }
 
@@ -273,7 +271,7 @@ impl Scheme for InputScheme {
                     self.vts.insert(vt);
 
                     if self.active_vt.is_none() {
-                        self.switch_vt(vt)?;
+                        self.switch_vt(vt);
                     }
 
                     Ok(vt)
@@ -325,7 +323,7 @@ impl Scheme for InputScheme {
                 // SAFETY: We have verified the size of the buffer above.
                 let cmd = unsafe { &*buf.as_ptr().cast::<VtActivate>() };
 
-                self.switch_vt(cmd.vt)?;
+                self.switch_vt(cmd.vt);
 
                 return Ok(buf.len());
             }
@@ -410,7 +408,7 @@ impl Scheme for InputScheme {
             }
 
             if let Some(new_active) = new_active_opt {
-                self.switch_vt(new_active)?;
+                self.switch_vt(new_active);
             }
         }
 
