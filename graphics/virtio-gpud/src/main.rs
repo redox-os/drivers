@@ -410,11 +410,11 @@ impl UpdateCursor{
         }
     }
 
-    pub fn move_cursor(x: u32, y: u32)-> Self {
+    pub fn move_cursor(x: u32, y: u32, resource_id: ResourceId)-> Self {
         Self {
             header: ControlHeader::with_ty(CommandTy::MoveCursor),
             pos: CursorPos::new(0, x, y),
-            resource_id: ResourceId(0),
+            resource_id: resource_id,
             hot_x: 0,
             hot_y: 0,
             _padding: 0,
