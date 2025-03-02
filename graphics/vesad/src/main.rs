@@ -83,7 +83,6 @@ fn main() {
 }
 fn inner(daemon: redox_daemon::Daemon, framebuffers: Vec<FrameBuffer>, spec: &[()]) -> ! {
     let mut inputd_display_handle = DisplayHandle::new_early("vesa").unwrap();
-    let mut inputd_control_handle = inputd::ControlHandle::new().unwrap();
 
     for &() in spec.iter() {
         inputd_display_handle.register_vt().unwrap();
@@ -120,8 +119,6 @@ fn inner(daemon: redox_daemon::Daemon, framebuffers: Vec<FrameBuffer>, spec: &[(
     libredox::call::setrens(0, 0).expect("vesad: failed to enter null namespace");
 
     daemon.ready().expect("failed to notify parent");
-
-    inputd_control_handle.activate_vt(1).unwrap();
 
     let all = [Source::Input, Source::Scheme];
     for event in all

@@ -1,28 +1,39 @@
-use graphics_ipc::legacy::{Damage, DisplayMap, LegacyGraphicsHandle};
+use graphics_ipc::legacy::{Damage, LegacyGraphicsHandle};
 use inputd::ConsumerHandle;
 use std::io;
 
 pub struct Display {
     pub input_handle: ConsumerHandle,
-    pub display_handle: LegacyGraphicsHandle,
-    pub map: DisplayMap,
+    pub map: Option<DisplayMap>,
+}
+
+pub struct DisplayMap {
+    display_handle: LegacyGraphicsHandle,
+    pub inner: graphics_ipc::legacy::DisplayMap,
 }
 
 impl Display {
     pub fn open_vt(vt: usize) -> io::Result<Self> {
         let input_handle = ConsumerHandle::for_vt(vt)?;
 
-        let display_handle = Self::open_display(&input_handle)?;
+        if let Ok(display_handle) = Self::open_display(&input_handle) {
+            let map = display_handle
+                .map_display()
+                .unwrap_or_else(|e| panic!("failed to map display for VT #{vt}: {e}"));
 
-        let map = display_handle
-            .map_display()
-            .unwrap_or_else(|e| panic!("failed to map display for VT #{vt}: {e}"));
-
-        Ok(Self {
-            input_handle,
-            display_handle,
-            map,
-        })
+            Ok(Self {
+                input_handle,
+                map: Some(DisplayMap {
+                    display_handle,
+                    inner: map,
+                }),
+            })
+        } else {
+            Ok(Self {
+                input_handle,
+                map: None,
+            })
+        }
     }
 
     /// Re-open the display after a handoff.
@@ -35,14 +46,16 @@ impl Display {
 
         match new_display_handle.map_display() {
             Ok(map) => {
-                self.map = map;
-                self.display_handle = new_display_handle;
-
                 eprintln!(
                     "fbcond: Mapped new display with size {}x{}",
-                    self.map.width(),
-                    self.map.height()
+                    map.width(),
+                    map.height()
                 );
+
+                self.map = Some(DisplayMap {
+                    display_handle: new_display_handle,
+                    inner: map,
+                });
             }
             Err(err) => {
                 eprintln!("failed to resize display: {}", err);
@@ -57,6 +70,8 @@ impl Display {
     }
 
     pub fn sync_rects(&mut self, sync_rects: Vec<Damage>) {
-        self.display_handle.sync_rects(&sync_rects).unwrap();
+        if let Some(map) = &self.map {
+            map.display_handle.sync_rects(&sync_rects).unwrap();
+        }
     }
 }

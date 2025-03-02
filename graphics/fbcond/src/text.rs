@@ -120,17 +120,19 @@ impl TextScreen {
     }
 
     pub fn write(&mut self, buf: &[u8]) -> Result<usize> {
-        let damage = self.inner.write(
-            &mut console_draw::DisplayMap {
-                offscreen: self.display.map.ptr_mut(),
-                width: self.display.map.width(),
-                height: self.display.map.height(),
-            },
-            buf,
-            &mut self.input,
-        );
+        if let Some(map) = &mut self.display.map {
+            let damage = self.inner.write(
+                &mut console_draw::DisplayMap {
+                    offscreen: map.inner.ptr_mut(),
+                    width: map.inner.width(),
+                    height: map.inner.height(),
+                },
+                buf,
+                &mut self.input,
+            );
 
-        self.display.sync_rects(damage);
+            self.display.sync_rects(damage);
+        }
 
         Ok(buf.len())
     }
