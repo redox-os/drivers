@@ -131,17 +131,19 @@ impl Scheme for InputScheme {
         let handle_ty = match command {
             "producer" => Handle::Producer,
             "consumer" => {
-                let target = path_parts
-                    .next()
-                    .and_then(|x| x.parse::<usize>().ok())
-                    .ok_or(SysError::new(EINVAL))?;
+                let vt = self.next_vt_id.fetch_add(1, Ordering::Relaxed);
+                self.vts.insert(vt);
+
+                if self.active_vt.is_none() {
+                    self.switch_vt(vt);
+                }
 
                 Handle::Consumer {
                     events: EventFlags::empty(),
                     pending: Vec::new(),
                     needs_handoff: false,
                     notified: false,
-                    vt: target,
+                    vt,
                 }
             }
             "handle" | "handle_early" => {
@@ -258,24 +260,8 @@ impl Scheme for InputScheme {
                 Ok(copy)
             }
 
-            Handle::Display {
-                pending, device, ..
-            } => {
-                // FIXME Create new VT through a write instead and return a NewVt event on read
-                // This allows also returning events for VT (de)activation from the display handle
-                // rather than pushing them to the graphics driver.
-                if buf.is_empty() {
-                    // Trying to do an empty read creates a new VT.
-                    let vt = self.next_vt_id.fetch_add(1, Ordering::SeqCst);
-                    log::info!("inputd: created VT #{vt} for {device}");
-                    self.vts.insert(vt);
-
-                    if self.active_vt.is_none() {
-                        self.switch_vt(vt);
-                    }
-
-                    Ok(vt)
-                } else if buf.len() % size_of::<VtEvent>() == 0 {
+            Handle::Display { pending, .. } => {
+                if buf.len() % size_of::<VtEvent>() == 0 {
                     let copy = core::cmp::min(pending.len(), buf.len() / size_of::<VtEvent>());
 
                     for (i, event) in pending.drain(..copy).enumerate() {
@@ -472,7 +458,22 @@ impl Scheme for InputScheme {
         }
     }
 
-    fn close(&mut self, _id: usize) -> syscall::Result<usize> {
+    fn close(&mut self, id: usize) -> syscall::Result<usize> {
+        let handle = self.handles.get(&id).ok_or(SysError::new(EINVAL))?;
+
+        match *handle {
+            Handle::Consumer { vt, .. } => {
+                self.vts.remove(&vt);
+                if self.active_vt == Some(vt) {
+                    if let Some(&new_vt) = self.vts.last() {
+                        self.switch_vt(new_vt);
+                    } else {
+                        self.active_vt = None;
+                    }
+                }
+            }
+            _ => {}
+        }
         Ok(0)
     }
 }
