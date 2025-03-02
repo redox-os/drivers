@@ -266,6 +266,11 @@ impl Scheme for InputScheme {
                     let vt = self.next_vt_id.fetch_add(1, Ordering::SeqCst);
                     log::info!("inputd: created VT #{vt} for {device}");
                     self.vts.insert(vt, Vt::new(device.clone()));
+
+                    if self.active_vt.is_none() {
+                        self.switch_vt(vt)?;
+                    }
+
                     Ok(vt)
                 } else if buf.len() % size_of::<VtEvent>() == 0 {
                     let copy = core::cmp::min(pending.len(), buf.len() / size_of::<VtEvent>());
