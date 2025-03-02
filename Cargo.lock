@@ -971,7 +971,6 @@ dependencies = [
  "redox-scheme 0.4.0",
  "redox_syscall",
  "serde",
- "thiserror",
 ]
 
 [[package]]

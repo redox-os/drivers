@@ -25,8 +25,7 @@ fn main() {
 }
 
 fn daemon(daemon: redox_daemon::Daemon) -> ! {
-    let mut pcid_handle =
-        PciFunctionHandle::connect_default().expect("ahcid: failed to setup channel to pcid");
+    let mut pcid_handle = PciFunctionHandle::connect_default();
     let pci_config = pcid_handle.config();
 
     let mut name = pci_config.func.name();
@@ -47,9 +46,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     info!(" + AHCI {}", pci_config.func.display());
 
-    let address = unsafe { pcid_handle.map_bar(5).expect("ahcid") }
-        .ptr
-        .as_ptr() as usize;
+    let address = unsafe { pcid_handle.map_bar(5) }.ptr.as_ptr() as usize;
     {
         let scheme_name = format!("disk.{}", name);
         let socket = Socket::nonblock(&scheme_name).expect("ahcid: failed to create disk scheme");

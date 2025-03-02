@@ -1,13 +1,12 @@
-use std::fmt;
 use std::fs::File;
 use std::io::prelude::*;
 use std::os::fd::{FromRawFd, IntoRawFd, RawFd};
 use std::path::Path;
 use std::ptr::NonNull;
 use std::{env, io};
+use std::{fmt, process};
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use thiserror::Error;
 
 pub use bar::PciBar;
 pub use cap::VendorSpecificCapability;
@@ -186,25 +185,6 @@ pub enum PciFeatureInfo {
     MsiX(msi::MsixInfo),
 }
 
-#[derive(Debug, Error)]
-pub enum PcidClientHandleError {
-    #[error("i/o error: {0}")]
-    IoError(#[from] io::Error),
-
-    #[error("JSON ser/de error: {0}")]
-    SerializationError(#[from] bincode::Error),
-
-    #[error("environment variable error: {0}")]
-    EnvError(#[from] env::VarError),
-
-    #[error("malformed fd: {0}")]
-    EnvValidityError(std::num::ParseIntError),
-
-    #[error("invalid response: {0:?}")]
-    InvalidResponse(PcidClientResponse),
-}
-pub type Result<T, E = PcidClientHandleError> = std::result::Result<T, E>;
-
 // TODO: Remove these "features" and just go strait to the actual thing.
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -286,75 +266,91 @@ pub struct PciFunctionHandle {
     mapped_bars: [Option<MappedBar>; 6],
 }
 
-#[doc(hidden)]
-pub fn send<W: Write, T: Serialize>(w: &mut W, message: &T) -> Result<()> {
+fn send<T: Serialize>(w: &mut File, message: &T) {
     let mut data = Vec::new();
-    bincode::serialize_into(&mut data, message)?;
-    assert_eq!(w.write(&data)?, data.len());
-    Ok(())
+    bincode::serialize_into(&mut data, message).expect("couldn't serialize pcid message");
+    match w.write(&data) {
+        Ok(len) => assert_eq!(len, data.len()),
+        Err(err) => {
+            log::error!("writing pcid request failed: {err}");
+            process::exit(1);
+        }
+    }
 }
-#[doc(hidden)]
-pub fn recv<R: Read, T: DeserializeOwned>(r: &mut R) -> Result<T> {
+fn recv<T: DeserializeOwned>(r: &mut File) -> T {
     let mut length_bytes = [0u8; 8];
-    r.read_exact(&mut length_bytes)?;
+    if let Err(err) = r.read_exact(&mut length_bytes) {
+        log::error!("reading pcid response length failed: {err}");
+        process::exit(1);
+    }
     let length = u64::from_le_bytes(length_bytes);
     if length > 0x100_000 {
         panic!("pcid_interface: buffer too large");
     }
     let mut data = vec![0u8; length as usize];
-    r.read_exact(&mut data)?;
+    if let Err(err) = r.read_exact(&mut data) {
+        log::error!("reading pcid response failed: {err}");
+        process::exit(1);
+    }
 
-    Ok(bincode::deserialize_from(&data[..])?)
+    bincode::deserialize_from(&data[..]).expect("couldn't deserialize pcid message")
 }
 
 impl PciFunctionHandle {
-    pub fn connect_default() -> Result<Self> {
-        let channel_fd = env::var("PCID_CLIENT_CHANNEL")?
-            .parse::<RawFd>()
-            .map_err(PcidClientHandleError::EnvValidityError)?;
+    pub fn connect_default() -> Self {
+        let channel_fd = match env::var("PCID_CLIENT_CHANNEL") {
+            Ok(channel_fd) => channel_fd,
+            Err(err) => {
+                log::error!("PCID_CLIENT_CHANNEL invalid: {err}");
+                process::exit(1);
+            }
+        };
+        let channel_fd = match channel_fd.parse::<RawFd>() {
+            Ok(channel_fd) => channel_fd,
+            Err(err) => {
+                log::error!("PCID_CLIENT_CHANNEL invalid: {err}");
+                process::exit(1);
+            }
+        };
         Self::connect_common(channel_fd)
     }
 
-    pub fn connect_by_path(device_path: &Path) -> Result<Self> {
+    pub fn connect_by_path(device_path: &Path) -> io::Result<Self> {
         let channel_fd = syscall::open(
             device_path.join("channel").to_str().unwrap(),
             syscall::O_RDWR,
         )
-        .map_err(|err| {
-            PcidClientHandleError::IoError(io::Error::other(format!(
-                "failed to open pcid channel: {}",
-                err
-            )))
-        })?;
-        Self::connect_common(channel_fd as RawFd)
+        .map_err(|err| io::Error::other(format!("failed to open pcid channel: {}", err)))?;
+        Ok(Self::connect_common(channel_fd as RawFd))
     }
 
-    fn connect_common(
-        channel_fd: i32,
-    ) -> std::result::Result<PciFunctionHandle, PcidClientHandleError> {
+    fn connect_common(channel_fd: i32) -> PciFunctionHandle {
         let mut channel = unsafe { File::from_raw_fd(channel_fd) };
 
-        send(&mut channel, &PcidClientRequest::RequestConfig)?;
-        let config = match recv(&mut channel)? {
+        send(&mut channel, &PcidClientRequest::RequestConfig);
+        let config = match recv(&mut channel) {
             PcidClientResponse::Config(a) => a,
-            other => return Err(PcidClientHandleError::InvalidResponse(other)),
+            other => {
+                log::error!("received wrong pcid response: {other:?}");
+                process::exit(1);
+            }
         };
 
-        Ok(Self {
+        Self {
             channel,
             config,
             mapped_bars: [const { None }; 6],
-        })
+        }
     }
 
     pub fn into_inner_fd(self) -> RawFd {
         self.channel.into_raw_fd()
     }
 
-    fn send(&mut self, req: &PcidClientRequest) -> Result<()> {
+    fn send(&mut self, req: &PcidClientRequest) {
         send(&mut self.channel, req)
     }
-    fn recv(&mut self) -> Result<PcidClientResponse> {
+    fn recv(&mut self) -> PcidClientResponse {
         recv(&mut self.channel)
     }
 
@@ -362,73 +358,97 @@ impl PciFunctionHandle {
         self.config.clone()
     }
 
-    pub fn enable_device(&mut self) -> Result<()> {
-        self.send(&PcidClientRequest::EnableDevice)?;
-        match self.recv()? {
-            PcidClientResponse::EnabledDevice => Ok(()),
-            other => Err(PcidClientHandleError::InvalidResponse(other)),
+    pub fn enable_device(&mut self) {
+        self.send(&PcidClientRequest::EnableDevice);
+        match self.recv() {
+            PcidClientResponse::EnabledDevice => {}
+            other => {
+                log::error!("received wrong pcid response: {other:?}");
+                process::exit(1);
+            }
         }
     }
 
-    pub fn get_vendor_capabilities(&mut self) -> Result<Vec<VendorSpecificCapability>> {
-        self.send(&PcidClientRequest::RequestVendorCapabilities)?;
-        match self.recv()? {
-            PcidClientResponse::VendorCapabilities(a) => Ok(a),
-            other => Err(PcidClientHandleError::InvalidResponse(other)),
+    pub fn get_vendor_capabilities(&mut self) -> Vec<VendorSpecificCapability> {
+        self.send(&PcidClientRequest::RequestVendorCapabilities);
+        match self.recv() {
+            PcidClientResponse::VendorCapabilities(a) => a,
+            other => {
+                log::error!("received wrong pcid response: {other:?}");
+                process::exit(1);
+            }
         }
     }
 
     // FIXME turn into struct with bool fields
-    pub fn fetch_all_features(&mut self) -> Result<Vec<PciFeature>> {
-        self.send(&PcidClientRequest::RequestFeatures)?;
-        match self.recv()? {
-            PcidClientResponse::AllFeatures(a) => Ok(a),
-            other => Err(PcidClientHandleError::InvalidResponse(other)),
+    pub fn fetch_all_features(&mut self) -> Vec<PciFeature> {
+        self.send(&PcidClientRequest::RequestFeatures);
+        match self.recv() {
+            PcidClientResponse::AllFeatures(a) => a,
+            other => {
+                log::error!("received wrong pcid response: {other:?}");
+                process::exit(1);
+            }
         }
     }
-    pub fn enable_feature(&mut self, feature: PciFeature) -> Result<()> {
-        self.send(&PcidClientRequest::EnableFeature(feature))?;
-        match self.recv()? {
-            PcidClientResponse::FeatureEnabled(feat) if feat == feature => Ok(()),
-            other => Err(PcidClientHandleError::InvalidResponse(other)),
+    pub fn enable_feature(&mut self, feature: PciFeature) {
+        self.send(&PcidClientRequest::EnableFeature(feature));
+        match self.recv() {
+            PcidClientResponse::FeatureEnabled(feat) if feat == feature => {}
+            other => {
+                log::error!("received wrong pcid response: {other:?}");
+                process::exit(1);
+            }
         }
     }
-    pub fn feature_info(&mut self, feature: PciFeature) -> Result<PciFeatureInfo> {
-        self.send(&PcidClientRequest::FeatureInfo(feature))?;
-        match self.recv()? {
-            PcidClientResponse::FeatureInfo(feat, info) if feat == feature => Ok(info),
-            other => Err(PcidClientHandleError::InvalidResponse(other)),
+    pub fn feature_info(&mut self, feature: PciFeature) -> PciFeatureInfo {
+        self.send(&PcidClientRequest::FeatureInfo(feature));
+        match self.recv() {
+            PcidClientResponse::FeatureInfo(feat, info) if feat == feature => info,
+            other => {
+                log::error!("received wrong pcid response: {other:?}");
+                process::exit(1);
+            }
         }
     }
-    pub fn set_feature_info(&mut self, info: SetFeatureInfo) -> Result<()> {
-        self.send(&PcidClientRequest::SetFeatureInfo(info))?;
-        match self.recv()? {
-            PcidClientResponse::SetFeatureInfo(_) => Ok(()),
-            other => Err(PcidClientHandleError::InvalidResponse(other)),
+    pub fn set_feature_info(&mut self, info: SetFeatureInfo) {
+        self.send(&PcidClientRequest::SetFeatureInfo(info));
+        match self.recv() {
+            PcidClientResponse::SetFeatureInfo(_) => {}
+            other => {
+                log::error!("received wrong pcid response: {other:?}");
+                process::exit(1);
+            }
         }
     }
-    pub unsafe fn read_config(&mut self, offset: u16) -> Result<u32> {
-        self.send(&PcidClientRequest::ReadConfig(offset))?;
-        match self.recv()? {
-            PcidClientResponse::ReadConfig(value) => Ok(value),
-            other => Err(PcidClientHandleError::InvalidResponse(other)),
+    pub unsafe fn read_config(&mut self, offset: u16) -> u32 {
+        self.send(&PcidClientRequest::ReadConfig(offset));
+        match self.recv() {
+            PcidClientResponse::ReadConfig(value) => value,
+            other => {
+                log::error!("received wrong pcid response: {other:?}");
+                process::exit(1);
+            }
         }
     }
-    pub unsafe fn write_config(&mut self, offset: u16, value: u32) -> Result<()> {
-        self.send(&PcidClientRequest::WriteConfig(offset, value))?;
-        match self.recv()? {
-            PcidClientResponse::WriteConfig => Ok(()),
-            other => Err(PcidClientHandleError::InvalidResponse(other)),
+    pub unsafe fn write_config(&mut self, offset: u16, value: u32) {
+        self.send(&PcidClientRequest::WriteConfig(offset, value));
+        match self.recv() {
+            PcidClientResponse::WriteConfig => {}
+            other => {
+                log::error!("received wrong pcid response: {other:?}");
+                process::exit(1);
+            }
         }
     }
-    pub unsafe fn map_bar(&mut self, bir: u8) -> Result<&MappedBar> {
+    pub unsafe fn map_bar(&mut self, bir: u8) -> &MappedBar {
         let mapped_bar = &mut self.mapped_bars[bir as usize];
         if let Some(mapped_bar) = mapped_bar {
-            Ok(mapped_bar)
+            mapped_bar
         } else {
             let (bar, bar_size) = self.config.func.bars[bir as usize].expect_mem();
 
-            let ptr = unsafe {
+            let ptr = match unsafe {
                 common::physmap(
                     bar,
                     bar_size,
@@ -436,13 +456,18 @@ impl PciFunctionHandle {
                     // FIXME once the kernel supports this use write-through for prefetchable BAR
                     common::MemoryType::Uncacheable,
                 )
-            }
-            .map_err(|err| io::Error::other(format!("failed to map BAR at {bar:016X}: {err}")))?;
+            } {
+                Ok(ptr) => ptr,
+                Err(err) => {
+                    log::error!("failed to map BAR at {bar:016X}: {err}");
+                    process::exit(1);
+                }
+            };
 
-            Ok(mapped_bar.insert(MappedBar {
+            mapped_bar.insert(MappedBar {
                 ptr: NonNull::new(ptr.cast::<u8>()).expect("Mapping a BAR resulted in a nullptr"),
                 bar_size,
-            }))
+            })
         }
     }
 }
