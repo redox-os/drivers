@@ -12,7 +12,7 @@
 //! events are available.
 
 use core::mem::size_of;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::mem::transmute;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -46,18 +46,14 @@ enum Handle {
     Control,
 }
 
-#[derive(Debug)]
-struct Vt {
-    display: String,
-}
-
 struct InputScheme {
     handles: BTreeMap<usize, Handle>,
 
     next_id: AtomicUsize,
     next_vt_id: AtomicUsize,
 
-    vts: BTreeMap<usize, Vt>,
+    display: Option<String>,
+    vts: BTreeSet<usize>,
     super_key: bool,
     active_vt: Option<usize>,
 
@@ -68,11 +64,13 @@ struct InputScheme {
 impl InputScheme {
     fn new() -> Self {
         Self {
+            handles: BTreeMap::new(),
+
             next_id: AtomicUsize::new(0),
             next_vt_id: AtomicUsize::new(1),
 
-            handles: BTreeMap::new(),
-            vts: BTreeMap::new(),
+            display: None,
+            vts: BTreeSet::new(),
             super_key: false,
             active_vt: None,
 
@@ -88,7 +86,7 @@ impl InputScheme {
             }
         }
 
-        if !self.vts.contains_key(&new_active) {
+        if !self.vts.contains(&new_active) {
             log::warn!("inputd: switch to non-existent VT #{new_active} was requested");
             return Ok(());
         }
@@ -106,7 +104,7 @@ impl InputScheme {
                     device,
                     ..
                 } => {
-                    if &self.vts[&new_active].display == &*device {
+                    if self.display.as_deref() == Some(&*device) {
                         pending.push(VtEvent {
                             kind: VtEventKind::Activate,
                             vt: new_active,
@@ -152,6 +150,9 @@ impl Scheme for InputScheme {
             }
             "handle_early" => {
                 let display = path_parts.collect::<Vec<_>>().join(".");
+                if self.display.is_none() {
+                    self.maybe_perform_handoff_to = Some(display.clone());
+                }
                 Handle::Display {
                     events: EventFlags::empty(),
                     pending: Vec::new(),
@@ -210,8 +211,8 @@ impl Scheme for InputScheme {
         let handle = self.handles.get(&id).ok_or(SysError::new(EINVAL))?;
 
         if let Handle::Consumer { vt, .. } = handle {
-            let display = self.vts.get(vt).ok_or(SysError::new(EINVAL))?;
-            let vt = format!("{}:{vt}", display.display);
+            let display = self.display.as_ref().ok_or(SysError::new(EINVAL))?;
+            let vt = format!("{}:{vt}", display);
 
             let size = core::cmp::min(vt.len(), buf.len());
             buf[..size].copy_from_slice(&vt.as_bytes()[..size]);
@@ -262,12 +263,7 @@ impl Scheme for InputScheme {
                     // Trying to do an empty read creates a new VT.
                     let vt = self.next_vt_id.fetch_add(1, Ordering::SeqCst);
                     log::info!("inputd: created VT #{vt} for {device}");
-                    self.vts.insert(
-                        vt,
-                        Vt {
-                            display: device.clone(),
-                        },
-                    );
+                    self.vts.insert(vt);
 
                     if self.active_vt.is_none() {
                         self.switch_vt(vt)?;
@@ -385,7 +381,7 @@ impl Scheme for InputScheme {
                                 device,
                                 ..
                             } => {
-                                if &self.vts[&self.active_vt.unwrap()].display == &*device {
+                                if self.display.as_ref() == Some(device) {
                                     pending.push(VtEvent {
                                         kind: VtEventKind::Resize,
                                         vt: self.active_vt.unwrap(),
@@ -510,9 +506,7 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
         if let Some(display) = scheme.maybe_perform_handoff_to.take() {
             scheme.has_new_events = true;
 
-            for vt in scheme.vts.values_mut() {
-                vt.display = display.clone();
-            }
+            scheme.display = Some(display.clone());
 
             for handle in scheme.handles.values_mut() {
                 match handle {
