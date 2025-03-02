@@ -28,7 +28,7 @@ static_assertions::const_assert_eq!(core::mem::size_of::<VirtHeader>(), 12);
 const MAX_BUFFER_LEN: usize = 65535;
 
 fn deamon(daemon: redox_daemon::Daemon) -> Result<(), Box<dyn std::error::Error>> {
-    let mut pcid_handle = PciFunctionHandle::connect_default()?;
+    let mut pcid_handle = PciFunctionHandle::connect_default();
 
     // Double check that we have the right device.
     //

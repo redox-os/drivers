@@ -8,8 +8,7 @@ use pcid_interface::PciFunctionHandle;
 pub mod device;
 
 fn main() {
-    let mut pcid_handle =
-        PciFunctionHandle::connect_default().expect("e1000d: failed to setup channel to pcid");
+    let mut pcid_handle = PciFunctionHandle::connect_default();
     let pci_config = pcid_handle.config();
 
     let mut name = pci_config.func.name();
@@ -25,10 +24,7 @@ fn main() {
     redox_daemon::Daemon::new(move |daemon| {
         let mut irq_file = irq.irq_handle("e1000d");
 
-        let address = unsafe { pcid_handle.map_bar(0) }
-            .expect("e1000d")
-            .ptr
-            .as_ptr() as usize;
+        let address = unsafe { pcid_handle.map_bar(0) }.ptr.as_ptr() as usize;
 
         let device =
             unsafe { device::Intel8254x::new(address).expect("e1000d: failed to allocate device") };

@@ -62,19 +62,14 @@ fn get_int_method(
 ) -> (Option<File>, InterruptMethod) {
     let pci_config = pcid_handle.config();
 
-    let all_pci_features = pcid_handle
-        .fetch_all_features()
-        .expect("xhcid: failed to fetch pci features");
+    let all_pci_features = pcid_handle.fetch_all_features();
     log::debug!("XHCI PCI FEATURES: {:?}", all_pci_features);
 
     let has_msi = all_pci_features.iter().any(|feature| feature.is_msi());
     let has_msix = all_pci_features.iter().any(|feature| feature.is_msix());
 
     if has_msi && !has_msix {
-        let mut capability = match pcid_handle
-            .feature_info(PciFeature::Msi)
-            .expect("xhcid: failed to retrieve the MSI capability structure from pcid")
-        {
+        let mut capability = match pcid_handle.feature_info(PciFeature::Msi) {
             PciFeatureInfo::Msi(s) => s,
             PciFeatureInfo::MsiX(_) => panic!(),
         };
@@ -92,21 +87,14 @@ fn get_int_method(
             message_address_and_data: Some(msg_addr_and_data),
             mask_bits: None,
         };
-        pcid_handle
-            .set_feature_info(SetFeatureInfo::Msi(set_feature_info))
-            .expect("xhcid: failed to set feature info");
+        pcid_handle.set_feature_info(SetFeatureInfo::Msi(set_feature_info));
 
-        pcid_handle
-            .enable_feature(PciFeature::Msi)
-            .expect("xhcid: failed to enable MSI");
+        pcid_handle.enable_feature(PciFeature::Msi);
         log::debug!("Enabled MSI");
 
         (Some(interrupt_handle), InterruptMethod::Msi)
     } else if has_msix {
-        let msix_info = match pcid_handle
-            .feature_info(PciFeature::MsiX)
-            .expect("xhcid: failed to retrieve the MSI-X capability structure from pcid")
-        {
+        let msix_info = match pcid_handle.feature_info(PciFeature::MsiX) {
             PciFeatureInfo::Msi(_) => panic!(),
             PciFeatureInfo::MsiX(s) => s,
         };
@@ -142,9 +130,7 @@ fn get_int_method(
             )
         };
 
-        pcid_handle
-            .enable_feature(PciFeature::MsiX)
-            .expect("xhcid: failed to enable MSI-X");
+        pcid_handle.enable_feature(PciFeature::MsiX);
         log::debug!("Enabled MSI-X");
 
         method
@@ -181,8 +167,7 @@ fn main() {
 }
 
 fn daemon(daemon: redox_daemon::Daemon) -> ! {
-    let mut pcid_handle =
-        PciFunctionHandle::connect_default().expect("xhcid: failed to setup channel to pcid");
+    let mut pcid_handle = PciFunctionHandle::connect_default();
     let pci_config = pcid_handle.config();
 
     let mut name = pci_config.func.name();
@@ -198,10 +183,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     log::debug!("XHCI PCI CONFIG: {:?}", pci_config);
 
-    let address = unsafe { pcid_handle.map_bar(0) }
-        .expect("xhcid")
-        .ptr
-        .as_ptr() as usize;
+    let address = unsafe { pcid_handle.map_bar(0) }.ptr.as_ptr() as usize;
 
     let (irq_file, interrupt_method) = (None, InterruptMethod::Polling); //get_int_method(&mut pcid_handle, address);
                                                                          //TODO: Fix interrupts.

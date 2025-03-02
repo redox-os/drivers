@@ -47,19 +47,14 @@ impl MappedMsixRegs {
 fn get_int_method(pcid_handle: &mut PciFunctionHandle) -> File {
     let pci_config = pcid_handle.config();
 
-    let all_pci_features = pcid_handle
-        .fetch_all_features()
-        .expect("rtl8168d: failed to fetch pci features");
+    let all_pci_features = pcid_handle.fetch_all_features();
     log::info!("PCI FEATURES: {:?}", all_pci_features);
 
     let has_msi = all_pci_features.iter().any(|feature| feature.is_msi());
     let has_msix = all_pci_features.iter().any(|feature| feature.is_msix());
 
     if has_msi && !has_msix {
-        let capability = match pcid_handle
-            .feature_info(PciFeature::Msi)
-            .expect("rtl8168d: failed to retrieve the MSI capability structure from pcid")
-        {
+        let capability = match pcid_handle.feature_info(PciFeature::Msi) {
             PciFeatureInfo::Msi(s) => s,
             PciFeatureInfo::MsiX(_) => panic!(),
         };
@@ -77,27 +72,20 @@ fn get_int_method(pcid_handle: &mut PciFunctionHandle) -> File {
             message_address_and_data: Some(msg_addr_and_data),
             mask_bits: None,
         };
-        pcid_handle
-            .set_feature_info(SetFeatureInfo::Msi(set_feature_info))
-            .expect("rtl8168d: failed to set feature info");
+        pcid_handle.set_feature_info(SetFeatureInfo::Msi(set_feature_info));
 
-        pcid_handle
-            .enable_feature(PciFeature::Msi)
-            .expect("rtl8168d: failed to enable MSI");
+        pcid_handle.enable_feature(PciFeature::Msi);
         log::info!("Enabled MSI");
 
         interrupt_handle
     } else if has_msix {
-        let msix_info = match pcid_handle
-            .feature_info(PciFeature::MsiX)
-            .expect("rtl8168d: failed to retrieve the MSI-X capability structure from pcid")
-        {
+        let msix_info = match pcid_handle.feature_info(PciFeature::MsiX) {
             PciFeatureInfo::Msi(_) => panic!(),
             PciFeatureInfo::MsiX(s) => s,
         };
         msix_info.validate(pci_config.func.bars);
 
-        let bar_address = unsafe { pcid_handle.map_bar(msix_info.table_bar).expect("rtl8168d") }
+        let bar_address = unsafe { pcid_handle.map_bar(msix_info.table_bar) }
             .ptr
             .as_ptr() as usize;
 
@@ -127,9 +115,7 @@ fn get_int_method(pcid_handle: &mut PciFunctionHandle) -> File {
             interrupt_handle
         };
 
-        pcid_handle
-            .enable_feature(PciFeature::MsiX)
-            .expect("rtl8168d: failed to enable MSI-X");
+        pcid_handle.enable_feature(PciFeature::MsiX);
         log::info!("Enabled MSI-X");
 
         method
@@ -161,11 +147,7 @@ fn map_bar(pcid_handle: &mut PciFunctionHandle) -> *mut u8 {
     for &barnum in &[2, 1] {
         match config.func.bars[usize::from(barnum)] {
             pcid_interface::PciBar::Memory32 { .. } | pcid_interface::PciBar::Memory64 { .. } => unsafe {
-                return pcid_handle
-                    .map_bar(barnum)
-                    .expect("rtl8168d: failed to map address")
-                    .ptr
-                    .as_ptr();
+                return pcid_handle.map_bar(barnum).ptr.as_ptr();
             },
             other => log::warn!("BAR {} is {:?} instead of memory BAR", barnum, other),
         }
@@ -182,8 +164,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         log::LevelFilter::Info,
     );
 
-    let mut pcid_handle =
-        PciFunctionHandle::connect_default().expect("rtl8168d: failed to setup channel to pcid");
+    let mut pcid_handle = PciFunctionHandle::connect_default();
 
     let pci_config = pcid_handle.config();
 

@@ -361,7 +361,7 @@ impl XferToHost2d {
 static DEVICE: spin::Once<virtio_core::Device> = spin::Once::new();
 
 fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
-    let mut pcid_handle = PciFunctionHandle::connect_default()?;
+    let mut pcid_handle = PciFunctionHandle::connect_default();
 
     // Double check that we have the right device.
     //

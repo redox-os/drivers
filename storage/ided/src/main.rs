@@ -28,8 +28,7 @@ fn main() {
 }
 
 fn daemon(daemon: redox_daemon::Daemon) -> ! {
-    let pcid_handle =
-        PciFunctionHandle::connect_default().expect("ided: failed to setup channel to pcid");
+    let pcid_handle = PciFunctionHandle::connect_default();
 
     let pci_config = pcid_handle.config();
 

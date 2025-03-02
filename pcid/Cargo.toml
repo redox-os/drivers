@@ -23,7 +23,6 @@ redox-daemon = "0.1"
 redox-scheme = "0.4"
 redox_syscall = "0.5.9"
 serde = { version = "1", features = ["derive"] }
-thiserror = "1"
 
 common = { path = "../common" }
 libredox = "0.1.3"
