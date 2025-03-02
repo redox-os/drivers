@@ -12,7 +12,7 @@
 //! events are available.
 
 use core::mem::size_of;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::mem::transmute;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -46,65 +46,47 @@ enum Handle {
     Control,
 }
 
-impl Handle {
-    pub fn is_producer(&self) -> bool {
-        matches!(self, Handle::Producer)
-    }
-}
-
-#[derive(Debug)]
-struct Vt {
-    display: String,
-}
-
-impl Vt {
-    fn new(display: impl Into<String>) -> Self {
-        Self {
-            display: display.into(),
-        }
-    }
-}
-
 struct InputScheme {
     handles: BTreeMap<usize, Handle>,
 
     next_id: AtomicUsize,
     next_vt_id: AtomicUsize,
 
-    vts: BTreeMap<usize, Vt>,
+    display: Option<String>,
+    vts: BTreeSet<usize>,
     super_key: bool,
     active_vt: Option<usize>,
 
     has_new_events: bool,
-    maybe_perform_handoff_to: Option<String>,
 }
 
 impl InputScheme {
     fn new() -> Self {
         Self {
+            handles: BTreeMap::new(),
+
             next_id: AtomicUsize::new(0),
             next_vt_id: AtomicUsize::new(1),
 
-            handles: BTreeMap::new(),
-            vts: BTreeMap::new(),
+            display: None,
+            vts: BTreeSet::new(),
             super_key: false,
             active_vt: None,
 
             has_new_events: false,
-            maybe_perform_handoff_to: None,
         }
     }
 
-    fn switch_vt(&mut self, new_active: usize) -> syscall::Result<()> {
+    fn switch_vt(&mut self, new_active: usize) {
         if let Some(active_vt) = self.active_vt {
             if new_active == active_vt {
-                return Ok(());
+                return;
             }
         }
 
-        if !self.vts.contains_key(&new_active) {
+        if !self.vts.contains(&new_active) {
             log::warn!("inputd: switch to non-existent VT #{new_active} was requested");
-            return Ok(());
+            return;
         }
 
         log::info!(
@@ -120,7 +102,7 @@ impl InputScheme {
                     device,
                     ..
                 } => {
-                    if &self.vts[&new_active].display == &*device {
+                    if self.display.as_deref() == Some(&*device) {
                         pending.push(VtEvent {
                             kind: VtEventKind::Activate,
                             vt: new_active,
@@ -136,8 +118,6 @@ impl InputScheme {
         }
 
         self.active_vt = Some(new_active);
-
-        Ok(())
     }
 }
 
@@ -164,19 +144,42 @@ impl Scheme for InputScheme {
                     vt: target,
                 }
             }
-            "handle_early" => {
+            "handle" | "handle_early" => {
                 let display = path_parts.collect::<Vec<_>>().join(".");
-                Handle::Display {
-                    events: EventFlags::empty(),
-                    pending: Vec::new(),
-                    notified: false,
-                    device: display,
-                    is_earlyfb: true,
+
+                let needs_handoff = match command {
+                    "handle_early" => self.display.is_none(),
+                    "handle" => self.handles.values().all(|handle| {
+                        !matches!(
+                            handle,
+                            Handle::Display {
+                                is_earlyfb: false,
+                                ..
+                            }
+                        )
+                    }),
+                    _ => unreachable!(),
+                };
+
+                if needs_handoff {
+                    self.has_new_events = true;
+                    self.display = Some(display.clone());
+
+                    for handle in self.handles.values_mut() {
+                        match handle {
+                            Handle::Consumer {
+                                needs_handoff,
+                                notified,
+                                ..
+                            } => {
+                                *needs_handoff = true;
+                                *notified = false;
+                            }
+                            _ => continue,
+                        }
+                    }
                 }
-            }
-            "handle" => {
-                let display = path_parts.collect::<Vec<_>>().join(".");
-                self.maybe_perform_handoff_to = Some(display.clone());
+
                 Handle::Display {
                     events: EventFlags::empty(),
                     pending: if let Some(active_vt) = self.active_vt {
@@ -192,7 +195,7 @@ impl Scheme for InputScheme {
                     },
                     notified: false,
                     device: display,
-                    is_earlyfb: false,
+                    is_earlyfb: command == "handle_early",
                 }
             }
             "control" => Handle::Control,
@@ -213,8 +216,8 @@ impl Scheme for InputScheme {
         let handle = self.handles.get(&id).ok_or(SysError::new(EINVAL))?;
 
         if let Handle::Consumer { vt, .. } = handle {
-            let display = self.vts.get(vt).ok_or(SysError::new(EINVAL))?;
-            let vt = format!("{}:{vt}", display.display);
+            let display = self.display.as_ref().ok_or(SysError::new(EINVAL))?;
+            let vt = format!("{}:{vt}", display);
 
             let size = core::cmp::min(vt.len(), buf.len());
             buf[..size].copy_from_slice(&vt.as_bytes()[..size]);
@@ -265,7 +268,12 @@ impl Scheme for InputScheme {
                     // Trying to do an empty read creates a new VT.
                     let vt = self.next_vt_id.fetch_add(1, Ordering::SeqCst);
                     log::info!("inputd: created VT #{vt} for {device}");
-                    self.vts.insert(vt, Vt::new(device.clone()));
+                    self.vts.insert(vt);
+
+                    if self.active_vt.is_none() {
+                        self.switch_vt(vt);
+                    }
+
                     Ok(vt)
                 } else if buf.len() % size_of::<VtEvent>() == 0 {
                     let copy = core::cmp::min(pending.len(), buf.len() / size_of::<VtEvent>());
@@ -315,7 +323,7 @@ impl Scheme for InputScheme {
                 // SAFETY: We have verified the size of the buffer above.
                 let cmd = unsafe { &*buf.as_ptr().cast::<VtActivate>() };
 
-                self.switch_vt(cmd.vt)?;
+                self.switch_vt(cmd.vt);
 
                 return Ok(buf.len());
             }
@@ -378,7 +386,7 @@ impl Scheme for InputScheme {
                                 device,
                                 ..
                             } => {
-                                if &self.vts[&self.active_vt.unwrap()].display == &*device {
+                                if self.display.as_ref() == Some(device) {
                                     pending.push(VtEvent {
                                         kind: VtEventKind::Resize,
                                         vt: self.active_vt.unwrap(),
@@ -400,12 +408,12 @@ impl Scheme for InputScheme {
             }
 
             if let Some(new_active) = new_active_opt {
-                self.switch_vt(new_active)?;
+                self.switch_vt(new_active);
             }
         }
 
         let handle = self.handles.get_mut(&id).ok_or(SysError::new(EINVAL))?;
-        assert!(handle.is_producer());
+        assert!(matches!(handle, Handle::Producer));
 
         if let Some(active_vt) = self.active_vt {
             for handle in self.handles.values_mut() {
@@ -500,55 +508,6 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
             RequestKind::MsyncMsg | RequestKind::MunmapMsg | RequestKind::MmapMsg => unreachable!(),
         }
 
-        if let Some(display) = scheme.maybe_perform_handoff_to.take() {
-            let early_displays = scheme
-                .handles
-                .values()
-                .filter_map(|handle| match handle {
-                    Handle::Display {
-                        device,
-                        is_earlyfb: true,
-                        ..
-                    } => Some(&**device),
-                    _ => None,
-                })
-                .collect::<Vec<_>>();
-            let vts = scheme
-                .vts
-                .iter_mut()
-                .filter_map(|(&i, vt)| {
-                    if early_displays.contains(&&*vt.display) {
-                        vt.display = display.clone();
-
-                        scheme.has_new_events = true;
-
-                        Some(i)
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>();
-
-            for handle in scheme.handles.values_mut() {
-                match handle {
-                    Handle::Consumer {
-                        needs_handoff,
-                        notified,
-                        vt,
-                        ..
-                    } => {
-                        if !vts.contains(vt) {
-                            continue;
-                        }
-
-                        *needs_handoff = true;
-                        *notified = false;
-                    }
-                    _ => continue,
-                }
-            }
-        }
-
         if !scheme.has_new_events {
             continue;
         }
@@ -560,20 +519,12 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
                     pending,
                     needs_handoff,
                     ref mut notified,
-                    vt,
+                    ..
                 } => {
                     if (!*needs_handoff && pending.is_empty())
                         || *notified
                         || !events.contains(EventFlags::EVENT_READ)
                     {
-                        continue;
-                    }
-
-                    let active_vt = scheme.active_vt.unwrap();
-
-                    // The activate VT is not the same as the VT that the consumer is listening to
-                    // for events.
-                    if !*needs_handoff && active_vt != *vt {
                         continue;
                     }
 
@@ -635,6 +586,6 @@ fn main() {
             _ => panic!("inputd: invalid argument: {}", val),
         }
     } else {
-        redox_daemon::Daemon::new(daemon_runner).expect("virtio-core: failed to daemonize");
+        redox_daemon::Daemon::new(daemon_runner).expect("inputd: failed to daemonize");
     }
 }
