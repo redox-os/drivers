@@ -58,7 +58,6 @@ struct InputScheme {
     active_vt: Option<usize>,
 
     has_new_events: bool,
-    maybe_perform_handoff_to: Option<String>,
 }
 
 impl InputScheme {
@@ -75,7 +74,6 @@ impl InputScheme {
             active_vt: None,
 
             has_new_events: false,
-            maybe_perform_handoff_to: None,
         }
     }
 
@@ -151,7 +149,22 @@ impl Scheme for InputScheme {
             "handle_early" => {
                 let display = path_parts.collect::<Vec<_>>().join(".");
                 if self.display.is_none() {
-                    self.maybe_perform_handoff_to = Some(display.clone());
+                    self.has_new_events = true;
+                    self.display = Some(display.clone());
+
+                    for handle in self.handles.values_mut() {
+                        match handle {
+                            Handle::Consumer {
+                                needs_handoff,
+                                notified,
+                                ..
+                            } => {
+                                *needs_handoff = true;
+                                *notified = false;
+                            }
+                            _ => continue,
+                        }
+                    }
                 }
                 Handle::Display {
                     events: EventFlags::empty(),
@@ -173,7 +186,22 @@ impl Scheme for InputScheme {
                     )
                 });
                 if needs_handoff {
-                    self.maybe_perform_handoff_to = Some(display.clone());
+                    self.has_new_events = true;
+                    self.display = Some(display.clone());
+
+                    for handle in self.handles.values_mut() {
+                        match handle {
+                            Handle::Consumer {
+                                needs_handoff,
+                                notified,
+                                ..
+                            } => {
+                                *needs_handoff = true;
+                                *notified = false;
+                            }
+                            _ => continue,
+                        }
+                    }
                 }
                 Handle::Display {
                     events: EventFlags::empty(),
@@ -501,26 +529,6 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
             }
             RequestKind::Cancellation(_cancellation_request) => {}
             RequestKind::MsyncMsg | RequestKind::MunmapMsg | RequestKind::MmapMsg => unreachable!(),
-        }
-
-        if let Some(display) = scheme.maybe_perform_handoff_to.take() {
-            scheme.has_new_events = true;
-
-            scheme.display = Some(display.clone());
-
-            for handle in scheme.handles.values_mut() {
-                match handle {
-                    Handle::Consumer {
-                        needs_handoff,
-                        notified,
-                        ..
-                    } => {
-                        *needs_handoff = true;
-                        *notified = false;
-                    }
-                    _ => continue,
-                }
-            }
         }
 
         if !scheme.has_new_events {
