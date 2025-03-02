@@ -66,7 +66,7 @@ pub fn probe_device(pcid_handle: &mut PciFunctionHandle) -> Result<Device, Error
     let mut notify_addr = None;
     let mut device_addr = None;
 
-    for raw_capability in pcid_handle.get_vendor_capabilities()? {
+    for raw_capability in pcid_handle.get_vendor_capabilities() {
         // SAFETY: We have verified that the length of the data is correct.
         let capability = unsafe { &*(raw_capability.data.as_ptr() as *const PciCapability) };
 
@@ -147,7 +147,7 @@ pub fn probe_device(pcid_handle: &mut PciFunctionHandle) -> Result<Device, Error
     );
 
     // Setup interrupts.
-    let all_pci_features = pcid_handle.fetch_all_features()?;
+    let all_pci_features = pcid_handle.fetch_all_features();
     let has_msix = all_pci_features.iter().any(|feature| feature.is_msix());
 
     // According to the virtio specification, the device REQUIRED to support MSI-X.

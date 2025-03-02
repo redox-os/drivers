@@ -26,7 +26,7 @@ fn get_int_method(
     log::trace!("Begin get_int_method");
     use pcid_interface::irq_helpers;
 
-    let features = pcid_handle.fetch_all_features().unwrap();
+    let features = pcid_handle.fetch_all_features();
 
     let has_msi = features.iter().any(|feature| feature.is_msi());
     let has_msix = features.iter().any(|feature| feature.is_msix());
@@ -37,13 +37,13 @@ fn get_int_method(
         use self::nvme::MappedMsixRegs;
         use pcid_interface::msi::MsixTableEntry;
 
-        let msix_info = match pcid_handle.feature_info(PciFeature::MsiX).unwrap() {
+        let msix_info = match pcid_handle.feature_info(PciFeature::MsiX) {
             PciFeatureInfo::MsiX(msix) => msix,
             _ => unreachable!(),
         };
         msix_info.validate(function.bars);
         fn bar_base(pcid_handle: &mut PciFunctionHandle, bir: u8) -> Result<NonNull<u8>> {
-            Ok(unsafe { pcid_handle.map_bar(bir) }.expect("nvmed").ptr)
+            Ok(unsafe { pcid_handle.map_bar(bir) }.ptr)
         }
         let table_bar_base: *mut u8 = bar_base(pcid_handle, msix_info.table_bar)?.as_ptr();
         let table_base = unsafe { table_bar_base.offset(msix_info.table_offset as isize) };
@@ -59,7 +59,7 @@ fn get_int_method(
             table_entry.mask();
         }
 
-        pcid_handle.enable_feature(PciFeature::MsiX).unwrap();
+        pcid_handle.enable_feature(PciFeature::MsiX);
 
         let (msix_vector_number, irq_handle) = {
             let entry: &mut MsixTableEntry = &mut table_entries[0];
@@ -84,7 +84,7 @@ fn get_int_method(
         Ok((interrupt_method, interrupt_sources))
     } else if has_msi {
         // Message signaled interrupts.
-        let msi_info = match pcid_handle.feature_info(PciFeature::Msi).unwrap() {
+        let msi_info = match pcid_handle.feature_info(PciFeature::Msi) {
             PciFeatureInfo::Msi(msi) => msi,
             _ => unreachable!(),
         };
@@ -97,13 +97,11 @@ fn get_int_method(
             let (msg_addr_and_data, irq_handle) =
                 irq_helpers::allocate_single_interrupt_vector_for_msi(bsp_cpu_id);
 
-            pcid_handle
-                .set_feature_info(SetFeatureInfo::Msi(MsiSetFeatureInfo {
-                    message_address_and_data: Some(msg_addr_and_data),
-                    multi_message_enable: Some(0), // enable 2^0=1 vectors
-                    mask_bits: None,
-                }))
-                .unwrap();
+            pcid_handle.set_feature_info(SetFeatureInfo::Msi(MsiSetFeatureInfo {
+                message_address_and_data: Some(msg_addr_and_data),
+                multi_message_enable: Some(0), // enable 2^0=1 vectors
+                mask_bits: None,
+            }));
 
             (0, irq_handle)
         };
@@ -115,7 +113,7 @@ fn get_int_method(
         let interrupt_sources =
             InterruptSources::Msi(std::iter::once((msi_vector_number, irq_handle)).collect());
 
-        pcid_handle.enable_feature(PciFeature::Msi).unwrap();
+        pcid_handle.enable_feature(PciFeature::Msi);
 
         Ok((interrupt_method, interrupt_sources))
     } else if let Some(irq) = function.legacy_interrupt_line {
@@ -146,8 +144,7 @@ fn main() {
     redox_daemon::Daemon::new(daemon).expect("nvmed: failed to daemonize");
 }
 fn daemon(daemon: redox_daemon::Daemon) -> ! {
-    let mut pcid_handle =
-        PciFunctionHandle::connect_default().expect("nvmed: failed to setup channel to pcid");
+    let mut pcid_handle = PciFunctionHandle::connect_default();
     let pci_config = pcid_handle.config();
 
     let scheme_name = format!("disk.{}-nvme", pci_config.func.name());
@@ -162,7 +159,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     log::debug!("NVME PCI CONFIG: {:?}", pci_config);
 
-    let address = unsafe { pcid_handle.map_bar(0).expect("nvmed").ptr };
+    let address = unsafe { pcid_handle.map_bar(0).ptr };
 
     let socket = Socket::create(&scheme_name).expect("nvmed: failed to create disk scheme");
 

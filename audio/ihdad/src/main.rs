@@ -31,19 +31,14 @@ QEMU ICH9    8086:293E
 fn get_int_method(pcid_handle: &mut PciFunctionHandle) -> File {
     let pci_config = pcid_handle.config();
 
-    let all_pci_features = pcid_handle
-        .fetch_all_features()
-        .expect("ihdad: failed to fetch pci features");
+    let all_pci_features = pcid_handle.fetch_all_features();
     log::debug!("PCI FEATURES: {:?}", all_pci_features);
 
     let has_msi = all_pci_features.iter().any(|feature| feature.is_msi());
     let has_msix = all_pci_features.iter().any(|feature| feature.is_msix());
 
     if has_msi && !has_msix {
-        let capability = match pcid_handle
-            .feature_info(PciFeature::Msi)
-            .expect("ihdad: failed to retrieve the MSI capability structure from pcid")
-        {
+        let capability = match pcid_handle.feature_info(PciFeature::Msi) {
             PciFeatureInfo::Msi(s) => s,
             PciFeatureInfo::MsiX(_) => panic!(),
         };
@@ -61,13 +56,9 @@ fn get_int_method(pcid_handle: &mut PciFunctionHandle) -> File {
             message_address_and_data: Some(msg_addr_and_data),
             mask_bits: None,
         };
-        pcid_handle
-            .set_feature_info(SetFeatureInfo::Msi(set_feature_info))
-            .expect("ihdad: failed to set feature info");
+        pcid_handle.set_feature_info(SetFeatureInfo::Msi(set_feature_info));
 
-        pcid_handle
-            .enable_feature(PciFeature::Msi)
-            .expect("ihdad: failed to enable MSI");
+        pcid_handle.enable_feature(PciFeature::Msi);
         log::debug!("Enabled MSI");
 
         interrupt_handle
@@ -103,8 +94,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         log::LevelFilter::Info,
     );
 
-    let mut pcid_handle =
-        PciFunctionHandle::connect_default().expect("ihdad: failed to setup channel to pcid");
+    let mut pcid_handle = PciFunctionHandle::connect_default();
 
     let pci_config = pcid_handle.config();
 
@@ -113,9 +103,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     log::info!(" + IHDA {}", pci_config.func.display());
 
-    let address = unsafe { pcid_handle.map_bar(0).expect("ihdad") }
-        .ptr
-        .as_ptr() as usize;
+    let address = unsafe { pcid_handle.map_bar(0) }.ptr.as_ptr() as usize;
 
     //TODO: MSI-X
     let mut irq_file = get_int_method(&mut pcid_handle);

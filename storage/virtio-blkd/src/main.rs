@@ -107,7 +107,7 @@ pub struct BlockVirtRequest {
 const_assert_eq!(core::mem::size_of::<BlockVirtRequest>(), 16);
 
 fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
-    let mut pcid_handle = PciFunctionHandle::connect_default()?;
+    let mut pcid_handle = PciFunctionHandle::connect_default();
 
     // Double check that we have the right device.
     //

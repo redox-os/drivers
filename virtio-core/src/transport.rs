@@ -17,16 +17,8 @@ use std::task::{Poll, Waker};
 pub enum Error {
     #[error("syscall failed")]
     SyscallError(#[from] libredox::error::Error),
-    #[error("pcid client handle error")]
-    PcidClientHandle(pcid_interface::PcidClientHandleError),
     #[error("the device is incapable of {0:?}")]
     InCapable(CfgType),
-}
-
-impl From<pcid_interface::PcidClientHandleError> for Error {
-    fn from(value: pcid_interface::PcidClientHandleError) -> Self {
-        Self::PcidClientHandle(value)
-    }
 }
 
 /// Returns the queue part sizes in bytes.

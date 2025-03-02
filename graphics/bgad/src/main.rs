@@ -17,8 +17,7 @@ mod bga;
 mod scheme;
 
 fn main() {
-    let pcid_handle =
-        PciFunctionHandle::connect_default().expect("bgad: failed to setup channel to pcid");
+    let pcid_handle = PciFunctionHandle::connect_default();
     let pci_config = pcid_handle.config();
 
     let mut name = pci_config.func.name();
