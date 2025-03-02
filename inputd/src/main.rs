@@ -46,23 +46,9 @@ enum Handle {
     Control,
 }
 
-impl Handle {
-    pub fn is_producer(&self) -> bool {
-        matches!(self, Handle::Producer)
-    }
-}
-
 #[derive(Debug)]
 struct Vt {
     display: String,
-}
-
-impl Vt {
-    fn new(display: impl Into<String>) -> Self {
-        Self {
-            display: display.into(),
-        }
-    }
 }
 
 struct InputScheme {
@@ -265,7 +251,12 @@ impl Scheme for InputScheme {
                     // Trying to do an empty read creates a new VT.
                     let vt = self.next_vt_id.fetch_add(1, Ordering::SeqCst);
                     log::info!("inputd: created VT #{vt} for {device}");
-                    self.vts.insert(vt, Vt::new(device.clone()));
+                    self.vts.insert(
+                        vt,
+                        Vt {
+                            display: device.clone(),
+                        },
+                    );
 
                     if self.active_vt.is_none() {
                         self.switch_vt(vt)?;
@@ -410,7 +401,7 @@ impl Scheme for InputScheme {
         }
 
         let handle = self.handles.get_mut(&id).ok_or(SysError::new(EINVAL))?;
-        assert!(handle.is_producer());
+        assert!(matches!(handle, Handle::Producer));
 
         if let Some(active_vt) = self.active_vt {
             for handle in self.handles.values_mut() {
@@ -632,6 +623,6 @@ fn main() {
             _ => panic!("inputd: invalid argument: {}", val),
         }
     } else {
-        redox_daemon::Daemon::new(daemon_runner).expect("virtio-core: failed to daemonize");
+        redox_daemon::Daemon::new(daemon_runner).expect("inputd: failed to daemonize");
     }
 }
