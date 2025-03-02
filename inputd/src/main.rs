@@ -560,20 +560,12 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
                     pending,
                     needs_handoff,
                     ref mut notified,
-                    vt,
+                    ..
                 } => {
                     if (!*needs_handoff && pending.is_empty())
                         || *notified
                         || !events.contains(EventFlags::EVENT_READ)
                     {
-                        continue;
-                    }
-
-                    let active_vt = scheme.active_vt.unwrap();
-
-                    // The activate VT is not the same as the VT that the consumer is listening to
-                    // for events.
-                    if !*needs_handoff && active_vt != *vt {
                         continue;
                     }
 
