@@ -162,7 +162,18 @@ impl Scheme for InputScheme {
             }
             "handle" => {
                 let display = path_parts.collect::<Vec<_>>().join(".");
-                self.maybe_perform_handoff_to = Some(display.clone());
+                let needs_handoff = self.handles.values().all(|handle| {
+                    !matches!(
+                        handle,
+                        Handle::Display {
+                            is_earlyfb: false,
+                            ..
+                        }
+                    )
+                });
+                if needs_handoff {
+                    self.maybe_perform_handoff_to = Some(display.clone());
+                }
                 Handle::Display {
                     events: EventFlags::empty(),
                     pending: if let Some(active_vt) = self.active_vt {
@@ -497,46 +508,19 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
         }
 
         if let Some(display) = scheme.maybe_perform_handoff_to.take() {
-            let early_displays = scheme
-                .handles
-                .values()
-                .filter_map(|handle| match handle {
-                    Handle::Display {
-                        device,
-                        is_earlyfb: true,
-                        ..
-                    } => Some(&**device),
-                    _ => None,
-                })
-                .collect::<Vec<_>>();
-            let vts = scheme
-                .vts
-                .iter_mut()
-                .filter_map(|(&i, vt)| {
-                    if early_displays.contains(&&*vt.display) {
-                        vt.display = display.clone();
+            scheme.has_new_events = true;
 
-                        scheme.has_new_events = true;
-
-                        Some(i)
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>();
+            for vt in scheme.vts.values_mut() {
+                vt.display = display.clone();
+            }
 
             for handle in scheme.handles.values_mut() {
                 match handle {
                     Handle::Consumer {
                         needs_handoff,
                         notified,
-                        vt,
                         ..
                     } => {
-                        if !vts.contains(vt) {
-                            continue;
-                        }
-
                         *needs_handoff = true;
                         *notified = false;
                     }
