@@ -1,47 +1,51 @@
-use common::io::{Io, Pio};
-
 const BGA_INDEX_XRES: u16 = 1;
 const BGA_INDEX_YRES: u16 = 2;
 const BGA_INDEX_BPP: u16 = 3;
 const BGA_INDEX_ENABLE: u16 = 4;
 
 pub struct Bga {
-    index: Pio<u16>,
-    data: Pio<u16>,
+    bar: *mut u8,
 }
 
 impl Bga {
-    pub fn new() -> Bga {
-        Bga {
-            index: Pio::new(0x1CE),
-            data: Pio::new(0x1CF),
+    pub unsafe fn new(bar: *mut u8) -> Bga {
+        Bga { bar }
+    }
+
+    fn bochs_dispi_addr(&mut self, index: u16) -> *mut u16 {
+        assert!(index <= 0x10);
+        unsafe {
+            self.bar
+                .byte_add(0x500)
+                .cast::<u16>()
+                .add(usize::from(index))
         }
     }
 
-    fn read(&mut self, index: u16) -> u16 {
-        self.index.write(index);
-        self.data.read()
+    fn bochs_dispi_read(&mut self, index: u16) -> u16 {
+        unsafe { self.bochs_dispi_addr(index).read_volatile() }
     }
 
-    fn write(&mut self, index: u16, data: u16) {
-        self.index.write(index);
-        self.data.write(data);
+    fn bochs_dispi_write(&mut self, index: u16, data: u16) {
+        assert!(index <= 0x10);
+        unsafe {
+            self.bochs_dispi_addr(index).write_volatile(data);
+        }
     }
 
     pub fn width(&mut self) -> u16 {
-        self.read(BGA_INDEX_XRES)
+        self.bochs_dispi_read(BGA_INDEX_XRES)
     }
 
     pub fn height(&mut self) -> u16 {
-        self.read(BGA_INDEX_YRES)
+        self.bochs_dispi_read(BGA_INDEX_YRES)
     }
 
-    #[allow(dead_code)]
     pub fn set_size(&mut self, width: u16, height: u16) {
-        self.write(BGA_INDEX_ENABLE, 0);
-        self.write(BGA_INDEX_XRES, width);
-        self.write(BGA_INDEX_YRES, height);
-        self.write(BGA_INDEX_BPP, 32);
-        self.write(BGA_INDEX_ENABLE, 0x41);
+        self.bochs_dispi_write(BGA_INDEX_ENABLE, 0);
+        self.bochs_dispi_write(BGA_INDEX_XRES, width);
+        self.bochs_dispi_write(BGA_INDEX_YRES, height);
+        self.bochs_dispi_write(BGA_INDEX_BPP, 32);
+        self.bochs_dispi_write(BGA_INDEX_ENABLE, 0x41);
     }
 }
