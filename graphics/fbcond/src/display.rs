@@ -14,7 +14,7 @@ pub struct DisplayMap {
 
 impl Display {
     pub fn open_vt(vt: usize) -> io::Result<Self> {
-        let input_handle = ConsumerHandle::for_vt(vt)?;
+        let input_handle = ConsumerHandle::new_vt()?;
 
         if let Ok(display_handle) = Self::open_display(&input_handle) {
             let map = display_handle

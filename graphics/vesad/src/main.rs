@@ -15,12 +15,6 @@ mod framebuffer;
 mod scheme;
 
 fn main() {
-    let mut spec = Vec::new();
-
-    for _ in env::args().skip(1) {
-        spec.push(());
-    }
-
     if env::var("FRAMEBUFFER_WIDTH").is_err() {
         println!("vesad: No boot framebuffer");
         return;
@@ -78,15 +72,11 @@ fn main() {
         };
     }
 
-    redox_daemon::Daemon::new(|daemon| inner(daemon, framebuffers, &spec))
+    redox_daemon::Daemon::new(|daemon| inner(daemon, framebuffers))
         .expect("failed to create daemon");
 }
-fn inner(daemon: redox_daemon::Daemon, framebuffers: Vec<FrameBuffer>, spec: &[()]) -> ! {
+fn inner(daemon: redox_daemon::Daemon, framebuffers: Vec<FrameBuffer>) -> ! {
     let mut inputd_display_handle = DisplayHandle::new_early("vesa").unwrap();
-
-    for &() in spec.iter() {
-        inputd_display_handle.register_vt().unwrap();
-    }
 
     let mut scheme = GraphicsScheme::new(FbAdapter { framebuffers }, "display.vesa".to_owned());
 
