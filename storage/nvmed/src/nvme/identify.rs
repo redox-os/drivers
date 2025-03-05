@@ -151,14 +151,16 @@ impl LbaFormat {
 
 impl Nvme {
     /// Returns the serial number, model, and firmware, in that order.
-    pub fn identify_controller(&self) {
+    pub async fn identify_controller(&self) {
         // TODO: Use same buffer
         let data: Dma<IdentifyControllerData> = unsafe { Dma::zeroed().unwrap().assume_init() };
 
         // println!("  - Attempting to identify controller");
-        let comp = self.submit_and_complete_admin_command(|cid| {
-            NvmeCmd::identify_controller(cid, data.physical())
-        });
+        let comp = self
+            .submit_and_complete_admin_command(|cid| {
+                NvmeCmd::identify_controller(cid, data.physical())
+            })
+            .await;
         log::trace!("Completion: {:?}", comp);
 
         // println!("  - Dumping identify controller");
@@ -178,30 +180,34 @@ impl Nvme {
             firmware,
         );
     }
-    pub fn identify_namespace_list(&self, base: u32) -> Vec<u32> {
+    pub async fn identify_namespace_list(&self, base: u32) -> Vec<u32> {
         // TODO: Use buffer
         let data: Dma<[u32; 1024]> = unsafe { Dma::zeroed().unwrap().assume_init() };
 
         // println!("  - Attempting to retrieve namespace ID list");
-        let comp = self.submit_and_complete_admin_command(|cid| {
-            NvmeCmd::identify_namespace_list(cid, data.physical(), base)
-        });
+        let comp = self
+            .submit_and_complete_admin_command(|cid| {
+                NvmeCmd::identify_namespace_list(cid, data.physical(), base)
+            })
+            .await;
 
         log::trace!("Completion2: {:?}", comp);
 
         // println!("  - Dumping namespace ID list");
         data.iter().copied().take_while(|&nsid| nsid != 0).collect()
     }
-    pub fn identify_namespace(&self, nsid: u32) -> NvmeNamespace {
+    pub async fn identify_namespace(&self, nsid: u32) -> NvmeNamespace {
         //TODO: Use buffer
         let data: Dma<IdentifyNamespaceData> = unsafe { Dma::zeroed().unwrap().assume_init() };
 
-        // println!("  - Attempting to identify namespace {}", nsid);
-        let comp = self.submit_and_complete_admin_command(|cid| {
-            NvmeCmd::identify_namespace(cid, data.physical(), nsid)
-        });
+        log::debug!("Attempting to identify namespace {nsid}");
+        let comp = self
+            .submit_and_complete_admin_command(|cid| {
+                NvmeCmd::identify_namespace(cid, data.physical(), nsid)
+            })
+            .await;
 
-        // println!("  - Dumping identify namespace");
+        log::debug!("Dumping identify namespace");
 
         let size = data.size_in_blocks();
         let capacity = data.capacity_in_blocks();
