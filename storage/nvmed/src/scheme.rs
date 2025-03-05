@@ -7,10 +7,11 @@ use std::sync::Arc;
 use std::{cmp, str};
 
 use redox_scheme::{scheme::SchemeAsync, CallerCtx, OpenResult};
+use syscall::dirent::DirentBuf;
 use syscall::schemev2::NewFdFlags;
 use syscall::{
-    Error, Result, Stat, EACCES, EBADF, EINVAL, EISDIR, ENOENT, ENOLCK, EOVERFLOW, MODE_DIR,
-    MODE_FILE, O_DIRECTORY, O_STAT,
+    Error, Result, Stat, EACCES, EBADF, EINVAL, EISDIR, ENOENT, ENOLCK, EOPNOTSUPP, EOVERFLOW,
+    MODE_DIR, MODE_FILE, O_DIRECTORY, O_STAT,
 };
 
 use crate::nvme::executor::NvmeExecutor;
@@ -209,7 +210,6 @@ impl SchemeAsync for DiskScheme {
                         write!(list, "{}p{}\n", nsid, part_num).unwrap();
                     }
                 }
-
                 Handle::List(list.into_bytes())
             } else {
                 return Err(Error::new(EISDIR));
@@ -260,6 +260,15 @@ impl SchemeAsync for DiskScheme {
             number: id,
             flags: NewFdFlags::POSITIONED,
         })
+    }
+    async fn getdents<'buf>(
+        &mut self,
+        _id: usize,
+        _buf: DirentBuf<&'buf mut [u8]>,
+        _opaque_offset: u64,
+    ) -> Result<DirentBuf<&'buf mut [u8]>> {
+        // TODO
+        Err(Error::new(EOPNOTSUPP))
     }
 
     async fn dup(&mut self, id: usize, buf: &[u8], _ctx: &CallerCtx) -> Result<OpenResult> {
