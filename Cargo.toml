@@ -46,7 +46,7 @@ members = [
     "storage/lived",          # TODO: not really a driver...
     "storage/nvmed",
     "storage/usbscsid",
-    "storage/virtio-blkd", "executor",
+    "storage/virtio-blkd",
 ]
 
 [profile.release]
