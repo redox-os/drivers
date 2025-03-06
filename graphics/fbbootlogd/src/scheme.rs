@@ -102,7 +102,7 @@ impl Scheme for FbbootlogScheme {
             );
 
             if let Some(map) = &self.display_map {
-                map.display_handle.sync_rects(&damage).unwrap();
+                map.display_handle.sync_rect(damage).unwrap();
             }
         }
 
