@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use common::{dma::Dma, sgl};
-use driver_graphics::{GraphicsAdapter, GraphicsScheme, Resource};
+use driver_graphics::{Framebuffer, GraphicsAdapter, GraphicsScheme};
 use graphics_ipc::v1::Damage;
 use inputd::DisplayHandle;
 
@@ -23,14 +23,14 @@ impl Into<GpuRect> for Damage {
     }
 }
 
-pub struct VirtGpuResource {
+pub struct VirtGpuFramebuffer {
     id: ResourceId,
     sgl: sgl::Sgl,
     width: u32,
     height: u32,
 }
 
-impl Resource for VirtGpuResource {
+impl Framebuffer for VirtGpuFramebuffer {
     fn width(&self) -> u32 {
         self.width
     }
@@ -95,7 +95,7 @@ impl VirtGpuAdapter<'_> {
 }
 
 impl GraphicsAdapter for VirtGpuAdapter<'_> {
-    type Resource = VirtGpuResource;
+    type Framebuffer = VirtGpuFramebuffer;
 
     fn displays(&self) -> Vec<usize> {
         self.displays.iter().enumerate().map(|(i, _)| i).collect()
@@ -108,7 +108,7 @@ impl GraphicsAdapter for VirtGpuAdapter<'_> {
         )
     }
 
-    fn create_resource(&mut self, width: u32, height: u32) -> Self::Resource {
+    fn create_dumb_framebuffer(&mut self, width: u32, height: u32) -> Self::Framebuffer {
         futures::executor::block_on(async {
             let bpp = 32;
             let fb_size = width as usize * height as usize * bpp / 8;
@@ -157,7 +157,7 @@ impl GraphicsAdapter for VirtGpuAdapter<'_> {
             self.control_queue.send(command).await;
             assert_eq!(header.ty, CommandTy::RespOkNodata);
 
-            VirtGpuResource {
+            VirtGpuFramebuffer {
                 id: res_id,
                 sgl,
                 width,
@@ -166,19 +166,24 @@ impl GraphicsAdapter for VirtGpuAdapter<'_> {
         })
     }
 
-    fn map_resource(&mut self, resource: &Self::Resource) -> *mut u8 {
-        resource.sgl.as_ptr()
+    fn map_dumb_framebuffer(&mut self, framebuffer: &Self::Framebuffer) -> *mut u8 {
+        framebuffer.sgl.as_ptr()
     }
 
-    fn update_plane(&mut self, display_id: usize, resource: &Self::Resource, damage: &[Damage]) {
+    fn update_plane(
+        &mut self,
+        display_id: usize,
+        framebuffer: &Self::Framebuffer,
+        damage: &[Damage],
+    ) {
         futures::executor::block_on(async {
             let req = Dma::new(XferToHost2d::new(
-                resource.id,
+                framebuffer.id,
                 GpuRect {
                     x: 0,
                     y: 0,
-                    width: resource.width,
-                    height: resource.height,
+                    width: framebuffer.width,
+                    height: framebuffer.height,
                 },
                 0,
             ))
@@ -187,22 +192,22 @@ impl GraphicsAdapter for VirtGpuAdapter<'_> {
             assert_eq!(header.ty, CommandTy::RespOkNodata);
 
             // FIXME once we support resizing we also need to check that the current and target size match
-            if self.displays[display_id].active_resource != Some(resource.id) {
+            if self.displays[display_id].active_resource != Some(framebuffer.id) {
                 let scanout_request = Dma::new(SetScanout::new(
                     display_id as u32,
-                    resource.id,
-                    GpuRect::new(0, 0, resource.width, resource.height),
+                    framebuffer.id,
+                    GpuRect::new(0, 0, framebuffer.width, framebuffer.height),
                 ))
                 .unwrap();
                 let header = self.send_request(scanout_request).await.unwrap();
                 assert_eq!(header.ty, CommandTy::RespOkNodata);
-                self.displays[display_id].active_resource = Some(resource.id);
+                self.displays[display_id].active_resource = Some(framebuffer.id);
             }
 
             for damage in damage {
                 let flush = ResourceFlush::new(
-                    resource.id,
-                    damage.clip(resource.width, resource.height).into(),
+                    framebuffer.id,
+                    damage.clip(framebuffer.width, framebuffer.height).into(),
                 );
                 let header = self.send_request(Dma::new(flush).unwrap()).await.unwrap();
                 assert_eq!(header.ty, CommandTy::RespOkNodata);

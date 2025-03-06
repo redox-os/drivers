@@ -2,7 +2,7 @@ use std::alloc::{self, Layout};
 use std::convert::TryInto;
 use std::ptr::{self, NonNull};
 
-use driver_graphics::{GraphicsAdapter, Resource};
+use driver_graphics::{Framebuffer, GraphicsAdapter};
 use graphics_ipc::v1::Damage;
 use syscall::PAGE_SIZE;
 
@@ -13,7 +13,7 @@ pub struct FbAdapter {
 }
 
 impl GraphicsAdapter for FbAdapter {
-    type Resource = GraphicScreen;
+    type Framebuffer = GraphicScreen;
 
     fn displays(&self) -> Vec<usize> {
         (0..self.framebuffers.len()).collect()
@@ -26,16 +26,21 @@ impl GraphicsAdapter for FbAdapter {
         )
     }
 
-    fn create_resource(&mut self, width: u32, height: u32) -> Self::Resource {
+    fn create_dumb_framebuffer(&mut self, width: u32, height: u32) -> Self::Framebuffer {
         GraphicScreen::new(width as usize, height as usize)
     }
 
-    fn map_resource(&mut self, resource: &Self::Resource) -> *mut u8 {
-        resource.ptr.as_ptr().cast::<u8>()
+    fn map_dumb_framebuffer(&mut self, framebuffer: &Self::Framebuffer) -> *mut u8 {
+        framebuffer.ptr.as_ptr().cast::<u8>()
     }
 
-    fn update_plane(&mut self, display_id: usize, resource: &Self::Resource, damage: &[Damage]) {
-        resource.sync(&mut self.framebuffers[display_id], damage)
+    fn update_plane(
+        &mut self,
+        display_id: usize,
+        framebuffer: &Self::Framebuffer,
+        damage: &[Damage],
+    ) {
+        framebuffer.sync(&mut self.framebuffers[display_id], damage)
     }
 }
 
@@ -73,7 +78,7 @@ impl Drop for GraphicScreen {
     }
 }
 
-impl Resource for GraphicScreen {
+impl Framebuffer for GraphicScreen {
     fn width(&self) -> u32 {
         self.width as u32
     }

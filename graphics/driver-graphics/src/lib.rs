@@ -9,18 +9,23 @@ use redox_scheme::{RequestKind, Response, Scheme, SignalBehavior, Socket};
 use syscall::{Error, MapFlags, Result, EAGAIN, EBADF, EINVAL};
 
 pub trait GraphicsAdapter {
-    type Resource: Resource;
+    type Framebuffer: Framebuffer;
 
     fn displays(&self) -> Vec<usize>;
     fn display_size(&self, display_id: usize) -> (u32, u32);
 
-    fn create_resource(&mut self, width: u32, height: u32) -> Self::Resource;
-    fn map_resource(&mut self, resource: &Self::Resource) -> *mut u8;
+    fn create_dumb_framebuffer(&mut self, width: u32, height: u32) -> Self::Framebuffer;
+    fn map_dumb_framebuffer(&mut self, framebuffer: &Self::Framebuffer) -> *mut u8;
 
-    fn update_plane(&mut self, display_id: usize, resource: &Self::Resource, damage: &[Damage]);
+    fn update_plane(
+        &mut self,
+        display_id: usize,
+        framebuffer: &Self::Framebuffer,
+        damage: &[Damage],
+    );
 }
 
-pub trait Resource {
+pub trait Framebuffer {
     fn width(&self) -> u32;
     fn height(&self) -> u32;
 }
@@ -34,7 +39,7 @@ pub struct GraphicsScheme<T: GraphicsAdapter> {
     handles: BTreeMap<usize, Handle>,
 
     active_vt: usize,
-    vts_res: HashMap<usize, HashMap<usize, T::Resource>>,
+    vts_fb: HashMap<usize, HashMap<usize, T::Framebuffer>>,
 }
 
 enum Handle {
@@ -53,7 +58,7 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
             next_id: 0,
             handles: BTreeMap::new(),
             active_vt: 0,
-            vts_res: HashMap::new(),
+            vts_fb: HashMap::new(),
         }
     }
 
@@ -75,16 +80,16 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
                 log::info!("activate {}", vt_event.vt);
 
                 for display_id in self.adapter.displays() {
-                    let resource = self
-                        .vts_res
+                    let framebuffer = self
+                        .vts_fb
                         .entry(vt_event.vt)
                         .or_default()
                         .entry(display_id)
                         .or_insert_with(|| {
                             let (width, height) = self.adapter.display_size(display_id);
-                            self.adapter.create_resource(width, height)
+                            self.adapter.create_dumb_framebuffer(width, height)
                         });
-                    Self::update_whole_screen(&mut self.adapter, display_id, resource);
+                    Self::update_whole_screen(&mut self.adapter, display_id, framebuffer);
 
                     self.active_vt = vt_event.vt;
                 }
@@ -135,15 +140,15 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
         Ok(())
     }
 
-    fn update_whole_screen(adapter: &mut T, screen: usize, resource: &T::Resource) {
+    fn update_whole_screen(adapter: &mut T, screen: usize, framebuffer: &T::Framebuffer) {
         adapter.update_plane(
             screen,
-            resource,
+            framebuffer,
             &[Damage {
                 x: 0,
                 y: 0,
-                width: resource.width(),
-                height: resource.height(),
+                width: framebuffer.width(),
+                height: framebuffer.height(),
             }],
         );
     }
@@ -167,13 +172,13 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
             return Err(Error::new(EINVAL));
         }
 
-        self.vts_res
+        self.vts_fb
             .entry(vt)
             .or_default()
             .entry(id)
             .or_insert_with(|| {
                 let (width, height) = self.adapter.display_size(id);
-                self.adapter.create_resource(width, height)
+                self.adapter.create_dumb_framebuffer(width, height)
             });
 
         self.next_id += 1;
@@ -184,12 +189,12 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
 
     fn fpath(&mut self, id: usize, buf: &mut [u8]) -> syscall::Result<usize> {
         let Handle::Screen { vt, screen } = self.handles.get(&id).ok_or(Error::new(EBADF))?;
-        let resource = &self.vts_res[vt][screen];
+        let framebuffer = &self.vts_fb[vt][screen];
         let path = format!(
             "{}:{vt}.{screen}/{}/{}",
             self.scheme_name,
-            resource.width(),
-            resource.height()
+            framebuffer.width(),
+            framebuffer.height()
         );
         buf[..path.len()].copy_from_slice(path.as_bytes());
         Ok(path.len())
@@ -199,11 +204,11 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
         let Handle::Screen { vt, screen } = self.handles.get(&id).ok_or(Error::new(EBADF))?;
         if *vt != self.active_vt {
             // This is a protection against background VT's spamming us with flush requests. We will
-            // flush the resource on the next VT switch anyway
+            // flush the framebuffer on the next VT switch anyway
             return Ok(0);
         }
-        let resource = &self.vts_res[vt][screen];
-        Self::update_whole_screen(&mut self.adapter, *screen, resource);
+        let framebuffer = &self.vts_fb[vt][screen];
+        Self::update_whole_screen(&mut self.adapter, *screen, framebuffer);
         Ok(0)
     }
 
@@ -223,11 +228,11 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
 
         if *vt != self.active_vt {
             // This is a protection against background VT's spamming us with flush requests. We will
-            // flush the resource on the next VT switch anyway
+            // flush the framebuffer on the next VT switch anyway
             return Ok(buf.len());
         }
 
-        let resource = &self.vts_res[vt][screen];
+        let framebuffer = &self.vts_fb[vt][screen];
 
         let damage = unsafe {
             core::slice::from_raw_parts(
@@ -236,7 +241,7 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
             )
         };
 
-        self.adapter.update_plane(*screen, resource, damage);
+        self.adapter.update_plane(*screen, framebuffer, damage);
 
         Ok(buf.len())
     }
@@ -255,8 +260,8 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
         log::info!("KSMSG MMAP {} {:?} {} {}", id, flags, offset, size);
         let handle = self.handles.get(&id).ok_or(Error::new(EINVAL))?;
         let Handle::Screen { vt, screen } = handle;
-        let resource = &self.vts_res[vt][screen];
-        let ptr = T::map_resource(&mut self.adapter, resource);
+        let framebuffer = &self.vts_fb[vt][screen];
+        let ptr = T::map_dumb_framebuffer(&mut self.adapter, framebuffer);
         Ok(ptr as usize)
     }
 }
