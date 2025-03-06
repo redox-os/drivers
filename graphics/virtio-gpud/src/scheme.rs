@@ -66,6 +66,18 @@ impl VirtGpuAdapter<'_> {
         Ok(header)
     }
 
+    async fn send_request_fenced<T>(&self, request: Dma<T>) -> Result<Dma<ControlHeader>, Error> {
+        let mut header = Dma::new(ControlHeader::default())?;
+        header.flags |= VIRTIO_GPU_FLAG_FENCE;
+        let command = ChainBuilder::new()
+            .chain(Buffer::new(&request))
+            .chain(Buffer::new(&header).flags(DescriptorFlags::WRITE_ONLY))
+            .build();
+
+        self.control_queue.send(command).await;
+        Ok(header)
+    }
+
     async fn get_display_info(&self) -> Result<Dma<GetDisplayInfo>, Error> {
         let header = Dma::new(ControlHeader::with_ty(CommandTy::GetDisplayInfo))?;
 

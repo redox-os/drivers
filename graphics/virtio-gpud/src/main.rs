@@ -109,6 +109,9 @@ pub enum CommandTy {
 
 static_assertions::const_assert_eq!(core::mem::size_of::<CommandTy>(), 4);
 
+const VIRTIO_GPU_FLAG_FENCE: u32 = 1 << 0;
+//const VIRTIO_GPU_FLAG_INFO_RING_IDX: u32 = 1 << 1;
+
 #[derive(Debug)]
 #[repr(C)]
 pub struct ControlHeader {
