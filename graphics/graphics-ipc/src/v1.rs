@@ -4,17 +4,17 @@ use std::{cmp, io, mem, ptr, slice};
 
 use libredox::flag;
 
-/// A graphics handle using the legacy graphics API.
+/// A graphics handle using the v1 graphics API.
 ///
-/// The legacy graphics API only allows a single framebuffer for each VT and supports neither page
+/// The v1 graphics API only allows a single framebuffer for each VT and supports neither page
 /// flipping nor cursor planes.
-pub struct LegacyGraphicsHandle {
+pub struct V1GraphicsHandle {
     file: File,
 }
 
-impl LegacyGraphicsHandle {
+impl V1GraphicsHandle {
     pub fn from_file(file: File) -> io::Result<Self> {
-        Ok(LegacyGraphicsHandle { file })
+        Ok(V1GraphicsHandle { file })
     }
 
     pub fn map_display(&self) -> io::Result<DisplayMap> {

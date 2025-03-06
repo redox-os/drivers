@@ -4,7 +4,7 @@ use std::collections::{BTreeSet, VecDeque};
 use std::convert::{TryFrom, TryInto};
 use std::{cmp, ptr};
 
-use graphics_ipc::legacy::Damage;
+use graphics_ipc::v1::Damage;
 use orbclient::FONT;
 
 pub struct DisplayMap {

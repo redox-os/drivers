@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::io;
 
-use graphics_ipc::legacy::Damage;
+use graphics_ipc::v1::Damage;
 use inputd::{VtEvent, VtEventKind};
 use libredox::errno::EOPNOTSUPP;
 use libredox::Fd;
