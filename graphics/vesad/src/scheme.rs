@@ -34,28 +34,8 @@ impl GraphicsAdapter for FbAdapter {
         resource.ptr.as_ptr().cast::<u8>()
     }
 
-    fn update_plane(
-        &mut self,
-        display_id: usize,
-        resource: &Self::Resource,
-        damage: Option<&[Damage]>,
-    ) {
-        if let Some(damage) = damage {
-            resource.sync(&mut self.framebuffers[display_id], damage)
-        } else {
-            let framebuffer: &mut FrameBuffer = &mut self.framebuffers[display_id];
-            let width = resource.width.try_into().unwrap();
-            let height = resource.height.try_into().unwrap();
-            resource.sync(
-                framebuffer,
-                &[Damage {
-                    x: 0,
-                    y: 0,
-                    width,
-                    height,
-                }],
-            );
-        }
+    fn update_plane(&mut self, display_id: usize, resource: &Self::Resource, damage: &[Damage]) {
+        resource.sync(&mut self.framebuffers[display_id], damage)
     }
 }
 

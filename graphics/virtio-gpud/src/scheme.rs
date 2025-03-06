@@ -66,13 +66,6 @@ impl VirtGpuAdapter<'_> {
         Ok(header)
     }
 
-    async fn flush_resource_inner(&self, flush: ResourceFlush) -> Result<(), Error> {
-        let header = self.send_request(Dma::new(flush)?).await?;
-        assert_eq!(header.ty, CommandTy::RespOkNodata);
-
-        Ok(())
-    }
-
     async fn get_display_info(&self) -> Result<Dma<GetDisplayInfo>, Error> {
         let header = Dma::new(ControlHeader::with_ty(CommandTy::GetDisplayInfo))?;
 
@@ -165,12 +158,7 @@ impl GraphicsAdapter for VirtGpuAdapter<'_> {
         resource.sgl.as_ptr()
     }
 
-    fn update_plane(
-        &mut self,
-        display_id: usize,
-        resource: &Self::Resource,
-        damage: Option<&[Damage]>,
-    ) {
+    fn update_plane(&mut self, display_id: usize, resource: &Self::Resource, damage: &[Damage]) {
         futures::executor::block_on(async {
             let req = Dma::new(XferToHost2d::new(
                 resource.id,
@@ -199,29 +187,15 @@ impl GraphicsAdapter for VirtGpuAdapter<'_> {
                 self.displays[display_id].active_resource = Some(resource.id);
             }
 
-            if let Some(damage) = damage {
-                for damage in damage {
-                    self.flush_resource_inner(ResourceFlush::new(
-                        resource.id,
-                        damage
-                            .clip(resource.width as i32, resource.height as i32)
-                            .into(),
-                    ))
-                    .await
-                    .unwrap();
-                }
-            } else {
-                self.flush_resource_inner(ResourceFlush::new(
+            for damage in damage {
+                let flush = ResourceFlush::new(
                     resource.id,
-                    GpuRect {
-                        x: 0,
-                        y: 0,
-                        width: resource.width,
-                        height: resource.height,
-                    },
-                ))
-                .await
-                .unwrap();
+                    damage
+                        .clip(resource.width as i32, resource.height as i32)
+                        .into(),
+                );
+                let header = self.send_request(Dma::new(flush).unwrap()).await.unwrap();
+                assert_eq!(header.ty, CommandTy::RespOkNodata);
             }
         });
     }

@@ -17,12 +17,7 @@ pub trait GraphicsAdapter {
     fn create_resource(&mut self, width: u32, height: u32) -> Self::Resource;
     fn map_resource(&mut self, resource: &Self::Resource) -> *mut u8;
 
-    fn update_plane(
-        &mut self,
-        display_id: usize,
-        resource: &Self::Resource,
-        damage: Option<&[Damage]>,
-    );
+    fn update_plane(&mut self, display_id: usize, resource: &Self::Resource, damage: &[Damage]);
 }
 
 pub trait Resource {
@@ -89,7 +84,7 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
                             let (width, height) = self.adapter.display_size(display_id);
                             self.adapter.create_resource(width, height)
                         });
-                    self.adapter.update_plane(display_id, resource, None);
+                    Self::update_whole_screen(&mut self.adapter, display_id, resource);
 
                     self.active_vt = vt_event.vt;
                 }
@@ -138,6 +133,19 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
         }
 
         Ok(())
+    }
+
+    fn update_whole_screen(adapter: &mut T, screen: usize, resource: &T::Resource) {
+        adapter.update_plane(
+            screen,
+            resource,
+            &[Damage {
+                x: 0,
+                y: 0,
+                width: resource.width() as i32,
+                height: resource.height() as i32,
+            }],
+        );
     }
 }
 
@@ -195,7 +203,7 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
             return Ok(0);
         }
         let resource = &self.vts_res[vt][screen];
-        self.adapter.update_plane(*screen, resource, None);
+        Self::update_whole_screen(&mut self.adapter, *screen, resource);
         Ok(0)
     }
 
@@ -228,7 +236,7 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
             )
         };
 
-        self.adapter.update_plane(*screen, resource, Some(damage));
+        self.adapter.update_plane(*screen, resource, damage);
 
         Ok(buf.len())
     }
