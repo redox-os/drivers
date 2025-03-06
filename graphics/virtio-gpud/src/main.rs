@@ -192,7 +192,7 @@ impl Default for GetDisplayInfo {
 
 static RESOURCE_ALLOC: AtomicU32 = AtomicU32::new(1); // XXX: 0 is reserved for whatever that takes `resource_id`.
 
-#[derive(Debug, Copy, Clone)]
+#[derive(PartialEq, Eq, Debug, Copy, Clone)]
 #[repr(C)]
 pub struct ResourceId(u32);
 

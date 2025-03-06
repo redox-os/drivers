@@ -44,6 +44,7 @@ impl Resource for VirtGpuResource {
 pub struct Display {
     width: u32,
     height: u32,
+    active_resource: Option<ResourceId>,
 }
 
 pub struct VirtGpuAdapter<'a> {
@@ -164,24 +165,9 @@ impl GraphicsAdapter for VirtGpuAdapter<'_> {
         resource.sgl.as_ptr()
     }
 
-    fn set_scanout(&mut self, display_id: usize, resource: &Self::Resource) {
-        futures::executor::block_on(async {
-            let scanout_request = Dma::new(SetScanout::new(
-                display_id as u32,
-                resource.id,
-                GpuRect::new(0, 0, resource.width, resource.height),
-            ))
-            .unwrap();
-            let header = self.send_request(scanout_request).await.unwrap();
-            assert_eq!(header.ty, CommandTy::RespOkNodata);
-        });
-
-        self.flush_resource(display_id, resource, None);
-    }
-
-    fn flush_resource(
+    fn update_plane(
         &mut self,
-        _display_id: usize,
+        display_id: usize,
         resource: &Self::Resource,
         damage: Option<&[Damage]>,
     ) {
@@ -199,6 +185,19 @@ impl GraphicsAdapter for VirtGpuAdapter<'_> {
             .unwrap();
             let header = self.send_request(req).await.unwrap();
             assert_eq!(header.ty, CommandTy::RespOkNodata);
+
+            // FIXME once we support resizing we also need to check that the current and target size match
+            if self.displays[display_id].active_resource != Some(resource.id) {
+                let scanout_request = Dma::new(SetScanout::new(
+                    display_id as u32,
+                    resource.id,
+                    GpuRect::new(0, 0, resource.width, resource.height),
+                ))
+                .unwrap();
+                let header = self.send_request(scanout_request).await.unwrap();
+                assert_eq!(header.ty, CommandTy::RespOkNodata);
+                self.displays[display_id].active_resource = Some(resource.id);
+            }
 
             if let Some(damage) = damage {
                 for damage in damage {
@@ -261,11 +260,13 @@ impl<'a> GpuScheme {
                 adapter.displays.push(Display {
                     width: 640,
                     height: 480,
+                    active_resource: None,
                 });
             } else {
                 adapter.displays.push(Display {
                     width: info.rect.width,
                     height: info.rect.height,
+                    active_resource: None,
                 });
             }
         }

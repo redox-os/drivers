@@ -17,8 +17,7 @@ pub trait GraphicsAdapter {
     fn create_resource(&mut self, width: u32, height: u32) -> Self::Resource;
     fn map_resource(&mut self, resource: &Self::Resource) -> *mut u8;
 
-    fn set_scanout(&mut self, display_id: usize, resource: &Self::Resource);
-    fn flush_resource(
+    fn update_plane(
         &mut self,
         display_id: usize,
         resource: &Self::Resource,
@@ -90,7 +89,7 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
                             let (width, height) = self.adapter.display_size(display_id);
                             self.adapter.create_resource(width, height)
                         });
-                    self.adapter.set_scanout(display_id, resource);
+                    self.adapter.update_plane(display_id, resource, None);
 
                     self.active_vt = vt_event.vt;
                 }
@@ -196,7 +195,7 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
             return Ok(0);
         }
         let resource = &self.vts_res[vt][screen];
-        self.adapter.flush_resource(*screen, resource, None);
+        self.adapter.update_plane(*screen, resource, None);
         Ok(0)
     }
 
@@ -229,7 +228,7 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
             )
         };
 
-        self.adapter.flush_resource(*screen, resource, Some(damage));
+        self.adapter.update_plane(*screen, resource, Some(damage));
 
         Ok(buf.len())
     }

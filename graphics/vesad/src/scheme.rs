@@ -34,11 +34,7 @@ impl GraphicsAdapter for FbAdapter {
         resource.ptr.as_ptr().cast::<u8>()
     }
 
-    fn set_scanout(&mut self, display_id: usize, resource: &Self::Resource) {
-        self.flush_resource(display_id, resource, None);
-    }
-
-    fn flush_resource(
+    fn update_plane(
         &mut self,
         display_id: usize,
         resource: &Self::Resource,
