@@ -2,7 +2,7 @@
 name = "partitionlib"
 version = "0.1.0"
 authors = ["Deepak Sirone <deepaksirone94@gmail.com>"]
-edition = "2018"
+edition = "2021"
 license = "MIT"
 
 [dependencies]

@@ -1,35 +1,21 @@
-extern crate partitionlib;
+use std::fs::File;
 
-use partitionlib::{get_partitions_from_file, LogicalBlockSize, Partition};
+use partitionlib::{
+    get_partitions, LogicalBlockSize, Partition, PartitionTable, PartitionTableKind,
+};
 
-#[test]
-fn part_is_gpt() {
-    assert!(dbg!(
-        get_partitions_from_file("./resources/disk.img", LogicalBlockSize::Lb512)
-            .unwrap()
-            .unwrap()
-    )
-    .kind
-    .is_gpt());
-}
-
-#[test]
-fn part_is_mbr() {
-    assert!(
-        get_partitions_from_file("./resources/disk_mbr.img", LogicalBlockSize::Lb512)
-            .unwrap()
-            .unwrap()
-            .kind
-            .is_mbr()
-    );
+fn get_partitions_from_file(path: &str) -> PartitionTable {
+    let mut file = File::open(path).unwrap();
+    get_partitions(&mut file, LogicalBlockSize::Lb512)
+        .unwrap()
+        .unwrap()
 }
 
 // NOTE: The following tests rely on outside resource files being correct.
 #[test]
 fn gpt() {
-    let table = get_partitions_from_file("./resources/disk.img", LogicalBlockSize::Lb512)
-        .unwrap()
-        .unwrap();
+    let table = get_partitions_from_file("./resources/disk.img");
+    assert_eq!(table.kind, PartitionTableKind::Gpt);
     assert_eq!(
         &table.partitions,
         &[Partition {
@@ -44,9 +30,8 @@ fn gpt() {
 
 #[test]
 fn mbr() {
-    let table = get_partitions_from_file("./resources/disk_mbr.img", LogicalBlockSize::Lb512)
-        .unwrap()
-        .unwrap();
+    let table = get_partitions_from_file("./resources/disk_mbr.img");
+    assert_eq!(table.kind, PartitionTableKind::Mbr);
     assert_eq!(
         &table.partitions,
         &[Partition {

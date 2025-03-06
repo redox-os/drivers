@@ -1,77 +1,57 @@
 use scroll::{Pread, Pwrite};
-use std::io;
-use std::io::prelude::*;
+use std::io::{self, Read, Seek};
 
 #[derive(Clone, Copy, Debug, Pread, Pwrite)]
-pub struct Entry {
-    pub drive_attrs: u8,
-    pub start_head: u8,
-    pub start_cs: u16,
-    pub sys_id: u8,
-    pub end_head: u8,
-    pub end_cs: u16,
-    pub rel_sector: u32,
-    pub len: u32,
+pub(crate) struct Entry {
+    pub(crate) drive_attrs: u8,
+    pub(crate) start_head: u8,
+    pub(crate) start_cs: u16,
+    pub(crate) sys_id: u8,
+    pub(crate) end_head: u8,
+    pub(crate) end_cs: u16,
+    pub(crate) rel_sector: u32,
+    pub(crate) len: u32,
 }
 
 #[derive(Pread, Pwrite)]
-pub struct Header {
-    pub bootstrap: [u8; 446],
-    pub first_entry: Entry,
-    pub second_entry: Entry,
-    pub third_entry: Entry,
-    pub fourth_entry: Entry,
-    pub last_signature: u16, // 0xAA55
+pub(crate) struct Header {
+    pub(crate) bootstrap: [u8; 446],
+    pub(crate) first_entry: Entry,
+    pub(crate) second_entry: Entry,
+    pub(crate) third_entry: Entry,
+    pub(crate) fourth_entry: Entry,
+    pub(crate) last_signature: u16, // 0xAA55
 }
 
-#[derive(Debug)]
-pub enum Error {
-    IoError(io::Error),
-    ParsingError(scroll::Error),
-}
-
-impl From<io::Error> for Error {
-    fn from(err: io::Error) -> Self {
-        Self::IoError(err)
-    }
-}
-impl From<scroll::Error> for Error {
-    fn from(err: scroll::Error) -> Self {
-        Self::ParsingError(err)
-    }
-}
-
-pub fn read_header<D: Read + Seek>(device: &mut D) -> Result<Header, Error> {
+pub(crate) fn read_header<D: Read + Seek>(device: &mut D) -> io::Result<Option<Header>> {
     device.seek(io::SeekFrom::Start(0))?;
 
     let mut bytes = [0u8; 512];
     device.read_exact(&mut bytes)?;
 
-    let header: Header = bytes.pread_with(0, scroll::LE)?;
+    let header: Header = bytes.pread_with(0, scroll::LE).unwrap();
 
     if header.last_signature != 0xAA55 {
-        return Err(scroll::Error::BadInput {
-            size: 2,
-            msg: "no 0xAA55 signature",
-        }
-        .into());
+        return Ok(None);
     }
 
-    Ok(header)
+    Ok(Some(header))
 }
 
 impl Header {
-    pub fn partitions(&self) -> [Entry; 4] {
+    pub(crate) fn partitions(&self) -> impl Iterator<Item = Entry> {
         [
             self.first_entry,
             self.second_entry,
             self.third_entry,
             self.fourth_entry,
         ]
+        .into_iter()
+        .filter(Entry::is_valid)
     }
 }
 impl Entry {
-    pub fn is_valid(&self) -> bool {
+    fn is_valid(&self) -> bool {
         (self.drive_attrs == 0 || self.drive_attrs == 0x80) && self.len != 0
     }
 }
