@@ -4,7 +4,7 @@ use std::collections::{BTreeSet, VecDeque};
 use std::convert::{TryFrom, TryInto};
 use std::{cmp, ptr};
 
-use graphics_ipc::legacy::Damage;
+use graphics_ipc::v1::Damage;
 use orbclient::FONT;
 
 pub struct DisplayMap {
@@ -221,7 +221,7 @@ impl TextScreen {
             } else {
                 damage.push(Damage {
                     x: 0,
-                    y: i32::try_from(change).unwrap() * 16,
+                    y: u32::try_from(change).unwrap() * 16,
                     width,
                     height: 16,
                 });

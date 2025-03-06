@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use common::{dma::Dma, sgl};
-use driver_graphics::{GraphicsAdapter, GraphicsScheme, Resource};
-use graphics_ipc::legacy::Damage;
+use driver_graphics::{Framebuffer, GraphicsAdapter, GraphicsScheme};
+use graphics_ipc::v1::Damage;
 use inputd::DisplayHandle;
 
 use syscall::PAGE_SIZE;
@@ -15,22 +15,22 @@ use crate::*;
 impl Into<GpuRect> for Damage {
     fn into(self) -> GpuRect {
         GpuRect {
-            x: self.x as u32,
-            y: self.y as u32,
-            width: self.width as u32,
-            height: self.height as u32,
+            x: self.x,
+            y: self.y,
+            width: self.width,
+            height: self.height,
         }
     }
 }
 
-pub struct VirtGpuResource {
+pub struct VirtGpuFramebuffer {
     id: ResourceId,
     sgl: sgl::Sgl,
     width: u32,
     height: u32,
 }
 
-impl Resource for VirtGpuResource {
+impl Framebuffer for VirtGpuFramebuffer {
     fn width(&self) -> u32 {
         self.width
     }
@@ -44,6 +44,7 @@ impl Resource for VirtGpuResource {
 pub struct Display {
     width: u32,
     height: u32,
+    active_resource: Option<ResourceId>,
 }
 
 pub struct VirtGpuAdapter<'a> {
@@ -65,11 +66,16 @@ impl VirtGpuAdapter<'_> {
         Ok(header)
     }
 
-    async fn flush_resource_inner(&self, flush: ResourceFlush) -> Result<(), Error> {
-        let header = self.send_request(Dma::new(flush)?).await?;
-        assert_eq!(header.ty, CommandTy::RespOkNodata);
+    async fn send_request_fenced<T>(&self, request: Dma<T>) -> Result<Dma<ControlHeader>, Error> {
+        let mut header = Dma::new(ControlHeader::default())?;
+        header.flags |= VIRTIO_GPU_FLAG_FENCE;
+        let command = ChainBuilder::new()
+            .chain(Buffer::new(&request))
+            .chain(Buffer::new(&header).flags(DescriptorFlags::WRITE_ONLY))
+            .build();
 
-        Ok(())
+        self.control_queue.send(command).await;
+        Ok(header)
     }
 
     async fn get_display_info(&self) -> Result<Dma<GetDisplayInfo>, Error> {
@@ -89,7 +95,7 @@ impl VirtGpuAdapter<'_> {
 }
 
 impl GraphicsAdapter for VirtGpuAdapter<'_> {
-    type Resource = VirtGpuResource;
+    type Framebuffer = VirtGpuFramebuffer;
 
     fn displays(&self) -> Vec<usize> {
         self.displays.iter().enumerate().map(|(i, _)| i).collect()
@@ -102,7 +108,7 @@ impl GraphicsAdapter for VirtGpuAdapter<'_> {
         )
     }
 
-    fn create_resource(&mut self, width: u32, height: u32) -> Self::Resource {
+    fn create_dumb_framebuffer(&mut self, width: u32, height: u32) -> Self::Framebuffer {
         futures::executor::block_on(async {
             let bpp = 32;
             let fb_size = width as usize * height as usize * bpp / 8;
@@ -151,7 +157,7 @@ impl GraphicsAdapter for VirtGpuAdapter<'_> {
             self.control_queue.send(command).await;
             assert_eq!(header.ty, CommandTy::RespOkNodata);
 
-            VirtGpuResource {
+            VirtGpuFramebuffer {
                 id: res_id,
                 sgl,
                 width,
@@ -160,39 +166,24 @@ impl GraphicsAdapter for VirtGpuAdapter<'_> {
         })
     }
 
-    fn map_resource(&mut self, resource: &Self::Resource) -> *mut u8 {
-        resource.sgl.as_ptr()
+    fn map_dumb_framebuffer(&mut self, framebuffer: &Self::Framebuffer) -> *mut u8 {
+        framebuffer.sgl.as_ptr()
     }
 
-    fn set_scanout(&mut self, display_id: usize, resource: &Self::Resource) {
-        futures::executor::block_on(async {
-            let scanout_request = Dma::new(SetScanout::new(
-                display_id as u32,
-                resource.id,
-                GpuRect::new(0, 0, resource.width, resource.height),
-            ))
-            .unwrap();
-            let header = self.send_request(scanout_request).await.unwrap();
-            assert_eq!(header.ty, CommandTy::RespOkNodata);
-        });
-
-        self.flush_resource(display_id, resource, None);
-    }
-
-    fn flush_resource(
+    fn update_plane(
         &mut self,
-        _display_id: usize,
-        resource: &Self::Resource,
-        damage: Option<&[Damage]>,
+        display_id: usize,
+        framebuffer: &Self::Framebuffer,
+        damage: &[Damage],
     ) {
         futures::executor::block_on(async {
             let req = Dma::new(XferToHost2d::new(
-                resource.id,
+                framebuffer.id,
                 GpuRect {
                     x: 0,
                     y: 0,
-                    width: resource.width,
-                    height: resource.height,
+                    width: framebuffer.width,
+                    height: framebuffer.height,
                 },
                 0,
             ))
@@ -200,29 +191,26 @@ impl GraphicsAdapter for VirtGpuAdapter<'_> {
             let header = self.send_request(req).await.unwrap();
             assert_eq!(header.ty, CommandTy::RespOkNodata);
 
-            if let Some(damage) = damage {
-                for damage in damage {
-                    self.flush_resource_inner(ResourceFlush::new(
-                        resource.id,
-                        damage
-                            .clip(resource.width as i32, resource.height as i32)
-                            .into(),
-                    ))
-                    .await
-                    .unwrap();
-                }
-            } else {
-                self.flush_resource_inner(ResourceFlush::new(
-                    resource.id,
-                    GpuRect {
-                        x: 0,
-                        y: 0,
-                        width: resource.width,
-                        height: resource.height,
-                    },
+            // FIXME once we support resizing we also need to check that the current and target size match
+            if self.displays[display_id].active_resource != Some(framebuffer.id) {
+                let scanout_request = Dma::new(SetScanout::new(
+                    display_id as u32,
+                    framebuffer.id,
+                    GpuRect::new(0, 0, framebuffer.width, framebuffer.height),
                 ))
-                .await
                 .unwrap();
+                let header = self.send_request(scanout_request).await.unwrap();
+                assert_eq!(header.ty, CommandTy::RespOkNodata);
+                self.displays[display_id].active_resource = Some(framebuffer.id);
+            }
+
+            for damage in damage {
+                let flush = ResourceFlush::new(
+                    framebuffer.id,
+                    damage.clip(framebuffer.width, framebuffer.height).into(),
+                );
+                let header = self.send_request(Dma::new(flush).unwrap()).await.unwrap();
+                assert_eq!(header.ty, CommandTy::RespOkNodata);
             }
         });
     }
@@ -261,11 +249,13 @@ impl<'a> GpuScheme {
                 adapter.displays.push(Display {
                     width: 640,
                     height: 480,
+                    active_resource: None,
                 });
             } else {
                 adapter.displays.push(Display {
                     width: info.rect.width,
                     height: info.rect.height,
+                    active_resource: None,
                 });
             }
         }
