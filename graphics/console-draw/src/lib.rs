@@ -128,6 +128,18 @@ impl TextScreen {
             }
         };
 
+    pub fn write(&mut self, map: &mut DisplayMap, buf: &[u8], input: &mut VecDeque<u8>) -> Damage {
+        let mut min_changed = usize::MAX;
+        let mut max_changed = 0;
+        let mut line_changed = |line| {
+            if line < min_changed {
+                min_changed = line;
+            }
+            if line > max_changed {
+                max_changed = line;
+            }
+        };
+
         self.console.resize(map.width / 8, map.height / 16);
         if self.console.state.x >= self.console.state.w {
             self.console.state.x = self.console.state.w - 1;
