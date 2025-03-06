@@ -142,8 +142,8 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
             &[Damage {
                 x: 0,
                 y: 0,
-                width: resource.width() as i32,
-                height: resource.height() as i32,
+                width: resource.width(),
+                height: resource.height(),
             }],
         );
     }

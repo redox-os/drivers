@@ -15,10 +15,10 @@ use crate::*;
 impl Into<GpuRect> for Damage {
     fn into(self) -> GpuRect {
         GpuRect {
-            x: self.x as u32,
-            y: self.y as u32,
-            width: self.width as u32,
-            height: self.height as u32,
+            x: self.x,
+            y: self.y,
+            width: self.width,
+            height: self.height,
         }
     }
 }
@@ -202,9 +202,7 @@ impl GraphicsAdapter for VirtGpuAdapter<'_> {
             for damage in damage {
                 let flush = ResourceFlush::new(
                     resource.id,
-                    damage
-                        .clip(resource.width as i32, resource.height as i32)
-                        .into(),
+                    damage.clip(resource.width, resource.height).into(),
                 );
                 let header = self.send_request(Dma::new(flush).unwrap()).await.unwrap();
                 assert_eq!(header.ty, CommandTy::RespOkNodata);

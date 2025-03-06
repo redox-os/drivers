@@ -111,18 +111,20 @@ impl Drop for DisplayMap {
 }
 
 // Keep synced with orbital's SyncRect
+// Technically orbital uses i32 rather than u32, but values larger than i32::MAX
+// would be a bug anyway.
 #[derive(Debug, Copy, Clone)]
 #[repr(packed)]
 pub struct Damage {
-    pub x: i32,
-    pub y: i32,
-    pub width: i32,
-    pub height: i32,
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
 }
 
 impl Damage {
     #[must_use]
-    pub fn clip(mut self, width: i32, height: i32) -> Self {
+    pub fn clip(mut self, width: u32, height: u32) -> Self {
         // Clip damage
         self.x = cmp::min(self.x, width);
         if self.x + self.width > width {

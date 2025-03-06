@@ -221,7 +221,7 @@ impl TextScreen {
             } else {
                 damage.push(Damage {
                     x: 0,
-                    y: i32::try_from(change).unwrap() * 16,
+                    y: u32::try_from(change).unwrap() * 16,
                     width,
                     height: 16,
                 });

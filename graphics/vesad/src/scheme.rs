@@ -91,10 +91,10 @@ impl GraphicScreen {
                 self.height.try_into().unwrap(),
             );
 
-            let start_x: usize = sync_rect.x.try_into().unwrap_or(0);
-            let start_y: usize = sync_rect.y.try_into().unwrap_or(0);
-            let w: usize = sync_rect.width.try_into().unwrap_or(0);
-            let h: usize = sync_rect.height.try_into().unwrap_or(0);
+            let start_x: usize = sync_rect.x.try_into().unwrap();
+            let start_y: usize = sync_rect.y.try_into().unwrap();
+            let w: usize = sync_rect.width.try_into().unwrap();
+            let h: usize = sync_rect.height.try_into().unwrap();
 
             let offscreen_ptr = self.ptr.as_ptr() as *mut u32;
             let onscreen_ptr = framebuffer.onscreen as *mut u32; // FIXME use as_mut_ptr once stable
