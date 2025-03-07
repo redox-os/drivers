@@ -35,14 +35,14 @@ impl AsRef<NvmeNamespace> for DiskWrapper {
 }
 
 impl DiskWrapper {
-    fn pt(disk: &mut NvmeNamespace, nvme: &Nvme) -> Option<PartitionTable> {
+    fn pt(disk: NvmeNamespace, nvme: &Nvme) -> Option<PartitionTable> {
         let bs = match disk.block_size {
             512 => LogicalBlockSize::Lb512,
             4096 => LogicalBlockSize::Lb4096,
             _ => return None,
         };
         struct Device<'a> {
-            disk: &'a mut NvmeNamespace,
+            disk: NvmeNamespace,
             nvme: &'a Nvme,
             offset: u64,
         }
@@ -74,7 +74,7 @@ impl DiskWrapper {
                 let blksize = self.disk.block_size;
                 let size_in_blocks = self.disk.blocks;
 
-                let disk = &mut self.disk;
+                let disk = self.disk;
                 let nvme = &mut self.nvme;
 
                 let read_block = |block: u64, block_bytes: &mut [u8]| {
@@ -83,7 +83,7 @@ impl DiskWrapper {
                     }
                     loop {
                         match nvme
-                            .namespace_read(disk, disk.id, block, block_bytes)
+                            .namespace_read(disk, block, block_bytes)
                             .map_err(|err| io::Error::from_raw_os_error(err.errno))?
                         {
                             Some(bytes) => {
@@ -122,9 +122,9 @@ impl DiskWrapper {
         .ok()
         .flatten()
     }
-    fn new(mut inner: NvmeNamespace, nvme: &Nvme) -> Self {
+    fn new(inner: NvmeNamespace, nvme: &Nvme) -> Self {
         Self {
-            pt: Self::pt(&mut inner, nvme),
+            pt: Self::pt(inner, nvme),
             inner,
         }
     }
@@ -372,7 +372,7 @@ impl SchemeBlock for DiskScheme {
                 let disk = self.disks.get_mut(&number).ok_or(Error::new(EBADF))?;
                 let block_size = disk.as_ref().block_size;
                 self.nvme
-                    .namespace_read(disk.as_ref(), disk.as_ref().id, offset / block_size, buf)
+                    .namespace_read(*disk.as_ref(), offset / block_size, buf)
             }
             Handle::Partition(disk_num, part_num) => {
                 let disk = self.disks.get_mut(&disk_num).ok_or(Error::new(EBADF))?;
@@ -392,8 +392,7 @@ impl SchemeBlock for DiskScheme {
 
                 let abs_block = part.start_lba + rel_block;
 
-                self.nvme
-                    .namespace_read(disk.as_ref(), disk.as_ref().id, abs_block, buf)
+                self.nvme.namespace_read(*disk.as_ref(), abs_block, buf)
             }
         }
     }
@@ -411,7 +410,7 @@ impl SchemeBlock for DiskScheme {
                 let disk = self.disks.get_mut(&number).ok_or(Error::new(EBADF))?;
                 let block_size = disk.as_ref().block_size;
                 self.nvme
-                    .namespace_write(disk.as_ref(), disk.as_ref().id, offset / block_size, buf)
+                    .namespace_write(*disk.as_ref(), offset / block_size, buf)
             }
             Handle::Partition(disk_num, part_num) => {
                 let disk = self.disks.get_mut(&disk_num).ok_or(Error::new(EBADF))?;
@@ -431,8 +430,7 @@ impl SchemeBlock for DiskScheme {
 
                 let abs_block = part.start_lba + rel_block;
 
-                self.nvme
-                    .namespace_write(disk.as_ref(), disk.as_ref().id, abs_block, buf)
+                self.nvme.namespace_write(*disk.as_ref(), abs_block, buf)
             }
         }
     }
