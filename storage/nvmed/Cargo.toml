@@ -13,7 +13,7 @@ redox-daemon = "0.1"
 redox_syscall = { version = "0.5", features = ["std"] }
 redox-scheme = { git = "https://gitlab.redox-os.org/redox-os/redox-scheme.git" }
 redox_event = "0.4"
-partitionlib = { git = "https://gitlab.redox-os.org/redox-os/partitionlib.git" }
+partitionlib = { path = "../partitionlib" }
 smallvec = "1"
 
 common = { path = "../../common" }
