@@ -4,6 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-partitionlib = { git = "https://gitlab.redox-os.org/redox-os/partitionlib.git" }
+partitionlib = { path = "../partitionlib" }
 
 redox_syscall = "0.5"

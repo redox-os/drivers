@@ -937,7 +937,6 @@ dependencies = [
 [[package]]
 name = "partitionlib"
 version = "0.1.0"
-source = "git+https://gitlab.redox-os.org/redox-os/partitionlib.git#9e48718a0553a4d0d4070994053e1c402bb33b91"
 dependencies = [
  "gpt",
  "scroll",

@@ -191,6 +191,9 @@ impl<'a> DiskScheme<'a> {
             block_bytes: &mut [0u8; 4096],
         };
 
+        //driver_block::DiskWrapper::new(disk)
+
+        // FIXME use DiskWrapper instead
         let part_table = partitionlib::get_partitions(&mut shim, LogicalBlockSize::Lb512)
             .ok()
             .flatten();

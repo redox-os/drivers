@@ -1,0 +1,11 @@
+[package]
+name = "partitionlib"
+version = "0.1.0"
+authors = ["Deepak Sirone <deepaksirone94@gmail.com>"]
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+gpt = { version = "3.0.1" }
+scroll = { version = "0.10", features = ["derive"] }
+uuid = { version = "1.0", features = ["v4"] }
