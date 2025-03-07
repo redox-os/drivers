@@ -3,6 +3,7 @@ use std::io::Error;
 use std::io::{self, Read, Seek, SeekFrom};
 
 use partitionlib::{LogicalBlockSize, PartitionTable};
+use syscall::{EBADF, EOVERFLOW};
 
 /// Split the read operation into a series of block reads.
 /// `read_fn` will be called with a block number to be read, and a buffer to be filled.
@@ -157,17 +158,76 @@ impl<T: Disk> DiskWrapper<T> {
             disk,
         }
     }
-}
 
-impl<T> std::ops::Deref for DiskWrapper<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
+    pub fn disk(&self) -> &T {
         &self.disk
     }
-}
-impl<T> std::ops::DerefMut for DiskWrapper<T> {
-    fn deref_mut(&mut self) -> &mut T {
+
+    pub fn disk_mut(&mut self) -> &mut T {
         &mut self.disk
+    }
+
+    pub fn block_size(&self) -> u32 {
+        self.disk.block_size()
+    }
+
+    pub fn size(&self) -> u64 {
+        self.disk.size()
+    }
+
+    pub fn read(
+        &mut self,
+        part_num: Option<usize>,
+        block: u64,
+        buf: &mut [u8],
+    ) -> syscall::Result<Option<usize>> {
+        if let Some(part_num) = part_num {
+            let part = self
+                .pt
+                .as_ref()
+                .ok_or(syscall::Error::new(EBADF))?
+                .partitions
+                .get(part_num)
+                .ok_or(syscall::Error::new(EBADF))?;
+
+            let block_size = u64::from(self.block_size());
+            if block >= part.size / block_size {
+                return Err(syscall::Error::new(EOVERFLOW));
+            }
+
+            let abs_block = part.start_lba + block;
+
+            self.disk.read(abs_block, buf)
+        } else {
+            self.disk.read(block, buf)
+        }
+    }
+
+    pub fn write(
+        &mut self,
+        part_num: Option<usize>,
+        block: u64,
+        buf: &[u8],
+    ) -> syscall::Result<Option<usize>> {
+        if let Some(part_num) = part_num {
+            let part = self
+                .pt
+                .as_ref()
+                .ok_or(syscall::Error::new(EBADF))?
+                .partitions
+                .get(part_num)
+                .ok_or(syscall::Error::new(EBADF))?;
+
+            let block_size = u64::from(self.block_size());
+            if block >= part.size / block_size {
+                return Err(syscall::Error::new(EOVERFLOW));
+            }
+
+            let abs_block = part.start_lba + block;
+
+            self.disk.write(abs_block, buf)
+        } else {
+            self.disk.write(block, buf)
+        }
     }
 }

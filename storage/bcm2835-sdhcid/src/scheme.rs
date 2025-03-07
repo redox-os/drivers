@@ -5,8 +5,8 @@ use std::str;
 use driver_block::{Disk, DiskWrapper};
 use syscall::schemev2::NewFdFlags;
 use syscall::{
-    Error, Result, Stat, EACCES, EBADF, EISDIR, ENOENT, ENOLCK, EOVERFLOW, MODE_DIR, MODE_FILE,
-    O_DIRECTORY, O_STAT,
+    Error, Result, Stat, EACCES, EBADF, EISDIR, ENOENT, ENOLCK, MODE_DIR, MODE_FILE, O_DIRECTORY,
+    O_STAT,
 };
 
 use redox_scheme::{CallerCtx, OpenResult, SchemeBlock};
@@ -251,31 +251,13 @@ impl SchemeBlock for DiskScheme {
             }
             Handle::Disk(number) => {
                 let disk = self.disks.get_mut(number).ok_or(Error::new(EBADF))?;
-                let blk_len = disk.block_size();
-                disk.read(offset / u64::from(blk_len), buf)
+                let block = offset / u64::from(disk.block_size());
+                disk.read(None, block, buf)
             }
             Handle::Partition(disk_num, part_num) => {
                 let disk = self.disks.get_mut(disk_num).ok_or(Error::new(EBADF))?;
-                let blksize = disk.block_size();
-
-                // validate that we're actually reading within the bounds of the partition
-                let rel_block = offset / u64::from(blksize);
-
-                let abs_block = {
-                    let pt = disk.pt.as_ref().ok_or(Error::new(EBADF))?;
-                    let partition = pt
-                        .partitions
-                        .get(part_num as usize)
-                        .ok_or(Error::new(EBADF))?;
-
-                    let abs_block = partition.start_lba + rel_block;
-                    if rel_block >= partition.size {
-                        return Err(Error::new(EOVERFLOW));
-                    }
-                    abs_block
-                };
-
-                disk.read(abs_block, buf)
+                let block = offset / u64::from(disk.block_size());
+                disk.read(Some(part_num as usize), block, buf)
             }
         }
     }
@@ -285,31 +267,13 @@ impl SchemeBlock for DiskScheme {
             Handle::List(_) => Err(Error::new(EBADF)),
             Handle::Disk(number) => {
                 let disk = self.disks.get_mut(number).ok_or(Error::new(EBADF))?;
-                let blk_len = disk.block_size();
-                disk.write(offset / u64::from(blk_len), buf)
+                let block = offset / u64::from(disk.block_size());
+                disk.write(None, block, buf)
             }
             Handle::Partition(disk_num, part_num) => {
                 let disk = self.disks.get_mut(disk_num).ok_or(Error::new(EBADF))?;
-                let blksize = disk.block_size();
-
-                // validate that we're actually reading within the bounds of the partition
-                let rel_block = offset / u64::from(blksize as u64);
-
-                let abs_block = {
-                    let pt = disk.pt.as_ref().ok_or(Error::new(EBADF))?;
-                    let partition = pt
-                        .partitions
-                        .get(part_num as usize)
-                        .ok_or(Error::new(EBADF))?;
-
-                    let abs_block = partition.start_lba + rel_block;
-                    if rel_block >= partition.size {
-                        return Err(Error::new(EOVERFLOW));
-                    }
-                    abs_block
-                };
-
-                disk.write(abs_block, buf)
+                let block = offset / u64::from(disk.block_size());
+                disk.write(Some(part_num as usize), block, buf)
             }
         }
     }

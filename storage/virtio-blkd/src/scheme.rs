@@ -4,7 +4,7 @@ use std::fmt::Write;
 use std::sync::Arc;
 
 use common::dma::Dma;
-use driver_block::{Disk, DiskWrapper};
+use driver_block::DiskWrapper;
 
 use redox_scheme::CallerCtx;
 use redox_scheme::OpenResult;
@@ -239,28 +239,13 @@ impl<'a> SchemeBlock for DiskScheme<'a> {
                 buf[..count].copy_from_slice(&src[..count]);
                 Ok(Some(count))
             }
-
-            Handle::Partition { number } => {
-                let part_table = self.disk.pt.as_ref().unwrap();
-                let part = part_table
-                    .partitions
-                    .get(number as usize)
-                    .ok_or(Error::new(EBADF))?;
-
-                // Get the offset in sectors.
-                let rel_block = offset / BLK_SIZE;
-                // if rel_block >= part.size {
-                //     return Err(Error::new(EOVERFLOW));
-                // }
-
-                let abs_block = part.start_lba + rel_block;
-
-                self.disk.read(abs_block, buf)
-            }
-
             Handle::Disk => {
                 let block = offset / u64::from(self.disk.block_size());
-                self.disk.read(block, buf)
+                self.disk.read(None, block, buf)
+            }
+            Handle::Partition { number } => {
+                let block = offset / u64::from(self.disk.block_size());
+                self.disk.read(Some(number as usize), block, buf)
             }
         }
     }
@@ -273,12 +258,15 @@ impl<'a> SchemeBlock for DiskScheme<'a> {
         _fcntl_flags: u32,
     ) -> syscall::Result<Option<usize>> {
         match *self.handles.get_mut(&id).ok_or(Error::new(EBADF))? {
+            Handle::List { .. } => Err(Error::new(EBADF)),
             Handle::Disk => {
                 let block = offset / u64::from(self.disk.block_size());
-                self.disk.write(block, buf)
+                self.disk.write(None, block, buf)
             }
-
-            _ => todo!(),
+            Handle::Partition { number } => {
+                let block = offset / u64::from(self.disk.block_size());
+                self.disk.write(Some(number as usize), block, buf)
+            }
         }
     }
 
