@@ -1,11 +1,11 @@
 use std::collections::BTreeMap;
 use std::convert::{TryFrom, TryInto};
 use std::fmt::Write;
-use std::io;
-use std::io::prelude::*;
+use std::str;
 use std::sync::Arc;
-use std::{cmp, str};
 
+use driver_block::Disk;
+use partitionlib::PartitionTable;
 use redox_scheme::{CallerCtx, OpenResult, SchemeBlock};
 use syscall::schemev2::NewFdFlags;
 use syscall::{
@@ -15,12 +15,30 @@ use syscall::{
 
 use crate::nvme::{Nvme, NvmeNamespace};
 
-use partitionlib::{LogicalBlockSize, PartitionTable};
-
 enum Handle {
     List(Vec<u8>),       // entries
     Disk(u32),           // disk num
     Partition(u32, u32), // disk num, part num
+}
+
+struct NamespaceAndNvme<'a>(&'a Nvme, NvmeNamespace);
+
+impl Disk for NamespaceAndNvme<'_> {
+    fn block_length(&mut self) -> syscall::error::Result<u32> {
+        Ok(self.1.block_size.try_into().unwrap())
+    }
+
+    fn size(&mut self) -> u64 {
+        self.1.blocks * self.1.block_size
+    }
+
+    fn read(&mut self, block: u64, buffer: &mut [u8]) -> syscall::Result<Option<usize>> {
+        self.0.namespace_read(self.1, block, buffer)
+    }
+
+    fn write(&mut self, block: u64, buffer: &[u8]) -> syscall::Result<Option<usize>> {
+        self.0.namespace_write(self.1, block, buffer)
+    }
 }
 
 pub struct DiskWrapper {
@@ -36,91 +54,7 @@ impl AsRef<NvmeNamespace> for DiskWrapper {
 
 impl DiskWrapper {
     fn pt(disk: NvmeNamespace, nvme: &Nvme) -> Option<PartitionTable> {
-        let bs = match disk.block_size {
-            512 => LogicalBlockSize::Lb512,
-            4096 => LogicalBlockSize::Lb4096,
-            _ => return None,
-        };
-        struct Device<'a> {
-            disk: NvmeNamespace,
-            nvme: &'a Nvme,
-            offset: u64,
-        }
-
-        impl<'a> Seek for Device<'a> {
-            fn seek(&mut self, from: io::SeekFrom) -> io::Result<u64> {
-                let size_u = self.disk.blocks * self.disk.block_size;
-                let size = i64::try_from(size_u).or(Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    "Disk larger than 2^63 - 1 bytes",
-                )))?;
-
-                self.offset = match from {
-                    io::SeekFrom::Start(new_pos) => cmp::min(size_u, new_pos),
-                    io::SeekFrom::Current(new_pos) => {
-                        cmp::max(0, cmp::min(size, self.offset as i64 + new_pos)) as u64
-                    }
-                    io::SeekFrom::End(new_pos) => {
-                        cmp::max(0, cmp::min(size + new_pos, size)) as u64
-                    }
-                };
-
-                Ok(self.offset)
-            }
-        }
-
-        impl<'a> Read for Device<'a> {
-            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-                let blksize = self.disk.block_size;
-                let size_in_blocks = self.disk.blocks;
-
-                let disk = self.disk;
-                let nvme = &mut self.nvme;
-
-                let read_block = |block: u64, block_bytes: &mut [u8]| {
-                    if block >= size_in_blocks {
-                        return Err(io::Error::from_raw_os_error(syscall::EOVERFLOW));
-                    }
-                    loop {
-                        match nvme
-                            .namespace_read(disk, block, block_bytes)
-                            .map_err(|err| io::Error::from_raw_os_error(err.errno))?
-                        {
-                            Some(bytes) => {
-                                assert_eq!(bytes, block_bytes.len());
-                                assert_eq!(bytes, blksize as usize);
-                                return Ok(());
-                            }
-                            None => {
-                                std::thread::yield_now();
-                                continue;
-                            } // TODO: Does this driver have (internal) error handling at all?
-                        }
-                    }
-                };
-                let bytes_read = driver_block::block_read(
-                    self.offset,
-                    blksize
-                        .try_into()
-                        .expect("Unreasonable block size above 2^32 bytes"),
-                    buf,
-                    read_block,
-                )?;
-                self.offset += bytes_read as u64;
-                Ok(bytes_read)
-            }
-        }
-
-        partitionlib::get_partitions(
-            &mut Device {
-                disk,
-                nvme,
-                offset: 0,
-            },
-            bs,
-        )
-        .ok()
-        .flatten()
+        driver_block::DiskWrapper::pt(&mut NamespaceAndNvme(nvme, disk))
     }
     fn new(inner: NvmeNamespace, nvme: &Nvme) -> Self {
         Self {

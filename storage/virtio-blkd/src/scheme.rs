@@ -1,13 +1,10 @@
 use std::collections::BTreeMap;
-use std::io::Read;
-use std::io::Result as IoResult;
-use std::io::Seek;
 
 use std::fmt::Write;
 use std::sync::Arc;
 
 use common::dma::Dma;
-use partitionlib::LogicalBlockSize;
+use driver_block::DiskWrapper;
 use partitionlib::PartitionTable;
 
 use redox_scheme::CallerCtx;
@@ -121,82 +118,28 @@ impl<'a> DiskScheme<'a> {
             part_table: None,
         };
 
-        struct VirtioShim<'a, 'b> {
-            scheme: &'b DiskScheme<'a>,
-            offset: u64,
-        }
-
-        impl<'a, 'b> Read for VirtioShim<'a, 'b> {
-            fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
-                let read_block =
-                    |block: u64, block_bytes: &mut [u8]| -> Result<(), std::io::Error> {
-                        let req = Dma::new(BlockVirtRequest {
-                            ty: BlockRequestTy::In,
-                            reserved: 0,
-                            sector: block,
-                        })
-                        .unwrap();
-
-                        let result = Dma::new([0u8; 512]).unwrap();
-                        let status = Dma::new(u8::MAX).unwrap();
-
-                        let chain = ChainBuilder::new()
-                            .chain(Buffer::new(&req))
-                            .chain(Buffer::new(&result).flags(DescriptorFlags::WRITE_ONLY))
-                            .chain(Buffer::new(&status).flags(DescriptorFlags::WRITE_ONLY))
-                            .build();
-
-                        futures::executor::block_on(self.scheme.queue.send(chain));
-                        assert_eq!(*status, 0);
-
-                        let size = core::cmp::min(block_bytes.len(), result.len());
-                        block_bytes[..size].copy_from_slice(&result.as_slice()[..size]);
-                        Ok(())
-                    };
-
-                let bytes_read =
-                    driver_block::block_read(self.offset, 512, buf, read_block).unwrap();
-                self.offset += bytes_read as u64;
-                Ok(bytes_read)
-            }
-        }
-
-        impl<'a, 'b> Seek for VirtioShim<'a, 'b> {
-            fn seek(&mut self, from: std::io::SeekFrom) -> IoResult<u64> {
-                let size_u = self.scheme.cfg.capacity() * self.scheme.cfg.block_size() as u64;
-                let size = i64::try_from(size_u).or(Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "Disk larger than 2^63 - 1 bytes",
-                )))?;
-
-                self.offset = match from {
-                    std::io::SeekFrom::Start(new_pos) => std::cmp::min(size_u, new_pos),
-                    std::io::SeekFrom::Current(new_pos) => {
-                        std::cmp::max(0, std::cmp::min(size, self.offset as i64 + new_pos)) as u64
-                    }
-                    std::io::SeekFrom::End(new_pos) => {
-                        std::cmp::max(0, std::cmp::min(size + new_pos, size)) as u64
-                    }
-                };
-
-                Ok(self.offset)
-            }
-        }
-
-        let mut shim = VirtioShim {
-            scheme: &this,
-            offset: 0,
-        };
-
-        //driver_block::DiskWrapper::new(disk)
-
-        // FIXME use DiskWrapper instead
-        let part_table = partitionlib::get_partitions(&mut shim, LogicalBlockSize::Lb512)
-            .ok()
-            .flatten();
-
-        this.part_table = part_table;
+        this.part_table = DiskWrapper::pt(&mut this);
         this
+    }
+}
+
+impl driver_block::Disk for DiskScheme<'_> {
+    fn block_length(&mut self) -> syscall::error::Result<u32> {
+        Ok(self.cfg.block_size())
+    }
+
+    fn size(&mut self) -> u64 {
+        self.cfg.capacity() * self.cfg.block_size() as u64
+    }
+
+    fn read(&mut self, block: u64, buffer: &mut [u8]) -> syscall::Result<Option<usize>> {
+        Ok(Some(futures::executor::block_on(
+            self.queue.read(block, buffer),
+        )))
+    }
+
+    fn write(&mut self, _block: u64, _buffer: &[u8]) -> syscall::Result<Option<usize>> {
+        todo!()
     }
 }
 

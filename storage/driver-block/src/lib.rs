@@ -8,8 +8,7 @@ use partitionlib::{LogicalBlockSize, PartitionTable};
 /// `read_fn` will be called with a block number to be read, and a buffer to be filled.
 /// `read_fn` must return a full block of data.
 /// Result will be the number of bytes read.
-// FIXME make private once nvmed uses the DiskWrapper defined in this crate
-pub fn block_read(
+fn block_read(
     offset: u64,
     blksize: u32,
     buf: &mut [u8],
@@ -67,9 +66,10 @@ pub struct DiskWrapper {
 }
 
 impl DiskWrapper {
-    fn pt(disk: &mut dyn Disk) -> Option<PartitionTable> {
+    pub fn pt(disk: &mut dyn Disk) -> Option<PartitionTable> {
         let bs = match disk.block_length() {
             Ok(512) => LogicalBlockSize::Lb512,
+            Ok(4096) => LogicalBlockSize::Lb4096,
             _ => return None,
         };
         struct Device<'a> {
