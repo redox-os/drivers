@@ -41,14 +41,13 @@ impl DiskWrapper {
             4096 => LogicalBlockSize::Lb4096,
             _ => return None,
         };
-        struct Device<'a, 'b> {
+        struct Device<'a> {
             disk: &'a mut NvmeNamespace,
             nvme: &'a Nvme,
             offset: u64,
-            block_bytes: &'b mut [u8],
         }
 
-        impl<'a, 'b> Seek for Device<'a, 'b> {
+        impl<'a> Seek for Device<'a> {
             fn seek(&mut self, from: io::SeekFrom) -> io::Result<u64> {
                 let size_u = self.disk.blocks * self.disk.block_size;
                 let size = i64::try_from(size_u).or(Err(io::Error::new(
@@ -70,7 +69,7 @@ impl DiskWrapper {
             }
         }
 
-        impl<'a, 'b> Read for Device<'a, 'b> {
+        impl<'a> Read for Device<'a> {
             fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
                 let blksize = self.disk.block_size;
                 let size_in_blocks = self.disk.blocks;
@@ -105,7 +104,6 @@ impl DiskWrapper {
                         .try_into()
                         .expect("Unreasonable block size above 2^32 bytes"),
                     buf,
-                    self.block_bytes,
                     read_block,
                 )?;
                 self.offset += bytes_read as u64;
@@ -113,14 +111,11 @@ impl DiskWrapper {
             }
         }
 
-        let mut block_bytes = [0u8; 4096];
-
         partitionlib::get_partitions(
             &mut Device {
                 disk,
                 nvme,
                 offset: 0,
-                block_bytes: &mut block_bytes[..bs.into()],
             },
             bs,
         )

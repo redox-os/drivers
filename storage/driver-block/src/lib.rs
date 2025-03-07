@@ -6,7 +6,6 @@ use partitionlib::{LogicalBlockSize, PartitionTable};
 
 /// Split the read operation into a series of block reads.
 /// `read_fn` will be called with a block number to be read, and a buffer to be filled.
-/// The buffer must be large enough to hold `blksize` of data.
 /// `read_fn` must return a full block of data.
 /// Result will be the number of bytes read.
 // FIXME make private once nvmed uses the DiskWrapper defined in this crate
@@ -14,7 +13,6 @@ pub fn block_read(
     offset: u64,
     blksize: u32,
     buf: &mut [u8],
-    block_bytes: &mut [u8],
     mut read_fn: impl FnMut(u64, &mut [u8]) -> Result<(), Error>,
 ) -> Result<usize, Error> {
     // TODO: Yield sometimes, perhaps after a few blocks or something.
@@ -31,6 +29,9 @@ pub fn block_read(
     let mut curr_offset = offset;
     let blk_size = usize::try_from(blksize).expect("blksize larger than usize");
     let mut total_read = 0;
+
+    let mut block_bytes = [0u8; 4096];
+    let block_bytes = &mut block_bytes[..blk_size];
 
     while curr_buf.len() > 0 {
         // TODO: Async/await? I mean, shouldn't AHCI be async?
@@ -72,13 +73,12 @@ impl DiskWrapper {
             Ok(512) => LogicalBlockSize::Lb512,
             _ => return None,
         };
-        struct Device<'a, 'b> {
+        struct Device<'a> {
             disk: &'a mut dyn Disk,
             offset: u64,
-            block_bytes: &'b mut [u8],
         }
 
-        impl<'a, 'b> Seek for Device<'a, 'b> {
+        impl<'a> Seek for Device<'a> {
             fn seek(&mut self, from: SeekFrom) -> io::Result<u64> {
                 let size = i64::try_from(self.disk.size()).or(Err(io::Error::new(
                     io::ErrorKind::Other,
@@ -97,7 +97,7 @@ impl DiskWrapper {
             }
         }
         // TODO: Perhaps this impl should be used in the rest of the scheme.
-        impl<'a, 'b> Read for Device<'a, 'b> {
+        impl<'a> Read for Device<'a> {
             fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
                 let blksize = self
                     .disk
@@ -115,7 +115,6 @@ impl DiskWrapper {
                         match disk.read(block, block_bytes) {
                             Ok(Some(bytes)) => {
                                 assert_eq!(bytes, block_bytes.len());
-                                assert_eq!(bytes, blksize as usize);
                                 return Ok(());
                             }
                             Ok(None) => {
@@ -126,26 +125,16 @@ impl DiskWrapper {
                         }
                     }
                 };
-                let bytes_read =
-                    block_read(self.offset, blksize, buf, self.block_bytes, read_block)?;
+                let bytes_read = block_read(self.offset, blksize, buf, read_block)?;
 
                 self.offset += bytes_read as u64;
                 Ok(bytes_read)
             }
         }
 
-        let mut block_bytes = [0u8; 4096];
-
-        partitionlib::get_partitions(
-            &mut Device {
-                disk,
-                offset: 0,
-                block_bytes: &mut block_bytes[..bs.into()],
-            },
-            bs,
-        )
-        .ok()
-        .flatten()
+        partitionlib::get_partitions(&mut Device { disk, offset: 0 }, bs)
+            .ok()
+            .flatten()
     }
 
     pub fn new(mut disk: Box<dyn Disk>) -> Self {

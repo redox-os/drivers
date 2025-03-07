@@ -124,7 +124,6 @@ impl<'a> DiskScheme<'a> {
         struct VirtioShim<'a, 'b> {
             scheme: &'b DiskScheme<'a>,
             offset: u64,
-            block_bytes: &'b mut [u8],
         }
 
         impl<'a, 'b> Read for VirtioShim<'a, 'b> {
@@ -156,8 +155,7 @@ impl<'a> DiskScheme<'a> {
                     };
 
                 let bytes_read =
-                    driver_block::block_read(self.offset, 512, buf, self.block_bytes, read_block)
-                        .unwrap();
+                    driver_block::block_read(self.offset, 512, buf, read_block).unwrap();
                 self.offset += bytes_read as u64;
                 Ok(bytes_read)
             }
@@ -188,7 +186,6 @@ impl<'a> DiskScheme<'a> {
         let mut shim = VirtioShim {
             scheme: &this,
             offset: 0,
-            block_bytes: &mut [0u8; 4096],
         };
 
         //driver_block::DiskWrapper::new(disk)
