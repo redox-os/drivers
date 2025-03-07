@@ -124,8 +124,8 @@ impl<'a> DiskScheme<'a> {
 }
 
 impl driver_block::Disk for DiskScheme<'_> {
-    fn block_length(&mut self) -> syscall::error::Result<u32> {
-        Ok(self.cfg.block_size())
+    fn block_length(&mut self) -> u32 {
+        self.cfg.block_size()
     }
 
     fn size(&mut self) -> u64 {

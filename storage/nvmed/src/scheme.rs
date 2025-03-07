@@ -24,8 +24,8 @@ enum Handle {
 struct NamespaceAndNvme<'a>(&'a Nvme, NvmeNamespace);
 
 impl Disk for NamespaceAndNvme<'_> {
-    fn block_length(&mut self) -> syscall::error::Result<u32> {
-        Ok(self.1.block_size.try_into().unwrap())
+    fn block_length(&mut self) -> u32 {
+        self.1.block_size.try_into().unwrap()
     }
 
     fn size(&mut self) -> u64 {

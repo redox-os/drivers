@@ -53,7 +53,7 @@ fn block_read(
 }
 
 pub trait Disk {
-    fn block_length(&mut self) -> syscall::error::Result<u32>;
+    fn block_length(&mut self) -> u32;
     fn size(&mut self) -> u64;
 
     fn read(&mut self, block: u64, buffer: &mut [u8]) -> syscall::Result<Option<usize>>;
@@ -68,8 +68,8 @@ pub struct DiskWrapper {
 impl DiskWrapper {
     pub fn pt(disk: &mut dyn Disk) -> Option<PartitionTable> {
         let bs = match disk.block_length() {
-            Ok(512) => LogicalBlockSize::Lb512,
-            Ok(4096) => LogicalBlockSize::Lb4096,
+            512 => LogicalBlockSize::Lb512,
+            4096 => LogicalBlockSize::Lb4096,
             _ => return None,
         };
         struct Device<'a> {
@@ -98,10 +98,7 @@ impl DiskWrapper {
         // TODO: Perhaps this impl should be used in the rest of the scheme.
         impl<'a> Read for Device<'a> {
             fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-                let blksize = self
-                    .disk
-                    .block_length()
-                    .map_err(|err| io::Error::from_raw_os_error(err.errno))?;
+                let blksize = self.disk.block_length();
                 let size_in_blocks = self.disk.size() / u64::from(blksize);
 
                 let disk = &mut self.disk;

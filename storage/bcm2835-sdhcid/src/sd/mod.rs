@@ -774,7 +774,7 @@ impl Disk for SdHostCtrl {
         }
     }
 
-    fn block_length(&mut self) -> Result<u32> {
-        Ok(512)
+    fn block_length(&mut self) -> u32 {
+        512
     }
 }
