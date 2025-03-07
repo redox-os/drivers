@@ -4,7 +4,7 @@ use std::fmt::Write;
 use std::sync::Arc;
 
 use common::dma::Dma;
-use driver_block::DiskWrapper;
+use driver_block::{Disk, DiskWrapper};
 use partitionlib::PartitionTable;
 
 use redox_scheme::CallerCtx;
@@ -87,6 +87,39 @@ impl BlkExtension for Queue<'_> {
     }
 }
 
+struct VirtioDisk<'a> {
+    queue: Arc<Queue<'a>>,
+    cfg: BlockDeviceConfig,
+}
+
+impl<'a> VirtioDisk<'a> {
+    pub fn new(queue: Arc<Queue<'a>>, cfg: BlockDeviceConfig) -> Self {
+        Self { queue, cfg }
+    }
+}
+
+impl driver_block::Disk for VirtioDisk<'_> {
+    fn block_length(&mut self) -> u32 {
+        self.cfg.block_size()
+    }
+
+    fn size(&mut self) -> u64 {
+        self.cfg.capacity() * u64::from(self.cfg.block_size())
+    }
+
+    fn read(&mut self, block: u64, buffer: &mut [u8]) -> syscall::Result<Option<usize>> {
+        Ok(Some(futures::executor::block_on(
+            self.queue.read(block, buffer),
+        )))
+    }
+
+    fn write(&mut self, block: u64, buffer: &[u8]) -> syscall::Result<Option<usize>> {
+        Ok(Some(futures::executor::block_on(
+            self.queue.write(block, buffer),
+        )))
+    }
+}
+
 pub enum Handle {
     Partition {
         /// Partition Number
@@ -101,45 +134,22 @@ pub enum Handle {
 }
 
 pub struct DiskScheme<'a> {
-    queue: Arc<Queue<'a>>,
+    disk: VirtioDisk<'a>,
     next_id: usize,
-    cfg: BlockDeviceConfig,
     handles: BTreeMap<usize, Handle>,
     part_table: Option<PartitionTable>,
 }
 
 impl<'a> DiskScheme<'a> {
     pub fn new(queue: Arc<Queue<'a>>, cfg: BlockDeviceConfig) -> Self {
-        let mut this = Self {
-            queue,
+        let mut disk = VirtioDisk::new(queue, cfg);
+
+        Self {
+            part_table: DiskWrapper::pt(&mut disk),
+            disk,
             next_id: 0,
-            cfg,
             handles: BTreeMap::new(),
-            part_table: None,
-        };
-
-        this.part_table = DiskWrapper::pt(&mut this);
-        this
-    }
-}
-
-impl driver_block::Disk for DiskScheme<'_> {
-    fn block_length(&mut self) -> u32 {
-        self.cfg.block_size()
-    }
-
-    fn size(&mut self) -> u64 {
-        self.cfg.capacity() * self.cfg.block_size() as u64
-    }
-
-    fn read(&mut self, block: u64, buffer: &mut [u8]) -> syscall::Result<Option<usize>> {
-        Ok(Some(futures::executor::block_on(
-            self.queue.read(block, buffer),
-        )))
-    }
-
-    fn write(&mut self, _block: u64, _buffer: &[u8]) -> syscall::Result<Option<usize>> {
-        todo!()
+        }
     }
 }
 
@@ -224,45 +234,40 @@ impl<'a> SchemeBlock for DiskScheme<'a> {
         offset: u64,
         _fcntl_flags: u32,
     ) -> syscall::Result<Option<usize>> {
-        Ok(Some(
-            match *self.handles.get_mut(&id).ok_or(Error::new(EBADF))? {
-                Handle::List { ref mut entries } => {
-                    let src = usize::try_from(offset)
-                        .ok()
-                        .and_then(|o| entries.get(o..))
-                        .unwrap_or(&[]);
-                    let count = core::cmp::min(src.len(), buf.len());
-                    buf[..count].copy_from_slice(&src[..count]);
-                    count
-                }
+        match *self.handles.get_mut(&id).ok_or(Error::new(EBADF))? {
+            Handle::List { ref mut entries } => {
+                let src = usize::try_from(offset)
+                    .ok()
+                    .and_then(|o| entries.get(o..))
+                    .unwrap_or(&[]);
+                let count = core::cmp::min(src.len(), buf.len());
+                buf[..count].copy_from_slice(&src[..count]);
+                Ok(Some(count))
+            }
 
-                Handle::Partition { number } => {
-                    let part_table = self.part_table.as_ref().unwrap();
-                    let part = part_table
-                        .partitions
-                        .get(number as usize)
-                        .ok_or(Error::new(EBADF))?;
+            Handle::Partition { number } => {
+                let part_table = self.part_table.as_ref().unwrap();
+                let part = part_table
+                    .partitions
+                    .get(number as usize)
+                    .ok_or(Error::new(EBADF))?;
 
-                    // Get the offset in sectors.
-                    let rel_block = offset / BLK_SIZE;
-                    // if rel_block >= part.size {
-                    //     return Err(Error::new(EOVERFLOW));
-                    // }
+                // Get the offset in sectors.
+                let rel_block = offset / BLK_SIZE;
+                // if rel_block >= part.size {
+                //     return Err(Error::new(EOVERFLOW));
+                // }
 
-                    let abs_block = part.start_lba + rel_block;
+                let abs_block = part.start_lba + rel_block;
 
-                    futures::executor::block_on(self.queue.read(abs_block, buf))
-                }
+                self.disk.read(abs_block, buf)
+            }
 
-                Handle::Disk => {
-                    let block_size = self.cfg.block_size();
-
-                    futures::executor::block_on(
-                        self.queue.read(offset / u64::from(block_size), buf),
-                    )
-                }
-            },
-        ))
+            Handle::Disk => {
+                let block = offset / u64::from(self.disk.block_length());
+                self.disk.read(block, buf)
+            }
+        }
     }
 
     fn write(
@@ -272,18 +277,14 @@ impl<'a> SchemeBlock for DiskScheme<'a> {
         offset: u64,
         _fcntl_flags: u32,
     ) -> syscall::Result<Option<usize>> {
-        Ok(Some(
-            match *self.handles.get_mut(&id).ok_or(Error::new(EBADF))? {
-                Handle::Disk => {
-                    let block_size = self.cfg.block_size();
-                    futures::executor::block_on(
-                        self.queue.write(offset / u64::from(block_size), buf),
-                    )
-                }
+        match *self.handles.get_mut(&id).ok_or(Error::new(EBADF))? {
+            Handle::Disk => {
+                let block = offset / u64::from(self.disk.block_length());
+                self.disk.write(block, buf)
+            }
 
-                _ => todo!(),
-            },
-        ))
+            _ => todo!(),
+        }
     }
 
     fn fsize(&mut self, id: usize) -> syscall::Result<Option<u64>> {
@@ -311,7 +312,7 @@ impl<'a> SchemeBlock for DiskScheme<'a> {
                     len
                 }
 
-                Handle::Disk => self.cfg.capacity() * u64::from(self.cfg.block_size()),
+                Handle::Disk => self.disk.size(),
             },
         ))
     }
