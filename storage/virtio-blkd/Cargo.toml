@@ -15,7 +15,6 @@ spin = "*"
 redox-daemon = "0.1"
 redox_syscall = { version = "0.5", features = ["std"] }
 redox-scheme = { git = "https://gitlab.redox-os.org/redox-os/redox-scheme.git" }
-partitionlib = { path = "../partitionlib" }
 
 common = { path = "../../common" }
 driver-block = { path = "../driver-block" }
