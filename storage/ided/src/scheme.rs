@@ -22,7 +22,7 @@ enum Handle {
 pub struct DiskScheme {
     scheme_name: String,
     chans: Box<[Arc<Mutex<Channel>>]>,
-    disks: Box<[DiskWrapper]>,
+    disks: Box<[DiskWrapper<Box<dyn Disk>>]>,
     handles: BTreeMap<usize, Handle>,
     next_id: usize,
 }

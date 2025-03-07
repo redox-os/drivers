@@ -60,13 +60,31 @@ pub trait Disk {
     fn write(&mut self, block: u64, buffer: &[u8]) -> syscall::Result<Option<usize>>;
 }
 
-pub struct DiskWrapper {
-    pub disk: Box<dyn Disk>,
+impl<T: Disk + ?Sized> Disk for Box<T> {
+    fn block_length(&mut self) -> u32 {
+        (**self).block_length()
+    }
+
+    fn size(&mut self) -> u64 {
+        (**self).size()
+    }
+
+    fn read(&mut self, block: u64, buffer: &mut [u8]) -> syscall::Result<Option<usize>> {
+        (**self).read(block, buffer)
+    }
+
+    fn write(&mut self, block: u64, buffer: &[u8]) -> syscall::Result<Option<usize>> {
+        (**self).write(block, buffer)
+    }
+}
+
+pub struct DiskWrapper<T> {
+    pub disk: T,
     pub pt: Option<PartitionTable>,
 }
 
-impl DiskWrapper {
-    pub fn pt(disk: &mut dyn Disk) -> Option<PartitionTable> {
+impl<T: Disk> DiskWrapper<T> {
+    pub fn pt(disk: &mut T) -> Option<PartitionTable> {
         let bs = match disk.block_length() {
             512 => LogicalBlockSize::Lb512,
             4096 => LogicalBlockSize::Lb4096,
@@ -133,23 +151,23 @@ impl DiskWrapper {
             .flatten()
     }
 
-    pub fn new(mut disk: Box<dyn Disk>) -> Self {
+    pub fn new(mut disk: T) -> Self {
         Self {
-            pt: Self::pt(&mut *disk),
+            pt: Self::pt(&mut disk),
             disk,
         }
     }
 }
 
-impl std::ops::Deref for DiskWrapper {
-    type Target = dyn Disk;
+impl<T> std::ops::Deref for DiskWrapper<T> {
+    type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        &*self.disk
+        &self.disk
     }
 }
-impl std::ops::DerefMut for DiskWrapper {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut *self.disk
+impl<T> std::ops::DerefMut for DiskWrapper<T> {
+    fn deref_mut(&mut self) -> &mut T {
+        &mut self.disk
     }
 }

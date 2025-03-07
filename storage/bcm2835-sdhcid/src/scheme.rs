@@ -19,7 +19,7 @@ enum Handle {
 
 pub struct DiskScheme {
     scheme_name: String,
-    disks: Box<[DiskWrapper]>,
+    disks: Box<[DiskWrapper<Box<dyn Disk>>]>,
     handles: BTreeMap<usize, Handle>,
     next_id: usize,
 }
