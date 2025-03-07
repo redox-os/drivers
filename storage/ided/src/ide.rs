@@ -169,10 +169,6 @@ pub struct AtaDisk {
 }
 
 impl Disk for AtaDisk {
-    fn id(&self) -> usize {
-        self.chan_i << 1 | self.dev as usize
-    }
-
     fn size(&mut self) -> u64 {
         self.size
     }

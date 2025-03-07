@@ -733,10 +733,6 @@ impl SdHostCtrl {
 }
 
 impl Disk for SdHostCtrl {
-    fn id(&self) -> usize {
-        0xdead_dead
-    }
-
     fn size(&mut self) -> u64 {
         //assert 512MiB
         self.size

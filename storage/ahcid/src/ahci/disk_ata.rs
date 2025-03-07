@@ -154,10 +154,6 @@ impl DiskATA {
 }
 
 impl Disk for DiskATA {
-    fn id(&self) -> usize {
-        self.id
-    }
-
     fn size(&mut self) -> u64 {
         self.size
     }

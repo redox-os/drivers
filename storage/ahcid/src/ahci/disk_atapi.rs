@@ -72,10 +72,6 @@ impl DiskATAPI {
 }
 
 impl Disk for DiskATAPI {
-    fn id(&self) -> usize {
-        self.id
-    }
-
     fn size(&mut self) -> u64 {
         match self.read_capacity() {
             Ok((blk_count, blk_size)) => (blk_count as u64) * (blk_size as u64),

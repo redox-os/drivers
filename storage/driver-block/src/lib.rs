@@ -54,7 +54,6 @@ pub fn block_read(
 }
 
 pub trait Disk {
-    fn id(&self) -> usize;
     fn block_length(&mut self) -> syscall::error::Result<u32>;
     fn size(&mut self) -> u64;
 
