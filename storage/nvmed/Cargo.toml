@@ -21,5 +21,4 @@ partitionlib = { path = "../partitionlib" }
 pcid = { path = "../../pcid" }
 
 [features]
-default = ["async"]
-async = []
+default = []
