@@ -1672,7 +1672,6 @@ dependencies = [
  "futures",
  "libredox",
  "log",
- "partitionlib",
  "pcid",
  "redox-daemon",
  "redox-scheme 0.3.0",

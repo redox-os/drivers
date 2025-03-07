@@ -5,7 +5,6 @@ use std::sync::Arc;
 
 use common::dma::Dma;
 use driver_block::{Disk, DiskWrapper};
-use partitionlib::PartitionTable;
 
 use redox_scheme::CallerCtx;
 use redox_scheme::OpenResult;
@@ -134,19 +133,15 @@ pub enum Handle {
 }
 
 pub struct DiskScheme<'a> {
-    disk: VirtioDisk<'a>,
+    disk: DiskWrapper<VirtioDisk<'a>>,
     next_id: usize,
     handles: BTreeMap<usize, Handle>,
-    part_table: Option<PartitionTable>,
 }
 
 impl<'a> DiskScheme<'a> {
     pub fn new(queue: Arc<Queue<'a>>, cfg: BlockDeviceConfig) -> Self {
-        let mut disk = VirtioDisk::new(queue, cfg);
-
         Self {
-            part_table: DiskWrapper::pt(&mut disk),
-            disk,
+            disk: DiskWrapper::new(VirtioDisk::new(queue, cfg)),
             next_id: 0,
             handles: BTreeMap::new(),
         }
@@ -170,7 +165,7 @@ impl<'a> SchemeBlock for DiskScheme<'a> {
                 //            to the namespace id).
                 write!(list, "{}\n", 0).unwrap();
 
-                if let Some(part_table) = &self.part_table {
+                if let Some(part_table) = &self.disk.pt {
                     for part_num in 0..part_table.partitions.len() {
                         write!(list, "{}p{}\n", 0, part_num).unwrap();
                     }
@@ -201,7 +196,7 @@ impl<'a> SchemeBlock for DiskScheme<'a> {
             let part_num_str = &path_str[p_pos + 1..];
             let part_num = part_num_str.parse::<u32>().unwrap();
 
-            let part_table = self.part_table.as_ref().unwrap();
+            let part_table = self.disk.pt.as_ref().unwrap();
             let _part = part_table.partitions.get(part_num as usize).unwrap();
 
             let id = self.next_id;
@@ -246,7 +241,7 @@ impl<'a> SchemeBlock for DiskScheme<'a> {
             }
 
             Handle::Partition { number } => {
-                let part_table = self.part_table.as_ref().unwrap();
+                let part_table = self.disk.pt.as_ref().unwrap();
                 let part = part_table
                     .partitions
                     .get(number as usize)
@@ -298,7 +293,7 @@ impl<'a> SchemeBlock for DiskScheme<'a> {
                 }
 
                 Handle::Partition { number } => {
-                    let part_table = self.part_table.as_ref().unwrap();
+                    let part_table = self.disk.pt.as_ref().unwrap();
                     let part = part_table
                         .partitions
                         .get(number as usize)
