@@ -733,7 +733,11 @@ impl SdHostCtrl {
 }
 
 impl Disk for SdHostCtrl {
-    fn size(&mut self) -> u64 {
+    fn block_size(&self) -> u32 {
+        512
+    }
+
+    fn size(&self) -> u64 {
         //assert 512MiB
         self.size
     }
@@ -772,9 +776,5 @@ impl Disk for SdHostCtrl {
             Ok(cnt) => Ok(Some(cnt)),
             Err(err) => Err(err),
         }
-    }
-
-    fn block_length(&mut self) -> u32 {
-        512
     }
 }

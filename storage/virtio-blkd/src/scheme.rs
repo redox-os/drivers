@@ -98,11 +98,11 @@ impl<'a> VirtioDisk<'a> {
 }
 
 impl driver_block::Disk for VirtioDisk<'_> {
-    fn block_length(&mut self) -> u32 {
+    fn block_size(&self) -> u32 {
         self.cfg.block_size()
     }
 
-    fn size(&mut self) -> u64 {
+    fn size(&self) -> u64 {
         self.cfg.capacity() * u64::from(self.cfg.block_size())
     }
 
@@ -259,7 +259,7 @@ impl<'a> SchemeBlock for DiskScheme<'a> {
             }
 
             Handle::Disk => {
-                let block = offset / u64::from(self.disk.block_length());
+                let block = offset / u64::from(self.disk.block_size());
                 self.disk.read(block, buf)
             }
         }
@@ -274,7 +274,7 @@ impl<'a> SchemeBlock for DiskScheme<'a> {
     ) -> syscall::Result<Option<usize>> {
         match *self.handles.get_mut(&id).ok_or(Error::new(EBADF))? {
             Handle::Disk => {
-                let block = offset / u64::from(self.disk.block_length());
+                let block = offset / u64::from(self.disk.block_size());
                 self.disk.write(block, buf)
             }
 

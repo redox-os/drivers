@@ -4,8 +4,7 @@ use std::fmt::Write;
 use std::str;
 use std::sync::Arc;
 
-use driver_block::Disk;
-use partitionlib::PartitionTable;
+use driver_block::{Disk, DiskWrapper};
 use redox_scheme::{CallerCtx, OpenResult, SchemeBlock};
 use syscall::schemev2::NewFdFlags;
 use syscall::{
@@ -21,14 +20,14 @@ enum Handle {
     Partition(u32, u32), // disk num, part num
 }
 
-struct NamespaceAndNvme<'a>(&'a Nvme, NvmeNamespace);
+struct NvmeDisk(Arc<Nvme>, NvmeNamespace);
 
-impl Disk for NamespaceAndNvme<'_> {
-    fn block_length(&mut self) -> u32 {
+impl Disk for NvmeDisk {
+    fn block_size(&self) -> u32 {
         self.1.block_size.try_into().unwrap()
     }
 
-    fn size(&mut self) -> u64 {
+    fn size(&self) -> u64 {
         self.1.blocks * self.1.block_size
     }
 
@@ -41,33 +40,9 @@ impl Disk for NamespaceAndNvme<'_> {
     }
 }
 
-pub struct DiskWrapper {
-    inner: NvmeNamespace,
-    pt: Option<PartitionTable>,
-}
-
-impl AsRef<NvmeNamespace> for DiskWrapper {
-    fn as_ref(&self) -> &NvmeNamespace {
-        &self.inner
-    }
-}
-
-impl DiskWrapper {
-    fn pt(disk: NvmeNamespace, nvme: &Nvme) -> Option<PartitionTable> {
-        driver_block::DiskWrapper::pt(&mut NamespaceAndNvme(nvme, disk))
-    }
-    fn new(inner: NvmeNamespace, nvme: &Nvme) -> Self {
-        Self {
-            pt: Self::pt(inner, nvme),
-            inner,
-        }
-    }
-}
-
 pub struct DiskScheme {
     scheme_name: String,
-    nvme: Arc<Nvme>,
-    disks: BTreeMap<u32, DiskWrapper>,
+    disks: BTreeMap<u32, DiskWrapper<NvmeDisk>>,
     handles: BTreeMap<usize, Handle>,
     next_id: usize,
 }
@@ -82,9 +57,8 @@ impl DiskScheme {
             scheme_name,
             disks: disks
                 .into_iter()
-                .map(|(k, v)| (k, DiskWrapper::new(v, &nvme)))
+                .map(|(k, ns)| (k, DiskWrapper::new(NvmeDisk(nvme.clone(), ns))))
                 .collect(),
-            nvme,
             handles: BTreeMap::new(),
             next_id: 0,
         }
@@ -209,13 +183,9 @@ impl SchemeBlock for DiskScheme {
             Handle::Disk(number) => {
                 let disk = self.disks.get_mut(&number).ok_or(Error::new(EBADF))?;
                 stat.st_mode = MODE_FILE;
-                stat.st_blocks = disk.as_ref().blocks;
-                stat.st_blksize = disk
-                    .as_ref()
-                    .block_size
-                    .try_into()
-                    .expect("Unreasonable block size of over 2^32 bytes");
-                stat.st_size = disk.as_ref().blocks * disk.as_ref().block_size;
+                stat.st_blocks = disk.1.blocks;
+                stat.st_blksize = disk.block_size();
+                stat.st_size = disk.size();
                 Ok(Some(0))
             }
             Handle::Partition(disk_num, part_num) => {
@@ -228,13 +198,9 @@ impl SchemeBlock for DiskScheme {
                     .get(part_num as usize)
                     .ok_or(Error::new(EBADF))?;
                 stat.st_mode = MODE_FILE;
-                stat.st_size = part.size * disk.as_ref().block_size;
+                stat.st_size = part.size * u64::from(disk.block_size());
                 stat.st_blocks = part.size;
-                stat.st_blksize = disk
-                    .as_ref()
-                    .block_size
-                    .try_into()
-                    .expect("Unreasonable block size of over 2^32 bytes");
+                stat.st_blksize = disk.block_size();
                 Ok(Some(0))
             }
         }
@@ -304,9 +270,8 @@ impl SchemeBlock for DiskScheme {
             }
             Handle::Disk(number) => {
                 let disk = self.disks.get_mut(&number).ok_or(Error::new(EBADF))?;
-                let block_size = disk.as_ref().block_size;
-                self.nvme
-                    .namespace_read(*disk.as_ref(), offset / block_size, buf)
+                let block_size = u64::from(disk.block_size());
+                disk.read(offset / block_size, buf)
             }
             Handle::Partition(disk_num, part_num) => {
                 let disk = self.disks.get_mut(&disk_num).ok_or(Error::new(EBADF))?;
@@ -318,7 +283,7 @@ impl SchemeBlock for DiskScheme {
                     .get(part_num as usize)
                     .ok_or(Error::new(EBADF))?;
 
-                let block_size = disk.as_ref().block_size;
+                let block_size = u64::from(disk.block_size());
                 let rel_block = offset / block_size;
                 if rel_block >= part.size {
                     return Err(Error::new(EOVERFLOW));
@@ -326,7 +291,7 @@ impl SchemeBlock for DiskScheme {
 
                 let abs_block = part.start_lba + rel_block;
 
-                self.nvme.namespace_read(*disk.as_ref(), abs_block, buf)
+                disk.read(abs_block, buf)
             }
         }
     }
@@ -342,9 +307,8 @@ impl SchemeBlock for DiskScheme {
             Handle::List(_) => Err(Error::new(EBADF)),
             Handle::Disk(number) => {
                 let disk = self.disks.get_mut(&number).ok_or(Error::new(EBADF))?;
-                let block_size = disk.as_ref().block_size;
-                self.nvme
-                    .namespace_write(*disk.as_ref(), offset / block_size, buf)
+                let block_size = u64::from(disk.block_size());
+                disk.write(offset / block_size, buf)
             }
             Handle::Partition(disk_num, part_num) => {
                 let disk = self.disks.get_mut(&disk_num).ok_or(Error::new(EBADF))?;
@@ -356,7 +320,7 @@ impl SchemeBlock for DiskScheme {
                     .get(part_num as usize)
                     .ok_or(Error::new(EBADF))?;
 
-                let block_size = disk.as_ref().block_size;
+                let block_size = u64::from(disk.block_size());
                 let rel_block = offset / block_size;
                 if rel_block >= part.size {
                     return Err(Error::new(EOVERFLOW));
@@ -364,7 +328,7 @@ impl SchemeBlock for DiskScheme {
 
                 let abs_block = part.start_lba + rel_block;
 
-                self.nvme.namespace_write(*disk.as_ref(), abs_block, buf)
+                disk.write(abs_block, buf)
             }
         }
     }
@@ -375,7 +339,7 @@ impl SchemeBlock for DiskScheme {
                 Handle::List(ref handle) => handle.len() as u64,
                 Handle::Disk(number) => {
                     let disk = self.disks.get_mut(&number).ok_or(Error::new(EBADF))?;
-                    disk.as_ref().blocks * disk.as_ref().block_size
+                    disk.size()
                 }
                 Handle::Partition(disk_num, part_num) => {
                     let disk = self.disks.get_mut(&disk_num).ok_or(Error::new(EBADF))?;
@@ -387,7 +351,7 @@ impl SchemeBlock for DiskScheme {
                         .get(part_num as usize)
                         .ok_or(Error::new(EBADF))?;
 
-                    part.size * disk.as_ref().block_size
+                    part.size * u64::from(disk.block_size())
                 }
             },
         ))

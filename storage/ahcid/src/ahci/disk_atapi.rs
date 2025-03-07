@@ -69,11 +69,11 @@ impl DiskATAPI {
 }
 
 impl Disk for DiskATAPI {
-    fn block_length(&mut self) -> u32 {
+    fn block_size(&self) -> u32 {
         self.blk_size
     }
 
-    fn size(&mut self) -> u64 {
+    fn size(&self) -> u64 {
         u64::from(self.blk_count) * u64::from(self.blk_size)
     }
 

@@ -53,19 +53,19 @@ fn block_read(
 }
 
 pub trait Disk {
-    fn block_length(&mut self) -> u32;
-    fn size(&mut self) -> u64;
+    fn block_size(&self) -> u32;
+    fn size(&self) -> u64;
 
     fn read(&mut self, block: u64, buffer: &mut [u8]) -> syscall::Result<Option<usize>>;
     fn write(&mut self, block: u64, buffer: &[u8]) -> syscall::Result<Option<usize>>;
 }
 
 impl<T: Disk + ?Sized> Disk for Box<T> {
-    fn block_length(&mut self) -> u32 {
-        (**self).block_length()
+    fn block_size(&self) -> u32 {
+        (**self).block_size()
     }
 
-    fn size(&mut self) -> u64 {
+    fn size(&self) -> u64 {
         (**self).size()
     }
 
@@ -85,7 +85,7 @@ pub struct DiskWrapper<T> {
 
 impl<T: Disk> DiskWrapper<T> {
     pub fn pt(disk: &mut T) -> Option<PartitionTable> {
-        let bs = match disk.block_length() {
+        let bs = match disk.block_size() {
             512 => LogicalBlockSize::Lb512,
             4096 => LogicalBlockSize::Lb4096,
             _ => return None,
@@ -116,7 +116,7 @@ impl<T: Disk> DiskWrapper<T> {
         // TODO: Perhaps this impl should be used in the rest of the scheme.
         impl<'a> Read for Device<'a> {
             fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-                let blksize = self.disk.block_length();
+                let blksize = self.disk.block_size();
                 let size_in_blocks = self.disk.size() / u64::from(blksize);
 
                 let disk = &mut self.disk;
