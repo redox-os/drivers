@@ -7,7 +7,7 @@
 use libredox::call::MmapArgs;
 use libredox::flag::{self, O_CLOEXEC, O_RDONLY, O_RDWR, O_WRONLY};
 use libredox::{errno::EINVAL, error::*, Fd};
-use syscall::PAGE_SIZE;
+use syscall::{ProcSchemeVerb, PAGE_SIZE};
 
 /// The Direct Memory Access (DMA) API for drivers
 pub mod dma;
@@ -250,8 +250,20 @@ impl Drop for PhysBorrowed {
 /// prevent system instability caused by a faulty driver. Processes with ring 3 IOPL have access to
 /// I/O ports.
 pub fn acquire_port_io_rights() -> Result<()> {
-    unsafe {
-        syscall::iopl(3)?;
+    extern "C" {
+        fn redox_cur_thrfd_v0() -> usize;
     }
+    let fd = unsafe { redox_cur_thrfd_v0() };
+    let metadata = [ProcSchemeVerb::Iopl as u64];
+    let _ = unsafe {
+        syscall::syscall5(
+            syscall::SYS_CALL,
+            fd,
+            0,
+            0,
+            metadata.len(),
+            metadata.as_ptr() as usize,
+        )?
+    };
     Ok(())
 }
