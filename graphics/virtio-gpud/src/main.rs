@@ -109,6 +109,9 @@ pub enum CommandTy {
 
 static_assertions::const_assert_eq!(core::mem::size_of::<CommandTy>(), 4);
 
+const VIRTIO_GPU_FLAG_FENCE: u32 = 1 << 0;
+//const VIRTIO_GPU_FLAG_INFO_RING_IDX: u32 = 1 << 1;
+
 #[derive(Debug)]
 #[repr(C)]
 pub struct ControlHeader {
@@ -192,7 +195,7 @@ impl Default for GetDisplayInfo {
 
 static RESOURCE_ALLOC: AtomicU32 = AtomicU32::new(1); // XXX: 0 is reserved for whatever that takes `resource_id`.
 
-#[derive(Debug, Copy, Clone)]
+#[derive(PartialEq, Eq, Debug, Copy, Clone)]
 #[repr(C)]
 pub struct ResourceId(u32);
 

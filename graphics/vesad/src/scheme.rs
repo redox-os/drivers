@@ -2,8 +2,8 @@ use std::alloc::{self, Layout};
 use std::convert::TryInto;
 use std::ptr::{self, NonNull};
 
-use driver_graphics::{GraphicsAdapter, Resource};
-use graphics_ipc::legacy::Damage;
+use driver_graphics::{Framebuffer, GraphicsAdapter};
+use graphics_ipc::v1::Damage;
 use syscall::PAGE_SIZE;
 
 use crate::framebuffer::FrameBuffer;
@@ -13,7 +13,7 @@ pub struct FbAdapter {
 }
 
 impl GraphicsAdapter for FbAdapter {
-    type Resource = GraphicScreen;
+    type Framebuffer = GraphicScreen;
 
     fn displays(&self) -> Vec<usize> {
         (0..self.framebuffers.len()).collect()
@@ -26,40 +26,21 @@ impl GraphicsAdapter for FbAdapter {
         )
     }
 
-    fn create_resource(&mut self, width: u32, height: u32) -> Self::Resource {
+    fn create_dumb_framebuffer(&mut self, width: u32, height: u32) -> Self::Framebuffer {
         GraphicScreen::new(width as usize, height as usize)
     }
 
-    fn map_resource(&mut self, resource: &Self::Resource) -> *mut u8 {
-        resource.ptr.as_ptr().cast::<u8>()
+    fn map_dumb_framebuffer(&mut self, framebuffer: &Self::Framebuffer) -> *mut u8 {
+        framebuffer.ptr.as_ptr().cast::<u8>()
     }
 
-    fn set_scanout(&mut self, display_id: usize, resource: &Self::Resource) {
-        self.flush_resource(display_id, resource, None);
-    }
-
-    fn flush_resource(
+    fn update_plane(
         &mut self,
         display_id: usize,
-        resource: &Self::Resource,
-        damage: Option<&[Damage]>,
+        framebuffer: &Self::Framebuffer,
+        damage: &[Damage],
     ) {
-        if let Some(damage) = damage {
-            resource.sync(&mut self.framebuffers[display_id], damage)
-        } else {
-            let framebuffer: &mut FrameBuffer = &mut self.framebuffers[display_id];
-            let width = resource.width.try_into().unwrap();
-            let height = resource.height.try_into().unwrap();
-            resource.sync(
-                framebuffer,
-                &[Damage {
-                    x: 0,
-                    y: 0,
-                    width,
-                    height,
-                }],
-            );
-        }
+        framebuffer.sync(&mut self.framebuffers[display_id], damage)
     }
 }
 
@@ -97,7 +78,7 @@ impl Drop for GraphicScreen {
     }
 }
 
-impl Resource for GraphicScreen {
+impl Framebuffer for GraphicScreen {
     fn width(&self) -> u32 {
         self.width as u32
     }
@@ -115,10 +96,10 @@ impl GraphicScreen {
                 self.height.try_into().unwrap(),
             );
 
-            let start_x: usize = sync_rect.x.try_into().unwrap_or(0);
-            let start_y: usize = sync_rect.y.try_into().unwrap_or(0);
-            let w: usize = sync_rect.width.try_into().unwrap_or(0);
-            let h: usize = sync_rect.height.try_into().unwrap_or(0);
+            let start_x: usize = sync_rect.x.try_into().unwrap();
+            let start_y: usize = sync_rect.y.try_into().unwrap();
+            let w: usize = sync_rect.width.try_into().unwrap();
+            let h: usize = sync_rect.height.try_into().unwrap();
 
             let offscreen_ptr = self.ptr.as_ptr() as *mut u32;
             let onscreen_ptr = framebuffer.onscreen as *mut u32; // FIXME use as_mut_ptr once stable

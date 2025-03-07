@@ -1,4 +1,4 @@
-use graphics_ipc::legacy::{Damage, LegacyGraphicsHandle};
+use graphics_ipc::v1::{Damage, V1GraphicsHandle};
 use inputd::ConsumerHandle;
 use std::io;
 
@@ -8,8 +8,8 @@ pub struct Display {
 }
 
 pub struct DisplayMap {
-    display_handle: LegacyGraphicsHandle,
-    pub inner: graphics_ipc::legacy::DisplayMap,
+    display_handle: V1GraphicsHandle,
+    pub inner: graphics_ipc::v1::DisplayMap,
 }
 
 impl Display {
@@ -63,10 +63,10 @@ impl Display {
         }
     }
 
-    fn open_display(input_handle: &ConsumerHandle) -> io::Result<LegacyGraphicsHandle> {
+    fn open_display(input_handle: &ConsumerHandle) -> io::Result<V1GraphicsHandle> {
         let display_file = input_handle.open_display()?;
 
-        LegacyGraphicsHandle::from_file(display_file)
+        V1GraphicsHandle::from_file(display_file)
     }
 
     pub fn sync_rects(&mut self, sync_rects: Vec<Damage>) {

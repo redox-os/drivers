@@ -1,5 +1,5 @@
 use event::{user_data, EventQueue};
-use graphics_ipc::legacy::{Damage, LegacyGraphicsHandle};
+use graphics_ipc::v1::{Damage, V1GraphicsHandle};
 use inputd::ConsumerHandle;
 use libredox::errno::ESTALE;
 use orbclient::Event;
@@ -22,7 +22,7 @@ fn read_to_slice<T: Copy>(
     }
 }
 
-fn display_fd_map(display_handle: LegacyGraphicsHandle) -> io::Result<DisplayMap> {
+fn display_fd_map(display_handle: V1GraphicsHandle) -> io::Result<DisplayMap> {
     let display_map = display_handle.map_display()?;
     Ok(DisplayMap {
         display_handle: Arc::new(display_handle),
@@ -31,8 +31,8 @@ fn display_fd_map(display_handle: LegacyGraphicsHandle) -> io::Result<DisplayMap
 }
 
 pub struct DisplayMap {
-    display_handle: Arc<LegacyGraphicsHandle>,
-    pub inner: graphics_ipc::legacy::DisplayMap,
+    display_handle: Arc<V1GraphicsHandle>,
+    pub inner: graphics_ipc::v1::DisplayMap,
 }
 
 enum DisplayCommand {
@@ -50,7 +50,7 @@ impl Display {
 
         let map = match input_handle.open_display() {
             Ok(display) => {
-                let display_handle = LegacyGraphicsHandle::from_file(display)?;
+                let display_handle = V1GraphicsHandle::from_file(display)?;
                 Arc::new(Mutex::new(Some(
                     display_fd_map(display_handle)
                         .unwrap_or_else(|e| panic!("failed to map display: {e}")),
@@ -102,7 +102,7 @@ impl Display {
                     eprintln!("fbbootlogd: handoff requested");
 
                     let new_display_handle = match input_handle.open_display() {
-                        Ok(display) => LegacyGraphicsHandle::from_file(display).unwrap(),
+                        Ok(display) => V1GraphicsHandle::from_file(display).unwrap(),
                         Err(err) => {
                             println!("fbbootlogd: No display present yet: {err}");
                             continue;

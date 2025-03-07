@@ -4,17 +4,17 @@ use std::{cmp, io, mem, ptr, slice};
 
 use libredox::flag;
 
-/// A graphics handle using the legacy graphics API.
+/// A graphics handle using the v1 graphics API.
 ///
-/// The legacy graphics API only allows a single framebuffer for each VT and supports neither page
+/// The v1 graphics API only allows a single framebuffer for each VT and supports neither page
 /// flipping nor cursor planes.
-pub struct LegacyGraphicsHandle {
+pub struct V1GraphicsHandle {
     file: File,
 }
 
-impl LegacyGraphicsHandle {
+impl V1GraphicsHandle {
     pub fn from_file(file: File) -> io::Result<Self> {
-        Ok(LegacyGraphicsHandle { file })
+        Ok(V1GraphicsHandle { file })
     }
 
     pub fn map_display(&self) -> io::Result<DisplayMap> {
@@ -111,18 +111,20 @@ impl Drop for DisplayMap {
 }
 
 // Keep synced with orbital's SyncRect
+// Technically orbital uses i32 rather than u32, but values larger than i32::MAX
+// would be a bug anyway.
 #[derive(Debug, Copy, Clone)]
 #[repr(packed)]
 pub struct Damage {
-    pub x: i32,
-    pub y: i32,
-    pub width: i32,
-    pub height: i32,
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
 }
 
 impl Damage {
     #[must_use]
-    pub fn clip(mut self, width: i32, height: i32) -> Self {
+    pub fn clip(mut self, width: u32, height: u32) -> Self {
         // Clip damage
         self.x = cmp::min(self.x, width);
         if self.x + self.width > width {
