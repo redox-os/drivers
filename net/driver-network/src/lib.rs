@@ -72,13 +72,13 @@ impl<T: NetworkAdapter> NetworkScheme<T> {
         &mut self.adapter
     }
 
-    /// Process pending and new packets.
+    /// Process pending and new requests.
     ///
     /// This needs to be called each time there is a new event on the scheme
     /// file and each time a new network packet has been received by the
     /// driver.
     // FIXME maybe split into one method for events on the scheme fd and one
-    // to call when an irq is received to indicate that blocked packets can
+    // to call when an irq is received to indicate that blocked requests can
     // be processed.
     pub fn tick(&mut self) -> io::Result<()> {
         // Handle any blocked requests

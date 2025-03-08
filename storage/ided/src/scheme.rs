@@ -21,21 +21,15 @@ enum Handle {
 
 pub struct DiskScheme {
     scheme_name: String,
-    chans: Box<[Arc<Mutex<Channel>>]>,
     disks: Box<[DiskWrapper<Box<dyn Disk>>]>,
     handles: BTreeMap<usize, Handle>,
     next_id: usize,
 }
 
 impl DiskScheme {
-    pub fn new(
-        scheme_name: String,
-        chans: Vec<Arc<Mutex<Channel>>>,
-        disks: Vec<Box<dyn Disk>>,
-    ) -> DiskScheme {
+    pub fn new(scheme_name: String, disks: Vec<Box<dyn Disk>>) -> DiskScheme {
         DiskScheme {
             scheme_name,
-            chans: chans.into_boxed_slice(),
             disks: disks
                 .into_iter()
                 .map(DiskWrapper::new)
@@ -44,12 +38,6 @@ impl DiskScheme {
             handles: BTreeMap::new(),
             next_id: 0,
         }
-    }
-
-    pub fn irq(&mut self, chan_i: usize) -> bool {
-        let _chan = self.chans[chan_i].lock().unwrap();
-        //TODO: check chan for irq
-        true
     }
 
     // Checks if any conflicting handles already exist

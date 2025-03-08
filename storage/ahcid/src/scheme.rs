@@ -2,7 +2,6 @@ use std::collections::BTreeMap;
 use std::fmt::Write;
 use std::str;
 
-use common::io::Io as _;
 use driver_block::{Disk, DiskWrapper};
 use redox_scheme::{CallerCtx, OpenResult, SchemeBlock};
 use syscall::schemev2::NewFdFlags;
@@ -10,8 +9,6 @@ use syscall::{
     Error, Result, Stat, EACCES, EBADF, EISDIR, ENOENT, ENOLCK, MODE_DIR, MODE_FILE, O_DIRECTORY,
     O_STAT,
 };
-
-use crate::ahci::hba::HbaMem;
 
 enum Handle {
     List(Vec<u8>),         // Dir contents buffer
@@ -21,21 +18,15 @@ enum Handle {
 
 pub struct DiskScheme {
     scheme_name: String,
-    hba_mem: &'static mut HbaMem,
     disks: Box<[DiskWrapper<Box<dyn Disk>>]>,
     handles: BTreeMap<usize, Handle>,
     next_id: usize,
 }
 
 impl DiskScheme {
-    pub fn new(
-        scheme_name: String,
-        hba_mem: &'static mut HbaMem,
-        disks: Vec<Box<dyn Disk>>,
-    ) -> DiskScheme {
+    pub fn new(scheme_name: String, disks: Vec<Box<dyn Disk>>) -> DiskScheme {
         DiskScheme {
             scheme_name,
-            hba_mem,
             disks: disks
                 .into_iter()
                 .map(DiskWrapper::new)
@@ -43,25 +34,6 @@ impl DiskScheme {
                 .into_boxed_slice(),
             handles: BTreeMap::new(),
             next_id: 0,
-        }
-    }
-
-    pub fn irq(&mut self) -> bool {
-        let is = self.hba_mem.is.read();
-        if is > 0 {
-            let pi = self.hba_mem.pi.read();
-            let pi_is = pi & is;
-            for i in 0..self.hba_mem.ports.len() {
-                if pi_is & 1 << i > 0 {
-                    let port = &mut self.hba_mem.ports[i];
-                    let is = port.is.read();
-                    port.is.write(is);
-                }
-            }
-            self.hba_mem.is.write(is);
-            true
-        } else {
-            false
         }
     }
 

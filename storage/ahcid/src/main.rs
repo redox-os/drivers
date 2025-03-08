@@ -7,6 +7,7 @@ use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
 use std::usize;
 
+use common::io::Io;
 use event::{EventFlags, RawEventQueue};
 use pcid_interface::PciFunctionHandle;
 use redox_scheme::{RequestKind, Response, SignalBehavior, Socket};
@@ -68,7 +69,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         daemon.ready().expect("ahcid: failed to notify parent");
 
         let (hba_mem, disks) = ahci::disks(address as usize, &name);
-        let mut scheme = DiskScheme::new(scheme_name, hba_mem, disks);
+        let mut scheme = DiskScheme::new(scheme_name, disks);
 
         let mut mounted = true;
         let mut todo = Vec::new();
@@ -120,7 +121,19 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
                     .expect("ahcid: failed to read irq file")
                     >= irq.len()
                 {
-                    if scheme.irq() {
+                    let is = hba_mem.is.read();
+                    if is > 0 {
+                        let pi = hba_mem.pi.read();
+                        let pi_is = pi & is;
+                        for i in 0..hba_mem.ports.len() {
+                            if pi_is & 1 << i > 0 {
+                                let port = &mut hba_mem.ports[i];
+                                let is = port.is.read();
+                                port.is.write(is);
+                            }
+                        }
+                        hba_mem.is.write(is);
+
                         irq_file
                             .write(&irq)
                             .expect("ahcid: failed to write irq file");
