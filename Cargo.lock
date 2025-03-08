@@ -52,7 +52,6 @@ dependencies = [
  "log",
  "pcid",
  "redox-daemon",
- "redox-scheme 0.3.0",
  "redox_event",
  "redox_syscall",
 ]
@@ -180,7 +179,6 @@ dependencies = [
  "fdt 0.2.0-alpha1",
  "libredox",
  "redox-daemon",
- "redox-scheme 0.3.0",
  "redox_event",
  "redox_syscall",
 ]
@@ -392,7 +390,9 @@ checksum = "22ec99545bb0ed0ea7bb9b8e1e9122ea386ff8a48c0922e43f36d45ab09e0e80"
 name = "driver-block"
 version = "0.1.0"
 dependencies = [
+ "libredox",
  "partitionlib",
+ "redox-scheme 0.3.0",
  "redox_syscall",
 ]
 
@@ -680,7 +680,6 @@ dependencies = [
  "log",
  "pcid",
  "redox-daemon",
- "redox-scheme 0.3.0",
  "redox_event",
  "redox_syscall",
 ]
@@ -781,9 +780,9 @@ name = "lived"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "driver-block",
  "libredox",
  "redox-daemon",
- "redox-scheme 0.3.0",
  "redox_event",
  "redox_syscall",
 ]
@@ -856,7 +855,6 @@ dependencies = [
  "log",
  "pcid",
  "redox-daemon",
- "redox-scheme 0.3.0",
  "redox_event",
  "redox_syscall",
  "smallvec 1.13.2",
@@ -1673,7 +1671,7 @@ dependencies = [
  "log",
  "pcid",
  "redox-daemon",
- "redox-scheme 0.3.0",
+ "redox_event",
  "redox_syscall",
  "spin",
  "static_assertions",
