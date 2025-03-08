@@ -780,9 +780,9 @@ name = "lived"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "driver-block",
  "libredox",
  "redox-daemon",
- "redox-scheme 0.3.0",
  "redox_event",
  "redox_syscall",
 ]

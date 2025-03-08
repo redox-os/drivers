@@ -69,6 +69,8 @@ pub trait Disk {
     fn block_size(&self) -> u32;
     fn size(&self) -> u64;
 
+    // These operate on a whole multiple of the block size
+    // FIXME maybe only operate on a single block worth of data?
     fn read(&mut self, block: u64, buffer: &mut [u8]) -> syscall::Result<Option<usize>>;
     fn write(&mut self, block: u64, buffer: &[u8]) -> syscall::Result<Option<usize>>;
 }
