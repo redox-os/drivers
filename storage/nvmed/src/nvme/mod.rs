@@ -170,7 +170,7 @@ pub struct NvmeRegs {
     cmbsz: Mmio<u32>,
 }
 
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct NvmeNamespace {
     pub id: u32,
     pub blocks: u64,
@@ -641,8 +641,7 @@ impl Nvme {
 
     fn namespace_rw(
         &self,
-        namespace: &NvmeNamespace,
-        nsid: u32,
+        namespace: NvmeNamespace,
         lba: u64,
         blocks_1: u16,
         write: bool,
@@ -666,9 +665,9 @@ impl Nvme {
         let mut cmd = NvmeCmd::default();
         let comp = self.submit_and_complete_command(1, |cid| {
             cmd = if write {
-                NvmeCmd::io_write(cid, nsid, lba, blocks_1, ptr0, ptr1)
+                NvmeCmd::io_write(cid, namespace.id, lba, blocks_1, ptr0, ptr1)
             } else {
-                NvmeCmd::io_read(cid, nsid, lba, blocks_1, ptr0, ptr1)
+                NvmeCmd::io_read(cid, namespace.id, lba, blocks_1, ptr0, ptr1)
             };
             cmd.clone()
         });
@@ -683,8 +682,7 @@ impl Nvme {
 
     pub fn namespace_read(
         &self,
-        namespace: &NvmeNamespace,
-        nsid: u32,
+        namespace: NvmeNamespace,
         mut lba: u64,
         buf: &mut [u8],
     ) -> Result<Option<usize>> {
@@ -698,7 +696,7 @@ impl Nvme {
             assert!(blocks > 0);
             assert!(blocks <= 0x1_0000);
 
-            self.namespace_rw(namespace, nsid, lba, (blocks - 1) as u16, false)?;
+            self.namespace_rw(namespace, lba, (blocks - 1) as u16, false)?;
 
             chunk.copy_from_slice(&buffer_guard[..chunk.len()]);
 
@@ -710,8 +708,7 @@ impl Nvme {
 
     pub fn namespace_write(
         &self,
-        namespace: &NvmeNamespace,
-        nsid: u32,
+        namespace: NvmeNamespace,
         mut lba: u64,
         buf: &[u8],
     ) -> Result<Option<usize>> {
@@ -727,7 +724,7 @@ impl Nvme {
 
             buffer_guard[..chunk.len()].copy_from_slice(chunk);
 
-            self.namespace_rw(namespace, nsid, lba, (blocks - 1) as u16, true)?;
+            self.namespace_rw(namespace, lba, (blocks - 1) as u16, true)?;
 
             lba += blocks as u64;
         }

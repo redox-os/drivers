@@ -169,11 +169,11 @@ pub struct AtaDisk {
 }
 
 impl Disk for AtaDisk {
-    fn id(&self) -> usize {
-        self.chan_i << 1 | self.dev as usize
+    fn block_size(&self) -> u32 {
+        512
     }
 
-    fn size(&mut self) -> u64 {
+    fn size(&self) -> u64 {
         self.size
     }
 
@@ -463,9 +463,5 @@ impl Disk for AtaDisk {
         }
 
         Ok(Some(count))
-    }
-
-    fn block_length(&mut self) -> Result<u32> {
-        Ok(512)
     }
 }

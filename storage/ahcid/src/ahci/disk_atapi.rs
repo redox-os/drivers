@@ -25,6 +25,8 @@ pub struct DiskATAPI {
     // Just using the same buffer size as DiskATA
     // Although the sector size is different (and varies)
     buf: Dma<[u8; 256 * 512]>,
+    blk_count: u32,
+    blk_size: u32,
 }
 
 impl DiskATAPI {
@@ -38,11 +40,19 @@ impl DiskATAPI {
             .unwrap_or_else(|_| unreachable!());
 
         let mut fb = unsafe { Dma::zeroed()?.assume_init() };
-        let buf = unsafe { Dma::zeroed()?.assume_init() };
+        let mut buf = unsafe { Dma::zeroed()?.assume_init() };
 
         port.init(&mut clb, &mut ctbas, &mut fb);
 
         let size = unsafe { port.identify_packet(&mut clb, &mut ctbas).unwrap_or(0) };
+
+        let mut cmd = [0; 16];
+        cmd[0] = SCSI_READ_CAPACITY;
+        port.atapi_dma(&cmd, 8, &mut clb, &mut ctbas, &mut buf)?;
+
+        // Instead of a count, contains number of last LBA, so add 1
+        let blk_count = BigEndian::read_u32(&buf[0..4]) + 1;
+        let blk_size = BigEndian::read_u32(&buf[4..8]);
 
         Ok(DiskATAPI {
             id,
@@ -52,41 +62,25 @@ impl DiskATAPI {
             ctbas,
             _fb: fb,
             buf,
+            blk_count,
+            blk_size,
         })
-    }
-
-    fn read_capacity(&mut self) -> Result<(u32, u32)> {
-        // TODO: only query when needed (disk changed)
-
-        let mut cmd = [0; 16];
-        cmd[0] = SCSI_READ_CAPACITY;
-        self.port
-            .atapi_dma(&cmd, 8, &mut self.clb, &mut self.ctbas, &mut self.buf)?;
-
-        // Instead of a count, contains number of last LBA, so add 1
-        let blk_count = BigEndian::read_u32(&self.buf[0..4]) + 1;
-        let blk_size = BigEndian::read_u32(&self.buf[4..8]);
-
-        Ok((blk_count, blk_size))
     }
 }
 
 impl Disk for DiskATAPI {
-    fn id(&self) -> usize {
-        self.id
+    fn block_size(&self) -> u32 {
+        self.blk_size
     }
 
-    fn size(&mut self) -> u64 {
-        match self.read_capacity() {
-            Ok((blk_count, blk_size)) => (blk_count as u64) * (blk_size as u64),
-            Err(_) => 0, // XXX
-        }
+    fn size(&self) -> u64 {
+        u64::from(self.blk_count) * u64::from(self.blk_size)
     }
 
     fn read(&mut self, block: u64, buffer: &mut [u8]) -> Result<Option<usize>> {
         // TODO: Handle audio CDs, which use special READ CD command
 
-        let blk_len = self.block_length()?;
+        let blk_len = self.blk_size;
         let sectors = buffer.len() as u32 / blk_len;
 
         fn read10_cmd(block: u32, count: u16) -> [u8; 16] {
@@ -150,9 +144,5 @@ impl Disk for DiskATAPI {
 
     fn write(&mut self, _block: u64, _buffer: &[u8]) -> Result<Option<usize>> {
         Err(Error::new(EBADF)) // TODO: Implement writing
-    }
-
-    fn block_length(&mut self) -> Result<u32> {
-        Ok(self.read_capacity()?.1)
     }
 }
