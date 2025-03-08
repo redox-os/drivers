@@ -5,15 +5,15 @@ use std::ptr::NonNull;
 use std::sync::Arc;
 use std::{slice, usize};
 
+use driver_block::{Disk, DiskScheme};
 use pcid_interface::{PciFeature, PciFeatureInfo, PciFunction, PciFunctionHandle};
-use redox_scheme::{RequestKind, SignalBehavior, Socket};
 use syscall::Result;
 
+use crate::nvme::NvmeNamespace;
+
 use self::nvme::{InterruptMethod, InterruptSources, Nvme};
-use self::scheme::DiskScheme;
 
 mod nvme;
-mod scheme;
 
 /// Get the most optimal yet functional interrupt mechanism: either (in the order of preference):
 /// MSI-X, MSI, and INTx# pin. Returns both runtime interrupt structures (MSI/MSI-X capability
@@ -140,6 +140,26 @@ fn get_int_method(
     }
 }
 
+struct NvmeDisk(Arc<Nvme>, NvmeNamespace);
+
+impl Disk for NvmeDisk {
+    fn block_size(&self) -> u32 {
+        self.1.block_size.try_into().unwrap()
+    }
+
+    fn size(&self) -> u64 {
+        self.1.blocks * self.1.block_size
+    }
+
+    fn read(&mut self, block: u64, buffer: &mut [u8]) -> syscall::Result<Option<usize>> {
+        self.0.namespace_read(self.1, block, buffer)
+    }
+
+    fn write(&mut self, block: u64, buffer: &[u8]) -> syscall::Result<Option<usize>> {
+        self.0.namespace_write(self.1, block, buffer)
+    }
+}
+
 fn main() {
     redox_daemon::Daemon::new(daemon).expect("nvmed: failed to daemonize");
 }
@@ -160,8 +180,6 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     log::debug!("NVME PCI CONFIG: {:?}", pci_config);
 
     let address = unsafe { pcid_handle.map_bar(0).ptr };
-
-    let socket = Socket::create(&scheme_name).expect("nvmed: failed to create disk scheme");
 
     daemon.ready().expect("nvmed: failed to signal readiness");
 
@@ -185,40 +203,35 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         reactor_receiver,
     );
     let namespaces = nvme.init_with_queues();
+    let event_queue = event::EventQueue::new().unwrap();
+
+    event::user_data! {
+        enum Event {
+            Scheme,
+        }
+    };
+
+    let mut scheme = DiskScheme::new(
+        scheme_name,
+        namespaces
+            .into_iter()
+            .map(|(k, ns)| (k, NvmeDisk(nvme.clone(), ns)))
+            .collect(),
+    );
 
     libredox::call::setrens(0, 0).expect("nvmed: failed to enter null namespace");
 
-    let mut scheme = DiskScheme::new(scheme_name, nvme, namespaces);
-    let mut todo = Vec::new();
-    loop {
-        // TODO: Use a proper event queue once interrupt support is back.
-        match socket
-            .next_request(SignalBehavior::Restart)
-            .expect("nvmed: failed to read disk scheme")
-        {
-            None => {
-                break;
-            }
-            Some(req) => {
-                if let RequestKind::Call(c) = req.kind() {
-                    todo.push(c);
-                } else {
-                    // TODO: cancellation
-                    continue;
-                }
-            }
-        }
+    event_queue
+        .subscribe(
+            scheme.event_handle().raw(),
+            Event::Scheme,
+            event::EventFlags::READ,
+        )
+        .unwrap();
 
-        let mut i = 0;
-        while i < todo.len() {
-            if let Some(resp) = todo[i].handle_scheme_block(&mut scheme) {
-                let _req = todo.remove(i);
-                socket
-                    .write_response(resp, SignalBehavior::Restart)
-                    .expect("nvmed: failed to write disk scheme");
-            } else {
-                i += 1;
-            }
+    for event in event_queue {
+        match event.unwrap().user_data {
+            Event::Scheme => scheme.tick().unwrap(),
         }
     }
 

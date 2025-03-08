@@ -1,8 +1,9 @@
 #![deny(trivial_numeric_casts, unused_allocation)]
 
+use std::collections::BTreeMap;
 use std::sync::{Arc, Weak};
 
-use redox_scheme::{RequestKind, SignalBehavior, Socket};
+use driver_block::DiskScheme;
 use static_assertions::const_assert_eq;
 
 use pcid_interface::*;
@@ -14,6 +15,8 @@ use virtio_core::utils::VolatileCell;
 mod scheme;
 
 use thiserror::Error;
+
+use crate::scheme::VirtioDisk;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -140,31 +143,37 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
 
     let scheme_name = format!("disk.{}", name);
 
-    let socket_fd = Socket::create(&scheme_name).map_err(Error::SyscallError)?;
+    let event_queue = event::EventQueue::new().unwrap();
 
-    let mut scheme = scheme::DiskScheme::new(queue, device_space);
+    event::user_data! {
+        enum Event {
+            Scheme,
+        }
+    };
+
+    let mut scheme = DiskScheme::new(
+        scheme_name,
+        BTreeMap::from([(0, VirtioDisk::new(queue, device_space))]),
+    );
+
+    libredox::call::setrens(0, 0).expect("nvmed: failed to enter null namespace");
+
+    event_queue
+        .subscribe(
+            scheme.event_handle().raw(),
+            Event::Scheme,
+            event::EventFlags::READ,
+        )
+        .unwrap();
 
     deamon.ready().expect("virtio-blkd: failed to deamonize");
 
-    loop {
-        let req = match socket_fd
-            .next_request(SignalBehavior::Restart)
-            .expect("virtio-blkd: failed to read disk scheme")
-        {
-            Some(r) => {
-                if let RequestKind::Call(c) = r.kind() {
-                    c
-                } else {
-                    continue;
-                }
-            }
-            None => break,
-        };
-        let resp = req.handle_scheme_block(&mut scheme).expect("TODO: block?");
-        socket_fd
-            .write_response(resp, SignalBehavior::Restart)
-            .expect("virtio-blkd: failed to write to disk scheme");
+    for event in event_queue {
+        match event.unwrap().user_data {
+            Event::Scheme => scheme.tick().unwrap(),
+        }
     }
+
     Ok(())
 }
 
