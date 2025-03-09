@@ -1,7 +1,9 @@
 #![cfg_attr(target_arch = "aarch64", feature(stdarch_arm_hints))] // Required for yield instruction
 #![cfg_attr(target_arch = "riscv64", feature(riscv_ext_intrinsics))] // Required for pause instruction
 
+use std::cell::RefCell;
 use std::ptr::NonNull;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::{slice, usize};
 
@@ -140,23 +142,26 @@ fn get_int_method(
     }
 }
 
-struct NvmeDisk(Arc<Nvme>, NvmeNamespace);
+struct NvmeDisk {
+    nvme: Arc<Nvme>,
+    ns: NvmeNamespace,
+}
 
 impl Disk for NvmeDisk {
     fn block_size(&self) -> u32 {
-        self.1.block_size.try_into().unwrap()
+        self.ns.block_size.try_into().unwrap()
     }
 
     fn size(&self) -> u64 {
-        self.1.blocks * self.1.block_size
+        self.ns.blocks * self.ns.block_size
     }
 
-    fn read(&mut self, block: u64, buffer: &mut [u8]) -> syscall::Result<Option<usize>> {
-        self.0.namespace_read(self.1, block, buffer)
+    async fn read(&mut self, block: u64, buffer: &mut [u8]) -> syscall::Result<usize> {
+        self.nvme.namespace_read(&self.ns, block, buffer).await
     }
 
-    fn write(&mut self, block: u64, buffer: &[u8]) -> syscall::Result<Option<usize>> {
-        self.0.namespace_write(self.1, block, buffer)
+    async fn write(&mut self, block: u64, buffer: &[u8]) -> syscall::Result<usize> {
+        self.nvme.namespace_write(&self.ns, block, buffer).await
     }
 }
 
@@ -181,65 +186,67 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     let address = unsafe { pcid_handle.map_bar(0).ptr };
 
-    daemon.ready().expect("nvmed: failed to signal readiness");
-
-    let (reactor_sender, reactor_receiver) = crossbeam_channel::unbounded();
     let (interrupt_method, interrupt_sources) = get_int_method(&mut pcid_handle, &pci_config.func)
         .expect("nvmed: failed to find a suitable interrupt method");
-    let mut nvme = Nvme::new(
-        address.as_ptr() as usize,
-        interrupt_method,
-        pcid_handle,
-        reactor_sender,
-    )
-    .expect("nvmed: failed to allocate driver data");
+    let mut nvme = Nvme::new(address.as_ptr() as usize, interrupt_method, pcid_handle)
+        .expect("nvmed: failed to allocate driver data");
+
     unsafe { nvme.init() }
     log::debug!("Finished base initialization");
     let nvme = Arc::new(nvme);
-    #[cfg(feature = "async")]
-    let reactor_thread = nvme::cq_reactor::start_cq_reactor_thread(
-        Arc::clone(&nvme),
-        interrupt_sources,
-        reactor_receiver,
-    );
-    let namespaces = nvme.init_with_queues();
-    let event_queue = event::EventQueue::new().unwrap();
 
-    event::user_data! {
-        enum Event {
-            Scheme,
-        }
+    let executor = {
+        let (intx, (iv, irq_handle)) = match interrupt_sources {
+            InterruptSources::Msi(mut vectors) => (
+                false,
+                vectors.pop_first().map(|(a, b)| (u16::from(a), b)).unwrap(),
+            ),
+            InterruptSources::MsiX(mut vectors) => (false, vectors.pop_first().unwrap()),
+            InterruptSources::Intx(file) => (true, (0, file)),
+        };
+        nvme::executor::init(Arc::clone(&nvme), iv, intx, irq_handle)
     };
+    let namespaces = executor.block_on(nvme.init_with_queues());
+    log::debug!("Initialized!");
 
-    let mut scheme = DiskScheme::new(
+    let scheme = Rc::new(RefCell::new(DiskScheme::new(
         scheme_name,
         namespaces
             .into_iter()
-            .map(|(k, ns)| (k, NvmeDisk(nvme.clone(), ns)))
+            .map(|(k, ns)| {
+                (
+                    k,
+                    NvmeDisk {
+                        nvme: nvme.clone(),
+                        ns,
+                    },
+                )
+            })
             .collect(),
-    );
+        &*executor,
+    )));
+    daemon.ready().expect("nvmed: failed to signal readiness");
+
+    let mut scheme_events = Box::pin(executor.register_external_event(
+        scheme.borrow().event_handle().raw(),
+        event::EventFlags::READ,
+    ));
 
     libredox::call::setrens(0, 0).expect("nvmed: failed to enter null namespace");
 
-    event_queue
-        .subscribe(
-            scheme.event_handle().raw(),
-            Event::Scheme,
-            event::EventFlags::READ,
-        )
-        .unwrap();
+    log::info!("Starting to listen for scheme events");
 
-    for event in event_queue {
-        match event.unwrap().user_data {
-            Event::Scheme => scheme.tick().unwrap(),
+    executor.block_on(async {
+        loop {
+            log::trace!("new event iteration");
+            if let Err(err) = scheme.borrow_mut().tick().await {
+                log::error!("scheme error: {err}");
+            }
+            let _ = scheme_events.as_mut().next().await;
         }
-    }
+    });
 
     //TODO: destroy NVMe stuff
-    #[cfg(feature = "async")]
-    reactor_thread
-        .join()
-        .expect("nvmed: failed to join reactor thread");
 
     std::process::exit(0);
 }
