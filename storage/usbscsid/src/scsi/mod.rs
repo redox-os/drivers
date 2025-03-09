@@ -249,7 +249,7 @@ impl Scsi {
     pub fn res_read_capacity10(&self) -> &cmds::ReadCapacity10ParamData {
         plain::from_bytes(&self.data_buffer).unwrap()
     }
-    pub fn get_disk_size(&mut self) -> u64 {
+    pub fn get_disk_size(&self) -> u64 {
         self.block_count * u64::from(self.block_size)
     }
     pub fn read(

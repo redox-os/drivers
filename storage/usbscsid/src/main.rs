@@ -1,15 +1,15 @@
+use std::collections::BTreeMap;
 use std::env;
 
-use redox_scheme::{RequestKind, SignalBehavior, Socket};
+use driver_block::{Disk, DiskScheme};
+use syscall::{Error, EIO};
 use xhcid_interface::{ConfigureEndpointsReq, XhciClientHandle};
 
 pub mod protocol;
 pub mod scsi;
 
-mod scheme;
-
-use scheme::ScsiScheme;
-use scsi::Scsi;
+use crate::protocol::Protocol;
+use crate::scsi::Scsi;
 
 fn main() {
     let mut args = env::args().skip(1);
@@ -37,7 +37,7 @@ fn main() {
         .expect("usbscsid: failed to daemonize");
 }
 fn daemon(daemon: redox_daemon::Daemon, scheme: String, port: usize, protocol: u8) -> ! {
-    let disk_scheme_name = format!(":disk.usb-{scheme}+{port}-scsi");
+    let disk_scheme_name = format!("disk.usb-{scheme}+{port}-scsi");
 
     // TODO: Use eventfds.
     let handle = XhciClientHandle::new(scheme.to_owned(), port);
@@ -82,38 +82,81 @@ fn daemon(daemon: redox_daemon::Daemon, scheme: String, port: usize, protocol: u
 
     // TODO: Let all of the USB drivers fork or be managed externally, and xhcid won't have to keep
     // track of all the drivers.
-    let socket_fd =
-        Socket::create(&disk_scheme_name).expect("usbscsid: failed to create disk scheme");
-
-    //libredox::call::setrens(0, 0).expect("scsid: failed to enter null namespace");
     let mut scsi = Scsi::new(&mut *protocol).expect("usbscsid: failed to setup SCSI");
     println!("SCSI initialized");
     let mut buffer = [0u8; 512];
     scsi.read(&mut *protocol, 0, &mut buffer).unwrap();
     println!("DISK CONTENT: {}", base64::encode(&buffer[..]));
 
-    let mut scsi_scheme = ScsiScheme::new(&mut scsi, &mut *protocol);
+    let event_queue = event::EventQueue::new().unwrap();
 
-    // TODO: Use nonblocking and put all pending calls in a todo VecDeque. Use an eventfd as well.
-    loop {
-        let req = match socket_fd
-            .next_request(SignalBehavior::Restart)
-            .expect("scsid: failed to read disk scheme")
-        {
-            Some(r) => {
-                if let RequestKind::Call(c) = r.kind() {
-                    c
-                } else {
-                    continue;
-                }
-            }
-            None => break,
-        };
-        let resp = req.handle_scheme(&mut scsi_scheme);
-        socket_fd
-            .write_response(resp, SignalBehavior::Restart)
-            .expect("scsid: failed to write cqe");
+    event::user_data! {
+        enum Event {
+            Scheme,
+        }
+    };
+
+    let mut scheme = DiskScheme::new(
+        disk_scheme_name,
+        BTreeMap::from([(
+            0,
+            UsbDisk {
+                scsi: &mut scsi,
+                protocol: &mut *protocol,
+            },
+        )]),
+    );
+
+    //libredox::call::setrens(0, 0).expect("nvmed: failed to enter null namespace");
+
+    event_queue
+        .subscribe(
+            scheme.event_handle().raw(),
+            Event::Scheme,
+            event::EventFlags::READ,
+        )
+        .unwrap();
+
+    for event in event_queue {
+        match event.unwrap().user_data {
+            Event::Scheme => scheme.tick().unwrap(),
+        }
     }
 
     std::process::exit(0);
+}
+
+struct UsbDisk<'a> {
+    scsi: &'a mut Scsi,
+    protocol: &'a mut dyn Protocol,
+}
+
+impl Disk for UsbDisk<'_> {
+    fn block_size(&self) -> u32 {
+        self.scsi.block_size
+    }
+
+    fn size(&self) -> u64 {
+        self.scsi.get_disk_size()
+    }
+
+    fn read(&mut self, block: u64, buffer: &mut [u8]) -> syscall::Result<Option<usize>> {
+        match self.scsi.read(self.protocol, block, buffer) {
+            Ok(bytes_read) => Ok(Some(bytes_read as usize)),
+            Err(err) => {
+                eprintln!("usbscsid: READ IO ERROR: {err}");
+                Err(Error::new(EIO))
+            }
+        }
+    }
+
+    fn write(&mut self, block: u64, buffer: &[u8]) -> syscall::Result<Option<usize>> {
+        match self.scsi.write(self.protocol, block, buffer) {
+            Ok(bytes_written) => Ok(Some(bytes_written as usize)),
+            Err(err) => {
+                eprintln!("usbscsid: WRITE IO ERROR: {err}");
+                Err(Error::new(EIO))
+            }
+        }
+    }
 }
