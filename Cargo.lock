@@ -1594,10 +1594,11 @@ name = "usbscsid"
 version = "0.1.0"
 dependencies = [
  "base64 0.11.0",
+ "driver-block",
  "libredox",
  "plain",
  "redox-daemon",
- "redox-scheme 0.3.0",
+ "redox_event",
  "redox_syscall",
  "thiserror",
  "xhcid",
