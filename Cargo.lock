@@ -23,7 +23,7 @@ version = "0.1.0"
 dependencies = [
  "aml",
  "amlserde",
- "arrayvec 0.7.6",
+ "arrayvec",
  "common",
  "libredox",
  "log",
@@ -128,12 +128,6 @@ name = "anyhow"
 version = "1.0.92"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "74f37166d7d48a0284b99dd824694c26119c700b53bf0d1540cdb147dbdaaf13"
-
-[[package]]
-name = "arrayvec"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23b62fc65de8e4e7f52534fb52b0f3ed04746ae267519eef2a83941e8085068b"
 
 [[package]]
 name = "arrayvec"
@@ -390,9 +384,11 @@ checksum = "22ec99545bb0ed0ea7bb9b8e1e9122ea386ff8a48c0922e43f36d45ab09e0e80"
 name = "driver-block"
 version = "0.1.0"
 dependencies = [
+ "executor",
  "libredox",
+ "log",
  "partitionlib",
- "redox-scheme 0.3.0",
+ "redox-scheme 0.5.0",
  "redox_syscall",
 ]
 
@@ -437,6 +433,15 @@ name = "equivalent"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5443807d6dff69373d433ab9ef5378ad8df50ca6298caf15de6e52e24aaf54d5"
+
+[[package]]
+name = "executor"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "redox_event",
+ "slab",
+]
 
 [[package]]
 name = "fbbootlogd"
@@ -845,14 +850,15 @@ checksum = "6aa2c4e539b869820a2b82e1aef6ff40aa85e65decdd5185e83fb4b1249cd00f"
 name = "nvmed"
 version = "0.1.0"
 dependencies = [
- "arrayvec 0.5.2",
- "bitflags 1.3.2",
+ "arrayvec",
+ "bitflags 2.6.0",
  "common",
- "crossbeam-channel",
  "driver-block",
- "futures",
+ "executor",
  "libredox",
  "log",
+ "parking_lot 0.12.3",
+ "partitionlib",
  "pcid",
  "redox-daemon",
  "redox_event",
@@ -1144,6 +1150,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "redox-scheme"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a96b9cfb034251dfb0aaa66a67059a7f0ea344039904d1d70cd36266af9c8a2f"
+dependencies = [
+ "libredox",
+ "redox_syscall",
+]
+
+[[package]]
 name = "redox_event"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1155,9 +1171,9 @@ dependencies = [
 
 [[package]]
 name = "redox_syscall"
-version = "0.5.9"
+version = "0.5.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82b568323e98e49e2a0899dcee453dd679fae22d69adf9b11dd508d1549b7e2f"
+checksum = "0b8c0c260b63a8219631167be35e6a988e9554dbd323f8bd08439c8ed1302bd1"
 dependencies = [
  "bitflags 2.6.0",
 ]
