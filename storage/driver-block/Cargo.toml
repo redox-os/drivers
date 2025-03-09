@@ -4,8 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+executor = { path = "../../executor" }
 partitionlib = { path = "../partitionlib" }
 
 libredox = "0.1.3"
-redox_syscall = "0.5"
-redox-scheme = "0.4"
+log = "0.4"
+redox_syscall = { version = "0.5", features = ["std"] }
+redox-scheme = "0.5"

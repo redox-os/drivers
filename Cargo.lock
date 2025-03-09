@@ -32,7 +32,7 @@ dependencies = [
  "parking_lot 0.12.3",
  "plain",
  "redox-daemon",
- "redox-scheme",
+ "redox-scheme 0.4.0",
  "redox_event",
  "redox_syscall",
  "ron",
@@ -193,7 +193,7 @@ dependencies = [
  "orbclient",
  "pcid",
  "redox-daemon",
- "redox-scheme",
+ "redox-scheme 0.4.0",
  "redox_syscall",
 ]
 
@@ -391,9 +391,11 @@ checksum = "22ec99545bb0ed0ea7bb9b8e1e9122ea386ff8a48c0922e43f36d45ab09e0e80"
 name = "driver-block"
 version = "0.1.0"
 dependencies = [
+ "executor",
  "libredox",
+ "log",
  "partitionlib",
- "redox-scheme",
+ "redox-scheme 0.5.0",
  "redox_syscall",
 ]
 
@@ -406,7 +408,7 @@ dependencies = [
  "inputd",
  "libredox",
  "log",
- "redox-scheme",
+ "redox-scheme 0.4.0",
  "redox_syscall",
 ]
 
@@ -415,7 +417,7 @@ name = "driver-network"
 version = "0.1.0"
 dependencies = [
  "libredox",
- "redox-scheme",
+ "redox-scheme 0.4.0",
  "redox_syscall",
 ]
 
@@ -440,6 +442,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5443807d6dff69373d433ab9ef5378ad8df50ca6298caf15de6e52e24aaf54d5"
 
 [[package]]
+name = "executor"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "redox_event",
+ "slab",
+]
+
+[[package]]
 name = "fbbootlogd"
 version = "0.1.0"
 dependencies = [
@@ -450,7 +461,7 @@ dependencies = [
  "orbclient",
  "ransid",
  "redox-daemon",
- "redox-scheme",
+ "redox-scheme 0.4.0",
  "redox_event",
  "redox_syscall",
 ]
@@ -466,7 +477,7 @@ dependencies = [
  "orbclient",
  "ransid",
  "redox-daemon",
- "redox-scheme",
+ "redox-scheme 0.4.0",
  "redox_event",
  "redox_syscall",
 ]
@@ -720,7 +731,7 @@ dependencies = [
  "log",
  "orbclient",
  "redox-daemon",
- "redox-scheme",
+ "redox-scheme 0.4.0",
  "redox_syscall",
 ]
 
@@ -965,7 +976,7 @@ dependencies = [
  "pico-args",
  "plain",
  "redox-daemon",
- "redox-scheme",
+ "redox-scheme 0.4.0",
  "redox_syscall",
  "serde",
 ]
@@ -1126,6 +1137,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "redox-scheme"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a96b9cfb034251dfb0aaa66a67059a7f0ea344039904d1d70cd36266af9c8a2f"
+dependencies = [
+ "libredox",
+ "redox_syscall",
+]
+
+[[package]]
 name = "redox_event"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1137,9 +1158,9 @@ dependencies = [
 
 [[package]]
 name = "redox_syscall"
-version = "0.5.9"
+version = "0.5.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82b568323e98e49e2a0899dcee453dd679fae22d69adf9b11dd508d1549b7e2f"
+checksum = "0b8c0c260b63a8219631167be35e6a988e9554dbd323f8bd08439c8ed1302bd1"
 dependencies = [
  "bitflags 2.6.0",
 ]
@@ -1915,7 +1936,7 @@ dependencies = [
  "pcid",
  "plain",
  "redox-daemon",
- "redox-scheme",
+ "redox-scheme 0.4.0",
  "redox_event",
  "redox_syscall",
  "regex",
