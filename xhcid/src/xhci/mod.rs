@@ -300,7 +300,12 @@ impl PortState {
     //TODO: fetch using endpoint number instead
     fn get_endp_desc(&self, endp_idx: u8) -> Option<&EndpDesc> {
         let cfg_idx = self.cfg_idx?;
-        let config_desc = self.dev_desc.as_ref()?.config_descs.get(cfg_idx as usize)?;
+        let config_desc = self
+            .dev_desc
+            .as_ref()?
+            .config_descs
+            .iter()
+            .find(|desc| desc.configuration_value == cfg_idx)?;
         let mut endp_count = 0;
         for if_desc in config_desc.interface_descs.iter() {
             for endp_desc in if_desc.endpoints.iter() {

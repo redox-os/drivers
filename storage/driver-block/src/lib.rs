@@ -13,8 +13,8 @@ use redox_scheme::{
 };
 use syscall::schemev2::NewFdFlags;
 use syscall::{
-    Error, Result, Stat, EACCES, EAGAIN, EBADF, EISDIR, ENOENT, ENOLCK, EOPNOTSUPP, EOVERFLOW,
-    MODE_DIR, MODE_FILE, O_DIRECTORY, O_STAT,
+    Error, Result, Stat, EACCES, EAGAIN, EBADF, EINVAL, EISDIR, ENOENT, ENOLCK, EOPNOTSUPP,
+    EOVERFLOW, MODE_DIR, MODE_FILE, O_DIRECTORY, O_STAT,
 };
 
 /// Split the read operation into a series of block reads.
@@ -195,6 +195,10 @@ impl<T: Disk> DiskWrapper<T> {
         block: u64,
         buf: &mut [u8],
     ) -> syscall::Result<Option<usize>> {
+        if buf.len() as u64 % u64::from(self.disk.block_size()) != 0 {
+            return Err(Error::new(EINVAL));
+        }
+
         if let Some(part_num) = part_num {
             let part = self
                 .pt
@@ -204,8 +208,7 @@ impl<T: Disk> DiskWrapper<T> {
                 .get(part_num)
                 .ok_or(syscall::Error::new(EBADF))?;
 
-            let block_size = u64::from(self.block_size());
-            if block >= part.size / block_size {
+            if block >= part.size {
                 return Err(syscall::Error::new(EOVERFLOW));
             }
 
@@ -223,6 +226,10 @@ impl<T: Disk> DiskWrapper<T> {
         block: u64,
         buf: &[u8],
     ) -> syscall::Result<Option<usize>> {
+        if buf.len() as u64 % u64::from(self.disk.block_size()) != 0 {
+            return Err(Error::new(EINVAL));
+        }
+
         if let Some(part_num) = part_num {
             let part = self
                 .pt
@@ -232,8 +239,7 @@ impl<T: Disk> DiskWrapper<T> {
                 .get(part_num)
                 .ok_or(syscall::Error::new(EBADF))?;
 
-            let block_size = u64::from(self.block_size());
-            if block >= part.size / block_size {
+            if block >= part.size {
                 return Err(syscall::Error::new(EOVERFLOW));
             }
 

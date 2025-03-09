@@ -22,7 +22,6 @@
 //! - USB2  - [Universal Serial Bus Specification](https://www.usb.org/document-library/usb-20-specification)
 //! - USB32 - [Universal Serial Bus 3.2 Specification Revision 1.1](https://usb.org/document-library/usb-32-revision-11-june-2022)
 //!
-#![warn(missing_docs)]
 #[macro_use]
 extern crate bitflags;
 

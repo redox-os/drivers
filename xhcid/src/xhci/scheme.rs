@@ -918,8 +918,10 @@ impl Xhci {
                 .as_ref()
                 .unwrap()
                 .config_descs
-                .get(usize::from(req.config_desc))
-                .ok_or(Error::new(EBADFD))?;
+                .iter()
+                .find(|desc| desc.configuration_value == req.config_desc)
+                .ok_or(Error::new(EBADFD))
+                .unwrap();
 
             //TODO: USE ENDPOINTS FROM ALL INTERFACES
             let mut endp_desc_count = 0;
@@ -1459,7 +1461,7 @@ impl Xhci {
             }
 
             let mut interface_descs = SmallVec::new();
-            let mut iter = descriptors.into_iter();
+            let mut iter = descriptors.into_iter().peekable();
 
             while let Some(item) = iter.next() {
                 if let AnyDescriptor::Interface(idesc) = item {
@@ -1481,21 +1483,20 @@ impl Xhci {
                         };
                         let mut endp = EndpDesc::from(next);
 
-                        if supports_superspeed {
-                            let next = match iter.next() {
-                                Some(AnyDescriptor::SuperSpeedCompanion(n)) => n,
+                        loop {
+                            match iter.peek() {
+                                Some(AnyDescriptor::SuperSpeedCompanion(n)) => {
+                                    endp.ssc = Some(SuperSpeedCmp::from(n.clone()));
+                                    iter.next().unwrap();
+                                }
+                                Some(AnyDescriptor::SuperSpeedPlusCompanion(n)) => {
+                                    endp.sspc = Some(SuperSpeedPlusIsochCmp::from(n.clone()));
+                                    iter.next().unwrap();
+                                }
                                 _ => break,
-                            };
-                            endp.ssc = Some(SuperSpeedCmp::from(next));
-
-                            if endp.has_ssp_companion() && supports_superspeedplus {
-                                let next = match iter.next() {
-                                    Some(AnyDescriptor::SuperSpeedPlusCompanion(n)) => n,
-                                    _ => break,
-                                };
-                                endp.sspc = Some(SuperSpeedPlusIsochCmp::from(next));
                             }
                         }
+
                         endpoints.push(endp);
                     }
 
@@ -1506,7 +1507,7 @@ impl Xhci {
                 } else {
                     log::warn!("expected interface, got {:?}", item);
                     // TODO
-                    break;
+                    //break;
                 }
             }
 
