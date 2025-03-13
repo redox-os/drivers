@@ -985,16 +985,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pcspkrd"
-version = "0.1.0"
-dependencies = [
- "common",
- "libredox",
- "redox-daemon",
- "redox_syscall",
-]
-
-[[package]]
 name = "pico-args"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

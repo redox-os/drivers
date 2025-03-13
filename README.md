@@ -18,7 +18,6 @@ This document covers the driver details.
 - ixgbed - Intel 10 Gigabit ethernet
 - nvmed - NVMe interface
 - pcid - PCI interface with extensions for PCI Express
-- pcspkrd - PC speaker
 - ps2d - PS/2 interface
 - rtl8139d - Realtek ethernet
 - rtl8168d - Realtek ethernet
