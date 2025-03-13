@@ -1,14 +1,8 @@
-extern crate orbclient;
-extern crate syscall;
-
-use std::fs::File;
-use std::io::{Read, Write};
-
 use inputd::ProducerHandle;
 use pcid_interface::PciFunctionHandle;
+use redox_scheme::{RequestKind, Response, SignalBehavior, Socket};
 use syscall::call::iopl;
-use syscall::data::Packet;
-use syscall::scheme::SchemeMut;
+use syscall::EOPNOTSUPP;
 
 use crate::bga::Bga;
 use crate::scheme::BgaScheme;
@@ -28,7 +22,7 @@ fn main() {
     redox_daemon::Daemon::new(move |daemon| {
         unsafe { iopl(3).unwrap() };
 
-        let mut socket = File::create(":bga").expect("bgad: failed to create bga scheme");
+        let socket = Socket::create("bga").expect("bgad: failed to create bga scheme");
 
         let mut bga = Bga::new();
         println!("   - BGA {}x{}", bga.width(), bga.height());
@@ -45,20 +39,38 @@ fn main() {
         daemon.ready().expect("bgad: failed to notify parent");
 
         loop {
-            let mut packet = Packet::default();
-            if socket
-                .read(&mut packet)
-                .expect("bgad: failed to read events from bga scheme")
-                == 0
-            {
-                break;
+            let Some(request) = socket
+                .next_request(SignalBehavior::Restart)
+                .expect("bgad: failed to read scheme")
+            else {
+                // Scheme likely got unmounted
+                std::process::exit(0);
+            };
+
+            match request.kind() {
+                RequestKind::Call(call_request) => {
+                    let resp = call_request.handle_scheme(&mut scheme);
+                    socket
+                        .write_response(resp, SignalBehavior::Restart)
+                        .expect("bgad: failed to write display scheme");
+                }
+                RequestKind::SendFd(sendfd_request) => {
+                    socket
+                        .write_response(
+                            Response::for_sendfd(
+                                &sendfd_request,
+                                Err(syscall::Error::new(EOPNOTSUPP)),
+                            ),
+                            SignalBehavior::Restart,
+                        )
+                        .expect("bgad: failed to write response");
+                }
+                RequestKind::Cancellation(_cancellation_request) => {}
+                RequestKind::MsyncMsg | RequestKind::MunmapMsg | RequestKind::MmapMsg => {
+                    unreachable!()
+                }
             }
-            scheme.handle(&mut packet);
-            socket
-                .write(&packet)
-                .expect("bgad: failed to write responses to bga scheme");
         }
-        std::process::exit(0);
     })
     .expect("bgad: failed to daemonize");
 }

@@ -1,7 +1,8 @@
 use inputd::ProducerHandle;
+use redox_scheme::Scheme;
 use std::str;
 use syscall::data::Stat;
-use syscall::{Error, Result, SchemeMut, EACCES, EINVAL, MODE_CHR};
+use syscall::{Error, Result, EACCES, EINVAL, MODE_CHR};
 
 use crate::bga::Bga;
 
@@ -24,7 +25,7 @@ impl BgaScheme {
     }
 }
 
-impl SchemeMut for BgaScheme {
+impl Scheme for BgaScheme {
     fn open(&mut self, _path: &str, _flags: usize, uid: u32, _gid: u32) -> Result<usize> {
         if uid == 0 {
             Ok(0)
@@ -33,7 +34,13 @@ impl SchemeMut for BgaScheme {
         }
     }
 
-    fn read(&mut self, _file: usize, buf: &mut [u8]) -> Result<usize> {
+    fn read(
+        &mut self,
+        _id: usize,
+        buf: &mut [u8],
+        _offset: u64,
+        _fcntl_flags: u32,
+    ) -> Result<usize> {
         let mut i = 0;
         let data = format!("{},{}\n", self.bga.width(), self.bga.height()).into_bytes();
         while i < buf.len() && i < data.len() {
@@ -43,7 +50,7 @@ impl SchemeMut for BgaScheme {
         Ok(i)
     }
 
-    fn write(&mut self, _file: usize, buf: &[u8]) -> Result<usize> {
+    fn write(&mut self, _id: usize, buf: &[u8], _offset: u64, _fcntl_flags: u32) -> Result<usize> {
         let string = str::from_utf8(buf).or(Err(Error::new(EINVAL)))?;
         let string = string.trim();
 

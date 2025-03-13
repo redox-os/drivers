@@ -26,12 +26,9 @@
 extern crate bitflags;
 
 use std::fs::File;
-use std::io::{Read, Write};
-use std::os::unix::io::{FromRawFd, RawFd};
 use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
 
-use libredox::flag;
 #[cfg(target_arch = "x86_64")]
 use pcid_interface::irq_helpers::allocate_single_interrupt_vector_for_msi;
 use pcid_interface::irq_helpers::read_bsp_apic_id;
@@ -40,9 +37,8 @@ use pcid_interface::{
     MsiSetFeatureInfo, PciFeature, PciFeatureInfo, PciFunctionHandle, SetFeatureInfo,
 };
 
-use syscall::data::Packet;
-use syscall::error::EWOULDBLOCK;
-use syscall::scheme::Scheme;
+use redox_scheme::{RequestKind, Response, SignalBehavior, Socket};
+use syscall::EOPNOTSUPP;
 
 use crate::xhci::{InterruptMethod, Xhci};
 
@@ -190,14 +186,11 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     println!(" + XHCI {}", pci_config.func.display());
 
     let scheme_name = format!("usb.{}", name);
-    let socket_fd =
-        libredox::call::open(format!(":{}", scheme_name), flag::O_RDWR | flag::O_CREAT, 0)
-            .expect("xhcid: failed to create usb scheme");
-    let mut socket = unsafe { File::from_raw_fd(socket_fd as RawFd) };
+    let socket = Socket::create(scheme_name.clone()).expect("xhcid: failed to create usb scheme");
 
     daemon.ready().expect("xhcid: failed to notify parent");
 
-    let mut hci = Arc::new(
+    let hci = Arc::new(
         Xhci::new(scheme_name, address, interrupt_method, pcid_handle)
             .expect("xhcid: failed to allocate device"),
     );
@@ -207,26 +200,34 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     hci.poll();
 
-    let mut todo = Vec::<Packet>::new();
     loop {
-        let mut packet = Packet::default();
-        match socket.read(&mut packet) {
-            Ok(0) => break,
-            Ok(_) => (),
-            Err(err) => panic!("xhcid failed to read from socket: {err}"),
-        }
+        let Some(request) = socket
+            .next_request(SignalBehavior::Restart)
+            .expect("xhcid: failed to read scheme")
+        else {
+            // Scheme likely got unmounted
+            std::process::exit(0);
+        };
 
-        let a = packet.a;
-        hci.handle(&mut packet);
-        if packet.a == (-EWOULDBLOCK) as usize {
-            packet.a = a;
-            todo.push(packet);
-        } else {
-            socket
-                .write(&packet)
-                .expect("xhcid failed to write to socket");
+        match request.kind() {
+            RequestKind::Call(call_request) => {
+                let resp = call_request.handle_scheme(&mut &*hci);
+                socket
+                    .write_response(resp, SignalBehavior::Restart)
+                    .expect("xhcid: failed to write scheme");
+            }
+            RequestKind::SendFd(sendfd_request) => {
+                socket
+                    .write_response(
+                        Response::for_sendfd(&sendfd_request, Err(syscall::Error::new(EOPNOTSUPP))),
+                        SignalBehavior::Restart,
+                    )
+                    .expect("xhcid: failed to write response");
+            }
+            RequestKind::Cancellation(_cancellation_request) => {}
+            RequestKind::MsyncMsg | RequestKind::MunmapMsg | RequestKind::MmapMsg => {
+                unreachable!()
+            }
         }
     }
-
-    std::process::exit(0);
 }
