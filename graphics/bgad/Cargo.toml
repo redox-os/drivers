@@ -1,11 +1,12 @@
 [package]
 name = "bgad"
 version = "0.1.0"
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 orbclient = "0.3.47"
 redox-daemon = "0.1"
+redox-scheme = { git = "https://gitlab.redox-os.org/redox-os/redox-scheme.git" }
 redox_syscall = "0.5"
 
 common = { path = "../../common" }

@@ -28,7 +28,8 @@ use log::{debug, error, info, trace, warn};
 use smallvec::SmallVec;
 
 use common::io::Io;
-use syscall::scheme::Scheme;
+use redox_scheme::{CallerCtx, OpenResult, Scheme};
+use syscall::schemev2::NewFdFlags;
 use syscall::{
     Error, Result, Stat, EACCES, EBADF, EBADFD, EBADMSG, EINVAL, EIO, EISDIR, ENOENT, ENOSYS,
     ENOTDIR, EPROTO, ESPIPE, MODE_CHR, MODE_DIR, MODE_FILE, O_DIRECTORY, O_RDWR, O_STAT, O_WRONLY,
@@ -97,7 +98,7 @@ pub enum EndpointHandleTy {
     Ctl,
 
     /// portX/endpoints/Y/
-    Root(usize, Vec<u8>), // offset, content
+    Root(Vec<u8>), // content
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -122,13 +123,13 @@ pub enum PortReqState {
 /// Contains some information about the data requested via the handle.
 #[derive(Debug)]
 pub enum Handle {
-    TopLevel(usize, Vec<u8>),              // offset, contents (ports)
-    Port(usize, usize, Vec<u8>),           // port, offset, contents
-    PortDesc(usize, usize, Vec<u8>),       // port, offset, contents
-    PortState(usize, usize),               // port, offset
+    TopLevel(Vec<u8>),                     // contents (ports)
+    Port(usize, Vec<u8>),                  // port, contents
+    PortDesc(usize, Vec<u8>),              // port, contents
+    PortState(usize),                      // port
     PortReq(usize, PortReqState),          // port, state
-    Endpoints(usize, usize, Vec<u8>),      // port, offset, contents
-    Endpoint(usize, u8, EndpointHandleTy), // port, endpoint, offset, state
+    Endpoints(usize, Vec<u8>),             // port, contents
+    Endpoint(usize, u8, EndpointHandleTy), // port, endpoint, state
     ConfigureEndpoints(usize),             // port
 }
 
@@ -181,20 +182,20 @@ impl Handle {
     /// - A [String] containing the scheme path that the handle is associated with.
     pub(crate) fn to_scheme(&self) -> String {
         match self {
-            Handle::TopLevel(_, _) => String::from(""),
-            Handle::Port(port_num, _, _) => {
+            Handle::TopLevel(_) => String::from(""),
+            Handle::Port(port_num, _) => {
                 format!("port{}", port_num)
             }
-            Handle::PortDesc(port_num, _, _) => {
+            Handle::PortDesc(port_num, _) => {
                 format!("port{}/descriptors", port_num)
             }
-            Handle::PortState(port_num, _) => {
+            Handle::PortState(port_num) => {
                 format!("port{}/state", port_num)
             }
             Handle::PortReq(port_num, _) => {
                 format!("port{}/request", port_num)
             }
-            Handle::Endpoints(port_num, _, _) => {
+            Handle::Endpoints(port_num, _) => {
                 format!("port{}/endpoints", port_num)
             }
             Handle::Endpoint(port_num, endpoint_num, handle_type) => match handle_type {
@@ -204,7 +205,7 @@ impl Handle {
                 EndpointHandleTy::Ctl => {
                     format!("port{}/endpoints/{}/ctl", port_num, endpoint_num)
                 }
-                EndpointHandleTy::Root(_, _) => {
+                EndpointHandleTy::Root(_) => {
                     format!("port{}/endpoints/{}", port_num, endpoint_num)
                 }
             },
@@ -224,21 +225,21 @@ impl Handle {
     /// - [HandleType] - The access mode associated with the handle.
     pub(crate) fn get_handle_type(&self) -> HandleType {
         match self {
-            &Handle::TopLevel(_, _) => HandleType::Directory,
-            &Handle::Port(_, _, _) => HandleType::Directory,
-            &Handle::Endpoints(_, _, _) => HandleType::Directory,
-            &Handle::PortDesc(_, _, _) => HandleType::File,
+            &Handle::TopLevel(_) => HandleType::Directory,
+            &Handle::Port(_, _) => HandleType::Directory,
+            &Handle::Endpoints(_, _) => HandleType::Directory,
+            &Handle::PortDesc(_, _) => HandleType::File,
             &Handle::PortReq(_, PortReqState::WaitingForDeviceBytes(_, _)) => HandleType::Character,
             &Handle::PortReq(_, PortReqState::WaitingForHostBytes(_, _)) => HandleType::Character,
             &Handle::PortReq(_, PortReqState::Tmp) => unreachable!(),
             &Handle::PortReq(_, PortReqState::TmpSetup(_)) => unreachable!(),
-            &Handle::PortState(_, _) => HandleType::Character,
+            &Handle::PortState(_) => HandleType::Character,
             &Handle::PortReq(_, _) => HandleType::Character,
             &Handle::ConfigureEndpoints(_) => HandleType::Character,
             &Handle::Endpoint(_, _, ref st) => match st {
                 EndpointHandleTy::Data => HandleType::Character,
                 EndpointHandleTy::Ctl => HandleType::Character,
-                EndpointHandleTy::Root(_, _) => HandleType::Directory,
+                EndpointHandleTy::Root(_) => HandleType::Directory,
             },
         }
     }
@@ -252,21 +253,21 @@ impl Handle {
     /// Either the size of the buffer, or [Option::None] if the buffer does not exist.
     pub(crate) fn get_buf_len(&self) -> Option<usize> {
         match self {
-            &Handle::TopLevel(_, ref buf) => Some(buf.len()),
-            &Handle::Port(_, _, ref buf) => Some(buf.len()),
-            &Handle::Endpoints(_, _, ref buf) => Some(buf.len()),
-            &Handle::PortDesc(_, _, ref buf) => Some(buf.len()),
+            &Handle::TopLevel(ref buf) => Some(buf.len()),
+            &Handle::Port(_, ref buf) => Some(buf.len()),
+            &Handle::Endpoints(_, ref buf) => Some(buf.len()),
+            &Handle::PortDesc(_, ref buf) => Some(buf.len()),
             &Handle::PortReq(_, PortReqState::WaitingForDeviceBytes(ref buf, _)) => Some(buf.len()),
             &Handle::PortReq(_, PortReqState::WaitingForHostBytes(ref buf, _)) => Some(buf.len()),
             &Handle::PortReq(_, PortReqState::Tmp) => None,
             &Handle::PortReq(_, PortReqState::TmpSetup(_)) => None,
-            &Handle::PortState(_, _) => None,
+            &Handle::PortState(_) => None,
             &Handle::PortReq(_, _) => None,
             &Handle::ConfigureEndpoints(_) => None,
             &Handle::Endpoint(_, _, ref st) => match st {
                 EndpointHandleTy::Data => None,
                 EndpointHandleTy::Ctl => None,
-                EndpointHandleTy::Root(_, ref buf) => Some(buf.len()),
+                EndpointHandleTy::Root(ref buf) => Some(buf.len()),
             },
         }
     }
@@ -1551,12 +1552,10 @@ impl Xhci {
             .dev_desc;
         serde_json::to_vec(dev_desc).or(Err(Error::new(EIO)))
     }
-    fn write_dyn_string(string: &[u8], buf: &mut [u8], offset: &mut usize) -> usize {
+    fn write_dyn_string(string: &[u8], buf: &mut [u8], offset: usize) -> usize {
         let max_bytes_to_read = cmp::min(string.len(), buf.len());
-        let bytes_to_read = cmp::max(*offset, max_bytes_to_read) - *offset;
+        let bytes_to_read = cmp::max(offset, max_bytes_to_read) - offset;
         buf[..bytes_to_read].copy_from_slice(&string[..bytes_to_read]);
-
-        *offset += bytes_to_read;
 
         bytes_to_read
     }
@@ -1735,7 +1734,7 @@ impl Xhci {
                 write!(contents, "port{}\n", index).unwrap();
             }
 
-            Ok(Handle::TopLevel(0, contents))
+            Ok(Handle::TopLevel(contents))
         } else {
             Err(Error::new(EISDIR))
         }
@@ -1758,7 +1757,7 @@ impl Xhci {
         }
 
         let contents = self.port_desc_json(port_num)?;
-        Ok(Handle::PortDesc(port_num, 0, contents))
+        Ok(Handle::PortDesc(port_num, contents))
     }
 
     /// implements open() for /port<n>
@@ -1792,7 +1791,7 @@ impl Xhci {
                 write!(contents, "configure\n").unwrap();
             }
 
-            Ok(Handle::Port(port_num, 0, contents))
+            Ok(Handle::Port(port_num, contents))
         } else {
             Err(Error::new(EISDIR))
         }
@@ -1814,7 +1813,7 @@ impl Xhci {
             return Err(Error::new(ENOTDIR));
         }
 
-        Ok(Handle::PortState(port_num, 0))
+        Ok(Handle::PortState(port_num))
     }
 
     /// implements open() for /port<n>/endpoints
@@ -1843,7 +1842,7 @@ impl Xhci {
             write!(contents, "{}\n", ep_num).unwrap();
         }
 
-        Ok(Handle::Endpoints(port_num, 0, contents))
+        Ok(Handle::Endpoints(port_num, contents))
     }
 
     /// implements open() for /port<n>/endpoints/<n>
@@ -1886,7 +1885,7 @@ impl Xhci {
         Ok(Handle::Endpoint(
             port_num,
             endpoint_num,
-            EndpointHandleTy::Root(0, contents),
+            EndpointHandleTy::Root(contents),
         ))
     }
 
@@ -1983,9 +1982,9 @@ impl Xhci {
     }
 }
 
-impl Scheme for Xhci {
-    fn open(&self, path_str: &str, flags: usize, uid: u32, _gid: u32) -> Result<usize> {
-        if uid != 0 {
+impl Scheme for &Xhci {
+    fn xopen(&mut self, path_str: &str, flags: usize, ctx: &CallerCtx) -> Result<OpenResult> {
+        if ctx.uid != 0 {
             return Err(Error::new(EACCES));
         }
 
@@ -2025,11 +2024,14 @@ impl Scheme for Xhci {
 
         self.handles.insert(fd, handle);
 
-        Ok(fd)
+        Ok(OpenResult::ThisScheme {
+            number: fd,
+            flags: NewFdFlags::POSITIONED,
+        })
     }
 
-    fn fstat(&self, id: usize, stat: &mut Stat) -> Result<usize> {
-        let mut guard = self.handles.get(&id).ok_or(Error::new(EBADF))?;
+    fn fstat(&mut self, id: usize, stat: &mut Stat) -> Result<usize> {
+        let guard = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
         stat.st_mode = match (&*guard).get_handle_type() {
             HandleType::Directory => MODE_DIR,
@@ -2043,14 +2045,14 @@ impl Scheme for Xhci {
         };
 
         //If we have a handle to the configure scheme, we need to mark it as write only.
-        if let &Handle::ConfigureEndpoints(_) = (&*guard) {
+        if let &Handle::ConfigureEndpoints(_) = &*guard {
             stat.st_mode = stat.st_mode | 0o200;
         }
 
         Ok(0)
     }
 
-    fn fpath(&self, fd: usize, buffer: &mut [u8]) -> Result<usize> {
+    fn fpath(&mut self, fd: usize, buffer: &mut [u8]) -> Result<usize> {
         let mut cursor = io::Cursor::new(buffer);
 
         let guard = self.handles.get(&fd).ok_or(Error::new(EBADF))?;
@@ -2068,51 +2070,8 @@ impl Scheme for Xhci {
         Ok(src_len)
     }
 
-    fn seek(&self, fd: usize, pos: isize, whence: usize) -> Result<isize> {
-        let mut guard = self.handles.get_mut(&fd).ok_or(Error::new(EBADF))?;
-
-        trace!(
-            "SEEK fd={}, handle={:?}, pos {}, whence {}",
-            fd,
-            guard,
-            pos,
-            whence
-        );
-
-        match &mut *guard {
-            // Directories, or fixed files
-            Handle::TopLevel(ref mut offset, ref buf)
-            | Handle::Port(_, ref mut offset, ref buf)
-            | Handle::PortDesc(_, ref mut offset, ref buf)
-            | Handle::Endpoints(_, ref mut offset, ref buf)
-            | Handle::Endpoint(_, _, EndpointHandleTy::Root(ref mut offset, ref buf)) => {
-                let max = buf.len() as isize;
-                *offset = match whence {
-                    SEEK_SET => cmp::max(0, cmp::min(pos, max)),
-                    SEEK_CUR => cmp::max(0, cmp::min(*offset as isize + pos, max)),
-                    SEEK_END => cmp::max(0, cmp::min(max + pos, max)),
-                    _ => return Err(Error::new(EINVAL)),
-                } as usize;
-                Ok(*offset as isize)
-            }
-            Handle::PortState(_, ref mut offset) => {
-                match whence {
-                    //TODO: checks for invalid pos
-                    SEEK_SET => *offset = pos as usize,
-                    SEEK_CUR => *offset = pos as usize,
-                    SEEK_END => *offset = pos as usize,
-                    _ => return Err(Error::new(EINVAL)),
-                };
-                Ok(*offset as isize)
-            }
-            // Write-once configure or transfer
-            Handle::Endpoint(_, _, _) | Handle::ConfigureEndpoints(_) | Handle::PortReq(_, _) => {
-                Err(Error::new(ESPIPE))
-            }
-        }
-    }
-
-    fn read(&self, fd: usize, buf: &mut [u8]) -> Result<usize> {
+    fn read(&mut self, fd: usize, buf: &mut [u8], offset: u64, _fcntl_flags: u32) -> Result<usize> {
+        let offset = offset as usize;
         let mut guard = self.handles.get_mut(&fd).ok_or(Error::new(EBADF))?;
         trace!(
             "READ fd={}, handle={:?}, buf=(addr {:p}, length {})",
@@ -2122,16 +2081,15 @@ impl Scheme for Xhci {
             buf.len()
         );
         match &mut *guard {
-            Handle::TopLevel(ref mut offset, ref src_buf)
-            | Handle::Port(_, ref mut offset, ref src_buf)
-            | Handle::PortDesc(_, ref mut offset, ref src_buf)
-            | Handle::Endpoints(_, ref mut offset, ref src_buf)
-            | Handle::Endpoint(_, _, EndpointHandleTy::Root(ref mut offset, ref src_buf)) => {
+            Handle::TopLevel(ref src_buf)
+            | Handle::Port(_, ref src_buf)
+            | Handle::PortDesc(_, ref src_buf)
+            | Handle::Endpoints(_, ref src_buf)
+            | Handle::Endpoint(_, _, EndpointHandleTy::Root(ref src_buf)) => {
                 let max_bytes_to_read = cmp::min(src_buf.len(), buf.len());
-                let bytes_to_read = cmp::max(max_bytes_to_read, *offset) - *offset;
+                let bytes_to_read = cmp::max(max_bytes_to_read, offset) - offset;
 
                 buf[..bytes_to_read].copy_from_slice(&src_buf[..bytes_to_read]);
-                *offset += bytes_to_read;
 
                 Ok(bytes_to_read)
             }
@@ -2140,9 +2098,9 @@ impl Scheme for Xhci {
             &mut Handle::Endpoint(port_num, endp_num, ref mut st) => match st {
                 EndpointHandleTy::Ctl => self.on_read_endp_ctl(port_num, endp_num, buf),
                 EndpointHandleTy::Data => block_on(self.on_read_endp_data(port_num, endp_num, buf)),
-                EndpointHandleTy::Root(_, _) => Err(Error::new(EBADF)),
+                EndpointHandleTy::Root(_) => Err(Error::new(EBADF)),
             },
-            &mut Handle::PortState(port_num, ref mut offset) => {
+            &mut Handle::PortState(port_num) => {
                 let ps = self.port_states.get(&port_num).ok_or(Error::new(EBADF))?;
                 let state = self
                     .dev_ctx
@@ -2164,7 +2122,7 @@ impl Scheme for Xhci {
                 .unwrap_or("unknown")
                 .as_bytes();
 
-                Ok(Self::write_dyn_string(string, buf, offset))
+                Ok(Xhci::write_dyn_string(string, buf, offset))
             }
             &mut Handle::PortReq(port_num, ref mut st) => {
                 let state = std::mem::replace(st, PortReqState::Tmp);
@@ -2173,7 +2131,7 @@ impl Scheme for Xhci {
             }
         }
     }
-    fn write(&self, fd: usize, buf: &[u8]) -> Result<usize> {
+    fn write(&mut self, fd: usize, buf: &[u8], _offset: u64, _fcntl_flags: u32) -> Result<usize> {
         let mut guard = self.handles.get_mut(&fd).ok_or(Error::new(EBADF))?;
         trace!(
             "WRITE fd={}, handle={:?}, buf=(addr {:p}, length {})",
@@ -2193,7 +2151,7 @@ impl Scheme for Xhci {
                 EndpointHandleTy::Data => {
                     block_on(self.on_write_endp_data(port_num, endp_num, buf))
                 }
-                EndpointHandleTy::Root(_, _) => return Err(Error::new(EBADF)),
+                EndpointHandleTy::Root(_) => return Err(Error::new(EBADF)),
             },
             &mut Handle::PortReq(port_num, ref mut st) => {
                 let state = std::mem::replace(st, PortReqState::Tmp);
@@ -2205,7 +2163,7 @@ impl Scheme for Xhci {
             _ => Err(Error::new(EBADF)),
         }
     }
-    fn close(&self, fd: usize) -> Result<usize> {
+    fn close(&mut self, fd: usize) -> Result<usize> {
         if self.handles.remove(&fd).is_none() {
             return Err(Error::new(EBADF));
         }

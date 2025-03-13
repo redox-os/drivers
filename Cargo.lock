@@ -193,6 +193,7 @@ dependencies = [
  "orbclient",
  "pcid",
  "redox-daemon",
+ "redox-scheme 0.3.0",
  "redox_syscall",
 ]
 
@@ -1933,6 +1934,7 @@ dependencies = [
  "pcid",
  "plain",
  "redox-daemon",
+ "redox-scheme 0.3.0",
  "redox_event",
  "redox_syscall",
  "regex",
