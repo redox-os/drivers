@@ -14,7 +14,6 @@ members = [
 
     "audio/ac97d",
     "audio/ihdad",
-    "audio/pcspkrd",
     "audio/sb16d",
 
     "graphics/bgad",
