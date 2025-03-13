@@ -126,13 +126,16 @@ impl Damage {
     #[must_use]
     pub fn clip(mut self, width: u32, height: u32) -> Self {
         // Clip damage
+        let x2 = self.x + self.width;
         self.x = cmp::min(self.x, width);
-        if self.x + self.width > width {
-            self.width -= cmp::min(self.width, width - self.x);
+        if x2 > width {
+            self.width = width - self.x;
         }
+
+        let y2 = self.y + self.height;
         self.y = cmp::min(self.y, height);
-        if self.y + self.height > height {
-            self.height = cmp::min(self.height, height - self.y);
+        if y2 > height {
+            self.height = height - self.y;
         }
         self
     }
