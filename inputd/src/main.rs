@@ -219,7 +219,7 @@ impl Scheme for InputScheme {
 
         if let Handle::Consumer { vt, .. } = handle {
             let display = self.display.as_ref().ok_or(SysError::new(EINVAL))?;
-            let vt = format!("{}:{vt}", display);
+            let vt = format!("/scheme/{}/{vt}", display);
 
             let size = core::cmp::min(vt.len(), buf.len());
             buf[..size].copy_from_slice(&vt.as_bytes()[..size]);
