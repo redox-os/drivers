@@ -114,7 +114,7 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
                     std::process::exit(0);
                 }
                 Err(err) if err.errno == EAGAIN => break,
-                Err(err) => panic!("vesad: failed to read display scheme: {err}"),
+                Err(err) => panic!("driver-graphics: failed to read display scheme: {err}"),
             };
 
             match request.kind() {
@@ -122,7 +122,7 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
                     let resp = call_request.handle_scheme(self);
                     self.socket
                         .write_response(resp, SignalBehavior::Restart)
-                        .expect("vesad: failed to write display scheme");
+                        .expect("driver-graphics: failed to write display scheme");
                 }
                 RequestKind::SendFd(sendfd_request) => {
                     self.socket.write_response(
