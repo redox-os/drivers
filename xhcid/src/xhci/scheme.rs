@@ -920,8 +920,7 @@ impl Xhci {
                 .config_descs
                 .iter()
                 .find(|desc| desc.configuration_value == req.config_desc)
-                .ok_or(Error::new(EBADFD))
-                .unwrap();
+                .ok_or(Error::new(EBADFD))?;
 
             //TODO: USE ENDPOINTS FROM ALL INTERFACES
             let mut endp_desc_count = 0;
