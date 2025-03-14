@@ -161,9 +161,10 @@ impl SchemeBlock for FbconScheme {
             Err(Error::new(EBADF))
         }
     }
+}
 
-    fn close(&mut self, id: usize) -> Result<Option<usize>> {
-        self.handles.remove(&id).ok_or(Error::new(EBADF))?;
-        Ok(Some(0))
+impl FbconScheme {
+    pub fn on_close(&mut self, id: usize) {
+        self.handles.remove(&id);
     }
 }

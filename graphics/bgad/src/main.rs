@@ -1,8 +1,7 @@
 use inputd::ProducerHandle;
 use pcid_interface::PciFunctionHandle;
-use redox_scheme::{RequestKind, Response, SignalBehavior, Socket};
+use redox_scheme::{RequestKind, SignalBehavior, Socket};
 use syscall::call::iopl;
-use syscall::EOPNOTSUPP;
 
 use crate::bga::Bga;
 use crate::scheme::BgaScheme;
@@ -41,34 +40,23 @@ fn main() {
         loop {
             let Some(request) = socket
                 .next_request(SignalBehavior::Restart)
-                .expect("bgad: failed to read scheme")
+                .expect("bgad: failed to get next scheme request")
             else {
                 // Scheme likely got unmounted
                 std::process::exit(0);
             };
-
             match request.kind() {
-                RequestKind::Call(call_request) => {
-                    let resp = call_request.handle_scheme(&mut scheme);
+                RequestKind::Call(call) => {
+                    let response = call.handle_scheme(&mut scheme);
+
                     socket
-                        .write_response(resp, SignalBehavior::Restart)
-                        .expect("bgad: failed to write display scheme");
+                        .write_responses(&[response], SignalBehavior::Restart)
+                        .expect("bgad: failed to write next scheme response");
                 }
-                RequestKind::SendFd(sendfd_request) => {
-                    socket
-                        .write_response(
-                            Response::for_sendfd(
-                                &sendfd_request,
-                                Err(syscall::Error::new(EOPNOTSUPP)),
-                            ),
-                            SignalBehavior::Restart,
-                        )
-                        .expect("bgad: failed to write response");
+                RequestKind::OnClose { id } => {
+                    scheme.on_close(id);
                 }
-                RequestKind::Cancellation(_cancellation_request) => {}
-                RequestKind::MsyncMsg | RequestKind::MunmapMsg | RequestKind::MmapMsg => {
-                    unreachable!()
-                }
+                _ => (),
             }
         }
     })

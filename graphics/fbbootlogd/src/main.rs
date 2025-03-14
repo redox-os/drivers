@@ -9,8 +9,7 @@
 //!   to get new input. Fbbootlogd does all blocking operations in background threads such that the
 //!   main thread will always keep accepting new input and writing it to the framebuffer.
 
-use libredox::errno::EOPNOTSUPP;
-use redox_scheme::{RequestKind, Response, SignalBehavior, Socket};
+use redox_scheme::{RequestKind, SignalBehavior, Socket};
 
 use crate::scheme::FbbootlogScheme;
 
@@ -45,26 +44,17 @@ fn inner(daemon: redox_daemon::Daemon) -> ! {
         };
 
         match request.kind() {
-            RequestKind::Call(call_request) => {
+            RequestKind::Call(call) => {
+                let response = call.handle_scheme(&mut scheme);
+
                 socket
-                    .write_response(
-                        call_request.handle_scheme(&mut scheme),
-                        SignalBehavior::Restart,
-                    )
-                    .expect("fbbootlogd: failed to write display scheme");
+                    .write_responses(&[response], SignalBehavior::Restart)
+                    .expect("pcid: failed to write next scheme response");
             }
-            RequestKind::SendFd(sendfd_request) => {
-                socket
-                    .write_response(
-                        Response::for_sendfd(&sendfd_request, Err(syscall::Error::new(EOPNOTSUPP))),
-                        SignalBehavior::Restart,
-                    )
-                    .expect("fbbootlogd: failed to write scheme");
+            RequestKind::OnClose { id } => {
+                scheme.on_close(id);
             }
-            RequestKind::Cancellation(_cancellation_request) => {}
-            RequestKind::MsyncMsg | RequestKind::MunmapMsg | RequestKind::MmapMsg => {
-                unreachable!()
-            }
+            _ => (),
         }
     }
 }

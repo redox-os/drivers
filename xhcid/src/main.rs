@@ -37,8 +37,7 @@ use pcid_interface::{
     MsiSetFeatureInfo, PciFeature, PciFeatureInfo, PciFunctionHandle, SetFeatureInfo,
 };
 
-use redox_scheme::{RequestKind, Response, SignalBehavior, Socket};
-use syscall::EOPNOTSUPP;
+use redox_scheme::{RequestKind, SignalBehavior, Socket};
 
 use crate::xhci::{InterruptMethod, Xhci};
 
@@ -216,18 +215,10 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
                     .write_response(resp, SignalBehavior::Restart)
                     .expect("xhcid: failed to write scheme");
             }
-            RequestKind::SendFd(sendfd_request) => {
-                socket
-                    .write_response(
-                        Response::for_sendfd(&sendfd_request, Err(syscall::Error::new(EOPNOTSUPP))),
-                        SignalBehavior::Restart,
-                    )
-                    .expect("xhcid: failed to write response");
+            RequestKind::OnClose { id } => {
+                hci.on_close(id);
             }
-            RequestKind::Cancellation(_cancellation_request) => {}
-            RequestKind::MsyncMsg | RequestKind::MunmapMsg | RequestKind::MmapMsg => {
-                unreachable!()
-            }
+            _ => {}
         }
     }
 }

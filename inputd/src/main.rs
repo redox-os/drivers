@@ -18,8 +18,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use inputd::{VtActivate, VtEvent, VtEventKind};
 
-use libredox::errno::{EOPNOTSUPP, ESTALE};
-use redox_scheme::{RequestKind, Response, Scheme, SignalBehavior, Socket};
+use libredox::errno::ESTALE;
+use redox_scheme::{RequestKind, Scheme, SignalBehavior, Socket};
 
 use orbclient::{Event, EventOption};
 use syscall::{Error as SysError, EventFlags, EINVAL};
@@ -457,11 +457,13 @@ impl Scheme for InputScheme {
             }
         }
     }
+}
 
-    fn close(&mut self, id: usize) -> syscall::Result<usize> {
-        let handle = self.handles.get(&id).ok_or(SysError::new(EINVAL))?;
+impl InputScheme {
+    fn on_close(&mut self, id: usize) {
+        let handle = self.handles.remove(&id).unwrap();
 
-        match *handle {
+        match handle {
             Handle::Consumer { vt, .. } => {
                 self.vts.remove(&vt);
                 if self.active_vt == Some(vt) {
@@ -474,7 +476,6 @@ impl Scheme for InputScheme {
             }
             _ => {}
         }
-        Ok(0)
     }
 }
 
@@ -499,14 +500,10 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
                     SignalBehavior::Restart,
                 )?;
             }
-            RequestKind::SendFd(sendfd_request) => {
-                socket_file.write_response(
-                    Response::for_sendfd(&sendfd_request, Err(syscall::Error::new(EOPNOTSUPP))),
-                    SignalBehavior::Restart,
-                )?;
+            RequestKind::OnClose { id } => {
+                scheme.on_close(id);
             }
-            RequestKind::Cancellation(_cancellation_request) => {}
-            RequestKind::MsyncMsg | RequestKind::MunmapMsg | RequestKind::MmapMsg => unreachable!(),
+            _ => {}
         }
 
         if !scheme.has_new_events {
