@@ -1,6 +1,7 @@
 use core::str;
 use parking_lot::RwLockReadGuard;
-use redox_scheme::{CallerCtx, OpenResult, Scheme};
+use redox_scheme::scheme::SchemeSync;
+use redox_scheme::{CallerCtx, OpenResult};
 use std::collections::BTreeMap;
 use std::convert::{TryFrom, TryInto};
 use syscall::dirent::{DirEntry, DirentBuf, DirentKind};
@@ -141,8 +142,8 @@ fn parse_table(table: &[u8]) -> Option<SdtSignature> {
     })
 }
 
-impl Scheme for AcpiScheme<'_> {
-    fn xopen(&mut self, path: &str, flags: usize, _ctx: &CallerCtx) -> Result<OpenResult> {
+impl SchemeSync for AcpiScheme<'_> {
+    fn open(&mut self, path: &str, flags: usize, _ctx: &CallerCtx) -> Result<OpenResult> {
         let path = path.trim_start_matches('/');
 
         let flag_stat = flags & O_STAT == O_STAT;
@@ -218,7 +219,7 @@ impl Scheme for AcpiScheme<'_> {
         })
     }
 
-    fn fstat(&mut self, id: usize, stat: &mut Stat) -> Result<usize> {
+    fn fstat(&mut self, id: usize, stat: &mut Stat, _ctx: &CallerCtx) -> Result<()> {
         let handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
         stat.st_size = handle
@@ -233,10 +234,17 @@ impl Scheme for AcpiScheme<'_> {
             stat.st_mode = MODE_FILE;
         }
 
-        Ok(0)
+        Ok(())
     }
 
-    fn read(&mut self, id: usize, buf: &mut [u8], offset: u64, _fcntl: u32) -> Result<usize> {
+    fn read(
+        &mut self,
+        id: usize,
+        buf: &mut [u8],
+        offset: u64,
+        _fcntl: u32,
+        _ctx: &CallerCtx,
+    ) -> Result<usize> {
         let offset: usize = offset.try_into().map_err(|_| Error::new(EINVAL))?;
 
         let handle = self.handles.get_mut(&id).ok_or(Error::new(EBADF))?;
@@ -340,7 +348,14 @@ impl Scheme for AcpiScheme<'_> {
         Ok(buf)
     }
 
-    fn write(&mut self, _id: usize, _buf: &[u8], _offset: u64, _fcntl: u32) -> Result<usize> {
+    fn write(
+        &mut self,
+        _id: usize,
+        _buf: &[u8],
+        _offset: u64,
+        _fcntl: u32,
+        _ctx: &CallerCtx,
+    ) -> Result<usize> {
         Err(Error::new(EBADF))
     }
 }

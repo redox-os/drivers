@@ -20,7 +20,7 @@ pci_types = "0.10"
 pico-args = { version = "0.5", features = ["combined-flags"] }
 plain = "0.2"
 redox-daemon = "0.1"
-redox-scheme = "0.4"
+redox-scheme = "0.6.2"
 redox_syscall = "0.5.9"
 serde = { version = "1", features = ["derive"] }
 
