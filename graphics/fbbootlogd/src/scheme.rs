@@ -73,8 +73,8 @@ impl Scheme for FbbootlogScheme {
 
         Ok(buf.len())
     }
+}
 
-    fn close(&mut self, _id: usize) -> Result<usize> {
-        Ok(0)
-    }
+impl FbbootlogScheme {
+    pub fn on_close(&mut self, _id: usize) {}
 }

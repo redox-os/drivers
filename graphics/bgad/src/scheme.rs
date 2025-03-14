@@ -97,8 +97,8 @@ impl Scheme for BgaScheme {
     fn fcntl(&mut self, _id: usize, _cmd: usize, _arg: usize) -> Result<usize> {
         Ok(0)
     }
+}
 
-    fn close(&mut self, _file: usize) -> Result<usize> {
-        Ok(0)
-    }
+impl BgaScheme {
+    pub fn on_close(&mut self, _id: usize) {}
 }

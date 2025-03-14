@@ -91,18 +91,12 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
         if event.fd == socket.inner().raw() {
             loop {
-                let sqe = match socket.next_request(SignalBehavior::Interrupt) {
+                let req = match socket.next_request(SignalBehavior::Interrupt) {
                     Ok(None) => {
                         mounted = false;
                         break;
                     }
-                    Ok(Some(s)) => {
-                        if let RequestKind::Call(call) = s.kind() {
-                            call
-                        } else {
-                            continue;
-                        }
-                    }
+                    Ok(Some(req)) => req,
                     Err(err) => {
                         if err.errno == EWOULDBLOCK || err.errno == EAGAIN {
                             break;
@@ -112,10 +106,18 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
                     }
                 };
 
-                let response = sqe.handle_scheme(&mut scheme);
-                socket
-                    .write_response(response, SignalBehavior::Restart)
-                    .expect("acpid: failed to write response");
+                match req.kind() {
+                    RequestKind::Call(call) => {
+                        let response = call.handle_scheme(&mut scheme);
+                        socket
+                            .write_response(response, SignalBehavior::Restart)
+                            .expect("acpid: failed to write response");
+                    }
+                    RequestKind::OnClose { id } => {
+                        scheme.on_close(id);
+                    }
+                    _ => (),
+                }
             }
         } else if event.fd == shutdown_pipe.as_raw_fd() as usize {
             log::info!("Received shutdown request from kernel.");

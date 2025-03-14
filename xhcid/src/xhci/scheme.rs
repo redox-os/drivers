@@ -2163,14 +2163,12 @@ impl Scheme for &Xhci {
             _ => Err(Error::new(EBADF)),
         }
     }
-    fn close(&mut self, fd: usize) -> Result<usize> {
-        if self.handles.remove(&fd).is_none() {
-            return Err(Error::new(EBADF));
-        }
-        Ok(0)
-    }
 }
 impl Xhci {
+    pub fn on_close(&self, fd: usize) {
+        self.handles.remove(&fd);
+    }
+
     pub fn get_endp_status(&self, port_num: usize, endp_num: u8) -> Result<EndpointStatus> {
         let port_state = self.port_states.get(&port_num).ok_or(Error::new(EBADFD))?;
 
