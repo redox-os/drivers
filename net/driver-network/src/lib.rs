@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 use std::{cmp, io};
 
-use libredox::errno::EOPNOTSUPP;
 use libredox::flag::O_NONBLOCK;
 use libredox::Fd;
 use redox_scheme::{
@@ -114,11 +113,8 @@ impl<T: NetworkAdapter> NetworkScheme<T> {
                         self.blocked.push(call_request);
                     }
                 }
-                RequestKind::SendFd(sendfd_request) => {
-                    self.socket.write_response(
-                        Response::for_sendfd(&sendfd_request, Err(syscall::Error::new(EOPNOTSUPP))),
-                        SignalBehavior::Restart,
-                    )?;
+                RequestKind::OnClose { id } => {
+                    self.on_close(id);
                 }
                 RequestKind::Cancellation(cancellation_request) => {
                     if let Some(i) = self
@@ -131,9 +127,7 @@ impl<T: NetworkAdapter> NetworkScheme<T> {
                         self.socket.write_response(resp, SignalBehavior::Restart)?;
                     }
                 }
-                RequestKind::MsyncMsg | RequestKind::MunmapMsg | RequestKind::MmapMsg => {
-                    unreachable!()
-                }
+                _ => {}
             }
         }
 
@@ -282,9 +276,10 @@ impl<T: NetworkAdapter> SchemeBlock for NetworkScheme<T> {
         let _handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
         Ok(Some(0))
     }
+}
 
-    fn close(&mut self, id: usize) -> Result<Option<usize>> {
-        self.handles.remove(&id).ok_or(Error::new(EBADF))?;
-        Ok(Some(0))
+impl<T: NetworkAdapter> NetworkScheme<T> {
+    fn on_close(&mut self, id: usize) {
+        self.handles.remove(&id);
     }
 }

@@ -3,9 +3,8 @@ use std::io;
 
 use graphics_ipc::v1::Damage;
 use inputd::{VtEvent, VtEventKind};
-use libredox::errno::EOPNOTSUPP;
 use libredox::Fd;
-use redox_scheme::{RequestKind, Response, Scheme, SignalBehavior, Socket};
+use redox_scheme::{RequestKind, Scheme, SignalBehavior, Socket};
 use syscall::{Error, MapFlags, Result, EAGAIN, EBADF, EINVAL};
 
 pub trait GraphicsAdapter {
@@ -118,22 +117,16 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
             };
 
             match request.kind() {
-                RequestKind::Call(call_request) => {
-                    let resp = call_request.handle_scheme(self);
+                RequestKind::Call(call) => {
+                    let response = call.handle_scheme(self);
                     self.socket
-                        .write_response(resp, SignalBehavior::Restart)
-                        .expect("driver-graphics: failed to write display scheme");
+                        .write_response(response, SignalBehavior::Restart)
+                        .expect("driver-graphics: failed to write response");
                 }
-                RequestKind::SendFd(sendfd_request) => {
-                    self.socket.write_response(
-                        Response::for_sendfd(&sendfd_request, Err(syscall::Error::new(EOPNOTSUPP))),
-                        SignalBehavior::Restart,
-                    )?;
+                RequestKind::OnClose { id } => {
+                    self.on_close(id);
                 }
-                RequestKind::Cancellation(_cancellation_request) => {}
-                RequestKind::MsyncMsg | RequestKind::MunmapMsg | RequestKind::MmapMsg => {
-                    unreachable!()
-                }
+                _ => (),
             }
         }
 
@@ -246,10 +239,6 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
         Ok(buf.len())
     }
 
-    fn close(&mut self, id: usize) -> syscall::Result<usize> {
-        self.handles.remove(&id).ok_or(Error::new(EBADF))?;
-        Ok(0)
-    }
     fn mmap_prep(
         &mut self,
         id: usize,
@@ -263,5 +252,11 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
         let framebuffer = &self.vts_fb[vt][screen];
         let ptr = T::map_dumb_framebuffer(&mut self.adapter, framebuffer);
         Ok(ptr as usize)
+    }
+}
+
+impl<T: GraphicsAdapter> GraphicsScheme<T> {
+    fn on_close(&mut self, id: usize) {
+        self.handles.remove(&id);
     }
 }

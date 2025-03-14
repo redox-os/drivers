@@ -9,12 +9,12 @@ use std::str;
 use libredox::Fd;
 use partitionlib::{LogicalBlockSize, PartitionTable};
 use redox_scheme::{
-    CallRequest, CallerCtx, OpenResult, RequestKind, Response, SchemeBlock, SignalBehavior, Socket,
+    CallRequest, CallerCtx, OpenResult, RequestKind, SchemeBlock, SignalBehavior, Socket,
 };
 use syscall::schemev2::NewFdFlags;
 use syscall::{
-    Error, Result, Stat, EACCES, EAGAIN, EBADF, EINVAL, EISDIR, ENOENT, ENOLCK, EOPNOTSUPP,
-    EOVERFLOW, MODE_DIR, MODE_FILE, O_DIRECTORY, O_STAT,
+    Error, Result, Stat, EACCES, EAGAIN, EBADF, EINVAL, EISDIR, ENOENT, ENOLCK, EOVERFLOW,
+    MODE_DIR, MODE_FILE, O_DIRECTORY, O_STAT,
 };
 
 /// Split the read operation into a series of block reads.
@@ -330,18 +330,13 @@ impl<T: Disk> DiskScheme<T> {
                         self.blocked.push(call_request);
                     }
                 }
-                RequestKind::SendFd(sendfd_request) => {
-                    self.socket.write_response(
-                        Response::for_sendfd(&sendfd_request, Err(syscall::Error::new(EOPNOTSUPP))),
-                        SignalBehavior::Restart,
-                    )?;
+                RequestKind::OnClose { id } => {
+                    self.on_close(id);
                 }
                 RequestKind::Cancellation(_cancellation_request) => {
                     // FIXME implement cancellation
                 }
-                RequestKind::MsyncMsg | RequestKind::MunmapMsg | RequestKind::MmapMsg => {
-                    unreachable!()
-                }
+                _ => {}
             }
         }
 
@@ -610,11 +605,10 @@ impl<T: Disk> SchemeBlock for DiskScheme<T> {
             },
         ))
     }
+}
 
-    fn close(&mut self, id: usize) -> Result<Option<usize>> {
-        self.handles
-            .remove(&id)
-            .ok_or(Error::new(EBADF))
-            .and(Ok(Some(0)))
+impl<T: Disk> DiskScheme<T> {
+    fn on_close(&mut self, id: usize) {
+        self.handles.remove(&id);
     }
 }

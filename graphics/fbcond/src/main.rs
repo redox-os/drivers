@@ -1,5 +1,5 @@
 use event::EventQueue;
-use libredox::errno::{EAGAIN, EINTR, EOPNOTSUPP, ESTALE};
+use libredox::errno::{EAGAIN, EINTR, ESTALE};
 use orbclient::Event;
 use redox_scheme::{CallRequest, RequestKind, Response, SignalBehavior, Socket};
 use std::os::fd::{AsRawFd, BorrowedFd};
@@ -105,16 +105,8 @@ fn handle_event(
                             blocked.push(call_request);
                         }
                     }
-                    RequestKind::SendFd(sendfd_request) => {
-                        socket
-                            .write_response(
-                                Response::for_sendfd(
-                                    &sendfd_request,
-                                    Err(syscall::Error::new(EOPNOTSUPP)),
-                                ),
-                                SignalBehavior::Restart,
-                            )
-                            .expect("fbcond: failed to write scheme");
+                    RequestKind::OnClose { id } => {
+                        scheme.on_close(id);
                     }
                     RequestKind::Cancellation(cancellation_request) => {
                         if let Some(i) = blocked
@@ -128,9 +120,7 @@ fn handle_event(
                                 .expect("vesad: failed to write display scheme");
                         }
                     }
-                    RequestKind::MsyncMsg | RequestKind::MunmapMsg | RequestKind::MmapMsg => {
-                        unreachable!()
-                    }
+                    _ => {}
                 }
             }
         }

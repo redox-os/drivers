@@ -343,12 +343,10 @@ impl Scheme for AcpiScheme<'_> {
     fn write(&mut self, _id: usize, _buf: &[u8], _offset: u64, _fcntl: u32) -> Result<usize> {
         Err(Error::new(EBADF))
     }
+}
 
-    fn close(&mut self, id: usize) -> Result<usize> {
-        if self.handles.remove(&id).is_none() {
-            return Err(Error::new(EBADF));
-        }
-
-        Ok(0)
+impl AcpiScheme<'_> {
+    pub fn on_close(&mut self, id: usize) {
+        self.handles.remove(&id);
     }
 }

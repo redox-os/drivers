@@ -32,7 +32,7 @@ dependencies = [
  "parking_lot 0.12.3",
  "plain",
  "redox-daemon",
- "redox-scheme 0.3.0",
+ "redox-scheme",
  "redox_event",
  "redox_syscall",
  "ron",
@@ -193,7 +193,7 @@ dependencies = [
  "orbclient",
  "pcid",
  "redox-daemon",
- "redox-scheme 0.3.0",
+ "redox-scheme",
  "redox_syscall",
 ]
 
@@ -393,7 +393,7 @@ version = "0.1.0"
 dependencies = [
  "libredox",
  "partitionlib",
- "redox-scheme 0.3.0",
+ "redox-scheme",
  "redox_syscall",
 ]
 
@@ -406,7 +406,7 @@ dependencies = [
  "inputd",
  "libredox",
  "log",
- "redox-scheme 0.3.0",
+ "redox-scheme",
  "redox_syscall",
 ]
 
@@ -415,7 +415,7 @@ name = "driver-network"
 version = "0.1.0"
 dependencies = [
  "libredox",
- "redox-scheme 0.3.0",
+ "redox-scheme",
  "redox_syscall",
 ]
 
@@ -450,7 +450,7 @@ dependencies = [
  "orbclient",
  "ransid",
  "redox-daemon",
- "redox-scheme 0.3.0",
+ "redox-scheme",
  "redox_event",
  "redox_syscall",
 ]
@@ -466,7 +466,7 @@ dependencies = [
  "orbclient",
  "ransid",
  "redox-daemon",
- "redox-scheme 0.3.0",
+ "redox-scheme",
  "redox_event",
  "redox_syscall",
 ]
@@ -720,7 +720,7 @@ dependencies = [
  "log",
  "orbclient",
  "redox-daemon",
- "redox-scheme 0.3.0",
+ "redox-scheme",
  "redox_syscall",
 ]
 
@@ -965,7 +965,7 @@ dependencies = [
  "pico-args",
  "plain",
  "redox-daemon",
- "redox-scheme 0.4.0",
+ "redox-scheme",
  "redox_syscall",
  "serde",
 ]
@@ -1113,15 +1113,6 @@ dependencies = [
  "log",
  "smallvec 1.13.2",
  "termion",
-]
-
-[[package]]
-name = "redox-scheme"
-version = "0.3.0"
-source = "git+https://gitlab.redox-os.org/redox-os/redox-scheme.git#d2bfa80a1072facb2662d0bc73656247f0b254b4"
-dependencies = [
- "libredox",
- "redox_syscall",
 ]
 
 [[package]]
@@ -1924,7 +1915,7 @@ dependencies = [
  "pcid",
  "plain",
  "redox-daemon",
- "redox-scheme 0.3.0",
+ "redox-scheme",
  "redox_event",
  "redox_syscall",
  "regex",
