@@ -13,33 +13,19 @@ pub struct DisplayMap {
 }
 
 impl Display {
-    pub fn open_vt(vt: usize) -> io::Result<Self> {
-        let input_handle = ConsumerHandle::new_vt()?;
+    pub fn open_new_vt() -> io::Result<Self> {
+        let mut display = Self {
+            input_handle: ConsumerHandle::new_vt()?,
+            map: None,
+        };
 
-        if let Ok(display_handle) = Self::open_display(&input_handle) {
-            let map = display_handle
-                .map_display()
-                .unwrap_or_else(|e| panic!("failed to map display for VT #{vt}: {e}"));
+        display.reopen_for_handoff();
 
-            Ok(Self {
-                input_handle,
-                map: Some(DisplayMap {
-                    display_handle,
-                    inner: map,
-                }),
-            })
-        } else {
-            Ok(Self {
-                input_handle,
-                map: None,
-            })
-        }
+        Ok(display)
     }
 
     /// Re-open the display after a handoff.
     pub fn reopen_for_handoff(&mut self) {
-        eprintln!("fbcond: Performing handoff");
-
         let new_display_handle = Self::open_display(&self.input_handle).unwrap();
 
         eprintln!("fbcond: Opened new display");
