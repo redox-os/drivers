@@ -34,12 +34,7 @@ impl GraphicsAdapter for FbAdapter {
         framebuffer.ptr.as_ptr().cast::<u8>()
     }
 
-    fn update_plane(
-        &mut self,
-        display_id: usize,
-        framebuffer: &Self::Framebuffer,
-        damage: &[Damage],
-    ) {
+    fn update_plane(&mut self, display_id: usize, framebuffer: &Self::Framebuffer, damage: Damage) {
         framebuffer.sync(&mut self.framebuffers[display_id], damage)
     }
 }
@@ -89,29 +84,27 @@ impl Framebuffer for GraphicScreen {
 }
 
 impl GraphicScreen {
-    fn sync(&self, framebuffer: &mut FrameBuffer, sync_rects: &[Damage]) {
-        for sync_rect in sync_rects {
-            let sync_rect = sync_rect.clip(
-                self.width.try_into().unwrap(),
-                self.height.try_into().unwrap(),
-            );
+    fn sync(&self, framebuffer: &mut FrameBuffer, sync_rect: Damage) {
+        let sync_rect = sync_rect.clip(
+            self.width.try_into().unwrap(),
+            self.height.try_into().unwrap(),
+        );
 
-            let start_x: usize = sync_rect.x.try_into().unwrap();
-            let start_y: usize = sync_rect.y.try_into().unwrap();
-            let w: usize = sync_rect.width.try_into().unwrap();
-            let h: usize = sync_rect.height.try_into().unwrap();
+        let start_x: usize = sync_rect.x.try_into().unwrap();
+        let start_y: usize = sync_rect.y.try_into().unwrap();
+        let w: usize = sync_rect.width.try_into().unwrap();
+        let h: usize = sync_rect.height.try_into().unwrap();
 
-            let offscreen_ptr = self.ptr.as_ptr() as *mut u32;
-            let onscreen_ptr = framebuffer.onscreen as *mut u32; // FIXME use as_mut_ptr once stable
+        let offscreen_ptr = self.ptr.as_ptr() as *mut u32;
+        let onscreen_ptr = framebuffer.onscreen as *mut u32; // FIXME use as_mut_ptr once stable
 
-            for row in start_y..start_y + h {
-                unsafe {
-                    ptr::copy(
-                        offscreen_ptr.add(row * self.width + start_x),
-                        onscreen_ptr.add(row * framebuffer.stride + start_x),
-                        w,
-                    );
-                }
+        for row in start_y..start_y + h {
+            unsafe {
+                ptr::copy(
+                    offscreen_ptr.add(row * self.width + start_x),
+                    onscreen_ptr.add(row * framebuffer.stride + start_x),
+                    w,
+                );
             }
         }
     }

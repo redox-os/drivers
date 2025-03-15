@@ -132,7 +132,7 @@ impl TextScreen {
                 &mut self.input,
             );
 
-            self.display.sync_rects(damage);
+            self.display.sync_rect(damage);
         }
 
         Ok(buf.len())

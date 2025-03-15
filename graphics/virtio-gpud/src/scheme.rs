@@ -170,12 +170,7 @@ impl GraphicsAdapter for VirtGpuAdapter<'_> {
         framebuffer.sgl.as_ptr()
     }
 
-    fn update_plane(
-        &mut self,
-        display_id: usize,
-        framebuffer: &Self::Framebuffer,
-        damage: &[Damage],
-    ) {
+    fn update_plane(&mut self, display_id: usize, framebuffer: &Self::Framebuffer, damage: Damage) {
         futures::executor::block_on(async {
             let req = Dma::new(XferToHost2d::new(
                 framebuffer.id,
@@ -204,14 +199,12 @@ impl GraphicsAdapter for VirtGpuAdapter<'_> {
                 self.displays[display_id].active_resource = Some(framebuffer.id);
             }
 
-            for damage in damage {
-                let flush = ResourceFlush::new(
-                    framebuffer.id,
-                    damage.clip(framebuffer.width, framebuffer.height).into(),
-                );
-                let header = self.send_request(Dma::new(flush).unwrap()).await.unwrap();
-                assert_eq!(header.ty, CommandTy::RespOkNodata);
-            }
+            let flush = ResourceFlush::new(
+                framebuffer.id,
+                damage.clip(framebuffer.width, framebuffer.height).into(),
+            );
+            let header = self.send_request(Dma::new(flush).unwrap()).await.unwrap();
+            assert_eq!(header.ty, CommandTy::RespOkNodata);
         });
     }
 }

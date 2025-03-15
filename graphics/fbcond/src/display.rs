@@ -55,9 +55,9 @@ impl Display {
         V1GraphicsHandle::from_file(display_file)
     }
 
-    pub fn sync_rects(&mut self, sync_rects: Vec<Damage>) {
+    pub fn sync_rect(&mut self, sync_rect: Damage) {
         if let Some(map) = &self.map {
-            map.display_handle.sync_rects(&sync_rects).unwrap();
+            map.display_handle.sync_rect(sync_rect).unwrap();
         }
     }
 }
