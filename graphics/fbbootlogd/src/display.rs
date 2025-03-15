@@ -5,7 +5,6 @@ use libredox::errno::ESTALE;
 use orbclient::Event;
 use std::mem;
 use std::os::fd::BorrowedFd;
-use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::{io, os::unix::io::AsRawFd, slice};
 
@@ -35,12 +34,7 @@ pub struct DisplayMap {
     pub inner: graphics_ipc::v1::DisplayMap,
 }
 
-enum DisplayCommand {
-    SyncRects(Vec<Damage>),
-}
-
 pub struct Display {
-    cmd_tx: Sender<DisplayCommand>,
     pub map: Arc<Mutex<Option<DisplayMap>>>,
 }
 
@@ -67,13 +61,7 @@ impl Display {
             Self::handle_input_events(map_clone, input_handle);
         });
 
-        let (cmd_tx, cmd_rx) = mpsc::channel();
-        let map_clone = map.clone();
-        std::thread::spawn(move || {
-            Self::handle_sync_rect(map_clone, cmd_rx);
-        });
-
-        Ok(Self { cmd_tx, map })
+        Ok(Self { map })
     }
 
     fn handle_input_events(map: Arc<Mutex<Option<DisplayMap>>>, input_handle: ConsumerHandle) {
@@ -129,26 +117,9 @@ impl Display {
         }
     }
 
-    fn handle_sync_rect(map: Arc<Mutex<Option<DisplayMap>>>, cmd_rx: Receiver<DisplayCommand>) {
-        while let Ok(cmd) = cmd_rx.recv() {
-            match cmd {
-                DisplayCommand::SyncRects(sync_rects) => {
-                    // We may not hold this lock across the write call to avoid deadlocking if the
-                    // graphics driver tries to write to the bootlog.
-                    let display_handle = if let Some(map) = &*map.lock().unwrap() {
-                        map.display_handle.clone()
-                    } else {
-                        continue;
-                    };
-                    display_handle.sync_rects(&sync_rects).unwrap();
-                }
-            }
-        }
-    }
-
     pub fn sync_rects(&mut self, sync_rects: Vec<Damage>) {
-        self.cmd_tx
-            .send(DisplayCommand::SyncRects(sync_rects))
-            .unwrap();
+        if let Some(map) = &*self.map.lock().unwrap() {
+            map.display_handle.sync_rects(&sync_rects).unwrap();
+        }
     }
 }

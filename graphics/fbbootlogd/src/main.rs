@@ -1,13 +1,11 @@
 //! Fbbootlogd renders the boot log and presents it on VT1.
 //!
-//! While fbbootlogd is superficially similar to fbcond, there are two major differences:
+//! While fbbootlogd is superficially similar to fbcond, the major difference is:
 //!
 //! * Fbbootlogd doesn't accept input coming from the keyboard. It only allows getting written to.
-//! * Writing to fbbootlogd will never block. Not even on the graphics driver or inputd. This makes
-//!   it safe for graphics drivers and inputd to write to the boot log without risking deadlocks.
-//!   Fbcond will block on the graphics driver during handoff and will continously block on inputd
-//!   to get new input. Fbbootlogd does all blocking operations in background threads such that the
-//!   main thread will always keep accepting new input and writing it to the framebuffer.
+//!
+//! In the future fbbootlogd may also pull from logd as opposed to have logd push logs to it. And it
+//! it could display a boot splash like plymouth instead of a boot log when booting in quiet mode.
 
 use redox_scheme::{RequestKind, SignalBehavior, Socket};
 
