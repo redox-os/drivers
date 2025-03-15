@@ -122,8 +122,6 @@ pub fn probe_device(pcid_handle: &mut PciFunctionHandle) -> Result<Device, Error
 
             _ => unreachable!(),
         }
-
-        log::trace!("virtio-core::device-probe: {capability:?}");
     }
 
     let common_addr = common_addr.expect("virtio common capability missing");

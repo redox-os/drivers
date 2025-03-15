@@ -154,8 +154,6 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
         let vt = screen.next().unwrap_or("").parse::<usize>().unwrap();
         let id = screen.next().unwrap_or("").parse::<usize>().unwrap_or(0);
 
-        dbg!(vt, id);
-
         if id >= self.adapter.displays().len() {
             return Err(Error::new(EINVAL));
         }
@@ -233,11 +231,11 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
     fn mmap_prep(
         &mut self,
         id: usize,
-        offset: u64,
-        size: usize,
-        flags: MapFlags,
+        _offset: u64,
+        _size: usize,
+        _flags: MapFlags,
     ) -> syscall::Result<usize> {
-        log::info!("KSMSG MMAP {} {:?} {} {}", id, flags, offset, size);
+        // log::trace!("KSMSG MMAP {} {:?} {} {}", id, _flags, _offset, _size);
         let handle = self.handles.get(&id).ok_or(Error::new(EINVAL))?;
         let Handle::Screen { vt, screen } = handle;
         let framebuffer = &self.vts_fb[vt][screen];
