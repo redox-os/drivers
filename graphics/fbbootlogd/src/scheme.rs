@@ -6,7 +6,7 @@ use syscall::{Error, Result, EINVAL, ENOENT};
 use crate::display::Display;
 
 pub struct FbbootlogScheme {
-    display: Display,
+    pub display: Display,
     text_screen: console_draw::TextScreen,
 }
 
@@ -55,8 +55,7 @@ impl Scheme for FbbootlogScheme {
     }
 
     fn write(&mut self, _id: usize, buf: &[u8], _offset: u64, _fcntl_flags: u32) -> Result<usize> {
-        let mut map_guard = self.display.map.lock().unwrap();
-        if let Some(map) = &mut *map_guard {
+        if let Some(map) = &mut self.display.map {
             let damage = self.text_screen.write(
                 &mut console_draw::DisplayMap {
                     offscreen: map.inner.ptr_mut(),
@@ -66,7 +65,6 @@ impl Scheme for FbbootlogScheme {
                 buf,
                 &mut VecDeque::new(),
             );
-            drop(map_guard);
 
             self.display.sync_rects(damage);
         }
