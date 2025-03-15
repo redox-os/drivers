@@ -221,7 +221,7 @@ impl TextScreen {
             x: 0,
             y: u32::try_from(min_changed).unwrap() * 16,
             width,
-            height: u32::try_from(max_changed.saturating_sub(min_changed)).unwrap() * 16,
+            height: u32::try_from(max_changed.saturating_sub(min_changed) + 1).unwrap() * 16,
         };
 
         damage
