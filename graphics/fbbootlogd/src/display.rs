@@ -23,31 +23,21 @@ pub struct Display {
 
 impl Display {
     pub fn open_first_vt() -> io::Result<Self> {
-        let input_handle = ConsumerHandle::new_vt()?;
-
-        let map = match input_handle.open_display() {
-            Ok(display) => {
-                let display_handle = V1GraphicsHandle::from_file(display)?;
-                Some(
-                    display_fd_map(display_handle)
-                        .unwrap_or_else(|e| panic!("failed to map display: {e}")),
-                )
-            }
-            Err(err) => {
-                println!("fbbootlogd: No display present yet: {err}");
-                None
-            }
+        let mut display = Self {
+            input_handle: ConsumerHandle::new_vt()?,
+            map: None,
         };
 
-        Ok(Self { input_handle, map })
+        display.handle_handoff();
+
+        Ok(display)
     }
 
     pub fn handle_handoff(&mut self) {
-        eprintln!("fbbootlogd: handoff requested");
         let new_display_handle = match self.input_handle.open_display() {
             Ok(display) => V1GraphicsHandle::from_file(display).unwrap(),
             Err(err) => {
-                println!("fbbootlogd: No display present yet: {err}");
+                eprintln!("fbbootlogd: No display present yet: {err}");
                 return;
             }
         };
@@ -56,7 +46,7 @@ impl Display {
             Ok(ok) => {
                 self.map = Some(ok);
 
-                eprintln!("fbbootlogd: handoff finished");
+                eprintln!("fbbootlogd: mapped display");
             }
             Err(err) => {
                 eprintln!("fbbootlogd: failed to open display: {}", err);

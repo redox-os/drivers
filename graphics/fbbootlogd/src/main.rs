@@ -101,6 +101,7 @@ fn inner(daemon: redox_daemon::Daemon) -> ! {
                         ConsumerHandleEvent::Events(&[]) => break,
                         ConsumerHandleEvent::Events(_) => {}
                         ConsumerHandleEvent::Handoff => {
+                            eprintln!("fbbootlogd: handoff requested");
                             scheme.display.handle_handoff();
                         }
                     }
