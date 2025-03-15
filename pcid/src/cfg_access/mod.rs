@@ -151,8 +151,8 @@ impl Mcfg {
             if table_filename.get(0..4) == Some(&MCFG_NAME) {
                 let bytes = fs::read(table_path)?.into_boxed_slice();
                 match Mcfg::parse(&*bytes) {
-                    Some((mcfg, allocs)) => {
-                        log::info!("MCFG {mcfg:?} ALLOCS {allocs:?}");
+                    Some((_mcfg, allocs)) => {
+                        log::info!("MCFG ALLOCS {:?}", allocs.0);
                         return f(allocs, Vec::new(), [u32::MAX, u32::MAX, u32::MAX, u32::MAX]);
                     }
                     None => {

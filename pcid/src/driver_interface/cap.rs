@@ -10,12 +10,12 @@ pub struct VendorSpecificCapability {
 impl VendorSpecificCapability {
     pub unsafe fn parse(addr: PciCapabilityAddress, access: &dyn ConfigRegionAccess) -> Self {
         let dword = access.read(addr.address, addr.offset);
-        let next = (dword >> 8) & 0xFF;
         let length = ((dword >> 16) & 0xFF) as u16;
-        log::info!(
-            "Vendor specific offset: {:#02x} next: {next:#02x} cap len: {length:#02x}",
-            addr.offset
-        );
+        // let next = (dword >> 8) & 0xFF;
+        // log::trace!(
+        //     "Vendor specific offset: {:#02x} next: {next:#02x} cap len: {length:#02x}",
+        //     addr.offset
+        // );
         let data = if length > 0 {
             assert!(
                 length > 3 && length % 4 == 0,
