@@ -1,9 +1,9 @@
 use event::EventQueue;
-use libredox::errno::{EAGAIN, EINTR, ESTALE};
+use inputd::ConsumerHandleEvent;
+use libredox::errno::{EAGAIN, EINTR};
 use orbclient::Event;
 use redox_scheme::{CallRequest, RequestKind, Response, SignalBehavior, Socket};
-use std::os::fd::{AsRawFd, BorrowedFd};
-use std::{env, mem, slice};
+use std::env;
 use syscall::EVENT_READ;
 
 use crate::scheme::{FbconScheme, VtIndex};
@@ -11,19 +11,6 @@ use crate::scheme::{FbconScheme, VtIndex};
 mod display;
 mod scheme;
 mod text;
-
-fn read_to_slice<T: Copy>(
-    file: BorrowedFd,
-    buf: &mut [T],
-) -> Result<usize, libredox::error::Error> {
-    unsafe {
-        libredox::call::read(
-            file.as_raw_fd() as usize,
-            slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, buf.len() * mem::size_of::<T>()),
-        )
-        .map(|count| count / mem::size_of::<T>())
-    }
-}
 
 fn main() {
     let vt_ids = env::args()
@@ -129,21 +116,19 @@ fn handle_event(
 
             let mut events = [Event::new(); 16];
             loop {
-                match read_to_slice(vt.display.input_handle.inner(), &mut events) {
-                    Ok(0) => break,
-                    Err(err) if err.errno() == ESTALE => {
-                        vt.handle_handoff();
-                    }
-
-                    Ok(count) => {
-                        let events = &mut events[..count];
-                        for event in events.iter_mut() {
+                match vt
+                    .display
+                    .input_handle
+                    .read_events(&mut events)
+                    .expect("fbcond: Error while reading events")
+                {
+                    ConsumerHandleEvent::Events(&[]) => break,
+                    ConsumerHandleEvent::Events(events) => {
+                        for event in events {
                             vt.input(event)
                         }
                     }
-                    Err(err) => {
-                        panic!("fbcond: Error while reading events: {err}");
-                    }
+                    ConsumerHandleEvent::Handoff => vt.handle_handoff(),
                 }
             }
         }

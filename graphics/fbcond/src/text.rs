@@ -23,6 +23,7 @@ impl TextScreen {
     }
 
     pub fn handle_handoff(&mut self) {
+        eprintln!("fbcond: Performing handoff");
         self.display.reopen_for_handoff();
     }
 
