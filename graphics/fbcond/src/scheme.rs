@@ -43,10 +43,10 @@ impl FbconScheme {
         let mut vts = BTreeMap::new();
 
         for &vt_i in vt_ids {
-            let display = Display::open_vt(vt_i).expect("Failed to open display for vt");
+            let display = Display::open_new_vt().expect("Failed to open display for vt");
             event_queue
                 .subscribe(
-                    display.input_handle.inner().as_raw_fd() as usize,
+                    display.input_handle.event_handle().as_raw_fd() as usize,
                     VtIndex(vt_i),
                     event::EventFlags::READ,
                 )
