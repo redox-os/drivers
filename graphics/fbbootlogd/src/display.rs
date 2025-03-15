@@ -1,8 +1,7 @@
 use std::io;
 
 use graphics_ipc::v1::{Damage, V1GraphicsHandle};
-use inputd::{ConsumerHandle, ConsumerHandleEvent};
-use orbclient::Event;
+use inputd::ConsumerHandle;
 
 fn display_fd_map(display_handle: V1GraphicsHandle) -> io::Result<DisplayMap> {
     let display_map = display_handle.map_display()?;
@@ -43,38 +42,24 @@ impl Display {
         Ok(Self { input_handle, map })
     }
 
-    pub fn handle_input_events(&mut self) {
-        let mut events = [Event::new(); 16];
-        loop {
-            match self
-                .input_handle
-                .read_events(&mut events)
-                .expect("fbbootlogd: error while reading events")
-            {
-                ConsumerHandleEvent::Events(&[]) => break,
-                ConsumerHandleEvent::Events(_) => {}
-                ConsumerHandleEvent::Handoff => {
-                    eprintln!("fbbootlogd: handoff requested");
+    pub fn handle_handoff(&mut self) {
+        eprintln!("fbbootlogd: handoff requested");
+        let new_display_handle = match self.input_handle.open_display() {
+            Ok(display) => V1GraphicsHandle::from_file(display).unwrap(),
+            Err(err) => {
+                println!("fbbootlogd: No display present yet: {err}");
+                return;
+            }
+        };
 
-                    let new_display_handle = match self.input_handle.open_display() {
-                        Ok(display) => V1GraphicsHandle::from_file(display).unwrap(),
-                        Err(err) => {
-                            println!("fbbootlogd: No display present yet: {err}");
-                            continue;
-                        }
-                    };
+        match display_fd_map(new_display_handle) {
+            Ok(ok) => {
+                self.map = Some(ok);
 
-                    match display_fd_map(new_display_handle) {
-                        Ok(ok) => {
-                            self.map = Some(ok);
-
-                            eprintln!("fbbootlogd: handoff finished");
-                        }
-                        Err(err) => {
-                            eprintln!("fbbootlogd: failed to open display: {}", err);
-                        }
-                    }
-                }
+                eprintln!("fbbootlogd: handoff finished");
+            }
+            Err(err) => {
+                eprintln!("fbbootlogd: failed to open display: {}", err);
             }
         }
     }

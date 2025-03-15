@@ -10,7 +10,9 @@
 use std::os::fd::AsRawFd;
 
 use event::EventQueue;
+use inputd::ConsumerHandleEvent;
 use libredox::errno::EAGAIN;
+use orbclient::Event;
 use redox_scheme::{RequestKind, SignalBehavior, Socket};
 
 use crate::scheme::FbbootlogScheme;
@@ -88,7 +90,21 @@ fn inner(daemon: redox_daemon::Daemon) -> ! {
                 }
             }
             Source::Input => {
-                scheme.display.handle_input_events();
+                let mut events = [Event::new(); 16];
+                loop {
+                    match scheme
+                        .display
+                        .input_handle
+                        .read_events(&mut events)
+                        .expect("fbbootlogd: error while reading events")
+                    {
+                        ConsumerHandleEvent::Events(&[]) => break,
+                        ConsumerHandleEvent::Events(_) => {}
+                        ConsumerHandleEvent::Handoff => {
+                            scheme.display.handle_handoff();
+                        }
+                    }
+                }
             }
         }
     }
