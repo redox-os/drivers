@@ -46,7 +46,7 @@ fn inner(daemon: redox_daemon::Daemon) -> ! {
 
     event_queue
         .subscribe(
-            scheme.display.input_handle.inner().as_raw_fd() as usize,
+            scheme.display.input_handle.event_handle().as_raw_fd() as usize,
             Source::Input,
             event::EventFlags::READ,
         )

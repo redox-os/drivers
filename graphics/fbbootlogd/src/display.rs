@@ -1,24 +1,8 @@
-use graphics_ipc::v1::{Damage, V1GraphicsHandle};
-use inputd::ConsumerHandle;
-use libredox::errno::ESTALE;
-use orbclient::Event;
-use std::mem;
-use std::os::fd::BorrowedFd;
-use std::os::unix::io::AsRawFd;
-use std::{io, slice};
+use std::io;
 
-fn read_to_slice<T: Copy>(
-    file: BorrowedFd,
-    buf: &mut [T],
-) -> Result<usize, libredox::error::Error> {
-    unsafe {
-        libredox::call::read(
-            file.as_raw_fd() as usize,
-            slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, buf.len() * mem::size_of::<T>()),
-        )
-        .map(|count| count / mem::size_of::<T>())
-    }
-}
+use graphics_ipc::v1::{Damage, V1GraphicsHandle};
+use inputd::{ConsumerHandle, ConsumerHandleEvent};
+use orbclient::Event;
 
 fn display_fd_map(display_handle: V1GraphicsHandle) -> io::Result<DisplayMap> {
     let display_map = display_handle.map_display()?;
@@ -62,8 +46,14 @@ impl Display {
     pub fn handle_input_events(&mut self) {
         let mut events = [Event::new(); 16];
         loop {
-            match read_to_slice(self.input_handle.inner(), &mut events) {
-                Err(err) if err.errno() == ESTALE => {
+            match self
+                .input_handle
+                .read_events(&mut events)
+                .expect("fbbootlogd: error while reading events")
+            {
+                ConsumerHandleEvent::Events(&[]) => break,
+                ConsumerHandleEvent::Events(_) => {}
+                ConsumerHandleEvent::Handoff => {
                     eprintln!("fbbootlogd: handoff requested");
 
                     let new_display_handle = match self.input_handle.open_display() {
@@ -84,12 +74,6 @@ impl Display {
                             eprintln!("fbbootlogd: failed to open display: {}", err);
                         }
                     }
-                }
-
-                Ok(0) => break,
-                Ok(_count) => {}
-                Err(err) => {
-                    panic!("fbbootlogd: error while reading events: {err}");
                 }
             }
         }
