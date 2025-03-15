@@ -1,6 +1,6 @@
 extern crate ransid;
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::VecDeque;
 use std::convert::{TryFrom, TryInto};
 use std::{cmp, ptr};
 
@@ -15,7 +15,6 @@ pub struct DisplayMap {
 
 pub struct TextScreen {
     console: ransid::Console,
-    changed: BTreeSet<usize>,
 }
 
 impl TextScreen {
@@ -23,7 +22,6 @@ impl TextScreen {
         TextScreen {
             // Width and height will be filled in on the next write to the console
             console: ransid::Console::new(0, 0),
-            changed: BTreeSet::new(),
         }
     }
 
@@ -118,18 +116,24 @@ impl TextScreen {
 }
 
 impl TextScreen {
-    pub fn write(
-        &mut self,
-        map: &mut DisplayMap,
-        buf: &[u8],
-        input: &mut VecDeque<u8>,
-    ) -> Vec<Damage> {
+    pub fn write(&mut self, map: &mut DisplayMap, buf: &[u8], input: &mut VecDeque<u8>) -> Damage {
+        let mut min_changed = usize::MAX;
+        let mut max_changed = 0;
+        let mut line_changed = |line| {
+            if line < min_changed {
+                min_changed = line;
+            }
+            if line > max_changed {
+                max_changed = line;
+            }
+        };
+
         self.console.resize(map.width / 8, map.height / 16);
-        if self.console.state.x > self.console.state.w {
-            self.console.state.x = self.console.state.w;
+        if self.console.state.x >= self.console.state.w {
+            self.console.state.x = self.console.state.w - 1;
         }
-        if self.console.state.y > self.console.state.h {
-            self.console.state.y = self.console.state.h;
+        if self.console.state.y >= self.console.state.h {
+            self.console.state.y = self.console.state.h - 1;
         }
 
         if self.console.state.cursor
@@ -139,7 +143,7 @@ impl TextScreen {
             let x = self.console.state.x;
             let y = self.console.state.y;
             Self::invert(map, x * 8, y * 16, 8, 16);
-            self.changed.insert(y);
+            line_changed(y);
         }
 
         self.console.write(buf, |event| match event {
@@ -152,13 +156,13 @@ impl TextScreen {
                 ..
             } => {
                 Self::char(map, x * 8, y * 16, c, color.as_rgb(), bold, false);
-                self.changed.insert(y);
+                line_changed(y);
             }
             ransid::Event::Input { data } => input.extend(data),
             ransid::Event::Rect { x, y, w, h, color } => {
                 Self::rect(map, x * 8, y * 16, w * 8, h * 16, color.as_rgb());
                 for y2 in y..y + h {
-                    self.changed.insert(y2);
+                    line_changed(y2);
                 }
             }
             ransid::Event::ScreenBuffer { .. } => (),
@@ -195,7 +199,7 @@ impl TextScreen {
                         }
                     }
 
-                    self.changed.insert(to_y + y);
+                    line_changed(to_y + y);
                 }
             }
             ransid::Event::Resize { .. } => (),
@@ -209,27 +213,16 @@ impl TextScreen {
             let x = self.console.state.x;
             let y = self.console.state.y;
             Self::invert(map, x * 8, y * 16, 8, 16);
-            self.changed.insert(y);
+            line_changed(y);
         }
 
         let width = map.width.try_into().unwrap();
-        let mut damage: Vec<Damage> = vec![];
-        let mut last_change = usize::MAX - 1;
-        for &change in &self.changed {
-            if change == last_change + 1 {
-                damage.last_mut().unwrap().height += 16;
-            } else {
-                damage.push(Damage {
-                    x: 0,
-                    y: u32::try_from(change).unwrap() * 16,
-                    width,
-                    height: 16,
-                });
-            }
-            last_change = change;
-        }
-
-        self.changed.clear();
+        let damage = Damage {
+            x: 0,
+            y: u32::try_from(min_changed).unwrap() * 16,
+            width,
+            height: u32::try_from(max_changed.saturating_sub(min_changed)).unwrap() * 16,
+        };
 
         damage
     }

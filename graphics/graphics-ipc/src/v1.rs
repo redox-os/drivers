@@ -64,11 +64,11 @@ impl V1GraphicsHandle {
         Ok(())
     }
 
-    pub fn sync_rects(&self, sync_rects: &[Damage]) -> io::Result<()> {
+    pub fn sync_rect(&self, sync_rect: Damage) -> io::Result<()> {
         libredox::call::write(self.file.as_raw_fd() as usize, unsafe {
             slice::from_raw_parts(
-                sync_rects.as_ptr() as *const u8,
-                sync_rects.len() * mem::size_of::<Damage>(),
+                ptr::addr_of!(sync_rect).cast::<u8>(),
+                mem::size_of::<Damage>(),
             )
         })?;
         Ok(())

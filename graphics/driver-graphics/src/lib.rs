@@ -16,12 +16,7 @@ pub trait GraphicsAdapter {
     fn create_dumb_framebuffer(&mut self, width: u32, height: u32) -> Self::Framebuffer;
     fn map_dumb_framebuffer(&mut self, framebuffer: &Self::Framebuffer) -> *mut u8;
 
-    fn update_plane(
-        &mut self,
-        display_id: usize,
-        framebuffer: &Self::Framebuffer,
-        damage: &[Damage],
-    );
+    fn update_plane(&mut self, display_id: usize, framebuffer: &Self::Framebuffer, damage: Damage);
 }
 
 pub trait Framebuffer {
@@ -137,12 +132,12 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
         adapter.update_plane(
             screen,
             framebuffer,
-            &[Damage {
+            Damage {
                 x: 0,
                 y: 0,
                 width: framebuffer.width(),
                 height: framebuffer.height(),
-            }],
+            },
         );
     }
 }
@@ -227,12 +222,8 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
 
         let framebuffer = &self.vts_fb[vt][screen];
 
-        let damage = unsafe {
-            core::slice::from_raw_parts(
-                buf.as_ptr() as *const Damage,
-                buf.len() / core::mem::size_of::<Damage>(),
-            )
-        };
+        assert_eq!(buf.len(), std::mem::size_of::<Damage>());
+        let damage = unsafe { *buf.as_ptr().cast::<Damage>() };
 
         self.adapter.update_plane(*screen, framebuffer, damage);
 
