@@ -17,7 +17,6 @@ use redox_scheme::{RequestKind, SignalBehavior, Socket};
 
 use crate::scheme::FbbootlogScheme;
 
-mod display;
 mod scheme;
 
 fn main() {
@@ -48,7 +47,7 @@ fn inner(daemon: redox_daemon::Daemon) -> ! {
 
     event_queue
         .subscribe(
-            scheme.display.input_handle.event_handle().as_raw_fd() as usize,
+            scheme.input_handle.event_handle().as_raw_fd() as usize,
             Source::Input,
             event::EventFlags::READ,
         )
@@ -93,7 +92,6 @@ fn inner(daemon: redox_daemon::Daemon) -> ! {
                 let mut events = [Event::new(); 16];
                 loop {
                     match scheme
-                        .display
                         .input_handle
                         .read_events(&mut events)
                         .expect("fbbootlogd: error while reading events")
@@ -102,7 +100,7 @@ fn inner(daemon: redox_daemon::Daemon) -> ! {
                         ConsumerHandleEvent::Events(_) => {}
                         ConsumerHandleEvent::Handoff => {
                             eprintln!("fbbootlogd: handoff requested");
-                            scheme.display.handle_handoff();
+                            scheme.handle_handoff();
                         }
                     }
                 }
