@@ -374,6 +374,8 @@ impl<'a> GpuScheme {
             cursor_queue,
             transport,
             displays: vec![],
+            cursor_set: false,
+            cursor_resource: None,
         };
 
         let mut display_info = adapter.get_display_info().await?;
