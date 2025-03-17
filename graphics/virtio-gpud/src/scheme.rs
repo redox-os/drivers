@@ -346,20 +346,17 @@ impl GraphicsAdapter for VirtGpuAdapter<'_> {
             assert_eq!(header.ty, CommandTy::RespOkNodata);
         });
 
-        if let Some(damage) = damage {
-            for damage in damage {
-                if(self.cursor_set){
-                    let x: u32 = damage.x as u32;
-                    let y: u32 = damage.y as u32;
-                    self.move_cursor(x, y, self.cursor_resource.unwrap()).unwrap();
-                }else{
-                    let x: u32 = damage.x as u32;
-                    let y: u32 = damage.y as u32;
-                    self.setup_cursor(x, y);
-                    self.cursor_set = true;
-                }
-            }
-        } 
+        if self.cursor_set {
+            let x: u32 = damage.x as u32;
+            let y: u32 = damage.y as u32;
+            self.move_cursor(x, y, self.cursor_resource.unwrap()).unwrap();
+        }else{
+            let x: u32 = damage.x as u32;
+            let y: u32 = damage.y as u32;
+            self.setup_cursor(x, y);
+            self.cursor_set = true;
+        }
+        
     }
 }
 
