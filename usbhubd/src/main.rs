@@ -61,7 +61,7 @@ fn main() {
     /*TODO
     handle
         .configure_endpoints(&ConfigureEndpointsReq {
-            config_desc: conf_num as u8,
+            config_desc: conf_desc.configuration_value,
             interface_desc: Some(interface_num),
             alternate_setting: Some(if_desc.alternate_setting),
         })

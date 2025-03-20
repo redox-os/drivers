@@ -204,11 +204,10 @@ fn main() {
     log::info!("{:X?}", desc);
 
     let mut endp_count = 0;
-    let (conf_desc, conf_num, (if_desc, endp_desc_opt, hid_desc)) = desc
+    let (conf_desc, (if_desc, endp_desc_opt, hid_desc)) = desc
         .config_descs
         .iter()
-        .enumerate()
-        .find_map(|(conf_num, conf_desc)| {
+        .find_map(|conf_desc| {
             let if_desc = conf_desc.interface_descs.iter().find_map(|if_desc| {
                 if if_desc.number == interface_num {
                     let endp_desc_opt = if_desc.endpoints.iter().find_map(|endp_desc| {
@@ -231,13 +230,13 @@ fn main() {
                     None
                 }
             })?;
-            Some((conf_desc.clone(), conf_num, if_desc))
+            Some((conf_desc.clone(), if_desc))
         })
         .expect("Failed to find suitable configuration");
 
     handle
         .configure_endpoints(&ConfigureEndpointsReq {
-            config_desc: conf_num as u8,
+            config_desc: conf_desc.configuration_value,
             interface_desc: Some(interface_num),
             alternate_setting: Some(if_desc.alternate_setting),
         })
