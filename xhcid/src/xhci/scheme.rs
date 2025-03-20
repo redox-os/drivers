@@ -874,10 +874,10 @@ impl Xhci {
 
         if dev_desc.major_version() == 2 && endp_desc.is_periodic() {
             u32::from(max_packet_size) * (u32::from(max_burst_size) + 1)
-        } else if !endp_desc.has_ssp_companion() {
-            u32::from(endp_desc.ssc.as_ref().unwrap().bytes_per_interval)
         } else if endp_desc.has_ssp_companion() {
             endp_desc.sspc.as_ref().unwrap().bytes_per_interval
+        } else if endp_desc.ssc.is_some() {
+            u32::from(endp_desc.ssc.as_ref().unwrap().bytes_per_interval)
         } else if speed_id.is_fullspeed() && endp_desc.is_interrupt() {
             64
         } else if speed_id.is_fullspeed() && endp_desc.is_isoch() {
