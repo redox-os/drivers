@@ -1211,6 +1211,24 @@ impl Xhci {
         let drivers_usercfg: &DriversConfig = &DRIVERS_CONFIG;
 
         for ifdesc in config_desc.interface_descs.iter() {
+            //TODO: support alternate settings
+            // This is difficult because the device driver must know which alternate
+            // to use, but if alternates can have different classes, then a different
+            // device driver may be required for each alternate. For now, we will use
+            // only the default alternate setting (0)
+            if ifdesc.alternate_setting != 0 {
+                warn!(
+                    "ignoring port {} iface {} alternate {} class {}.{} proto {}",
+                    port,
+                    ifdesc.number,
+                    ifdesc.alternate_setting,
+                    ifdesc.class,
+                    ifdesc.sub_class,
+                    ifdesc.protocol
+                );
+                continue;
+            }
+
             if let Some(driver) = drivers_usercfg.drivers.iter().find(|driver| {
                 driver.class == ifdesc.class
                     && driver
@@ -1219,13 +1237,14 @@ impl Xhci {
                         .unwrap_or(true)
             }) {
                 info!(
-                    "Loading subdriver \"{}\" for port {} iface {} proto {} class {}.{}",
+                    "Loading subdriver \"{}\" for port {} iface {} alternate {} class {}.{} proto {}",
                     driver.name,
                     port,
                     ifdesc.number,
-                    ifdesc.protocol,
+                    ifdesc.alternate_setting,
                     ifdesc.class,
-                    ifdesc.sub_class
+                    ifdesc.sub_class,
+                    ifdesc.protocol,
                 );
                 let (command, args) = driver.command.split_first().ok_or(Error::new(EBADMSG))?;
 
@@ -1255,8 +1274,13 @@ impl Xhci {
                 });
             } else {
                 warn!(
-                    "No driver for port {} iface {} proto {} class {}.{}",
-                    port, ifdesc.number, ifdesc.protocol, ifdesc.class, ifdesc.sub_class
+                    "No driver for port {} iface {} alternate {} class {}.{} proto {}",
+                    port,
+                    ifdesc.number,
+                    ifdesc.alternate_setting,
+                    ifdesc.class,
+                    ifdesc.sub_class,
+                    ifdesc.protocol
                 );
             }
         }
