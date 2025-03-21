@@ -1,5 +1,5 @@
 use clap::{App, Arg};
-use xhcid_interface::XhciClientHandle;
+use xhcid_interface::{PortId, XhciClientHandle};
 
 fn main() {
     let matches = App::new("usbctl")
@@ -32,8 +32,8 @@ fn main() {
         let port = port_scmd_matches
             .value_of("PORT")
             .expect("invalid utf-8 for PORT argument")
-            .parse::<usize>()
-            .expect("expected PORT to be an integer");
+            .parse::<PortId>()
+            .expect("expected PORT ID");
 
         let handle = XhciClientHandle::new(scheme.to_owned(), port);
 

@@ -8,7 +8,8 @@ use rehid::{
     usage_tables::{GenericDesktopUsage, UsagePage},
 };
 use xhcid_interface::{
-    ConfigureEndpointsReq, DevDesc, EndpDirection, EndpointTy, PortReqRecipient, XhciClientHandle,
+    ConfigureEndpointsReq, DevDesc, EndpDirection, EndpointTy, PortId, PortReqRecipient,
+    XhciClientHandle,
 };
 
 mod keymap;
@@ -182,8 +183,8 @@ fn main() {
     let port = args
         .next()
         .expect(USAGE)
-        .parse::<usize>()
-        .expect("Expected integer as input of port");
+        .parse::<PortId>()
+        .expect("Expected port ID");
     let interface_num = args
         .next()
         .expect(USAGE)

@@ -14,7 +14,7 @@ use super::doorbell::Doorbell;
 use super::event::EventRing;
 use super::ring::Ring;
 use super::trb::{Trb, TrbCompletionCode, TrbType};
-use super::Xhci;
+use super::{PortId, Xhci};
 use crate::xhci::device_enumerator::DeviceEnumerationRequest;
 use crate::xhci::port::PortFlags;
 use common::io::Io as _;
@@ -48,12 +48,12 @@ pub struct NextEventTrb {
 // indexed using this struct instead.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct RingId {
-    pub port: u8,
+    pub port: PortId,
     pub endpoint_num: u8,
     pub stream_id: u16,
 }
 impl RingId {
-    pub const fn default_control_pipe(port: u8) -> Self {
+    pub const fn default_control_pipe(port: PortId) -> Self {
         Self {
             port,
             endpoint_num: 0,
@@ -623,7 +623,7 @@ impl Xhci {
     pub fn with_ring<T, F: FnOnce(&Ring) -> T>(&self, id: RingId, function: F) -> Option<T> {
         use super::RingOrStreams;
 
-        let slot_state = self.port_states.get(&(id.port as usize))?;
+        let slot_state = self.port_states.get(&id.port)?;
         let endpoint_state = slot_state.endpoint_states.get(&id.endpoint_num)?;
 
         let ring_ref = match endpoint_state.transfer {
@@ -640,7 +640,7 @@ impl Xhci {
     ) -> Option<T> {
         use super::RingOrStreams;
 
-        let mut slot_state = self.port_states.get_mut(&(id.port as usize))?;
+        let mut slot_state = self.port_states.get_mut(&id.port)?;
         let mut endpoint_state = slot_state.endpoint_states.get_mut(&id.endpoint_num)?;
 
         let ring_ref = match endpoint_state.transfer {

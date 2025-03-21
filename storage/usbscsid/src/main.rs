@@ -3,7 +3,7 @@ use std::env;
 
 use driver_block::{Disk, DiskScheme};
 use syscall::{Error, EIO};
-use xhcid_interface::{ConfigureEndpointsReq, XhciClientHandle};
+use xhcid_interface::{ConfigureEndpointsReq, PortId, XhciClientHandle};
 
 pub mod protocol;
 pub mod scsi;
@@ -20,8 +20,8 @@ fn main() {
     let port = args
         .next()
         .expect(USAGE)
-        .parse::<usize>()
-        .expect("port has to be a number");
+        .parse::<PortId>()
+        .expect("Expected port ID");
     let protocol = args
         .next()
         .expect(USAGE)
@@ -36,7 +36,7 @@ fn main() {
     redox_daemon::Daemon::new(move |d| daemon(d, scheme, port, protocol))
         .expect("usbscsid: failed to daemonize");
 }
-fn daemon(daemon: redox_daemon::Daemon, scheme: String, port: usize, protocol: u8) -> ! {
+fn daemon(daemon: redox_daemon::Daemon, scheme: String, port: PortId, protocol: u8) -> ! {
     let disk_scheme_name = format!("disk.usb-{scheme}+{port}-scsi");
 
     // TODO: Use eventfds.

@@ -5,7 +5,7 @@ use std::convert::TryFrom;
 use std::fs::{File, OpenOptions};
 use std::io::prelude::*;
 use std::num::NonZeroU8;
-use std::{io, result, str};
+use std::{fmt, io, result, str};
 
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -280,10 +280,78 @@ pub enum PortReqRecipient {
     VendorSpecific,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct PortId {
+    pub root_hub_port_num: u8,
+    pub route_string: u32,
+}
+
+impl PortId {
+    pub fn root_hub_port_index(&self) -> usize {
+        self.root_hub_port_num.checked_sub(1).unwrap().into()
+    }
+}
+
+impl fmt::Display for PortId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.root_hub_port_num)?;
+        // USB 3.1 Revision 1.1 Specification Section 8.9 Route String Field
+        // The Route String is a 20-bit field in downstream directed packets that the hub uses to route
+        // each packet to the designated downstream port. It is composed of a concatenation of the
+        // downstream port numbers (4 bits per hub) for each hub traversed to reach a device.
+        // The lowest 4 bits are ignored.
+        let mut route_string = self.route_string >> 4;
+        while route_string > 0 {
+            write!(f, ".{}", route_string & 0xF)?;
+            route_string >>= 4;
+        }
+        Ok(())
+    }
+}
+
+impl str::FromStr for PortId {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut root_hub_port_num = 0;
+        let mut route_string = 0;
+        for (i, part) in s.split('.').enumerate() {
+            let value: u8 = part
+                .parse()
+                .map_err(|e| format!("failed to parse {:?}: {}", part, e))?;
+
+            // Parse root hub port number
+            if i == 0 {
+                root_hub_port_num = value;
+                continue;
+            }
+
+            // Parse route string component
+            if value & 0xF0 != 0 {
+                return Err(format!(
+                    "value {:?} is too large for route string component",
+                    value
+                ));
+            }
+            route_string |= (value as u32) << (i * 4);
+        }
+        if root_hub_port_num == 0 {
+            return Err(format!(
+                "invalid root hub port number {:?}",
+                root_hub_port_num
+            ));
+        }
+        Ok(Self {
+            root_hub_port_num,
+            route_string,
+        })
+    }
+}
+
 #[derive(Debug)]
 pub struct XhciClientHandle {
     scheme: String,
-    port: usize,
+    port: PortId,
 }
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -410,7 +478,7 @@ impl DeviceReqData<'_> {
 }
 
 impl XhciClientHandle {
-    pub fn new(scheme: String, port: usize) -> Self {
+    pub fn new(scheme: String, port: PortId) -> Self {
         Self { scheme, port }
     }
 

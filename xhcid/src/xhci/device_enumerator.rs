@@ -1,5 +1,5 @@
 use crate::xhci::port::PortFlags;
-use crate::xhci::Xhci;
+use crate::xhci::{PortId, Xhci};
 use common::io::Io;
 use crossbeam_channel;
 use log::{debug, info, warn};
@@ -108,24 +108,29 @@ impl DeviceEnumerator {
                     panic!("Failed to received an enumeration request! error: {}", err)
                 }
             };
-            info!("Device Enumerator request for port {}", request.port_number);
 
-            let port_array_index = request.port_number - 1;
+            let port_id = PortId {
+                root_hub_port_num: request.port_number,
+                route_string: 0,
+            };
+            let port_array_index = port_id.root_hub_port_index();
+
+            info!("Device Enumerator request for port {}", port_id);
 
             let (len, flags) = {
                 let ports = self.hci.ports.lock().unwrap();
 
                 let len = ports.len();
 
-                if port_array_index as usize >= len {
+                if port_array_index >= len {
                     warn!(
                         "Received out of bounds Device Enumeration request for port {}",
-                        request.port_number
+                        port_id
                     );
                     continue;
                 }
 
-                (len, ports[port_array_index as usize].flags())
+                (len, ports[port_array_index].flags())
             };
 
             if flags.contains(PortFlags::PORT_CCS) {
@@ -145,21 +150,18 @@ impl DeviceEnumerator {
                     if !disabled_state {
                         panic!(
                             "Port {} isn't in the disabled state! Current flags: {:?}",
-                            request.port_number, flags
+                            port_id, flags
                         );
                     } else {
-                        debug!(
-                            "Port {} has entered the disabled state.",
-                            request.port_number
-                        );
+                        debug!("Port {} has entered the disabled state.", port_id);
                     }
 
                     //THIS LOCKS THE PORTS. DO NOT LOCK PORTS BEFORE THIS POINT
-                    info!("Received a device connect on port {}, but it's not enabled. Resetting the port.", request.port_number);
-                    self.hci.reset_port((port_array_index as usize));
+                    info!("Received a device connect on port {}, but it's not enabled. Resetting the port.", port_id);
+                    self.hci.reset_port(port_array_index);
 
                     let mut ports = self.hci.ports.lock().unwrap();
-                    let port = &mut ports[port_array_index as usize];
+                    let port = &mut ports[port_array_index];
 
                     port.portsc.writef(PortFlags::PORT_PRC.bits(), true);
 
@@ -175,20 +177,20 @@ impl DeviceEnumerator {
                     if !enabled_state {
                         warn!(
                             "Port {} isn't in the enabled state! Current flags: {:?}",
-                            request.port_number, flags
+                            port_id, flags
                         );
                     } else {
                         debug!(
                             "Port {} is in the enabled state. Proceeding with enumeration",
-                            request.port_number
+                            port_id
                         );
                     }
                 }
 
-                let result = futures::executor::block_on(self.hci.attach_device(port_array_index));
+                let result = futures::executor::block_on(self.hci.attach_device(port_id));
                 match result {
                     Ok(_) => {
-                        info!("Device on port {} was attached", port_array_index);
+                        info!("Device on port {} was attached", port_id);
                     }
                     Err(err) => {
                         if err.errno == EAGAIN {
@@ -201,14 +203,13 @@ impl DeviceEnumerator {
             } else {
                 info!(
                     "Device Enumerator received Detach request on port {} which is in state {}",
-                    request.port_number,
-                    self.hci.get_pls((port_array_index) as usize)
+                    port_id,
+                    self.hci.get_pls(port_id)
                 );
-                let result =
-                    futures::executor::block_on(self.hci.detach_device(port_array_index as usize));
+                let result = futures::executor::block_on(self.hci.detach_device(port_id));
                 match result {
                     Ok(_) => {
-                        info!("Device on port {} was detached", port_array_index);
+                        info!("Device on port {} was detached", port_id);
                     }
                     Err(err) => {
                         warn!("processing of device attach request failed! Error: {}", err);

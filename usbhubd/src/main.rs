@@ -1,7 +1,8 @@
 use std::{env, thread, time};
 
 use xhcid_interface::{
-    plain, usb, ConfigureEndpointsReq, DevDesc, DeviceReqData, PortReqRecipient, PortReqTy, XhciClientHandle,
+    plain, usb, ConfigureEndpointsReq, DevDesc, DeviceReqData, PortId, PortReqRecipient, PortReqTy,
+    XhciClientHandle,
 };
 
 fn main() {
@@ -21,8 +22,8 @@ fn main() {
     let port = args
         .next()
         .expect(USAGE)
-        .parse::<usize>()
-        .expect("Expected integer as input of port");
+        .parse::<PortId>()
+        .expect("Expected port ID");
     let interface_num = args
         .next()
         .expect(USAGE)
@@ -40,7 +41,6 @@ fn main() {
     let desc: DevDesc = handle
         .get_standard_descs()
         .expect("Failed to get standard descriptors");
-    log::info!("{:X?}", desc);
 
     let (conf_desc, if_desc) = desc
         .config_descs
@@ -77,10 +77,9 @@ fn main() {
             DeviceReqData::In(unsafe { plain::as_mut_bytes(&mut hub_desc) }),
         )
         .expect("Failed to retrieve hub descriptor");
-    log::info!("{:X?}", hub_desc);
 
     //TODO: use change flags?
-    let mut last_port_statuses = vec![usb::HubPortStatus::default(); hub_desc.ports.into()]; 
+    let mut last_port_statuses = vec![usb::HubPortStatus::default(); hub_desc.ports.into()];
     loop {
         for port in 1..=hub_desc.ports {
             let mut port_sts = usb::HubPortStatus::default();
