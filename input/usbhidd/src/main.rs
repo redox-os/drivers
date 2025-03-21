@@ -240,6 +240,7 @@ fn main() {
             config_desc: conf_desc.configuration_value,
             interface_desc: Some(interface_num),
             alternate_setting: Some(if_desc.alternate_setting),
+            hub_ports: None,
         })
         .expect("Failed to configure endpoints");
 

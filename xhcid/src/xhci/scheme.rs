@@ -52,6 +52,10 @@ use regex::Regex;
 lazy_static! {
     static ref REGEX_PORT_CONFIGURE: Regex = Regex::new(r"^port([\d\.]+)/configure$")
         .expect("Failed to create the regex for the port<n>/configure scheme.");
+    static ref REGEX_PORT_ATTACH: Regex = Regex::new(r"^port([\d\.]+)/attach$")
+        .expect("Failed to create the regex for the port<n>/attach scheme.");
+    static ref REGEX_PORT_DETACH: Regex = Regex::new(r"^port([\d\.]+)/detach$")
+        .expect("Failed to create the regex for the port<n>/detach scheme.");
     static ref REGEX_PORT_DESCRIPTORS: Regex = Regex::new(r"^port([\d\.]+)/descriptors$")
         .expect("Failed to create the regex for the port<n>/descriptors");
     static ref REGEX_PORT_STATE: Regex = Regex::new(r"^port([\d\.]+)/state$")
@@ -131,6 +135,8 @@ pub enum Handle {
     Endpoints(PortId, Vec<u8>),             // port, contents
     Endpoint(PortId, u8, EndpointHandleTy), // port, endpoint, state
     ConfigureEndpoints(PortId),             // port
+    AttachDevice(PortId),                   // port
+    DetachDevice(PortId),                   // port
 }
 
 /// The type of handle.
@@ -170,6 +176,10 @@ enum SchemeParameters {
     Endpoint(PortId, u8, String), // port number, endpoint number, handle type
     /// /port<n>/configure
     ConfigureEndpoints(PortId), // port number
+    /// /port<n>/attach
+    AttachDevice(PortId), // port number
+    /// /port<n>/detach
+    DetachDevice(PortId), // port number
 }
 
 impl Handle {
@@ -212,6 +222,12 @@ impl Handle {
             Handle::ConfigureEndpoints(port_num) => {
                 format!("port{}/configure", port_num)
             }
+            Handle::AttachDevice(port_num) => {
+                format!("port{}/attach", port_num)
+            }
+            Handle::DetachDevice(port_num) => {
+                format!("port{}/detach", port_num)
+            }
         }
     }
 
@@ -236,6 +252,8 @@ impl Handle {
             &Handle::PortState(_) => HandleType::Character,
             &Handle::PortReq(_, _) => HandleType::Character,
             &Handle::ConfigureEndpoints(_) => HandleType::Character,
+            &Handle::AttachDevice(_) => HandleType::Character,
+            &Handle::DetachDevice(_) => HandleType::Character,
             &Handle::Endpoint(_, _, ref st) => match st {
                 EndpointHandleTy::Data => HandleType::Character,
                 EndpointHandleTy::Ctl => HandleType::Character,
@@ -264,6 +282,8 @@ impl Handle {
             &Handle::PortState(_) => None,
             &Handle::PortReq(_, _) => None,
             &Handle::ConfigureEndpoints(_) => None,
+            &Handle::AttachDevice(_) => None,
+            &Handle::DetachDevice(_) => None,
             &Handle::Endpoint(_, _, ref st) => match st {
                 EndpointHandleTy::Data => None,
                 EndpointHandleTy::Ctl => None,
@@ -345,6 +365,14 @@ impl SchemeParameters {
             let port_num = get_port_id_from_regex(&REGEX_PORT_CONFIGURE, scheme, 0)?;
 
             Ok(Self::ConfigureEndpoints(port_num))
+        } else if REGEX_PORT_ATTACH.is_match(scheme) {
+            let port_num = get_port_id_from_regex(&REGEX_PORT_ATTACH, scheme, 0)?;
+
+            Ok(Self::AttachDevice(port_num))
+        } else if REGEX_PORT_DETACH.is_match(scheme) {
+            let port_num = get_port_id_from_regex(&REGEX_PORT_DETACH, scheme, 0)?;
+
+            Ok(Self::DetachDevice(port_num))
         } else if REGEX_PORT_DESCRIPTORS.is_match(scheme) {
             let port_num = get_port_id_from_regex(&REGEX_PORT_DESCRIPTORS, scheme, 0)?;
 
@@ -971,13 +999,28 @@ impl Xhci {
             const CONTEXT_ENTRIES_MASK: u32 = 0xF800_0000;
             const CONTEXT_ENTRIES_SHIFT: u8 = 27;
 
-            let current_slot_a = input_context.device.slot.a.read();
+            const HUB_PORTS_MASK: u32 = 0xFF00_0000;
+            const HUB_PORTS_SHIFT: u8 = 24;
 
-            input_context.device.slot.a.write(
-                (current_slot_a & !CONTEXT_ENTRIES_MASK)
-                    | ((u32::from(new_context_entries) << CONTEXT_ENTRIES_SHIFT)
-                        & CONTEXT_ENTRIES_MASK),
-            );
+            let mut current_slot_a = input_context.device.slot.a.read();
+            let mut current_slot_b = input_context.device.slot.b.read();
+
+            // Set context entries
+            current_slot_a &= !CONTEXT_ENTRIES_MASK;
+            current_slot_a |=
+                (u32::from(new_context_entries) << CONTEXT_ENTRIES_SHIFT) & CONTEXT_ENTRIES_MASK;
+
+            // Set hub data
+            current_slot_a &= !(1 << 26);
+            current_slot_b &= !HUB_PORTS_MASK;
+            if let Some(hub_ports) = req.hub_ports {
+                current_slot_a |= 1 << 26;
+                current_slot_b |= (u32::from(hub_ports) << HUB_PORTS_SHIFT) & HUB_PORTS_MASK;
+            }
+
+            input_context.device.slot.a.write(current_slot_a);
+            input_context.device.slot.b.write(current_slot_b);
+
             let control = if self.op.lock().unwrap().cie() {
                 (u32::from(req.alternate_setting.unwrap_or(0)) << 16)
                     | (u32::from(req.interface_desc.unwrap_or(0)) << 8)
@@ -1966,6 +2009,54 @@ impl Xhci {
         Ok(Handle::ConfigureEndpoints(port_num))
     }
 
+    /// implements open() for /port<n>/attach
+    ///
+    /// # Arguments
+    /// - 'port_num: [PortId]' - The port number specified in the scheme path
+    /// - 'flags: [usize]'    - The flags parameter passed to open()
+    ///
+    /// # Returns
+    /// This function returns a [Result] containing either:
+    ///
+    /// - [Handle::Port]     - The handle was opened successfully
+    /// - [EISDIR]          - open() was called on this scheme endpoint, but no directory-specific flags were passed to open
+    /// - [ENOENT]           - The scheme is valid, but there is no port associated with the given port_num, or no endpoint with the given endpoint_num
+    fn open_handle_attach_device(&self, port_num: PortId, flags: usize) -> Result<Handle> {
+        if flags & O_DIRECTORY != 0 && flags & O_STAT == 0 {
+            return Err(Error::new(ENOTDIR));
+        }
+
+        if flags & O_RDWR != O_WRONLY && flags & O_STAT == 0 {
+            return Err(Error::new(EACCES));
+        }
+
+        Ok(Handle::AttachDevice(port_num))
+    }
+
+    /// implements open() for /port<n>/detach
+    ///
+    /// # Arguments
+    /// - 'port_num: [PortId]' - The port number specified in the scheme path
+    /// - 'flags: [usize]'    - The flags parameter passed to open()
+    ///
+    /// # Returns
+    /// This function returns a [Result] containing either:
+    ///
+    /// - [Handle::Port]     - The handle was opened successfully
+    /// - [EISDIR]          - open() was called on this scheme endpoint, but no directory-specific flags were passed to open
+    /// - [ENOENT]           - The scheme is valid, but there is no port associated with the given port_num, or no endpoint with the given endpoint_num
+    fn open_handle_detach_device(&self, port_num: PortId, flags: usize) -> Result<Handle> {
+        if flags & O_DIRECTORY != 0 && flags & O_STAT == 0 {
+            return Err(Error::new(ENOTDIR));
+        }
+
+        if flags & O_RDWR != O_WRONLY && flags & O_STAT == 0 {
+            return Err(Error::new(EACCES));
+        }
+
+        Ok(Handle::DetachDevice(port_num))
+    }
+
     /// implements open() for /port<n>/request
     ///
     /// # Arguments
@@ -2020,6 +2111,12 @@ impl Scheme for &Xhci {
             SchemeParameters::ConfigureEndpoints(port_number) => {
                 self.open_handle_configure_endpoints(port_number, flags)?
             }
+            SchemeParameters::AttachDevice(port_number) => {
+                self.open_handle_attach_device(port_number, flags)?
+            }
+            SchemeParameters::DetachDevice(port_number) => {
+                self.open_handle_detach_device(port_number, flags)?
+            }
         };
 
         let fd = self.next_handle.fetch_add(1, atomic::Ordering::Relaxed);
@@ -2049,8 +2146,11 @@ impl Scheme for &Xhci {
         };
 
         //If we have a handle to the configure scheme, we need to mark it as write only.
-        if let &Handle::ConfigureEndpoints(_) = &*guard {
-            stat.st_mode = stat.st_mode | 0o200;
+        match &*guard {
+            Handle::ConfigureEndpoints(_) | Handle::AttachDevice(_) | Handle::DetachDevice(_) => {
+                stat.st_mode = stat.st_mode | 0o200;
+            }
+            _ => {}
         }
 
         Ok(0)
@@ -2098,6 +2198,8 @@ impl Scheme for &Xhci {
                 Ok(bytes_to_read)
             }
             Handle::ConfigureEndpoints(_) => Err(Error::new(EBADF)),
+            Handle::AttachDevice(_) => Err(Error::new(EBADF)),
+            Handle::DetachDevice(_) => Err(Error::new(EBADF)),
 
             &mut Handle::Endpoint(port_num, endp_num, ref mut st) => match st {
                 EndpointHandleTy::Ctl => self.on_read_endp_ctl(port_num, endp_num, buf),
@@ -2148,6 +2250,16 @@ impl Scheme for &Xhci {
         match &mut *guard {
             &mut Handle::ConfigureEndpoints(port_num) => {
                 block_on(self.configure_endpoints(port_num, buf))?;
+                Ok(buf.len())
+            }
+            &mut Handle::AttachDevice(port_num) => {
+                //TODO: accept some arguments in buffer?
+                block_on(self.attach_device(port_num))?;
+                Ok(buf.len())
+            }
+            &mut Handle::DetachDevice(port_num) => {
+                //TODO: accept some arguments in buffer?
+                block_on(self.detach_device(port_num))?;
                 Ok(buf.len())
             }
             &mut Handle::Endpoint(port_num, endp_num, ref ep_file_ty) => match ep_file_ty {

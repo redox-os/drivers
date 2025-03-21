@@ -739,6 +739,7 @@ impl Xhci {
 
     pub async fn attach_device(&self, port_id: PortId) -> syscall::Result<()> {
         if self.port_states.contains_key(&port_id) {
+            println!("Already contains port {}", port_id);
             return Err(syscall::Error::new(EAGAIN));
         }
 

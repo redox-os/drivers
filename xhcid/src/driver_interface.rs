@@ -20,6 +20,7 @@ pub struct ConfigureEndpointsReq {
     pub config_desc: u8,
     pub interface_desc: Option<u8>,
     pub alternate_setting: Option<u8>,
+    pub hub_ports: Option<u8>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -290,6 +291,33 @@ impl PortId {
     pub fn root_hub_port_index(&self) -> usize {
         self.root_hub_port_num.checked_sub(1).unwrap().into()
     }
+
+    pub fn hub_depth(&self) -> u8 {
+        let mut hub_depth = 0;
+        let mut route_string = self.route_string;
+        while route_string > 0 {
+            route_string >>= 4;
+            hub_depth += 1;
+        }
+        hub_depth
+    }
+
+    pub fn child(&self, value: u8) -> Result<Self, String> {
+        let depth = self.hub_depth();
+        if depth >= 5 {
+            return Err(format!("too many route string components"));
+        }
+        if value & 0xF0 != 0 {
+            return Err(format!(
+                "value {:?} is too large for route string component",
+                value
+            ));
+        }
+        Ok(Self {
+            root_hub_port_num: self.root_hub_port_num,
+            route_string: self.route_string | u32::from(value) << (depth * 4),
+        })
+    }
 }
 
 impl fmt::Display for PortId {
@@ -299,8 +327,7 @@ impl fmt::Display for PortId {
         // The Route String is a 20-bit field in downstream directed packets that the hub uses to route
         // each packet to the designated downstream port. It is composed of a concatenation of the
         // downstream port numbers (4 bits per hub) for each hub traversed to reach a device.
-        // The lowest 4 bits are ignored.
-        let mut route_string = self.route_string >> 4;
+        let mut route_string = self.route_string;
         while route_string > 0 {
             write!(f, ".{}", route_string & 0xF)?;
             route_string >>= 4;
@@ -320,6 +347,12 @@ impl str::FromStr for PortId {
                 .parse()
                 .map_err(|e| format!("failed to parse {:?}: {}", part, e))?;
 
+            // Neither root hub port number nor route string support 0 components
+            // to identify downstream ports
+            if value == 0 {
+                return Err(format!("zero is not a valid port ID component"));
+            }
+
             // Parse root hub port number
             if i == 0 {
                 root_hub_port_num = value;
@@ -327,7 +360,8 @@ impl str::FromStr for PortId {
             }
 
             // Parse route string component
-            if i > 5 {
+            let depth = i - 1;
+            if depth >= 5 {
                 return Err(format!("too many route string components"));
             }
             if value & 0xF0 != 0 {
@@ -336,13 +370,7 @@ impl str::FromStr for PortId {
                     value
                 ));
             }
-            route_string |= (value as u32) << (i * 4);
-        }
-        if root_hub_port_num == 0 {
-            return Err(format!(
-                "invalid root hub port number {:?}",
-                root_hub_port_num
-            ));
+            route_string |= u32::from(value) << (depth * 4);
         }
         Ok(Self {
             root_hub_port_num,
@@ -485,6 +513,18 @@ impl XhciClientHandle {
         Self { scheme, port }
     }
 
+    pub fn attach(&self) -> result::Result<(), XhciClientHandleError> {
+        let path = format!("/scheme/{}/port{}/attach", self.scheme, self.port);
+        let mut file = OpenOptions::new().read(false).write(true).open(path)?;
+        let _bytes_written = file.write(&[])?;
+        Ok(())
+    }
+    pub fn detach(&self) -> result::Result<(), XhciClientHandleError> {
+        let path = format!("/scheme/{}/port{}/detach", self.scheme, self.port);
+        let mut file = OpenOptions::new().read(false).write(true).open(path)?;
+        let _bytes_written = file.write(&[])?;
+        Ok(())
+    }
     pub fn get_standard_descs(&self) -> result::Result<DevDesc, XhciClientHandleError> {
         let path = format!("/scheme/{}/port{}/descriptors", self.scheme, self.port);
         let json = std::fs::read(path)?;
