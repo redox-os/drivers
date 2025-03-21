@@ -1436,7 +1436,7 @@ impl Xhci {
         let port = ports
             .get(port_id.root_hub_port_index())
             .ok_or(Error::new(ENOENT))?;
-        if !port.flags().contains(port::PortFlags::PORT_CCS) {
+        if !port.flags().contains(port::PortFlags::CCS) {
             return Err(Error::new(ENOENT));
         }
 
@@ -1776,7 +1776,7 @@ impl Xhci {
             for (index, _) in ports_guard
                 .iter()
                 .enumerate()
-                .filter(|(_, port)| port.flags().contains(port::PortFlags::PORT_CCS))
+                .filter(|(_, port)| port.flags().contains(port::PortFlags::CCS))
             {
                 write!(contents, "port{}\n", index).unwrap();
             }

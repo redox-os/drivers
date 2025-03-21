@@ -547,11 +547,10 @@ impl Xhci {
         Ok(())
     }
 
-    pub fn get_pls(&self, port_id: PortId) -> u32 {
+    pub fn get_pls(&self, port_id: PortId) -> u8 {
         let mut ports = self.ports.lock().unwrap();
         let port = ports.get_mut(port_id.root_hub_port_index()).unwrap();
-        let state = port.portsc.read();
-        (state >> 5) & 4
+        port.state()
     }
 
     pub fn poll(&self) {
@@ -569,10 +568,11 @@ impl Xhci {
             let (ccs, csc, flags) = {
                 let mut ports = self.ports.lock().unwrap();
                 let port = &mut ports[port_id.root_hub_port_index()];
-                let ccs = port.portsc.readf(PortFlags::PORT_CCS.bits());
-                let csc = port.portsc.readf(PortFlags::PORT_CSC.bits());
+                let flags = port.flags();
+                let ccs = flags.contains(PortFlags::CCS);
+                let csc = flags.contains(PortFlags::CSC);
 
-                (ccs, csc, port.flags())
+                (ccs, csc, flags)
             };
 
             debug!("Port {} has flags {:?}", port_id, flags);
@@ -630,28 +630,29 @@ impl Xhci {
             };
         }
     }
-    pub fn reset_port(&self, port_num: usize) {
-        debug!("XHCI Port {} reset", port_num);
+    pub fn reset_port(&self, port_id: PortId) {
+        debug!("XHCI Port {} reset", port_id);
 
         //TODO handle the second unwrap
         let mut ports = self.ports.lock().unwrap();
-        let port = ports.get_mut(port_num).unwrap();
+        let port = ports.get_mut(port_id.root_hub_port_index()).unwrap();
         let instant = std::time::Instant::now();
 
-        let state = port.portsc.read();
-        let pls = (state >> 5) & 4;
+        debug!("Port {} Link State: {}", port_id, port.state());
 
-        debug!("Port Link State: {}", pls);
-
-        port.portsc.writef(port::PortFlags::PORT_PR.bits(), true);
-        debug!("Flags after setting port reset: {:?}", port.flags());
-        while !port.portsc.readf(port::PortFlags::PORT_PRC.bits()) {
-            debug!("Ran at least once!");
+        port.set_pr();
+        debug!(
+            "Flags after setting port {} reset: {:?}",
+            port_id,
+            port.flags()
+        );
+        while !port.flags().contains(port::PortFlags::PRC) {
+            debug!("port {} reset loop ran at least once!", port_id);
             if instant.elapsed().as_secs() >= 1 {
                 warn!("timeout");
                 break;
             }
-            //std::thread::yield_now();
+            std::thread::yield_now();
         }
     }
 
@@ -753,7 +754,7 @@ impl Xhci {
             port_id, data, state, speed, flags
         );
 
-        if flags.contains(port::PortFlags::PORT_CCS) {
+        if flags.contains(port::PortFlags::CCS) {
             let slot_ty = match self.supported_protocol(port_id) {
                 Some(protocol) => protocol.proto_slot_ty(),
                 None => {

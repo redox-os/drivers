@@ -334,7 +334,7 @@ impl IrqReactor {
             {
                 let mut ports = self.hci.ports.lock().unwrap();
                 let port = &mut ports[port_id.root_hub_port_index()];
-                port.portsc.writef(PortFlags::PORT_CSC.bits(), true);
+                port.clear_csc();
             }
         } else {
             warn!(
