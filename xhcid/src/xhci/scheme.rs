@@ -550,13 +550,14 @@ impl Xhci {
         desc: usb::InterfaceDescriptor,
         endps: impl IntoIterator<Item = EndpDesc>,
         hid_descs: impl IntoIterator<Item = HidDesc>,
+        lang_id: u16,
     ) -> Result<IfDesc> {
         Ok(IfDesc {
             alternate_setting: desc.alternate_setting,
             class: desc.class,
             interface_str: if desc.interface_str > 0 {
                 Some(
-                    self.fetch_string_desc(port_id, slot, desc.interface_str)
+                    self.fetch_string_desc(port_id, slot, desc.interface_str, lang_id)
                         .await?,
                 )
             } else {
@@ -1443,10 +1444,23 @@ impl Xhci {
         let raw_dd = self.fetch_dev_desc(port_id, slot).await?;
         log::debug!("port {} slot {} desc {:X?}", port_id, slot, raw_dd);
 
+        let lang_ids = self.fetch_lang_ids_desc(port_id, slot).await?;
+        // Prefer US English, but fall back to first language ID, or zero
+        let en_us_id = 0x409;
+        let lang_id = if lang_ids.contains(&en_us_id) {
+            en_us_id
+        } else {
+            match lang_ids.first() {
+                Some(some) => *some,
+                None => 0,
+            }
+        };
+        log::debug!("port {} using language ID 0x{:04x}", port_id, lang_id);
+
         let (manufacturer_str, product_str, serial_str) = (
             if raw_dd.manufacturer_str > 0 {
                 Some(
-                    self.fetch_string_desc(port_id, slot, raw_dd.manufacturer_str)
+                    self.fetch_string_desc(port_id, slot, raw_dd.manufacturer_str, lang_id)
                         .await?,
                 )
             } else {
@@ -1454,7 +1468,7 @@ impl Xhci {
             },
             if raw_dd.product_str > 0 {
                 Some(
-                    self.fetch_string_desc(port_id, slot, raw_dd.product_str)
+                    self.fetch_string_desc(port_id, slot, raw_dd.product_str, lang_id)
                         .await?,
                 )
             } else {
@@ -1462,7 +1476,7 @@ impl Xhci {
             },
             if raw_dd.serial_str > 0 {
                 Some(
-                    self.fetch_string_desc(port_id, slot, raw_dd.serial_str)
+                    self.fetch_string_desc(port_id, slot, raw_dd.serial_str, lang_id)
                         .await?,
                 )
             } else {
@@ -1548,7 +1562,7 @@ impl Xhci {
                     }
 
                     interface_descs.push(
-                        self.new_if_desc(port_id, slot, idesc, endpoints, hid_descs)
+                        self.new_if_desc(port_id, slot, idesc, endpoints, hid_descs, lang_id)
                             .await?,
                     );
                 } else {
@@ -1562,7 +1576,7 @@ impl Xhci {
                 kind: desc.kind,
                 configuration: if desc.configuration_str > 0 {
                     Some(
-                        self.fetch_string_desc(port_id, slot, desc.configuration_str)
+                        self.fetch_string_desc(port_id, slot, desc.configuration_str, lang_id)
                             .await?,
                     )
                 } else {

@@ -99,7 +99,8 @@ impl Xhci {
         port: PortId,
         slot: u8,
         kind: usb::DescriptorKind,
-        index: u8,
+        value: u8,
+        index: u16,
         desc: &mut Dma<T>,
     ) -> Result<()> {
         if self.interrupt_is_pending(0) {
@@ -108,10 +109,11 @@ impl Xhci {
         }
         let len = mem::size_of::<T>();
         log::debug!(
-            "get_desc_raw port {} slot {} kind {:?} index {} len {}",
+            "get_desc_raw port {} slot {} kind {:?} value {} index {} len {}",
             port,
             slot,
             kind,
+            value,
             index,
             len
         );
@@ -128,7 +130,7 @@ impl Xhci {
             let first_index = ring.next_index();
             let (cmd, cycle) = (&mut ring.trbs[first_index], ring.cycle);
             cmd.setup(
-                usb::Setup::get_descriptor(kind, index, 0, len as u16),
+                usb::Setup::get_descriptor(kind, value, index, len as u16),
                 TransferKind::In,
                 cycle,
             );
@@ -173,14 +175,14 @@ impl Xhci {
         slot: u8,
     ) -> Result<usb::DeviceDescriptor8Byte> {
         let mut desc = unsafe { self.alloc_dma_zeroed::<usb::DeviceDescriptor8Byte>()? };
-        self.get_desc_raw(port, slot, usb::DescriptorKind::Device, 0, &mut desc)
+        self.get_desc_raw(port, slot, usb::DescriptorKind::Device, 0, 0, &mut desc)
             .await?;
         Ok(*desc)
     }
 
     async fn fetch_dev_desc(&self, port: PortId, slot: u8) -> Result<usb::DeviceDescriptor> {
         let mut desc = unsafe { self.alloc_dma_zeroed::<usb::DeviceDescriptor>()? };
-        self.get_desc_raw(port, slot, usb::DescriptorKind::Device, 0, &mut desc)
+        self.get_desc_raw(port, slot, usb::DescriptorKind::Device, 0, 0, &mut desc)
             .await?;
         Ok(*desc)
     }
@@ -197,6 +199,7 @@ impl Xhci {
             slot,
             usb::DescriptorKind::Configuration,
             config,
+            0,
             &mut desc,
         )
         .await?;
@@ -214,16 +217,43 @@ impl Xhci {
             slot,
             usb::DescriptorKind::BinaryObjectStorage,
             0,
+            0,
             &mut desc,
         )
         .await?;
         Ok(*desc)
     }
 
-    async fn fetch_string_desc(&self, port: PortId, slot: u8, index: u8) -> Result<String> {
+    async fn fetch_lang_ids_desc(&self, port: PortId, slot: u8) -> Result<Vec<u16>> {
         let mut sdesc = unsafe { self.alloc_dma_zeroed::<(u8, u8, [u16; 127])>()? };
-        self.get_desc_raw(port, slot, usb::DescriptorKind::String, index, &mut sdesc)
+        self.get_desc_raw(port, slot, usb::DescriptorKind::String, 0, 0, &mut sdesc)
             .await?;
+
+        let len = sdesc.0 as usize;
+        if len > 2 {
+            Ok(sdesc.2[..(len - 2) / 2].to_vec())
+        } else {
+            Ok(Vec::new())
+        }
+    }
+
+    async fn fetch_string_desc(
+        &self,
+        port: PortId,
+        slot: u8,
+        value: u8,
+        lang_id: u16,
+    ) -> Result<String> {
+        let mut sdesc = unsafe { self.alloc_dma_zeroed::<(u8, u8, [u16; 127])>()? };
+        self.get_desc_raw(
+            port,
+            slot,
+            usb::DescriptorKind::String,
+            value,
+            lang_id,
+            &mut sdesc,
+        )
+        .await?;
 
         let len = sdesc.0 as usize;
         if len > 2 {

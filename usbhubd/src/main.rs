@@ -56,7 +56,10 @@ fn main() {
             Some((conf_desc.clone(), if_desc))
         })
         .expect("Failed to find suitable configuration");
+    
+    //TODO: is it required to configure before reading hub descriptor?
 
+    // Read hub descriptor
     let mut hub_desc = usb::HubDescriptor::default();
     handle
         .device_request(
@@ -64,12 +67,12 @@ fn main() {
             PortReqRecipient::Device,
             usb::SetupReq::GetDescriptor as u8,
             0,
-            //TODO: should this be an index into interface_descs?
-            interface_num as u16,
+            0,
             DeviceReqData::In(unsafe { plain::as_mut_bytes(&mut hub_desc) }),
         )
-        .expect("Failed to retrieve hub descriptor");
+        .expect("Failed to read hub descriptor");
 
+    // Configure as hub device
     handle
         .configure_endpoints(&ConfigureEndpointsReq {
             config_desc: conf_desc.configuration_value,
@@ -77,7 +80,7 @@ fn main() {
             alternate_setting: Some(if_desc.alternate_setting),
             hub_ports: Some(hub_desc.ports),
         })
-        .expect("Failed to configure endpoints");
+        .expect("Failed to configure endpoints after reading hub descriptor");
 
     /*TODO: only set hub depth on USB 3+ hubs
     handle
