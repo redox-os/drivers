@@ -1188,7 +1188,15 @@ impl Xhci {
                         .map(|subclass| subclass == ifdesc.sub_class)
                         .unwrap_or(true)
             }) {
-                info!("Loading subdriver \"{}\"", driver.name);
+                info!(
+                    "Loading subdriver \"{}\" for port {} iface {} proto {} class {}.{}",
+                    driver.name,
+                    port,
+                    ifdesc.number,
+                    ifdesc.protocol,
+                    ifdesc.class,
+                    ifdesc.sub_class
+                );
                 let (command, args) = driver.command.split_first().ok_or(Error::new(EBADMSG))?;
 
                 let command = if command.starts_with('/') {
@@ -1217,8 +1225,8 @@ impl Xhci {
                 });
             } else {
                 warn!(
-                    "No driver for USB class {}.{}",
-                    ifdesc.class, ifdesc.sub_class
+                    "No driver for port {} iface {} proto {} class {}.{}",
+                    port, ifdesc.number, ifdesc.protocol, ifdesc.class, ifdesc.sub_class
                 );
             }
         }
