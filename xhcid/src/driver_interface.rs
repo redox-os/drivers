@@ -327,6 +327,9 @@ impl str::FromStr for PortId {
             }
 
             // Parse route string component
+            if i > 5 {
+                return Err(format!("too many route string components"));
+            }
             if value & 0xF0 != 0 {
                 return Err(format!(
                     "value {:?} is too large for route string component",

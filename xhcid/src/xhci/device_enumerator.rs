@@ -85,7 +85,7 @@ use syscall::EAGAIN;
 //}
 
 pub struct DeviceEnumerationRequest {
-    pub port_number: u8,
+    pub port_id: PortId,
 }
 
 pub struct DeviceEnumerator {
@@ -109,10 +109,7 @@ impl DeviceEnumerator {
                 }
             };
 
-            let port_id = PortId {
-                root_hub_port_num: request.port_number,
-                route_string: 0,
-            };
+            let port_id = request.port_id;
             let port_array_index = port_id.root_hub_port_index();
 
             info!("Device Enumerator request for port {}", port_id);

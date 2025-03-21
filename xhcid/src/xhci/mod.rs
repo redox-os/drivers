@@ -559,18 +559,23 @@ impl Xhci {
 
         let len = self.ports.lock().unwrap().len();
 
-        for index in 0..len {
+        for root_hub_port_num in 1..=(len as u8) {
+            let port_id = PortId {
+                root_hub_port_num,
+                route_string: 0,
+            };
+
             //Get the CCS and CSC flags
             let (ccs, csc, flags) = {
                 let mut ports = self.ports.lock().unwrap();
-                let port = &mut ports[index];
+                let port = &mut ports[port_id.root_hub_port_index()];
                 let ccs = port.portsc.readf(PortFlags::PORT_CCS.bits());
                 let csc = port.portsc.readf(PortFlags::PORT_CSC.bits());
 
                 (ccs, csc, port.flags())
             };
 
-            debug!("Port {} has flags {:?}", index + 1, flags);
+            debug!("Port {} has flags {:?}", port_id, flags);
 
             match (ccs, csc) {
                 (false, false) => { // Nothing is connected, and there was no port status change
@@ -579,9 +584,7 @@ impl Xhci {
                 _ => {
                     //Either something is connected, or nothing is connected and a port status change was asserted.
                     self.device_enumerator_sender
-                        .send(DeviceEnumerationRequest {
-                            port_number: (index + 1) as u8,
-                        })
+                        .send(DeviceEnumerationRequest { port_id })
                         .expect("Failed to generate the port enumeration request!");
                 }
             }

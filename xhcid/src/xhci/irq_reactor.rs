@@ -316,22 +316,24 @@ impl IrqReactor {
 
     /// Handles device attach/detach events as indicated by a PortStatusChange
     fn handle_port_status_change(&mut self, trb: Trb) {
-        if let Some(port_num) = trb.port_status_change_port_id() {
-            trace!("Received Port Status Change Request on port {}", port_num);
+        if let Some(root_hub_port_num) = trb.port_status_change_port_id() {
+            let port_id = PortId {
+                root_hub_port_num,
+                route_string: 0,
+            };
+            trace!("Received Port Status Change Request on port {}", port_id);
             self.device_enumerator_sender
-                .send(DeviceEnumerationRequest {
-                    port_number: port_num,
-                })
+                .send(DeviceEnumerationRequest { port_id })
                 .expect(
                     format!(
                         "Failed to transmit device numeration request on port {}",
-                        port_num
+                        port_id
                     )
                     .as_str(),
                 );
             {
                 let mut ports = self.hci.ports.lock().unwrap();
-                let port = &mut ports[(port_num - 1) as usize];
+                let port = &mut ports[port_id.root_hub_port_index()];
                 port.portsc.writef(PortFlags::PORT_CSC.bits(), true);
             }
         } else {
