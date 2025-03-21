@@ -56,8 +56,6 @@ fn main() {
             Some((conf_desc.clone(), if_desc))
         })
         .expect("Failed to find suitable configuration");
-    
-    //TODO: is it required to configure before reading hub descriptor?
 
     // Read hub descriptor
     let mut hub_desc = usb::HubDescriptor::default();
@@ -66,7 +64,9 @@ fn main() {
             PortReqTy::Class,
             PortReqRecipient::Device,
             usb::SetupReq::GetDescriptor as u8,
-            0,
+            // 0x29 is USB 2.0 hub descriptor
+            // TODO: suppot reading USB 3.0 descriptor?
+            0x29_00,
             0,
             DeviceReqData::In(unsafe { plain::as_mut_bytes(&mut hub_desc) }),
         )
