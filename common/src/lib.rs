@@ -243,27 +243,60 @@ impl Drop for PhysBorrowed {
     }
 }
 
-/// Uses the [syscall::iopl] system call to set the I/O privilege level of the current process
-/// to 3.
+// TODO: temporary wrapper in redox_syscall?
+unsafe fn sys_call(fd: usize, buf: &mut [u8], metadata: &[u64]) -> Result<usize> {
+    Ok(syscall::syscall5(
+        syscall::SYS_CALL,
+        fd,
+        buf.as_mut_ptr() as usize,
+        buf.len(),
+        metadata.len(),
+        metadata.as_ptr() as usize,
+    )?)
+}
+
+/// Instructs the kernel to enable I/O ports for this (usermode) process (x86-specific).
 ///
-/// In Redox, x86 privilege ring 3 represents userspace. Most Redox drivers run in userspace to
-/// prevent system instability caused by a faulty driver. Processes with ring 3 IOPL have access to
-/// I/O ports.
+/// On Redox, x86 privilege ring 3 represents userspace. Most Redox drivers run in userspace to
+/// prevent system instability caused by a faulty driver. Processes with (bitmap-enabled) IO port
+/// rights can use the IN/OUT instructions. This is not the same as IOPL 3; the CLI instruction is
+/// still not allowed.
 pub fn acquire_port_io_rights() -> Result<()> {
     extern "C" {
         fn redox_cur_thrfd_v0() -> usize;
     }
-    let fd = unsafe { redox_cur_thrfd_v0() };
-    let metadata = [ProcSchemeVerb::Iopl as u64];
     let _ = unsafe {
-        syscall::syscall5(
-            syscall::SYS_CALL,
-            fd,
-            0,
-            0,
-            metadata.len(),
-            metadata.as_ptr() as usize,
+        sys_call(
+            redox_cur_thrfd_v0(),
+            &mut [],
+            &[ProcSchemeVerb::Iopl as u64],
         )?
     };
     Ok(())
+}
+
+/// Kernel handle for translating virtual addresses in the current address space, to their
+/// underlying physical addresses.
+///
+/// It is currently unspecified whether this handle is specific to the address space at the time it
+/// was created, or whether all calls reference the currently active address space.
+pub struct VirtaddrTranslationHandle {
+    fd: Fd,
+}
+
+impl VirtaddrTranslationHandle {
+    /// Create a new handle, requires uid=0 but this may change.
+    pub fn new() -> Result<Self> {
+        Ok(Self {
+            fd: Fd::open("/scheme/memory/translation", O_CLOEXEC, 0)?,
+        })
+    }
+    /// Translate physical => virtual.
+    pub fn translate(&self, physical: usize) -> Result<usize> {
+        let mut buf = physical.to_ne_bytes();
+        unsafe {
+            sys_call(self.fd.raw(), &mut buf, &[])?;
+        }
+        Ok(usize::from_ne_bytes(buf))
+    }
 }

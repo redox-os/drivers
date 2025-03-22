@@ -7,6 +7,7 @@ use libredox::flag::{MAP_PRIVATE, PROT_READ, PROT_WRITE};
 use syscall::{MAP_FIXED, PAGE_SIZE};
 
 use crate::dma::phys_contiguous_fd;
+use crate::VirtaddrTranslationHandle;
 
 /// A Scatter-Gather List data structure
 ///
@@ -69,7 +70,9 @@ impl Sgl {
                 chunks: Vec::new(),
             };
 
+            // TODO: SglContext to avoid reopening these fds?
             let phys_contiguous_fd = phys_contiguous_fd()?;
+            let virttophys_handle = VirtaddrTranslationHandle::new()?;
 
             let mut offset = 0;
             while offset < aligned_length {
@@ -90,7 +93,7 @@ impl Sgl {
 
                     offset: 0,
                 })?;
-                let phys = syscall::virttophys(virt as usize + offset)?;
+                let phys = virttophys_handle.translate(virt as usize + offset)?;
                 this.chunks.push(Chunk {
                     offset,
                     phys,
