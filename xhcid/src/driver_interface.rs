@@ -295,7 +295,7 @@ impl PortId {
     pub fn hub_depth(&self) -> u8 {
         let mut hub_depth = 0;
         let mut route_string = self.route_string;
-        while route_string > 0 {
+        while route_string != 0 {
             route_string >>= 4;
             hub_depth += 1;
         }
@@ -318,6 +318,20 @@ impl PortId {
             route_string: self.route_string | u32::from(value) << (depth * 4),
         })
     }
+
+    pub fn parent(&self) -> Option<(Self, u8)> {
+        let depth = self.hub_depth();
+        let parent_depth = depth.checked_sub(1)?;
+        let parent_shift = parent_depth * 4;
+        let parent_mask = 0xF << parent_shift;
+        Some((
+            Self {
+                root_hub_port_num: self.root_hub_port_num,
+                route_string: self.route_string & !parent_mask,
+            },
+            u8::try_from((self.route_string & parent_mask) >> parent_shift).unwrap(),
+        ))
+    }
 }
 
 impl fmt::Display for PortId {
@@ -328,7 +342,7 @@ impl fmt::Display for PortId {
         // each packet to the designated downstream port. It is composed of a concatenation of the
         // downstream port numbers (4 bits per hub) for each hub traversed to reach a device.
         let mut route_string = self.route_string;
-        while route_string > 0 {
+        while route_string != 0 {
             write!(f, ".{}", route_string & 0xF)?;
             route_string >>= 4;
         }

@@ -321,6 +321,7 @@ unsafe impl Sync for Xhci {}
 
 struct PortState {
     slot: u8,
+    protocol_speed: &'static ProtocolSpeed,
     cfg_idx: Option<u8>,
     input_context: Mutex<Dma<InputContext>>,
     dev_desc: Option<DevDesc>,
@@ -805,16 +806,21 @@ impl Xhci {
 
             info!("Enabled port {}, which the xHC mapped to {}", port_id, slot);
 
+            //TODO: get correct speed for child devices
+            let protocol_speed = self
+                .lookup_psiv(port_id, speed)
+                .expect("Failed to retrieve speed ID");
+
             let mut input = unsafe { self.alloc_dma_zeroed::<InputContext>()? };
 
             info!("Attempting to address the device");
             let mut ring = match self
-                .address_device(&mut input, port_id, slot_ty, slot, speed)
+                .address_device(&mut input, port_id, slot_ty, slot, protocol_speed)
                 .await
             {
                 Ok(device_ring) => device_ring,
                 Err(err) => {
-                    error!("Failed to spawn driver for port {}: `{}`", port_id, err);
+                    error!("Failed to address device for port {}: `{}`", port_id, err);
                     return Err(err);
                 }
             };
@@ -825,6 +831,7 @@ impl Xhci {
 
             let mut port_state = PortState {
                 slot,
+                protocol_speed,
                 input_context: Mutex::new(input),
                 dev_desc: None,
                 cfg_idx: None,
@@ -1020,8 +1027,38 @@ impl Xhci {
         port: PortId,
         slot_ty: u8,
         slot: u8,
-        speed: u8,
+        protocol_speed: &ProtocolSpeed,
     ) -> Result<Ring> {
+        // Collect MTT, parent port number, parent slot ID
+        let mut mtt = false;
+        let mut parent_hub_slot_id = 0u8;
+        let mut parent_port_num = 0u8;
+        if let Some((parent_port, port_num)) = port.parent() {
+            match self.port_states.get(&parent_port) {
+                Some(parent_state) => {
+                    // parent info must be supplied if:
+                    let mut needs_parent_info = false;
+                    // 1. the device is low or full speed and connected through a high speed hub
+                    //TODO: determine device speed (speed is not accurate as it comes from the port)
+                    // 2. the device is superspeed and connected through a higher rank hub
+                    //TODO: determine device speed (speed is not accurate as it comes from the port)
+                    // For now, this is just set to true to force things to work
+                    needs_parent_info = true;
+                    if needs_parent_info {
+                        parent_hub_slot_id = parent_state.slot;
+                        parent_port_num = port_num;
+                    }
+                    info!(
+                        "port {} parent_hub_slot_id {} parent_port_num {}",
+                        port, parent_hub_slot_id, parent_port_num
+                    );
+                }
+                None => {
+                    warn!("port {} missing parent port {} state", port, parent_port);
+                }
+            }
+        }
+
         let mut ring = Ring::new(self.cap.ac64(), 16, true)?;
 
         {
@@ -1031,7 +1068,6 @@ impl Xhci {
 
             let route_string = port.route_string;
             let context_entries = 1u8;
-            let mtt = false;
             let hub = false;
 
             assert_eq!(route_string & 0x000F_FFFF, route_string);
@@ -1052,14 +1088,12 @@ impl Xhci {
             );
 
             // TODO
-            let parent_hud_slot_id = 0u8;
-            let parent_port_num = 0u8;
             let ttt = 0u8;
             let interrupter = 0u8;
 
             assert_eq!(ttt & 0b11, ttt);
             slot_ctx.c.write(
-                u32::from(parent_hud_slot_id)
+                u32::from(parent_hub_slot_id)
                     | (u32::from(parent_port_num) << 8)
                     | (u32::from(ttt) << 16)
                     | (u32::from(interrupter) << 22),
@@ -1067,19 +1101,15 @@ impl Xhci {
 
             let endp_ctx = &mut input_context.device.endpoints[0];
 
-            let speed_id = self
-                .lookup_psiv(port, speed)
-                .expect("Failed to retrieve speed ID");
-
             let max_error_count = 3u8; // recommended value according to the XHCI spec
             let ep_ty = 4u8; // control endpoint, bidirectional
-            let max_packet_size: u32 = if speed_id.is_lowspeed() {
+            let max_packet_size: u32 = if protocol_speed.is_lowspeed() {
                 8 // only valid value
-            } else if speed_id.is_fullspeed() {
+            } else if protocol_speed.is_fullspeed() {
                 64 // valid values are 8, 16, 32, 64
-            } else if speed_id.is_highspeed() {
+            } else if protocol_speed.is_highspeed() {
                 64 // only valid value
-            } else if speed_id.is_superspeed_gen_x() {
+            } else if protocol_speed.is_superspeed_gen_x() {
                 512 // only valid value
             } else {
                 unreachable!()
