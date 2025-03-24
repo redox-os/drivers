@@ -1,5 +1,5 @@
 use common::io::Io as _;
-use driver_block::{Disk, DiskScheme};
+use driver_block::{Disk, DiskScheme, ExecutorTrait, FuturesExecutor};
 use event::{EventFlags, RawEventQueue};
 use libredox::flag;
 use log::{error, info};
@@ -61,7 +61,28 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         Arc::new(Mutex::new(primary)),
         Arc::new(Mutex::new(secondary)),
     ];
-    let mut disks: Vec<Box<dyn Disk>> = Vec::new();
+    enum AnyDisk {
+        Ata(AtaDisk),
+    }
+    impl Disk for AnyDisk {
+        fn block_size(&self) -> u32 {
+            let AnyDisk::Ata(a) = self;
+            a.block_size()
+        }
+        fn size(&self) -> u64 {
+            let AnyDisk::Ata(a) = self;
+            a.size()
+        }
+        async fn write(&mut self, block: u64, buffer: &[u8]) -> syscall::Result<usize> {
+            let AnyDisk::Ata(a) = self;
+            a.write(block, buffer).await
+        }
+        async fn read(&mut self, block: u64, buffer: &mut [u8]) -> syscall::Result<usize> {
+            let AnyDisk::Ata(a) = self;
+            a.read(block, buffer).await
+        }
+    }
+    let mut disks: Vec<AnyDisk> = Vec::new();
     for (chan_i, chan_lock) in chans.iter().enumerate() {
         let mut chan = chan_lock.lock().unwrap();
 
@@ -174,7 +195,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
                 println!("      DMA: {}", dma);
                 println!("      {}-bit LBA", lba_bits);
 
-                disks.push(Box::new(AtaDisk {
+                disks.push(AnyDisk::Ata(AtaDisk {
                     chan: chan_lock.clone(),
                     chan_i,
                     dev,
@@ -194,6 +215,9 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
             .enumerate()
             .map(|(i, disk)| (i as u32, disk))
             .collect(),
+        // TODO: Should ided just use TrivialExecutor or would it be valuable to actually use a
+        // real executor?
+        &FuturesExecutor,
     );
 
     let primary_irq_fd = libredox::call::open(
@@ -233,7 +257,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     for event in event_queue {
         let event = event.unwrap();
         if event.fd == scheme.event_handle().raw() {
-            scheme.tick().unwrap();
+            FuturesExecutor.block_on(scheme.tick()).unwrap();
         } else if event.fd == primary_irq_fd {
             let mut irq = [0; 8];
             if primary_irq_file
@@ -248,7 +272,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
                     .write(&irq)
                     .expect("ided: failed to write irq file");
 
-                scheme.tick().unwrap();
+                FuturesExecutor.block_on(scheme.tick()).unwrap();
             }
         } else if event.fd == secondary_irq_fd {
             let mut irq = [0; 8];
@@ -264,7 +288,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
                     .write(&irq)
                     .expect("ided: failed to write irq file");
 
-                scheme.tick().unwrap();
+                FuturesExecutor.block_on(scheme.tick()).unwrap();
             }
         } else {
             error!("Unknown event {}", event.fd);

@@ -1,11 +1,12 @@
 use std::cmp;
-use std::future::IntoFuture;
+use std::future::{Future, IntoFuture};
 use std::io::{self, Read, Seek, SeekFrom};
 
 use std::collections::BTreeMap;
 use std::convert::TryFrom;
 use std::fmt::Write;
 use std::str;
+use std::task::Poll;
 
 use executor::LocalExecutor;
 use libredox::Fd;
@@ -283,6 +284,22 @@ pub struct FuturesExecutor;
 impl ExecutorTrait for FuturesExecutor {
     fn block_on<'a, O: 'a>(&self, fut: impl IntoFuture<Output = O> + 'a) -> O {
         futures::executor::block_on(fut.into_future())
+    }
+}
+pub struct TrivialExecutor;
+impl ExecutorTrait for TrivialExecutor {
+    fn block_on<'a, O: 'a>(&self, fut: impl IntoFuture<Output = O> + 'a) -> O {
+        let mut fut = std::pin::pin!(fut.into_future());
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        loop {
+            match fut.as_mut().poll(&mut cx) {
+                Poll::Ready(v) => return v,
+                Poll::Pending => {
+                    log::warn!("TrivialExecutor: future wasn't trivial");
+                    continue;
+                }
+            }
+        }
     }
 }
 

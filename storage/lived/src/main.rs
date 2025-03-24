@@ -8,6 +8,7 @@ use std::fs::File;
 use std::os::fd::AsRawFd;
 
 use driver_block::{Disk, DiskScheme};
+use driver_block::{ExecutorTrait, TrivialExecutor};
 use libredox::call::MmapArgs;
 use libredox::flag;
 
@@ -86,7 +87,7 @@ impl Disk for LiveDisk {
         self.the_data.len() as u64
     }
 
-    fn read(&mut self, block: u64, buffer: &mut [u8]) -> syscall::Result<Option<usize>> {
+    async fn read(&mut self, block: u64, buffer: &mut [u8]) -> syscall::Result<usize> {
         let block = block as usize;
         let block_size = self.block_size() as usize;
         if block * block_size + buffer.len() > self.size() as usize {
@@ -94,10 +95,10 @@ impl Disk for LiveDisk {
         }
         buffer
             .copy_from_slice(&self.the_data[block * block_size..block * block_size + buffer.len()]);
-        Ok(Some(block_size))
+        Ok(block_size)
     }
 
-    fn write(&mut self, block: u64, buffer: &[u8]) -> syscall::Result<Option<usize>> {
+    async fn write(&mut self, block: u64, buffer: &[u8]) -> syscall::Result<usize> {
         let block = block as usize;
         let block_size = self.block_size() as usize;
         if block * block_size + buffer.len() > self.size() as usize {
@@ -105,7 +106,7 @@ impl Disk for LiveDisk {
         }
         self.the_data[block * block_size..block * block_size + buffer.len()]
             .copy_from_slice(buffer);
-        Ok(Some(block_size))
+        Ok(block_size)
     }
 }
 
@@ -128,6 +129,7 @@ fn main() -> anyhow::Result<()> {
                     std::process::exit(1)
                 }),
             )]),
+            &TrivialExecutor,
         );
 
         libredox::call::setrens(0, 0).expect("nvmed: failed to enter null namespace");
@@ -144,7 +146,7 @@ fn main() -> anyhow::Result<()> {
 
         for event in event_queue {
             match event.unwrap().user_data {
-                Event::Scheme => scheme.tick().unwrap(),
+                Event::Scheme => TrivialExecutor.block_on(scheme.tick()).unwrap(),
             }
         }
 
