@@ -77,7 +77,7 @@ impl Disk for DiskATAPI {
         u64::from(self.blk_count) * u64::from(self.blk_size)
     }
 
-    fn read(&mut self, block: u64, buffer: &mut [u8]) -> Result<Option<usize>> {
+    async fn read(&mut self, block: u64, buffer: &mut [u8]) -> Result<usize> {
         // TODO: Handle audio CDs, which use special READ CD command
 
         let blk_len = self.blk_size;
@@ -139,10 +139,10 @@ impl Disk for DiskATAPI {
             sector += sectors - sector;
         }
 
-        Ok(Some((sector * blk_len) as usize))
+        Ok((sector * blk_len) as usize)
     }
 
-    fn write(&mut self, _block: u64, _buffer: &[u8]) -> Result<Option<usize>> {
+    async fn write(&mut self, _block: u64, _buffer: &[u8]) -> Result<usize> {
         Err(Error::new(EBADF)) // TODO: Implement writing
     }
 }

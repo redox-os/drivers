@@ -1,14 +1,11 @@
 #![cfg_attr(target_arch = "aarch64", feature(stdsimd))] // Required for yield instruction
 
-extern crate byteorder;
-extern crate syscall;
-
 use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
 use std::usize;
 
 use common::io::Io;
-use driver_block::DiskScheme;
+use driver_block::{DiskScheme, ExecutorTrait, FuturesExecutor};
 use event::{EventFlags, RawEventQueue};
 use pcid_interface::PciFunctionHandle;
 
@@ -54,6 +51,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
                 .enumerate()
                 .map(|(i, disk)| (i as u32, disk))
                 .collect(),
+            &FuturesExecutor,
         );
 
         let mut irq_file = irq.irq_handle("ahcid");
@@ -75,7 +73,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         for event in event_queue {
             let event = event.unwrap();
             if event.fd == scheme.event_handle().raw() {
-                scheme.tick().unwrap();
+                FuturesExecutor.block_on(scheme.tick()).unwrap();
             } else if event.fd == irq_fd {
                 let mut irq = [0; 8];
                 if irq_file
@@ -100,7 +98,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
                             .write(&irq)
                             .expect("ahcid: failed to write irq file");
 
-                        scheme.tick().unwrap();
+                        FuturesExecutor.block_on(scheme.tick()).unwrap();
                     }
                 }
             } else {
