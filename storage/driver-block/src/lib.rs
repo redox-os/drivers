@@ -15,7 +15,8 @@ use redox_scheme::{CallerCtx, OpenResult, RequestKind, Response, SignalBehavior,
 use syscall::dirent::DirentBuf;
 use syscall::schemev2::NewFdFlags;
 use syscall::{
-    Error, Result, Stat, EACCES, EAGAIN, EBADF, EINTR, EINVAL, EISDIR, ENOENT, ENOLCK, EOPNOTSUPP, EOVERFLOW, EWOULDBLOCK, MODE_DIR, MODE_FILE, O_DIRECTORY, O_STAT
+    Error, Result, Stat, EACCES, EAGAIN, EBADF, EINTR, EINVAL, EISDIR, ENOENT, ENOLCK, EOPNOTSUPP,
+    EOVERFLOW, EWOULDBLOCK, MODE_DIR, MODE_FILE, O_DIRECTORY, O_STAT,
 };
 
 /// Split the read operation into a series of block reads.
@@ -273,6 +274,15 @@ pub trait ExecutorTrait {
 impl<Hw: executor::Hardware> ExecutorTrait for LocalExecutor<Hw> {
     fn block_on<'a, O: 'a>(&self, fut: impl IntoFuture<Output = O> + 'a) -> O {
         LocalExecutor::block_on(self, fut)
+    }
+}
+#[deprecated = "use custom executor"]
+pub struct FuturesExecutor;
+
+#[allow(deprecated)]
+impl ExecutorTrait for FuturesExecutor {
+    fn block_on<'a, O: 'a>(&self, fut: impl IntoFuture<Output = O> + 'a) -> O {
+        futures::executor::block_on(fut.into_future())
     }
 }
 
@@ -610,7 +620,7 @@ impl<T: Disk> SchemeAsync for DiskScheme<T> {
                     .get(part_num as usize)
                     .ok_or(Error::new(EBADF))?;
 
-                    part.size * u64::from(disk.block_size())
+                part.size * u64::from(disk.block_size())
             }
         })
     }

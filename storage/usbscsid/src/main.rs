@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::env;
 
-use driver_block::{Disk, DiskScheme};
+use driver_block::{Disk, DiskScheme, ExecutorTrait};
 use syscall::{Error, EIO};
 use xhcid_interface::{ConfigureEndpointsReq, PortId, XhciClientHandle};
 
@@ -106,6 +106,7 @@ fn daemon(daemon: redox_daemon::Daemon, scheme: String, port: PortId, protocol: 
                 protocol: &mut *protocol,
             },
         )]),
+        &driver_block::FuturesExecutor,
     );
 
     //libredox::call::setrens(0, 0).expect("nvmed: failed to enter null namespace");
@@ -120,7 +121,9 @@ fn daemon(daemon: redox_daemon::Daemon, scheme: String, port: PortId, protocol: 
 
     for event in event_queue {
         match event.unwrap().user_data {
-            Event::Scheme => scheme.tick().unwrap(),
+            Event::Scheme => driver_block::FuturesExecutor
+                .block_on(scheme.tick())
+                .unwrap(),
         }
     }
 
@@ -141,9 +144,9 @@ impl Disk for UsbDisk<'_> {
         self.scsi.get_disk_size()
     }
 
-    fn read(&mut self, block: u64, buffer: &mut [u8]) -> syscall::Result<Option<usize>> {
+    async fn read(&mut self, block: u64, buffer: &mut [u8]) -> syscall::Result<usize> {
         match self.scsi.read(self.protocol, block, buffer) {
-            Ok(bytes_read) => Ok(Some(bytes_read as usize)),
+            Ok(bytes_read) => Ok(bytes_read as usize),
             Err(err) => {
                 eprintln!("usbscsid: READ IO ERROR: {err}");
                 Err(Error::new(EIO))
@@ -151,9 +154,9 @@ impl Disk for UsbDisk<'_> {
         }
     }
 
-    fn write(&mut self, block: u64, buffer: &[u8]) -> syscall::Result<Option<usize>> {
+    async fn write(&mut self, block: u64, buffer: &[u8]) -> syscall::Result<usize> {
         match self.scsi.write(self.protocol, block, buffer) {
-            Ok(bytes_written) => Ok(Some(bytes_written as usize)),
+            Ok(bytes_written) => Ok(bytes_written as usize),
             Err(err) => {
                 eprintln!("usbscsid: WRITE IO ERROR: {err}");
                 Err(Error::new(EIO))

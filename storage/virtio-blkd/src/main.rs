@@ -154,6 +154,7 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
     let mut scheme = DiskScheme::new(
         scheme_name,
         BTreeMap::from([(0, VirtioDisk::new(queue, device_space))]),
+        &driver_block::FuturesExecutor,
     );
 
     libredox::call::setrens(0, 0).expect("nvmed: failed to enter null namespace");
@@ -170,7 +171,7 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
 
     for event in event_queue {
         match event.unwrap().user_data {
-            Event::Scheme => scheme.tick().unwrap(),
+            Event::Scheme => futures::executor::block_on(scheme.tick()).unwrap(),
         }
     }
 
