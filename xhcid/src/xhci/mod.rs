@@ -858,7 +858,7 @@ impl Xhci {
                     .await?;
             }
 
-            debug!("Got the 8 byte dev descriptor");
+            debug!("Got the 8 byte dev descriptor: {:X?}", dev_desc_8_byte);
 
             let dev_desc = self.get_desc(port_id, slot).await?;
             debug!("Got the full device descriptor!");
@@ -963,12 +963,13 @@ impl Xhci {
         slot_id: u8,
         dev_desc: usb::DeviceDescriptor8Byte,
     ) -> Result<()> {
-        let new_max_packet_size = u32::from(dev_desc.packet_size); //if dev_desc.major_usb_vers() == 2 {
-                                                                   //u32::from(dev_desc.packet_size)
-                                                                   //} else {
-                                                                   //    info!("USB 2 device detected. Packet size is: {}", dev_desc.packet_size);
-                                                                   //    1u32 << dev_desc.packet_size
-                                                                   //};
+        let new_max_packet_size = if dev_desc.major_usb_vers() == 2 {
+            // For USB 2.0, packet_size is in bytes
+            u32::from(dev_desc.packet_size)
+        } else {
+            // For other USB versions, packet_size is the shift
+            1u32 << dev_desc.packet_size
+        };
         let endp_ctx = &mut input_context.device.endpoints[0];
         let mut b = endp_ctx.b.read();
         b &= 0x0000_FFFF;
@@ -997,11 +998,13 @@ impl Xhci {
         input_context.add_context.write(1 << 1);
         input_context.drop_context.write(0);
 
-        let new_max_packet_size = u32::from(dev_desc.packet_size); //if dev_desc.major_version() == 2 {
-                                                                   //    u32::from(dev_desc.packet_size)
-                                                                   //} else {
-                                                                   //    1u32 << dev_desc.packet_size
-                                                                   //};
+        let new_max_packet_size = if dev_desc.major_version() == 2 {
+            // For USB 2.0, packet_size is in bytes
+            u32::from(dev_desc.packet_size)
+        } else {
+            // For other USB versions, packet_size is the shift
+            1u32 << dev_desc.packet_size
+        };
         let endp_ctx = &mut input_context.device.endpoints[0];
         let mut b = endp_ctx.b.read();
         b &= 0x0000_FFFF;
