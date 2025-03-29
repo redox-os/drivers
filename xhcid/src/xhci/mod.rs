@@ -963,11 +963,11 @@ impl Xhci {
         slot_id: u8,
         dev_desc: usb::DeviceDescriptor8Byte,
     ) -> Result<()> {
-        let new_max_packet_size = if dev_desc.major_usb_vers() == 2 {
-            // For USB 2.0, packet_size is in bytes
+        let new_max_packet_size = if dev_desc.major_usb_vers() <= 2 {
+            // For USB 2.0 and below, packet_size is in bytes
             u32::from(dev_desc.packet_size)
         } else {
-            // For other USB versions, packet_size is the shift
+            // For later USB versions, packet_size is the shift
             1u32 << dev_desc.packet_size
         };
         let endp_ctx = &mut input_context.device.endpoints[0];
@@ -998,11 +998,11 @@ impl Xhci {
         input_context.add_context.write(1 << 1);
         input_context.drop_context.write(0);
 
-        let new_max_packet_size = if dev_desc.major_version() == 2 {
-            // For USB 2.0, packet_size is in bytes
+        let new_max_packet_size = if dev_desc.major_version() <= 2 {
+            // For USB 2.0 and below, packet_size is in bytes
             u32::from(dev_desc.packet_size)
         } else {
-            // For other USB versions, packet_size is the shift
+            // For later USB versions, packet_size is the shift
             1u32 << dev_desc.packet_size
         };
         let endp_ctx = &mut input_context.device.endpoints[0];
