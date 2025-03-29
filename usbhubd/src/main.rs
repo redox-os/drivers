@@ -58,58 +58,58 @@ fn main() {
         .expect("Failed to find suitable configuration");
 
     // Read hub descriptor
-    let ports = if desc.major_version() >= 3 {
+    let (ports, usb_3) = if desc.major_version() >= 3 {
         // USB 3.0 hubs
-        let mut hub_desc = usb::HubDescriptor3::default();
+        let mut hub_desc = usb::HubDescriptorV3::default();
         handle
             .device_request(
                 PortReqTy::Class,
                 PortReqRecipient::Device,
                 usb::SetupReq::GetDescriptor as u8,
-                u16::from(usb::HubDescriptor3::DESCRIPTOR_KIND) << 8,
+                u16::from(usb::HubDescriptorV3::DESCRIPTOR_KIND) << 8,
                 0,
                 DeviceReqData::In(unsafe { plain::as_mut_bytes(&mut hub_desc) }),
             )
             .expect("Failed to read hub descriptor");
-        hub_desc.ports
+        (hub_desc.ports, true)
     } else {
         // USB 2.0 and earlier hubs
-        let mut hub_desc = usb::HubDescriptor::default();
+        let mut hub_desc = usb::HubDescriptorV2::default();
         handle
             .device_request(
                 PortReqTy::Class,
                 PortReqRecipient::Device,
                 usb::SetupReq::GetDescriptor as u8,
-                u16::from(usb::HubDescriptor::DESCRIPTOR_KIND) << 8,
+                u16::from(usb::HubDescriptorV2::DESCRIPTOR_KIND) << 8,
                 0,
                 DeviceReqData::In(unsafe { plain::as_mut_bytes(&mut hub_desc) }),
             )
             .expect("Failed to read hub descriptor");
-        hub_desc.ports
+        (hub_desc.ports, false)
     };
 
     // Configure as hub device
     handle
         .configure_endpoints(&ConfigureEndpointsReq {
             config_desc: conf_desc.configuration_value,
-            interface_desc: Some(interface_num),
-            alternate_setting: Some(if_desc.alternate_setting),
+            interface_desc: None, //TODO: stalls on USB 3 hub: Some(interface_num),
+            alternate_setting: None, //TODO: stalls on USB 3 hub: Some(if_desc.alternate_setting),
             hub_ports: Some(ports),
         })
         .expect("Failed to configure endpoints after reading hub descriptor");
 
-    /*TODO: only set hub depth on USB 3+ hubs
-    handle
-        .device_request(
-            PortReqTy::Class,
-            PortReqRecipient::Device,
-            0x0c, // SET_HUB_DEPTH
-            port_id.hub_depth().into(),
-            0,
-            DeviceReqData::NoData,
-        )
-        .expect("Failed to set hub depth");
-    */
+    if usb_3 {
+        handle
+            .device_request(
+                PortReqTy::Class,
+                PortReqRecipient::Device,
+                0x0c, // SET_HUB_DEPTH
+                port_id.hub_depth().into(),
+                0,
+                DeviceReqData::NoData,
+            )
+            .expect("Failed to set hub depth");
+    }
 
     // Initialize states
     struct PortState {
@@ -140,7 +140,11 @@ fn main() {
         let child_port_id = port_id.child(port).expect("Cannot get child port ID");
         states.push(PortState {
             port_id: child_port_id,
-            port_sts: usb::HubPortStatus::default(),
+            port_sts: if usb_3 {
+                usb::HubPortStatus::V3(usb::HubPortStatusV3::default())
+            } else {
+                usb::HubPortStatus::V2(usb::HubPortStatusV2::default())
+            },
             handle: XhciClientHandle::new(scheme.clone(), child_port_id),
             attached: false,
         });
@@ -152,31 +156,47 @@ fn main() {
             let port_idx: usize = port.checked_sub(1).unwrap().into();
             let mut state = states.get_mut(port_idx).unwrap();
 
-            let mut port_sts = usb::HubPortStatus::default();
-            handle
-                .device_request(
-                    PortReqTy::Class,
-                    PortReqRecipient::Other,
-                    usb::SetupReq::GetStatus as u8,
-                    0,
-                    port as u16,
-                    DeviceReqData::In(unsafe { plain::as_mut_bytes(&mut port_sts) }),
-                )
-                .expect("Failed to retrieve port status");
+            let port_sts = if usb_3 {
+                let mut port_sts = usb::HubPortStatusV3::default();
+                handle
+                    .device_request(
+                        PortReqTy::Class,
+                        PortReqRecipient::Other,
+                        usb::SetupReq::GetStatus as u8,
+                        0,
+                        port as u16,
+                        DeviceReqData::In(unsafe { plain::as_mut_bytes(&mut port_sts) }),
+                    )
+                    .expect("Failed to retrieve port status");
+                usb::HubPortStatus::V3(port_sts)
+            } else {
+                let mut port_sts = usb::HubPortStatusV2::default();
+                handle
+                    .device_request(
+                        PortReqTy::Class,
+                        PortReqRecipient::Other,
+                        usb::SetupReq::GetStatus as u8,
+                        0,
+                        port as u16,
+                        DeviceReqData::In(unsafe { plain::as_mut_bytes(&mut port_sts) }),
+                    )
+                    .expect("Failed to retrieve port status");
+                usb::HubPortStatus::V2(port_sts)
+            };
             if state.port_sts != port_sts {
                 state.port_sts = port_sts;
                 log::info!("port {} status {:X?}", port, port_sts);
             }
 
             // Ensure port is powered on
-            if !port_sts.contains(usb::HubPortStatus::POWER) {
+            if !port_sts.is_powered() {
                 log::info!("power on port {port}");
                 handle
                     .device_request(
                         PortReqTy::Class,
                         PortReqRecipient::Other,
                         usb::SetupReq::SetFeature as u8,
-                        usb::HubFeature::PortPower as u16,
+                        usb::HubPortFeature::PortPower as u16,
                         port as u16,
                         DeviceReqData::NoData,
                     )
@@ -186,26 +206,26 @@ fn main() {
             }
 
             // Ignore disconnected port
-            if !port_sts.contains(usb::HubPortStatus::CONNECTION) {
+            if !port_sts.is_connected() {
                 state.ensure_attached(false);
                 continue;
             }
 
             // Ignore port in reset
-            if port_sts.contains(usb::HubPortStatus::RESET) {
+            if port_sts.is_resetting() {
                 state.ensure_attached(false);
                 continue;
             }
 
             // Ensure port is enabled
-            if !port_sts.contains(usb::HubPortStatus::ENABLE) {
+            if !port_sts.is_enabled() {
                 log::info!("reset port {port}");
                 handle
                     .device_request(
                         PortReqTy::Class,
                         PortReqRecipient::Other,
                         usb::SetupReq::SetFeature as u8,
-                        usb::HubFeature::PortReset as u16,
+                        usb::HubPortFeature::PortReset as u16,
                         port as u16,
                         DeviceReqData::NoData,
                     )
