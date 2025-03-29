@@ -93,15 +93,11 @@ impl driver_block::Disk for VirtioDisk<'_> {
         self.cfg.capacity() * u64::from(self.cfg.block_size())
     }
 
-    fn read(&mut self, block: u64, buffer: &mut [u8]) -> syscall::Result<Option<usize>> {
-        Ok(Some(futures::executor::block_on(
-            self.queue.read(block, buffer),
-        )))
+    async fn read(&mut self, block: u64, buffer: &mut [u8]) -> syscall::Result<usize> {
+        Ok(self.queue.read(block, buffer).await)
     }
 
-    fn write(&mut self, block: u64, buffer: &[u8]) -> syscall::Result<Option<usize>> {
-        Ok(Some(futures::executor::block_on(
-            self.queue.write(block, buffer),
-        )))
+    async fn write(&mut self, block: u64, buffer: &[u8]) -> syscall::Result<usize> {
+        Ok(self.queue.write(block, buffer).await)
     }
 }

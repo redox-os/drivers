@@ -1,0 +1,12 @@
+[package]
+name = "executor"
+authors = ["4lDO2 <4lDO2@protonmail.com>"]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Async framework for queue-based HW interfaces"
+
+[dependencies]
+log = "0.4"
+redox_event = "0.4.1"
+slab = "0.4.9"

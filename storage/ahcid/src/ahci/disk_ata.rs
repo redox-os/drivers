@@ -144,6 +144,7 @@ impl DiskATA {
 
                 self.request_opt = Some(request);
 
+                // TODO: support async internally
                 return Ok(None);
             } else {
                 // Done
@@ -162,21 +163,21 @@ impl Disk for DiskATA {
         self.size
     }
 
-    fn read(&mut self, block: u64, buffer: &mut [u8]) -> Result<Option<usize>> {
+    async fn read(&mut self, block: u64, buffer: &mut [u8]) -> Result<usize> {
         //TODO: FIGURE OUT WHY INTERRUPTS CAUSE HANGS
         loop {
             match self.request(block, BufferKind::Read(buffer))? {
-                Some(count) => return Ok(Some(count)),
+                Some(count) => return Ok(count),
                 None => std::thread::yield_now(),
             }
         }
     }
 
-    fn write(&mut self, block: u64, buffer: &[u8]) -> Result<Option<usize>> {
+    async fn write(&mut self, block: u64, buffer: &[u8]) -> Result<usize> {
         //TODO: FIGURE OUT WHY INTERRUPTS CAUSE HANGS
         loop {
             match self.request(block, BufferKind::Write(buffer))? {
-                Some(count) => return Ok(Some(count)),
+                Some(count) => return Ok(count),
                 None => std::thread::yield_now(),
             }
         }
