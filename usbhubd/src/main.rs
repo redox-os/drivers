@@ -58,19 +58,35 @@ fn main() {
         .expect("Failed to find suitable configuration");
 
     // Read hub descriptor
-    let mut hub_desc = usb::HubDescriptor::default();
-    handle
-        .device_request(
-            PortReqTy::Class,
-            PortReqRecipient::Device,
-            usb::SetupReq::GetDescriptor as u8,
-            // 0x29 is USB 2.0 hub descriptor
-            // TODO: suppot reading USB 3.0 descriptor?
-            0x29_00,
-            0,
-            DeviceReqData::In(unsafe { plain::as_mut_bytes(&mut hub_desc) }),
-        )
-        .expect("Failed to read hub descriptor");
+    let ports = if desc.major_version() >= 3 {
+        // USB 3.0 hubs
+        let mut hub_desc = usb::HubDescriptor3::default();
+        handle
+            .device_request(
+                PortReqTy::Class,
+                PortReqRecipient::Device,
+                usb::SetupReq::GetDescriptor as u8,
+                u16::from(usb::HubDescriptor3::DESCRIPTOR_KIND) << 8,
+                0,
+                DeviceReqData::In(unsafe { plain::as_mut_bytes(&mut hub_desc) }),
+            )
+            .expect("Failed to read hub descriptor");
+        hub_desc.ports
+    } else {
+        // USB 2.0 and earlier hubs
+        let mut hub_desc = usb::HubDescriptor::default();
+        handle
+            .device_request(
+                PortReqTy::Class,
+                PortReqRecipient::Device,
+                usb::SetupReq::GetDescriptor as u8,
+                u16::from(usb::HubDescriptor::DESCRIPTOR_KIND) << 8,
+                0,
+                DeviceReqData::In(unsafe { plain::as_mut_bytes(&mut hub_desc) }),
+            )
+            .expect("Failed to read hub descriptor");
+        hub_desc.ports
+    };
 
     // Configure as hub device
     handle
@@ -78,7 +94,7 @@ fn main() {
             config_desc: conf_desc.configuration_value,
             interface_desc: Some(interface_num),
             alternate_setting: Some(if_desc.alternate_setting),
-            hub_ports: Some(hub_desc.ports),
+            hub_ports: Some(ports),
         })
         .expect("Failed to configure endpoints after reading hub descriptor");
 
@@ -120,7 +136,7 @@ fn main() {
     }
 
     let mut states = Vec::new();
-    for port in 1..=hub_desc.ports {
+    for port in 1..=ports {
         let child_port_id = port_id.child(port).expect("Cannot get child port ID");
         states.push(PortState {
             port_id: child_port_id,
@@ -132,7 +148,7 @@ fn main() {
 
     //TODO: use change flags?
     loop {
-        for port in 1..=hub_desc.ports {
+        for port in 1..=ports {
             let port_idx: usize = port.checked_sub(1).unwrap().into();
             let mut state = states.get_mut(port_idx).unwrap();
 

@@ -2,7 +2,6 @@
 #[derive(Clone, Copy, Debug)]
 pub struct HubDescriptor {
     pub length: u8,
-    // 0x29 for USB 2, 0x2A for USB 3
     pub kind: u8,
     pub ports: u8,
     pub characteristics: u16,
@@ -17,6 +16,10 @@ pub struct HubDescriptor {
 
 unsafe impl plain::Plain for HubDescriptor {}
 
+impl HubDescriptor {
+    pub const DESCRIPTOR_KIND: u8 = 0x29;
+}
+
 impl Default for HubDescriptor {
     fn default() -> Self {
         Self {
@@ -26,6 +29,48 @@ impl Default for HubDescriptor {
             characteristics: 0,
             power_on_good: 0,
             current: 0,
+            /*
+            bitmaps: [0; 64],
+            */
+        }
+    }
+}
+
+#[repr(C, packed)]
+#[derive(Clone, Copy, Debug)]
+pub struct HubDescriptor3 {
+    pub length: u8,
+    pub kind: u8,
+    pub ports: u8,
+    pub characteristics: u16,
+    pub power_on_good: u8,
+    pub current: u8,
+    pub decode_latency: u8,
+    pub delay: u16,
+    /*TODO: USB 2 and 3 disagree on the descriptor, so some fields are disabled
+    // device_removable: bitmap of ports, maximum of 256 bits (32 bytes)
+    // power_control_mask: bitmap of ports, maximum of 256 bits (32 bytes)
+    bitmaps: [u8; 64],
+    */
+}
+
+unsafe impl plain::Plain for HubDescriptor3 {}
+
+impl HubDescriptor3 {
+    pub const DESCRIPTOR_KIND: u8 = 0x2A;
+}
+
+impl Default for HubDescriptor3 {
+    fn default() -> Self {
+        Self {
+            length: 0,
+            kind: 0,
+            ports: 0,
+            characteristics: 0,
+            power_on_good: 0,
+            current: 0,
+            decode_latency: 0,
+            delay: 0,
             /*
             bitmaps: [0; 64],
             */
