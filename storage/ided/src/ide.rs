@@ -177,7 +177,8 @@ impl Disk for AtaDisk {
         self.size
     }
 
-    fn read(&mut self, start_block: u64, buffer: &mut [u8]) -> Result<Option<usize>> {
+    // NOTE: not async
+    async fn read(&mut self, start_block: u64, buffer: &mut [u8]) -> Result<usize> {
         let mut count = 0;
         for chunk in buffer.chunks_mut(65536) {
             let block = start_block + (count as u64) / 512;
@@ -314,10 +315,11 @@ impl Disk for AtaDisk {
             count += chunk.len();
         }
 
-        Ok(Some(count))
+        Ok(count)
     }
 
-    fn write(&mut self, start_block: u64, buffer: &[u8]) -> Result<Option<usize>> {
+    // NOTE: not async
+    async fn write(&mut self, start_block: u64, buffer: &[u8]) -> Result<usize> {
         let mut count = 0;
         for chunk in buffer.chunks(65536) {
             let block = start_block + (count as u64) / 512;
@@ -462,6 +464,6 @@ impl Disk for AtaDisk {
             count += chunk.len();
         }
 
-        Ok(Some(count))
+        Ok(count)
     }
 }

@@ -1,3 +1,4 @@
+use std::cell::UnsafeCell;
 use std::ptr;
 use syscall::Result;
 
@@ -49,7 +50,7 @@ pub struct NvmeComp {
 
 /// Completion queue
 pub struct NvmeCompQueue {
-    pub data: Dma<[NvmeComp]>,
+    pub data: Dma<[UnsafeCell<NvmeComp>]>,
     pub head: u16,
     pub phase: bool,
 }
@@ -64,15 +65,8 @@ impl NvmeCompQueue {
     }
 
     /// Get a new completion queue entry, or return None if no entry is available yet.
-    pub(crate) fn complete(&mut self, cmd_opt: Option<(u16, NvmeCmd)>) -> Option<(u16, NvmeComp)> {
-        let entry = unsafe { ptr::read_volatile(self.data.as_ptr().add(self.head as usize)) };
-
-        //HACK FOR SOMETIMES RETURNING INVALID DATA ON QEMU!
-        if let Some((sq_id, cmd)) = cmd_opt {
-            if entry.sq_id != sq_id || entry.cid != cmd.cid {
-                return None;
-            }
-        }
+    pub(crate) fn complete(&mut self) -> Option<(u16, NvmeComp)> {
+        let entry = unsafe { ptr::read_volatile(self.data[usize::from(self.head)].get()) };
 
         if ((entry.status & 1) == 1) == self.phase {
             self.head = (self.head + 1) % (self.data.len() as u16);
@@ -86,10 +80,10 @@ impl NvmeCompQueue {
     }
 
     /// Get a new CQ entry, busy waiting until an entry appears.
-    fn complete_spin(&mut self, cmd_opt: Option<(u16, NvmeCmd)>) -> (u16, NvmeComp) {
+    pub fn complete_spin(&mut self) -> (u16, NvmeComp) {
         log::debug!("Waiting for new CQ entry");
         loop {
-            if let Some(some) = self.complete(cmd_opt) {
+            if let Some(some) = self.complete() {
                 return some;
             } else {
                 unsafe {
@@ -102,7 +96,7 @@ impl NvmeCompQueue {
 
 /// Submission queue
 pub struct NvmeCmdQueue {
-    pub data: Dma<[NvmeCmd]>,
+    pub data: Dma<[UnsafeCell<NvmeCmd>]>,
     pub tail: u16,
     pub head: u16,
 }
@@ -126,8 +120,32 @@ impl NvmeCmdQueue {
     /// Add a new submission command entry to the queue. The caller must ensure that the queue have free
     /// entries; this can be checked using `is_full`.
     pub fn submit_unchecked(&mut self, entry: NvmeCmd) -> u16 {
-        unsafe { ptr::write_volatile(&mut self.data[self.tail as usize] as *mut _, entry) }
+        unsafe { ptr::write_volatile(self.data[usize::from(self.tail)].get(), entry) }
         self.tail = (self.tail + 1) % (self.data.len() as u16);
         self.tail
+    }
+}
+
+#[derive(Debug)]
+pub enum Status {
+    GenericCmdStatus(u8),
+    CommandSpecificStatus(u8),
+    IntegrityError(u8),
+    PathRelatedStatus(u8),
+    Rsvd(u8),
+    Vendor(u8),
+}
+impl Status {
+    pub fn parse(raw: u16) -> Self {
+        let code = (raw >> 1) as u8;
+        match (raw >> 9) & 0b111 {
+            0 => Self::GenericCmdStatus(code),
+            1 => Self::CommandSpecificStatus(code),
+            2 => Self::IntegrityError(code),
+            3 => Self::PathRelatedStatus(code),
+            4..=6 => Self::Rsvd(code),
+            7 => Self::Vendor(code),
+            _ => unreachable!(),
+        }
     }
 }
