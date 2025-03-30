@@ -1446,21 +1446,22 @@ impl Xhci {
 
         // Only fetch language IDs if we need to. Some devices will fail to return this descriptor
         //TODO: also check configurations and interfaces for defined strings?
-        let lang_id = if raw_dd.manufacturer_str > 0 || raw_dd.product_str > 0 || raw_dd.serial_str > 0 {
-            let lang_ids = self.fetch_lang_ids_desc(port_id, slot).await?;
-            // Prefer US English, but fall back to first language ID, or zero
-            let en_us_id = 0x409;
-            if lang_ids.contains(&en_us_id) {
-                en_us_id
-            } else {
-                match lang_ids.first() {
-                    Some(some) => *some,
-                    None => 0,
+        let lang_id =
+            if raw_dd.manufacturer_str > 0 || raw_dd.product_str > 0 || raw_dd.serial_str > 0 {
+                let lang_ids = self.fetch_lang_ids_desc(port_id, slot).await?;
+                // Prefer US English, but fall back to first language ID, or zero
+                let en_us_id = 0x409;
+                if lang_ids.contains(&en_us_id) {
+                    en_us_id
+                } else {
+                    match lang_ids.first() {
+                        Some(some) => *some,
+                        None => 0,
+                    }
                 }
-            }
-        } else {
-            0
-        };
+            } else {
+                0
+            };
         log::debug!("port {} using language ID 0x{:04x}", port_id, lang_id);
 
         let (manufacturer_str, product_str, serial_str) = (

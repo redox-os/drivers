@@ -2,7 +2,7 @@
 
 use std::process;
 
-use driver_block::{Disk, DiskScheme};
+use driver_block::{Disk, DiskScheme, ExecutorTrait, TrivialExecutor};
 use event::{EventFlags, RawEventQueue};
 use fdt::Fdt;
 
@@ -99,7 +99,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     }
 
     let mut disks = Vec::new();
-    disks.push(Box::new(sdhci) as Box<dyn Disk>);
+    disks.push(sdhci);
     let mut scheme = DiskScheme::new(
         "disk.mmc".to_string(),
         disks
@@ -107,6 +107,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
             .enumerate()
             .map(|(i, disk)| (i as u32, disk))
             .collect(),
+        &TrivialExecutor, // TODO: real executor
     );
 
     let event_queue = RawEventQueue::new().expect("mmcd: failed to open event file");
@@ -120,7 +121,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     for event in event_queue {
         let event = event.unwrap();
         if event.fd == scheme.event_handle().raw() {
-            scheme.tick().unwrap();
+            TrivialExecutor.block_on(scheme.tick()).unwrap();
         } else {
             println!("Unknown event {}", event.fd);
         }

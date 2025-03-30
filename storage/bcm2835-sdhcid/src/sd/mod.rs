@@ -742,7 +742,8 @@ impl Disk for SdHostCtrl {
         self.size
     }
 
-    fn read(&mut self, block: u64, buffer: &mut [u8]) -> Result<Option<usize>> {
+    // TODO: real async?
+    async fn read(&mut self, block: u64, buffer: &mut [u8]) -> Result<usize> {
         if (buffer.len() % 512) != 0 {
             println!("buffer.len {} should be aligned to {}", buffer.len(), 512);
             return Err(Error::new(EINVAL));
@@ -755,12 +756,13 @@ impl Disk for SdHostCtrl {
             self.sd_readblock(block as u32, u32_buffer, num as u32)
         };
         match ret {
-            Ok(cnt) => Ok(Some(cnt)),
+            Ok(cnt) => Ok(cnt),
             Err(err) => Err(err),
         }
     }
 
-    fn write(&mut self, block: u64, buffer: &[u8]) -> Result<Option<usize>> {
+    // TODO: real async?
+    async fn write(&mut self, block: u64, buffer: &[u8]) -> Result<usize> {
         if (buffer.len() % 512) != 0 {
             println!("buffer.len {} should be aligned to {}", buffer.len(), 512);
             return Err(Error::new(EINVAL));
@@ -773,7 +775,7 @@ impl Disk for SdHostCtrl {
             self.sd_writeblock(block as u32, u32_buffer, num as u32)
         };
         match ret {
-            Ok(cnt) => Ok(Some(cnt)),
+            Ok(cnt) => Ok(cnt),
             Err(err) => Err(err),
         }
     }
