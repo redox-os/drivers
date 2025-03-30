@@ -1,0 +1,12 @@
+[package]
+name = "rtcd"
+version = "0.1.0"
+authors = ["4lDO2 <4lDO2@protonmail.com>"]
+edition = "2018"
+license = "MIT"
+
+
+[dependencies]
+anyhow = "1"
+
+common = { path = "../common" }

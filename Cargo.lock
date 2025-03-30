@@ -14,7 +14,7 @@ dependencies = [
  "redox-daemon",
  "redox_event",
  "redox_syscall",
- "spin",
+ "spin 0.9.8",
 ]
 
 [[package]]
@@ -705,7 +705,7 @@ dependencies = [
  "redox-daemon",
  "redox_event",
  "redox_syscall",
- "spin",
+ "spin 0.9.8",
 ]
 
 [[package]]
@@ -809,9 +809,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.26"
+version = "0.4.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30bde2b3dc3671ae49d8e2e9f044c7c005836e7a023ee57cffa25ab82764bb9e"
+checksum = "13dc2df351e3202783a1fe0d44375f7295ffb4049267b0f3018346dc122a1d94"
 
 [[package]]
 name = "maybe-uninit"
@@ -873,9 +873,9 @@ dependencies = [
 
 [[package]]
 name = "once_cell"
-version = "1.21.1"
+version = "1.21.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d75b0bedcc4fe52caa0e03d9f1151a323e4aa5e2d78ba3580400cd3c9e2bc4bc"
+checksum = "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"
 
 [[package]]
 name = "orbclient"
@@ -1227,6 +1227,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rtcd"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "common",
+]
+
+[[package]]
 name = "rtl8139d"
 version = "0.1.0"
 dependencies = [
@@ -1285,7 +1293,7 @@ dependencies = [
  "redox-daemon",
  "redox_event",
  "redox_syscall",
- "spin",
+ "spin 0.9.8",
 ]
 
 [[package]]
@@ -1416,6 +1424,15 @@ name = "spin"
 version = "0.9.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
+dependencies = [
+ "lock_api",
+]
+
+[[package]]
+name = "spin"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d5fe4ccb98d9c292d56fec89a5e07da7fc4cf0dc11e156b41793132775d3e591"
 dependencies = [
  "lock_api",
 ]
@@ -1688,7 +1705,7 @@ dependencies = [
  "redox-daemon",
  "redox_event",
  "redox_syscall",
- "spin",
+ "spin 0.10.0",
  "static_assertions",
  "thiserror",
  "virtio-core",
@@ -1728,7 +1745,7 @@ dependencies = [
  "redox-daemon",
  "redox_event",
  "redox_syscall",
- "spin",
+ "spin 0.9.8",
  "static_assertions",
  "virtio-core",
 ]
