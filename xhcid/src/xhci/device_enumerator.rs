@@ -24,7 +24,7 @@ impl DeviceEnumerator {
 
     pub fn run(&mut self) {
         loop {
-            info!("Start Device Enumerator Loop");
+            debug!("Start Device Enumerator Loop");
             let request = match self.request_queue.recv() {
                 Ok(req) => req,
                 Err(err) => {

@@ -104,7 +104,7 @@ impl Xhci {
         desc: &mut Dma<T>,
     ) -> Result<()> {
         if self.interrupt_is_pending(0) {
-            warn!("EHB is already set!");
+            debug!("EHB is already set!");
             self.force_clear_interrupt(0);
         }
         let len = mem::size_of::<T>();

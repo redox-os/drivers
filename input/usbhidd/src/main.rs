@@ -202,7 +202,7 @@ fn main() {
     let desc: DevDesc = handle
         .get_standard_descs()
         .expect("Failed to get standard descriptors");
-    log::info!("{:X?}", desc);
+    log::debug!("{:X?}", desc);
 
     let mut endp_count = 0;
     let (conf_desc, (if_desc, endp_desc_opt, hid_desc)) = desc
