@@ -265,13 +265,10 @@ pub fn acquire_port_io_rights() -> Result<()> {
     extern "C" {
         fn redox_cur_thrfd_v0() -> usize;
     }
-    let _ = unsafe {
-        sys_call(
-            redox_cur_thrfd_v0(),
-            &mut [],
-            &[ProcSchemeVerb::Iopl as u64],
-        )?
-    };
+    let kernel_fd = syscall::dup(unsafe { redox_cur_thrfd_v0() }, b"open_via_dup")?;
+    let res = unsafe { sys_call(kernel_fd, &mut [], &[ProcSchemeVerb::Iopl as u64]) };
+    let _ = syscall::close(kernel_fd);
+    res?;
     Ok(())
 }
 
