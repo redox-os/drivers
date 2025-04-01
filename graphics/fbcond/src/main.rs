@@ -12,7 +12,6 @@ mod display;
 mod scheme;
 mod text;
 
-
 fn main() {
     let vt_ids = env::args()
         .skip(1)
