@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Instant;
 
 use common::{dma::Dma, sgl};
 use driver_graphics::{Framebuffer, GraphicsAdapter, GraphicsScheme};
@@ -52,9 +53,12 @@ pub struct VirtGpuAdapter<'a> {
     cursor_queue: Arc<Queue<'a>>,
     transport: Arc<dyn Transport>,
     displays: Vec<Display>,
+
     cursor_set: bool,
     cursor_resource: Option<ResourceId>,
     cursor_sgl: Option<sgl::Sgl>,
+    update_cursor_timer: Instant, //QEMU UIs do not grab the pointer in case an absolute pointing device is present
+                                  //and since releasing our cursor makes it disappear, updating it every second fixes it
 }
 
 impl VirtGpuAdapter<'_> {
@@ -160,7 +164,9 @@ impl VirtGpuAdapter<'_> {
         self.update_cursor(cursor_damage);
     }
 
-    fn update_cursor(&self, cursor_damage: CursorDamage) {
+    fn update_cursor(&mut self, cursor_damage: CursorDamage) {
+        self.update_cursor_timer = Instant::now();
+
         let x = cursor_damage.x;
         let y = cursor_damage.y;
         let hot_x = cursor_damage.hot_x;
@@ -361,6 +367,10 @@ impl GraphicsAdapter for VirtGpuAdapter<'_> {
 
     fn handle_cursor(&mut self, cursor_damage: CursorDamage) {
         if self.cursor_set {
+            if self.update_cursor_timer.elapsed().as_millis() > 1000 {
+                self.update_cursor(cursor_damage);
+            }
+
             if cursor_damage.header == 0 {
                 self.move_cursor(cursor_damage);
             } else {
@@ -390,6 +400,7 @@ impl<'a> GpuScheme {
             cursor_set: false,
             cursor_resource: None,
             cursor_sgl: None,
+            update_cursor_timer: Instant::now(),
         };
 
         let mut display_info = adapter.get_display_info().await?;
