@@ -112,7 +112,7 @@ impl Drop for DisplayMap {
 
 #[derive(Debug, Copy, Clone)]
 #[repr(packed)]
-pub struct CursorDamage{
+pub struct CursorDamage {
     pub header: u32,
     pub x: i32,
     pub y: i32,

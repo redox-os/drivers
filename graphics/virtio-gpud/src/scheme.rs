@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use common::{dma::Dma, sgl};
 use driver_graphics::{Framebuffer, GraphicsAdapter, GraphicsScheme};
-use graphics_ipc::v1::{Damage, CursorDamage};
+use graphics_ipc::v1::{CursorDamage, Damage};
 use inputd::DisplayHandle;
 
 use syscall::PAGE_SIZE;
@@ -97,9 +97,7 @@ impl VirtGpuAdapter<'_> {
     }
 
     fn setup_cursor(&mut self, cursor_damage: CursorDamage) {
-
         futures::executor::block_on(async {
-
             //Creating a new resource for the cursor
             let fb_size = 64 * 64 * 4;
             let sgl = sgl::Sgl::new(fb_size).unwrap();
@@ -109,14 +107,9 @@ impl VirtGpuAdapter<'_> {
                 core::ptr::write_bytes(sgl.as_ptr() as *mut u8, 0, fb_size);
             }
 
-            let resource_request = Dma::new(ResourceCreate2d::new(
-                res_id,
-                ResourceFormat::Bgrx,
-                64,
-                64,
-            ))
-            .unwrap();
-            
+            let resource_request =
+                Dma::new(ResourceCreate2d::new(res_id, ResourceFormat::Bgrx, 64, 64)).unwrap();
+
             let header = self.send_request_fenced(resource_request).await.unwrap();
             assert_eq!(header.ty, CommandTy::RespOkNodata);
 
@@ -124,7 +117,7 @@ impl VirtGpuAdapter<'_> {
 
             //Attaching cursor resource as backing storage
             let mut mem_entries =
-            unsafe { Dma::zeroed_slice(sgl.chunks().len()).unwrap().assume_init() };
+                unsafe { Dma::zeroed_slice(sgl.chunks().len()).unwrap().assume_init() };
             for (entry, chunk) in mem_entries.iter_mut().zip(sgl.chunks().iter()) {
                 *entry = MemEntry {
                     address: chunk.phys as u64,
@@ -140,10 +133,10 @@ impl VirtGpuAdapter<'_> {
             let mut header = Dma::new(ControlHeader::default()).unwrap();
             header.flags |= VIRTIO_GPU_FLAG_FENCE;
             let command = ChainBuilder::new()
-            .chain(Buffer::new(&attach_request))
-            .chain(Buffer::new_unsized(&mem_entries))
-            .chain(Buffer::new(&header).flags(DescriptorFlags::WRITE_ONLY))
-            .build();
+                .chain(Buffer::new(&attach_request))
+                .chain(Buffer::new_unsized(&mem_entries))
+                .chain(Buffer::new(&header).flags(DescriptorFlags::WRITE_ONLY))
+                .build();
 
             self.control_queue.send(command).await;
             assert_eq!(header.ty, CommandTy::RespOkNodata);
@@ -158,49 +151,48 @@ impl VirtGpuAdapter<'_> {
                     height: 64,
                 },
                 0,
-            )).unwrap();
+            ))
+            .unwrap();
             let header = self.send_request_fenced(transfer_request).await.unwrap();
             assert_eq!(header.ty, CommandTy::RespOkNodata);
         });
 
         self.update_cursor(cursor_damage);
-
     }
 
     fn update_cursor(&self, cursor_damage: CursorDamage) {
-
         let x = cursor_damage.x;
-        let y =  cursor_damage.y;
+        let y = cursor_damage.y;
         let hot_x = cursor_damage.hot_x;
         let hot_y = cursor_damage.hot_y;
 
         let w: i32 = cursor_damage.width;
         let h: i32 = cursor_damage.height;
-        let cursor_image = cursor_damage.cursor_img_bytes;   
+        let cursor_image = cursor_damage.cursor_img_bytes;
 
         let sgl = self.cursor_sgl.as_ref().unwrap();
 
         //Clear previous image from backing storage
         unsafe {
-            core::ptr::write_bytes(sgl.as_ptr() as *mut u8, 0, 64*64*4);
+            core::ptr::write_bytes(sgl.as_ptr() as *mut u8, 0, 64 * 64 * 4);
         }
 
         //Write image to backing storage
         for row in 0..h {
-                let start: usize = (w*row) as usize;
-                let end: usize = (w*row+w) as usize;
+            let start: usize = (w * row) as usize;
+            let end: usize = (w * row + w) as usize;
 
-                unsafe {
-                    core::ptr::copy_nonoverlapping(
-                cursor_image[start..end].as_ptr(),
-                (sgl.as_ptr() as *mut u32).offset(64*row as isize), 
-              w as usize
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    cursor_image[start..end].as_ptr(),
+                    (sgl.as_ptr() as *mut u32).offset(64 * row as isize),
+                    w as usize,
                 );
             }
         }
 
         //Transfering cursor resource to host
-        futures::executor::block_on(async{
+        futures::executor::block_on(async {
             let transfer_request = Dma::new(XferToHost2d::new(
                 self.cursor_resource.unwrap(),
                 GpuRect {
@@ -210,39 +202,47 @@ impl VirtGpuAdapter<'_> {
                     height: 64,
                 },
                 0,
-            )).unwrap();
+            ))
+            .unwrap();
             let header = self.send_request_fenced(transfer_request).await.unwrap();
             assert_eq!(header.ty, CommandTy::RespOkNodata);
         });
 
         //Update the cursor position
-        let request = Dma::new(UpdateCursor::update_cursor(x, y, hot_x, hot_y,self.cursor_resource.unwrap())).unwrap();
+        let request = Dma::new(UpdateCursor::update_cursor(
+            x,
+            y,
+            hot_x,
+            hot_y,
+            self.cursor_resource.unwrap(),
+        ))
+        .unwrap();
         futures::executor::block_on(async {
-            let command = ChainBuilder::new()
-            .chain(Buffer::new(&request))
-            .build();
+            let command = ChainBuilder::new().chain(Buffer::new(&request)).build();
             self.cursor_queue.send(command).await;
         });
-
     }
 
     fn move_cursor(&self, cursor_damage: CursorDamage) {
-
         let x = cursor_damage.x;
-        let y =  cursor_damage.y;
+        let y = cursor_damage.y;
         let hot_x = cursor_damage.hot_x;
         let hot_y = cursor_damage.hot_y;
 
-        let request = Dma::new(MoveCursor::move_cursor(x, y, hot_x, hot_y, self.cursor_resource.unwrap())).unwrap();
+        let request = Dma::new(MoveCursor::move_cursor(
+            x,
+            y,
+            hot_x,
+            hot_y,
+            self.cursor_resource.unwrap(),
+        ))
+        .unwrap();
 
         futures::executor::block_on(async {
-            let command = ChainBuilder::new()
-            .chain(Buffer::new(&request))
-            .build();
+            let command = ChainBuilder::new().chain(Buffer::new(&request)).build();
             self.cursor_queue.send(command).await;
         });
     }
-
 }
 
 impl GraphicsAdapter for VirtGpuAdapter<'_> {
@@ -357,17 +357,16 @@ impl GraphicsAdapter for VirtGpuAdapter<'_> {
             let header = self.send_request(Dma::new(flush).unwrap()).await.unwrap();
             assert_eq!(header.ty, CommandTy::RespOkNodata);
         });
-        
     }
 
     fn handle_cursor(&mut self, cursor_damage: CursorDamage) {
         if self.cursor_set {
             if cursor_damage.header == 0 {
                 self.move_cursor(cursor_damage);
-            }else{
+            } else {
                 self.update_cursor(cursor_damage);
             }
-        }else{
+        } else {
             self.setup_cursor(cursor_damage);
             self.cursor_set = true;
         }

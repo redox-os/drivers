@@ -1,10 +1,6 @@
 use event::EventQueue;
-<<<<<<< HEAD
 use inputd::ConsumerHandleEvent;
 use libredox::errno::{EAGAIN, EINTR};
-=======
-use libredox::errno::{EAGAIN, EINTR, ESTALE};
->>>>>>> ecd26dd (Update to redox-scheme 0.4)
 use orbclient::Event;
 use redox_scheme::{CallRequest, RequestKind, Response, SignalBehavior, Socket};
 use std::env;
@@ -15,6 +11,7 @@ use crate::scheme::{FbconScheme, VtIndex};
 mod display;
 mod scheme;
 mod text;
+
 
 fn main() {
     let vt_ids = env::args()

@@ -17,9 +17,8 @@ pub trait GraphicsAdapter {
     fn map_dumb_framebuffer(&mut self, framebuffer: &Self::Framebuffer) -> *mut u8;
 
     fn update_plane(&mut self, display_id: usize, framebuffer: &Self::Framebuffer, damage: Damage);
-    fn handle_cursor(&mut self, cursor_damage: CursorDamage){}
+    fn handle_cursor(&mut self, cursor_damage: CursorDamage) {}
 }
-
 
 pub trait Framebuffer {
     fn width(&self) -> u32;
@@ -56,7 +55,7 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
             hw_cursor = true;
         }
 
-        GraphicsScheme { 
+        GraphicsScheme {
             adapter,
             scheme_name,
             socket,
@@ -222,9 +221,7 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
     }
 
     fn write(&mut self, id: usize, buf: &[u8], _offset: u64, _fcntl_flags: u32) -> Result<usize> {
-        
         if size_of_val(buf) == std::mem::size_of::<CursorDamage>() && self.hw_cursor {
-            
             let cursor_damage = unsafe { *buf.as_ptr().cast::<CursorDamage>() };
             self.adapter.handle_cursor(cursor_damage);
             return Ok(buf.len());

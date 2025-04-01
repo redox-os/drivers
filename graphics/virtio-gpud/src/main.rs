@@ -383,18 +383,18 @@ impl CursorPos {
 /* VIRTIO_GPU_CMD_UPDATE_CURSOR, VIRTIO_GPU_CMD_MOVE_CURSOR */
 #[derive(Debug)]
 #[repr(C)]
-pub struct UpdateCursor{
+pub struct UpdateCursor {
     pub header: ControlHeader,
-    pub pos: CursorPos, 
-    pub resource_id: ResourceId,    
-    pub hot_x: i32, 
-    pub hot_y: i32, 
+    pub pos: CursorPos,
+    pub resource_id: ResourceId,
+    pub hot_x: i32,
+    pub hot_y: i32,
     _padding: u32,
 }
 
 // impl UpdateCursor{
-impl UpdateCursor{ 
-    pub fn update_cursor(x: i32, y: i32, hot_x: i32, hot_y: i32, resource_id: ResourceId)-> Self {
+impl UpdateCursor {
+    pub fn update_cursor(x: i32, y: i32, hot_x: i32, hot_y: i32, resource_id: ResourceId) -> Self {
         Self {
             header: ControlHeader::with_ty(CommandTy::UpdateCursor),
             pos: CursorPos::new(0, x, y),
@@ -406,17 +406,17 @@ impl UpdateCursor{
     }
 }
 
-pub struct MoveCursor{
+pub struct MoveCursor {
     pub header: ControlHeader,
-    pub pos: CursorPos, 
-    pub resource_id: ResourceId,    
-    pub hot_x: i32, 
+    pub pos: CursorPos,
+    pub resource_id: ResourceId,
+    pub hot_x: i32,
     pub hot_y: i32,
     _padding: u32,
 }
 
-impl MoveCursor{
-    pub fn move_cursor(x: i32, y: i32, hot_x: i32, hot_y: i32, resource_id: ResourceId)-> Self {
+impl MoveCursor {
+    pub fn move_cursor(x: i32, y: i32, hot_x: i32, hot_y: i32, resource_id: ResourceId) -> Self {
         Self {
             header: ControlHeader::with_ty(CommandTy::MoveCursor),
             pos: CursorPos::new(0, x, y),
@@ -427,7 +427,6 @@ impl MoveCursor{
         }
     }
 }
-
 
 static DEVICE: spin::Once<virtio_core::Device> = spin::Once::new();
 
