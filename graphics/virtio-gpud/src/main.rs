@@ -209,6 +209,7 @@ impl ResourceId {
 #[repr(u32)]
 pub enum ResourceFormat {
     Unknown = 0,
+    
     Bgrx = 2,
     Xrgb = 4,
 }
