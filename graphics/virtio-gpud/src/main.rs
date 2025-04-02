@@ -393,7 +393,6 @@ pub struct UpdateCursor {
     _padding: u32,
 }
 
-// impl UpdateCursor{
 impl UpdateCursor {
     pub fn update_cursor(x: i32, y: i32, hot_x: i32, hot_y: i32, resource_id: ResourceId) -> Self {
         Self {
