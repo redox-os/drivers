@@ -110,6 +110,19 @@ impl Drop for DisplayMap {
     }
 }
 
+#[derive(Debug, Copy, Clone)]
+#[repr(C, packed)]
+pub struct CursorDamage {
+    pub header: u32,
+    pub x: i32,
+    pub y: i32,
+    pub hot_x: i32,
+    pub hot_y: i32,
+    pub width: i32,
+    pub height: i32,
+    pub cursor_img_bytes: [u32; 4096],
+}
+
 // Keep synced with orbital's SyncRect
 // Technically orbital uses i32 rather than u32, but values larger than i32::MAX
 // would be a bug anyway.
