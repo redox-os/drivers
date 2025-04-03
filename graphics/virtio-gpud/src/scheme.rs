@@ -113,11 +113,7 @@ impl VirtGpuAdapter<'_> {
 
         //Clear previous image from backing storage
         unsafe {
-            core::ptr::write_bytes(
-                cursor.sgl.as_ptr() as *mut u8,
-                0,
-                64 * 64 * 4,
-            );
+            core::ptr::write_bytes(cursor.sgl.as_ptr() as *mut u8, 0, 64 * 64 * 4);
         }
 
         //Write image to backing storage
