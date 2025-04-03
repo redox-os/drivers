@@ -246,7 +246,7 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
         {
             let cursor_damage = unsafe { *buf.as_ptr().cast::<CursorDamage>() };
 
-            //There is always expected to be cursor_resource if cursor_support returns true
+            //There is always expected to be cursor_resource if supports_hw_cursor returns true
             if let Some(cursor_resource) = self.cursor_resources.get_mut(vt) {
                 self.adapter.handle_cursor(cursor_damage, cursor_resource);
             }
