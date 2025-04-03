@@ -42,8 +42,8 @@ impl Framebuffer for VirtGpuFramebuffer {
 
 pub struct VirtGpuCursor {
     resource_id: ResourceId,
-    cursor_sgl: sgl::Sgl,
-    cursor_set: bool,
+    sgl: sgl::Sgl,
+    set: bool,
 }
 
 impl Cursor for VirtGpuCursor {}
@@ -101,7 +101,7 @@ impl VirtGpuAdapter<'_> {
         Ok(response)
     }
 
-    fn update_cursor(&mut self, cursor_damage: CursorDamage, cursor_resource: &mut VirtGpuCursor) {
+    fn update_cursor(&mut self, cursor_damage: CursorDamage, cursor: &mut VirtGpuCursor) {
         let x = cursor_damage.x;
         let y = cursor_damage.y;
         let hot_x = cursor_damage.hot_x;
@@ -114,7 +114,7 @@ impl VirtGpuAdapter<'_> {
         //Clear previous image from backing storage
         unsafe {
             core::ptr::write_bytes(
-                cursor_resource.cursor_sgl.as_ptr() as *mut u8,
+                cursor.sgl.as_ptr() as *mut u8,
                 0,
                 64 * 64 * 4,
             );
@@ -128,7 +128,7 @@ impl VirtGpuAdapter<'_> {
             unsafe {
                 core::ptr::copy_nonoverlapping(
                     cursor_image[start..end].as_ptr(),
-                    (cursor_resource.cursor_sgl.as_ptr() as *mut u32).offset(64 * row as isize),
+                    (cursor.sgl.as_ptr() as *mut u32).offset(64 * row as isize),
                     w as usize,
                 );
             }
@@ -137,7 +137,7 @@ impl VirtGpuAdapter<'_> {
         //Transfering cursor resource to host
         futures::executor::block_on(async {
             let transfer_request = Dma::new(XferToHost2d::new(
-                cursor_resource.resource_id,
+                cursor.resource_id,
                 GpuRect {
                     x: 0,
                     y: 0,
@@ -157,7 +157,7 @@ impl VirtGpuAdapter<'_> {
             y,
             hot_x,
             hot_y,
-            cursor_resource.resource_id,
+            cursor.resource_id,
         ))
         .unwrap();
         futures::executor::block_on(async {
@@ -166,7 +166,7 @@ impl VirtGpuAdapter<'_> {
         });
     }
 
-    fn move_cursor(&self, cursor_damage: CursorDamage, cursor_resource: &mut VirtGpuCursor) {
+    fn move_cursor(&self, cursor_damage: CursorDamage, cursor: &mut VirtGpuCursor) {
         let x = cursor_damage.x;
         let y = cursor_damage.y;
         let hot_x = cursor_damage.hot_x;
@@ -177,7 +177,7 @@ impl VirtGpuAdapter<'_> {
             y,
             hot_x,
             hot_y,
-            cursor_resource.resource_id,
+            cursor.resource_id,
         ))
         .unwrap();
 
@@ -366,21 +366,21 @@ impl GraphicsAdapter for VirtGpuAdapter<'_> {
 
         VirtGpuCursor {
             resource_id: res_id,
-            cursor_sgl: sgl,
-            cursor_set: false,
+            sgl: sgl,
+            set: false,
         }
     }
 
-    fn handle_cursor(&mut self, cursor_damage: CursorDamage, cursor_resource: &mut VirtGpuCursor) {
-        if !cursor_resource.cursor_set {
-            cursor_resource.cursor_set = true;
-            self.update_cursor(cursor_damage, cursor_resource);
+    fn handle_cursor(&mut self, cursor_damage: CursorDamage, cursor: &mut VirtGpuCursor) {
+        if !cursor.set {
+            cursor.set = true;
+            self.update_cursor(cursor_damage, cursor);
         }
 
         if cursor_damage.header == 0 {
-            self.move_cursor(cursor_damage, cursor_resource);
+            self.move_cursor(cursor_damage, cursor);
         } else {
-            self.update_cursor(cursor_damage, cursor_resource);
+            self.update_cursor(cursor_damage, cursor);
         }
     }
 }
