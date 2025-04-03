@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use common::{dma::Dma, sgl};
-use driver_graphics::{Framebuffer, Cursor, GraphicsAdapter, GraphicsScheme};
+use driver_graphics::{Cursor, Framebuffer, GraphicsAdapter, GraphicsScheme};
 use graphics_ipc::v1::{CursorDamage, Damage};
 use inputd::DisplayHandle;
 
@@ -113,7 +113,11 @@ impl VirtGpuAdapter<'_> {
 
         //Clear previous image from backing storage
         unsafe {
-            core::ptr::write_bytes(cursor_resource.cursor_sgl.as_ptr() as *mut u8, 0, 64 * 64 * 4);
+            core::ptr::write_bytes(
+                cursor_resource.cursor_sgl.as_ptr() as *mut u8,
+                0,
+                64 * 64 * 4,
+            );
         }
 
         //Write image to backing storage
@@ -310,7 +314,6 @@ impl GraphicsAdapter for VirtGpuAdapter<'_> {
         let res_id = ResourceId::alloc();
 
         futures::executor::block_on(async {
-
             unsafe {
                 core::ptr::write_bytes(sgl.as_ptr() as *mut u8, 0, fb_size);
             }
@@ -360,8 +363,12 @@ impl GraphicsAdapter for VirtGpuAdapter<'_> {
             let header = self.send_request_fenced(transfer_request).await.unwrap();
             assert_eq!(header.ty, CommandTy::RespOkNodata);
         });
-        
-        VirtGpuCursor { resource_id: res_id, cursor_sgl: sgl, cursor_set: false}
+
+        VirtGpuCursor {
+            resource_id: res_id,
+            cursor_sgl: sgl,
+            cursor_set: false,
+        }
     }
 
     fn handle_cursor(&mut self, cursor_damage: CursorDamage, cursor_resource: &mut VirtGpuCursor) {

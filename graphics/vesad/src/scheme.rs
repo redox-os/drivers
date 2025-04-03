@@ -2,8 +2,8 @@ use std::alloc::{self, Layout};
 use std::convert::TryInto;
 use std::ptr::{self, NonNull};
 
-use driver_graphics::{Framebuffer, Cursor, GraphicsAdapter};
-use graphics_ipc::v1::{Damage, CursorDamage};
+use driver_graphics::{Cursor, Framebuffer, GraphicsAdapter};
+use graphics_ipc::v1::{CursorDamage, Damage};
 use syscall::PAGE_SIZE;
 
 use crate::framebuffer::FrameBuffer;
@@ -51,7 +51,7 @@ impl GraphicsAdapter for FbAdapter {
         unimplemented!("Vesad does not support this function");
     }
 
-    fn handle_cursor(&mut self, _cursor_damage: CursorDamage, _cursor_resource: &mut VesadCursor){
+    fn handle_cursor(&mut self, _cursor_damage: CursorDamage, _cursor_resource: &mut VesadCursor) {
         unimplemented!("Vesad does not support this function");
     }
 }
