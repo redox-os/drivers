@@ -216,13 +216,22 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
     fn read(
         &mut self,
         id: usize,
-        _buf: &mut [u8],
+        buf: &mut [u8],
         _offset: u64,
         _fcntl_flags: u32,
     ) -> Result<usize> {
         let _handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
+
+        //Currently read is only used for Orbital to check GPU cursor support 
+        //and only expects a buf to pass a 0 or 1 flag 
+        if self.adapter.cursror_support() {
+            buf[0] = 1;
+        }else {
+            buf[0] = 0;
+        }
+
         Err(Error::new(EINVAL))
-    }
+    }   
 
     fn write(&mut self, id: usize, buf: &[u8], _offset: u64, _fcntl_flags: u32) -> Result<usize> {
         let Handle::Screen { vt, screen } = self.handles.get(&id).ok_or(Error::new(EBADF))?;
@@ -236,13 +245,12 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
         if size_of_val(buf) == std::mem::size_of::<CursorDamage>() && self.adapter.cursror_support() {
             let cursor_damage = unsafe { *buf.as_ptr().cast::<CursorDamage>() };
 
+            //There is always expected to be cursor_resource if cursor_support returns true
             if let Some(cursor_resource) = self.cursor_resources.get_mut(vt) {
                 self.adapter.handle_cursor(cursor_damage, cursor_resource);
-                return Ok(buf.len());
             }
 
-            //What to do if cursor_resource is None?
-
+            return Ok(buf.len());
         }
 
         let framebuffer = &self.vts_fb[vt][screen];

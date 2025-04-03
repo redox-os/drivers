@@ -47,7 +47,7 @@ impl GraphicsAdapter for FbAdapter {
         false
     }
 
-    fn cursor_setup(&mut self) -> Self::Cursor {
+    fn cursor_setup(&mut self) -> VesadCursor {
         unimplemented!("Vesad does not support this function");
     }
 
