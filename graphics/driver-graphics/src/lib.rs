@@ -241,7 +241,8 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
             return Ok(buf.len());
         }
 
-        if size_of_val(buf) == std::mem::size_of::<CursorDamage>() && self.adapter.supports_hw_cursor()
+        if size_of_val(buf) == std::mem::size_of::<CursorDamage>()
+            && self.adapter.supports_hw_cursor()
         {
             let cursor_damage = unsafe { *buf.as_ptr().cast::<CursorDamage>() };
 
