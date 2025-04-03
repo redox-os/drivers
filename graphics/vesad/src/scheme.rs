@@ -2,8 +2,8 @@ use std::alloc::{self, Layout};
 use std::convert::TryInto;
 use std::ptr::{self, NonNull};
 
-use driver_graphics::{Framebuffer, GraphicsAdapter};
-use graphics_ipc::v1::Damage;
+use driver_graphics::{Cursor, Framebuffer, GraphicsAdapter};
+use graphics_ipc::v1::{CursorDamage, Damage};
 use syscall::PAGE_SIZE;
 
 use crate::framebuffer::FrameBuffer;
@@ -12,8 +12,13 @@ pub struct FbAdapter {
     pub framebuffers: Vec<FrameBuffer>,
 }
 
+pub enum VesadCursor {}
+
+impl Cursor for VesadCursor {}
+
 impl GraphicsAdapter for FbAdapter {
     type Framebuffer = GraphicScreen;
+    type Cursor = VesadCursor;
 
     fn displays(&self) -> Vec<usize> {
         (0..self.framebuffers.len()).collect()
@@ -36,6 +41,18 @@ impl GraphicsAdapter for FbAdapter {
 
     fn update_plane(&mut self, display_id: usize, framebuffer: &Self::Framebuffer, damage: Damage) {
         framebuffer.sync(&mut self.framebuffers[display_id], damage)
+    }
+
+    fn supports_hw_cursor(&self) -> bool {
+        false
+    }
+
+    fn create_cursor_framebuffer(&mut self) -> VesadCursor {
+        unimplemented!("Vesad does not support this function");
+    }
+
+    fn handle_cursor(&mut self, _cursor_damage: CursorDamage, _cursor_resource: &mut VesadCursor) {
+        unimplemented!("Vesad does not support this function");
     }
 }
 
