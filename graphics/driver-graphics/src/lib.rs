@@ -9,6 +9,7 @@ use syscall::{Error, MapFlags, Result, EAGAIN, EBADF, EINVAL};
 
 pub trait GraphicsAdapter {
     type Framebuffer: Framebuffer;
+    type Cursor: Cursor;
 
     fn displays(&self) -> Vec<usize>;
     fn display_size(&self, display_id: usize) -> (u32, u32);
@@ -17,13 +18,18 @@ pub trait GraphicsAdapter {
     fn map_dumb_framebuffer(&mut self, framebuffer: &Self::Framebuffer) -> *mut u8;
 
     fn update_plane(&mut self, display_id: usize, framebuffer: &Self::Framebuffer, damage: Damage);
-    fn handle_cursor(&mut self, cursor_damage: CursorDamage) {}
+
+    fn cursror_support(&self) -> bool;
+    fn cursor_setup(&mut self) -> Self::Cursor;
+    fn handle_cursor(&mut self, cursor_damage: CursorDamage, cursor_resource: &mut Self::Cursor);
 }
 
 pub trait Framebuffer {
     fn width(&self) -> u32;
     fn height(&self) -> u32;
 }
+
+pub trait Cursor {}
 
 pub struct GraphicsScheme<T: GraphicsAdapter> {
     adapter: T,
@@ -35,8 +41,7 @@ pub struct GraphicsScheme<T: GraphicsAdapter> {
 
     active_vt: usize,
     vts_fb: HashMap<usize, HashMap<usize, T::Framebuffer>>,
-
-    hw_cursor: bool,
+    cursor_resources: HashMap<usize, T::Cursor>,
 }
 
 enum Handle {
@@ -48,13 +53,6 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
         assert!(scheme_name.starts_with("display"));
         let socket = Socket::nonblock(&scheme_name).expect("failed to create graphics scheme");
 
-        let mut hw_cursor = false;
-
-        //Only virtio-gpu supports hw cursor
-        if scheme_name.contains("virtio-gpu") {
-            hw_cursor = true;
-        }
-
         GraphicsScheme {
             adapter,
             scheme_name,
@@ -63,7 +61,7 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
             handles: BTreeMap::new(),
             active_vt: 0,
             vts_fb: HashMap::new(),
-            hw_cursor,
+            cursor_resources: HashMap::new(),
         }
     }
 
@@ -178,6 +176,12 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
                 self.adapter.create_dumb_framebuffer(width, height)
             });
 
+        
+        if self.adapter.cursror_support() {
+            self.cursor_resources.insert(vt, self.adapter.cursor_setup());
+        }
+
+
         self.next_id += 1;
         self.handles
             .insert(self.next_id, Handle::Screen { vt, screen: id });
@@ -221,18 +225,24 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
     }
 
     fn write(&mut self, id: usize, buf: &[u8], _offset: u64, _fcntl_flags: u32) -> Result<usize> {
-        if size_of_val(buf) == std::mem::size_of::<CursorDamage>() && self.hw_cursor {
-            let cursor_damage = unsafe { *buf.as_ptr().cast::<CursorDamage>() };
-            self.adapter.handle_cursor(cursor_damage);
-            return Ok(buf.len());
-        }
-
         let Handle::Screen { vt, screen } = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
         if *vt != self.active_vt {
             // This is a protection against background VT's spamming us with flush requests. We will
             // flush the framebuffer on the next VT switch anyway
             return Ok(buf.len());
+        }
+
+        if size_of_val(buf) == std::mem::size_of::<CursorDamage>() && self.adapter.cursror_support() {
+            let cursor_damage = unsafe { *buf.as_ptr().cast::<CursorDamage>() };
+
+            if let Some(cursor_resource) = self.cursor_resources.get_mut(vt) {
+                self.adapter.handle_cursor(cursor_damage, cursor_resource);
+                return Ok(buf.len());
+            }
+
+            //What to do if cursor_resource is None?
+
         }
 
         let framebuffer = &self.vts_fb[vt][screen];
