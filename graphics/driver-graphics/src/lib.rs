@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::io;
 
-use graphics_ipc::v1::Damage;
+use graphics_ipc::v1::{CursorDamage, Damage};
 use inputd::{VtEvent, VtEventKind};
 use libredox::Fd;
 use redox_scheme::{RequestKind, Scheme, SignalBehavior, Socket};
@@ -9,6 +9,7 @@ use syscall::{Error, MapFlags, Result, EAGAIN, EBADF, EINVAL};
 
 pub trait GraphicsAdapter {
     type Framebuffer: Framebuffer;
+    type Cursor: Cursor;
 
     fn displays(&self) -> Vec<usize>;
     fn display_size(&self, display_id: usize) -> (u32, u32);
@@ -17,12 +18,18 @@ pub trait GraphicsAdapter {
     fn map_dumb_framebuffer(&mut self, framebuffer: &Self::Framebuffer) -> *mut u8;
 
     fn update_plane(&mut self, display_id: usize, framebuffer: &Self::Framebuffer, damage: Damage);
+
+    fn supports_hw_cursor(&self) -> bool;
+    fn create_cursor_framebuffer(&mut self) -> Self::Cursor;
+    fn handle_cursor(&mut self, cursor_damage: CursorDamage, cursor_resource: &mut Self::Cursor);
 }
 
 pub trait Framebuffer {
     fn width(&self) -> u32;
     fn height(&self) -> u32;
 }
+
+pub trait Cursor {}
 
 pub struct GraphicsScheme<T: GraphicsAdapter> {
     adapter: T,
@@ -34,6 +41,7 @@ pub struct GraphicsScheme<T: GraphicsAdapter> {
 
     active_vt: usize,
     vts_fb: HashMap<usize, HashMap<usize, T::Framebuffer>>,
+    cursor_resources: HashMap<usize, T::Cursor>,
 }
 
 enum Handle {
@@ -53,6 +61,7 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
             handles: BTreeMap::new(),
             active_vt: 0,
             vts_fb: HashMap::new(),
+            cursor_resources: HashMap::new(),
         }
     }
 
@@ -167,6 +176,11 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
                 self.adapter.create_dumb_framebuffer(width, height)
             });
 
+        if self.adapter.supports_hw_cursor() {
+            self.cursor_resources
+                .insert(vt, self.adapter.create_cursor_framebuffer());
+        }
+
         self.next_id += 1;
         self.handles
             .insert(self.next_id, Handle::Screen { vt, screen: id });
@@ -201,12 +215,21 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
     fn read(
         &mut self,
         id: usize,
-        _buf: &mut [u8],
+        buf: &mut [u8],
         _offset: u64,
         _fcntl_flags: u32,
     ) -> Result<usize> {
         let _handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
-        Err(Error::new(EINVAL))
+
+        //Currently read is only used for Orbital to check GPU cursor support
+        //and only expects a buf to pass a 0 or 1 flag
+        if self.adapter.supports_hw_cursor() {
+            buf[0] = 1;
+        } else {
+            buf[0] = 0;
+        }
+
+        Ok(1)
     }
 
     fn write(&mut self, id: usize, buf: &[u8], _offset: u64, _fcntl_flags: u32) -> Result<usize> {
@@ -215,6 +238,19 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
         if *vt != self.active_vt {
             // This is a protection against background VT's spamming us with flush requests. We will
             // flush the framebuffer on the next VT switch anyway
+            return Ok(buf.len());
+        }
+
+        if size_of_val(buf) == std::mem::size_of::<CursorDamage>()
+            && self.adapter.supports_hw_cursor()
+        {
+            let cursor_damage = unsafe { *buf.as_ptr().cast::<CursorDamage>() };
+
+            //There is always expected to be cursor_resource if supports_hw_cursor returns true
+            if let Some(cursor_resource) = self.cursor_resources.get_mut(vt) {
+                self.adapter.handle_cursor(cursor_damage, cursor_resource);
+            }
+
             return Ok(buf.len());
         }
 
