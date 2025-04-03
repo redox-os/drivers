@@ -12,7 +12,7 @@ pub struct FbAdapter {
     pub framebuffers: Vec<FrameBuffer>,
 }
 
-pub struct VesadCursor {}
+pub enum VesadCursor {}
 
 impl Cursor for VesadCursor {}
 
@@ -43,11 +43,11 @@ impl GraphicsAdapter for FbAdapter {
         framebuffer.sync(&mut self.framebuffers[display_id], damage)
     }
 
-    fn cursror_support(&self) -> bool {
+    fn supports_hw_cursor(&self) -> bool {
         false
     }
 
-    fn cursor_setup(&mut self) -> VesadCursor {
+    fn create_cursor_framebuffer(&mut self) -> VesadCursor {
         unimplemented!("Vesad does not support this function");
     }
 

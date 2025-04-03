@@ -299,11 +299,11 @@ impl GraphicsAdapter for VirtGpuAdapter<'_> {
         });
     }
 
-    fn cursror_support(&self) -> bool {
+    fn supports_hw_cursor(&self) -> bool {
         true
     }
 
-    fn cursor_setup(&mut self) -> VirtGpuCursor {
+    fn create_cursor_framebuffer(&mut self) -> VirtGpuCursor {
         //Creating a new resource for the cursor
         let fb_size = 64 * 64 * 4;
         let sgl = sgl::Sgl::new(fb_size).unwrap();

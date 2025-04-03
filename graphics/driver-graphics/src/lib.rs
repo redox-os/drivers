@@ -19,8 +19,8 @@ pub trait GraphicsAdapter {
 
     fn update_plane(&mut self, display_id: usize, framebuffer: &Self::Framebuffer, damage: Damage);
 
-    fn cursror_support(&self) -> bool;
-    fn cursor_setup(&mut self) -> Self::Cursor;
+    fn supports_hw_cursor(&self) -> bool;
+    fn create_cursor_framebuffer(&mut self) -> Self::Cursor;
     fn handle_cursor(&mut self, cursor_damage: CursorDamage, cursor_resource: &mut Self::Cursor);
 }
 
@@ -176,9 +176,9 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
                 self.adapter.create_dumb_framebuffer(width, height)
             });
 
-        if self.adapter.cursror_support() {
+        if self.adapter.supports_hw_cursor() {
             self.cursor_resources
-                .insert(vt, self.adapter.cursor_setup());
+                .insert(vt, self.adapter.create_cursor_framebuffer());
         }
 
         self.next_id += 1;
@@ -223,13 +223,13 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
 
         //Currently read is only used for Orbital to check GPU cursor support
         //and only expects a buf to pass a 0 or 1 flag
-        if self.adapter.cursror_support() {
+        if self.adapter.supports_hw_cursor() {
             buf[0] = 1;
         } else {
             buf[0] = 0;
         }
 
-        Err(Error::new(EINVAL))
+        Ok(1)
     }
 
     fn write(&mut self, id: usize, buf: &[u8], _offset: u64, _fcntl_flags: u32) -> Result<usize> {
@@ -241,7 +241,7 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
             return Ok(buf.len());
         }
 
-        if size_of_val(buf) == std::mem::size_of::<CursorDamage>() && self.adapter.cursror_support()
+        if size_of_val(buf) == std::mem::size_of::<CursorDamage>() && self.adapter.supports_hw_cursor()
         {
             let cursor_damage = unsafe { *buf.as_ptr().cast::<CursorDamage>() };
 
