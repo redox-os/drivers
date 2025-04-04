@@ -416,13 +416,13 @@ pub struct MoveCursor {
 }
 
 impl MoveCursor {
-    pub fn move_cursor(x: i32, y: i32, hot_x: i32, hot_y: i32, resource_id: ResourceId) -> Self {
+    pub fn move_cursor(x: i32, y: i32) -> Self {
         Self {
             header: ControlHeader::with_ty(CommandTy::MoveCursor),
             pos: CursorPos::new(0, x, y),
-            resource_id,
-            hot_x,
-            hot_y,
+            resource_id: ResourceId(0),
+            hot_x: 0,
+            hot_y: 0,
             _padding: 0,
         }
     }

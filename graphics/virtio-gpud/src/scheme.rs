@@ -139,20 +139,8 @@ impl VirtGpuAdapter<'_> {
         });
     }
 
-    fn move_cursor(&self, cursor_damage: CursorDamage, cursor: &mut VirtGpuCursor) {
-        let x = cursor_damage.x;
-        let y = cursor_damage.y;
-        let hot_x = cursor_damage.hot_x;
-        let hot_y = cursor_damage.hot_y;
-
-        let request = Dma::new(MoveCursor::move_cursor(
-            x,
-            y,
-            hot_x,
-            hot_y,
-            cursor.resource_id,
-        ))
-        .unwrap();
+    fn move_cursor(&self, cursor_damage: CursorDamage) {
+        let request = Dma::new(MoveCursor::move_cursor(cursor_damage.x, cursor_damage.y)).unwrap();
 
         futures::executor::block_on(async {
             let command = ChainBuilder::new().chain(Buffer::new(&request)).build();
@@ -355,7 +343,7 @@ impl GraphicsAdapter for VirtGpuAdapter<'_> {
         }
 
         if cursor_damage.header == 0 {
-            self.move_cursor(cursor_damage, cursor);
+            self.move_cursor(cursor_damage);
         } else {
             self.update_cursor(cursor_damage, cursor);
         }
