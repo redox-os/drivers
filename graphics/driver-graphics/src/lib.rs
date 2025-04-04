@@ -9,7 +9,7 @@ use syscall::{Error, MapFlags, Result, EAGAIN, EBADF, EINVAL};
 
 pub trait GraphicsAdapter {
     type Framebuffer: Framebuffer;
-    type Cursor: Cursor;
+    type Cursor: CursorFramebuffer;
 
     fn displays(&self) -> Vec<usize>;
     fn display_size(&self, display_id: usize) -> (u32, u32);
@@ -22,7 +22,7 @@ pub trait GraphicsAdapter {
     fn supports_hw_cursor(&self) -> bool;
     fn create_cursor_framebuffer(&mut self) -> Self::Cursor;
     fn map_cursor_framebuffer(&mut self, cursor: &Self::Cursor) -> *mut u8;
-    fn handle_cursor(&mut self, cursor_damage: CursorDamage, cursor_resource: &mut Self::Cursor);
+    fn handle_cursor(&mut self, cursor: &mut CursorPlane<Self::Cursor>, dirty_fb: bool);
 }
 
 pub trait Framebuffer {
@@ -30,7 +30,15 @@ pub trait Framebuffer {
     fn height(&self) -> u32;
 }
 
-pub trait Cursor {}
+pub struct CursorPlane<C: CursorFramebuffer> {
+    pub x: i32,
+    pub y: i32,
+    pub hot_x: i32,
+    pub hot_y: i32,
+    pub framebuffer: C,
+}
+
+pub trait CursorFramebuffer {}
 
 pub struct GraphicsScheme<T: GraphicsAdapter> {
     adapter: T,
@@ -42,7 +50,7 @@ pub struct GraphicsScheme<T: GraphicsAdapter> {
 
     active_vt: usize,
     vts_fb: HashMap<usize, HashMap<usize, T::Framebuffer>>,
-    cursor_resources: HashMap<usize, T::Cursor>,
+    cursor_planes: HashMap<usize, CursorPlane<T::Cursor>>,
 }
 
 enum Handle {
@@ -62,7 +70,7 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
             handles: BTreeMap::new(),
             active_vt: 0,
             vts_fb: HashMap::new(),
-            cursor_resources: HashMap::new(),
+            cursor_planes: HashMap::new(),
         }
     }
 
@@ -96,6 +104,15 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
                     Self::update_whole_screen(&mut self.adapter, display_id, framebuffer);
 
                     self.active_vt = vt_event.vt;
+
+                    if self.adapter.supports_hw_cursor() {
+                        let cursor_plane = Self::cursor_plane_for_vt(
+                            &mut self.adapter,
+                            &mut self.cursor_planes,
+                            self.active_vt,
+                        );
+                        self.adapter.handle_cursor(cursor_plane, true);
+                    }
                 }
             }
 
@@ -150,6 +167,20 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
             },
         );
     }
+
+    fn cursor_plane_for_vt<'a>(
+        adapter: &mut T,
+        cursor_planes: &'a mut HashMap<usize, CursorPlane<T::Cursor>>,
+        vt: usize,
+    ) -> &'a mut CursorPlane<T::Cursor> {
+        cursor_planes.entry(vt).or_insert_with(|| CursorPlane {
+            x: 0,
+            y: 0,
+            hot_x: 0,
+            hot_y: 0,
+            framebuffer: adapter.create_cursor_framebuffer(),
+        })
+    }
 }
 
 impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
@@ -176,11 +207,6 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
                 let (width, height) = self.adapter.display_size(id);
                 self.adapter.create_dumb_framebuffer(width, height)
             });
-
-        if self.adapter.supports_hw_cursor() {
-            self.cursor_resources
-                .insert(vt, self.adapter.create_cursor_framebuffer());
-        }
 
         self.next_id += 1;
         self.handles
@@ -247,14 +273,25 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
         {
             let cursor_damage = unsafe { *buf.as_ptr().cast::<CursorDamage>() };
 
-            //There is always expected to be cursor_resource if supports_hw_cursor returns true
-            let cursor_resource = self.cursor_resources.get_mut(vt).unwrap();
+            let cursor_plane = Self::cursor_plane_for_vt(
+                &mut self.adapter,
+                &mut self.cursor_planes,
+                self.active_vt,
+            );
 
-            if cursor_damage.header != 0 {
+            cursor_plane.x = cursor_damage.x;
+            cursor_plane.y = cursor_damage.y;
+
+            if cursor_damage.header == 0 {
+                self.adapter.handle_cursor(cursor_plane, false);
+            } else {
+                cursor_plane.hot_x = cursor_damage.hot_x;
+                cursor_plane.hot_y = cursor_damage.hot_y;
+
                 let w: i32 = cursor_damage.width;
                 let h: i32 = cursor_damage.height;
                 let cursor_image = cursor_damage.cursor_img_bytes;
-                let cursor_ptr = self.adapter.map_cursor_framebuffer(cursor_resource);
+                let cursor_ptr = self.adapter.map_cursor_framebuffer(&cursor_plane.framebuffer);
 
                 //Clear previous image from backing storage
                 unsafe {
@@ -274,9 +311,10 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
                         );
                     }
                 }
-            }
 
-            self.adapter.handle_cursor(cursor_damage, cursor_resource);
+                self.adapter
+                    .handle_cursor(cursor_plane, true);
+            }
 
             return Ok(buf.len());
         }
