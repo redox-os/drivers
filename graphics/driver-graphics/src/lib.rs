@@ -291,7 +291,9 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
                 let w: i32 = cursor_damage.width;
                 let h: i32 = cursor_damage.height;
                 let cursor_image = cursor_damage.cursor_img_bytes;
-                let cursor_ptr = self.adapter.map_cursor_framebuffer(&cursor_plane.framebuffer);
+                let cursor_ptr = self
+                    .adapter
+                    .map_cursor_framebuffer(&cursor_plane.framebuffer);
 
                 //Clear previous image from backing storage
                 unsafe {
@@ -312,8 +314,7 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
                     }
                 }
 
-                self.adapter
-                    .handle_cursor(cursor_plane, true);
+                self.adapter.handle_cursor(cursor_plane, true);
             }
 
             return Ok(buf.len());
