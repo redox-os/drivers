@@ -21,6 +21,7 @@ pub trait GraphicsAdapter {
 
     fn supports_hw_cursor(&self) -> bool;
     fn create_cursor_framebuffer(&mut self) -> Self::Cursor;
+    fn map_cursor_framebuffer(&mut self, cursor: &Self::Cursor) -> *mut u8;
     fn handle_cursor(&mut self, cursor_damage: CursorDamage, cursor_resource: &mut Self::Cursor);
 }
 
@@ -247,9 +248,35 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
             let cursor_damage = unsafe { *buf.as_ptr().cast::<CursorDamage>() };
 
             //There is always expected to be cursor_resource if supports_hw_cursor returns true
-            if let Some(cursor_resource) = self.cursor_resources.get_mut(vt) {
-                self.adapter.handle_cursor(cursor_damage, cursor_resource);
+            let cursor_resource = self.cursor_resources.get_mut(vt).unwrap();
+
+            if cursor_damage.header != 0 {
+                let w: i32 = cursor_damage.width;
+                let h: i32 = cursor_damage.height;
+                let cursor_image = cursor_damage.cursor_img_bytes;
+                let cursor_ptr = self.adapter.map_cursor_framebuffer(cursor_resource);
+
+                //Clear previous image from backing storage
+                unsafe {
+                    core::ptr::write_bytes(cursor_ptr as *mut u8, 0, 64 * 64 * 4);
+                }
+
+                //Write image to backing storage
+                for row in 0..h {
+                    let start: usize = (w * row) as usize;
+                    let end: usize = (w * row + w) as usize;
+
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(
+                            cursor_image[start..end].as_ptr(),
+                            cursor_ptr.cast::<u32>().offset(64 * row as isize),
+                            w as usize,
+                        );
+                    }
+                }
             }
+
+            self.adapter.handle_cursor(cursor_damage, cursor_resource);
 
             return Ok(buf.len());
         }

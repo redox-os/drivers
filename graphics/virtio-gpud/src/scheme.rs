@@ -101,34 +101,11 @@ impl VirtGpuAdapter<'_> {
         Ok(response)
     }
 
-    fn update_cursor(&mut self, cursor_damage: CursorDamage, cursor: &mut VirtGpuCursor) {
+    fn update_cursor(&mut self, cursor_damage: CursorDamage, cursor: &VirtGpuCursor) {
         let x = cursor_damage.x;
         let y = cursor_damage.y;
         let hot_x = cursor_damage.hot_x;
         let hot_y = cursor_damage.hot_y;
-
-        let w: i32 = cursor_damage.width;
-        let h: i32 = cursor_damage.height;
-        let cursor_image = cursor_damage.cursor_img_bytes;
-
-        //Clear previous image from backing storage
-        unsafe {
-            core::ptr::write_bytes(cursor.sgl.as_ptr() as *mut u8, 0, 64 * 64 * 4);
-        }
-
-        //Write image to backing storage
-        for row in 0..h {
-            let start: usize = (w * row) as usize;
-            let end: usize = (w * row + w) as usize;
-
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    cursor_image[start..end].as_ptr(),
-                    (cursor.sgl.as_ptr() as *mut u32).offset(64 * row as isize),
-                    w as usize,
-                );
-            }
-        }
 
         //Transfering cursor resource to host
         futures::executor::block_on(async {
@@ -365,6 +342,10 @@ impl GraphicsAdapter for VirtGpuAdapter<'_> {
             sgl: sgl,
             set: false,
         }
+    }
+
+    fn map_cursor_framebuffer(&mut self, cursor: &Self::Cursor) -> *mut u8 {
+        cursor.sgl.as_ptr()
     }
 
     fn handle_cursor(&mut self, cursor_damage: CursorDamage, cursor: &mut VirtGpuCursor) {
