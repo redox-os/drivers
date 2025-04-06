@@ -7,6 +7,7 @@
 //! In the future fbbootlogd may also pull from logd as opposed to have logd push logs to it. And it
 //! it could display a boot splash like plymouth instead of a boot log when booting in quiet mode.
 
+use std::io::Write;
 use std::os::fd::AsRawFd;
 
 use event::EventQueue;
@@ -34,6 +35,15 @@ fn inner(daemon: redox_daemon::Daemon) -> ! {
 
     let socket =
         Socket::nonblock("fbbootlog").expect("fbbootlogd: failed to create fbbootlog scheme");
+
+    {
+        // Add ourself as log sink
+        let mut log_file = std::fs::OpenOptions::new()
+            .write(true)
+            .open("/scheme/log/add_sink")
+            .unwrap();
+        log_file.write(b"/scheme/fbbootlog").unwrap();
+    }
 
     event_queue
         .subscribe(
