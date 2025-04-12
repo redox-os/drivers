@@ -21,7 +21,7 @@ pub struct InterruptMap {
 fn locate_ecam_dtb<T>(
     f: impl FnOnce(PcieAllocs<'_>, Vec<InterruptMap>, [u32; 4]) -> io::Result<T>,
 ) -> io::Result<T> {
-    let dtb = fs::read("kernel.dtb:")?;
+    let dtb = fs::read("/scheme/kernel.dtb")?;
     let dt = Fdt::new(&dtb).map_err(|err| {
         io::Error::new(
             io::ErrorKind::InvalidData,
@@ -55,6 +55,24 @@ fn locate_ecam_dtb<T>(
     let mut interrupt_map = Vec::<InterruptMap>::new();
     while let Ok([addr1, addr2, addr3, int1, phandle]) = interrupt_map_data.next_chunk::<5>() {
         let parent = dt.find_phandle(phandle).unwrap();
+        let parent_address_cells = u32::from_be_bytes(
+            parent.property("#address-cells").unwrap().value[..4]
+                .try_into()
+                .unwrap(),
+        );
+        match parent_address_cells {
+            0 => {}
+            1 => {
+                assert_eq!(interrupt_map_data.next().unwrap(), 0);
+            }
+            2 => {
+                assert_eq!(interrupt_map_data.next_chunk::<2>().unwrap(), [0, 0]);
+            }
+            3 => {
+                assert_eq!(interrupt_map_data.next_chunk::<3>().unwrap(), [0, 0, 0]);
+            }
+            _ => break,
+        };
         let parent_interrupt_cells = parent.interrupt_cells().unwrap();
         let parent_interrupt = match parent_interrupt_cells {
             1 if let Some(a) = interrupt_map_data.next() => [a, 0, 0],
