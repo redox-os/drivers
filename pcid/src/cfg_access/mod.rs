@@ -21,7 +21,7 @@ pub struct InterruptMap {
 fn locate_ecam_dtb<T>(
     f: impl FnOnce(PcieAllocs<'_>, Vec<InterruptMap>, [u32; 4]) -> io::Result<T>,
 ) -> io::Result<T> {
-    let dtb = fs::read("kernel.dtb:")?;
+    let dtb = fs::read("/scheme/kernel.dtb")?;
     let dt = Fdt::new(&dtb).map_err(|err| {
         io::Error::new(
             io::ErrorKind::InvalidData,
