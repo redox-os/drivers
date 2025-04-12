@@ -25,6 +25,12 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         .expect("acpid: failed to read `/scheme/kernel.acpi/rxsdt`")
         .into();
 
+    if rxsdt_raw_data.is_empty() {
+        log::info!("System doesn't use ACPI");
+        daemon.ready().expect("acpid: failed to notify parent");
+        std::process::exit(0);
+    }
+
     let sdt = self::acpi::Sdt::new(rxsdt_raw_data).expect("acpid: failed to parse [RX]SDT");
 
     let mut thirty_two_bit;
