@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::io;
 
-use graphics_ipc::v1::{CursorDamage, Damage};
+use graphics_ipc::v1::{CursorDamage, Damage, GraphicsCommand};
 use inputd::{VtEvent, VtEventKind};
 use libredox::Fd;
 use redox_scheme::{RequestKind, Scheme, SignalBehavior, Socket};
@@ -260,6 +260,10 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
     }
 
     fn write(&mut self, id: usize, buf: &[u8], _offset: u64, _fcntl_flags: u32) -> Result<usize> {
+        if buf.len() < std::mem::size_of::<u32>() {
+            return Err(Error::new(EINVAL));
+        }
+
         let Handle::Screen { vt, screen } = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
         if *vt != self.active_vt {
@@ -268,64 +272,67 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
             return Ok(buf.len());
         }
 
-        if size_of_val(buf) == std::mem::size_of::<CursorDamage>()
-            && self.adapter.supports_hw_cursor()
-        {
-            let cursor_damage = unsafe { *buf.as_ptr().cast::<CursorDamage>() };
+        let command = GraphicsCommand::command_type(&buf);
 
-            let cursor_plane = Self::cursor_plane_for_vt(
-                &mut self.adapter,
-                &mut self.cursor_planes,
-                self.active_vt,
-            );
+        match command {
+            GraphicsCommand::UpdateDisplay(damage) => {
+                let framebuffer = &self.vts_fb[vt][screen];
 
-            cursor_plane.x = cursor_damage.x;
-            cursor_plane.y = cursor_damage.y;
-
-            if cursor_damage.header == 0 {
-                self.adapter.handle_cursor(cursor_plane, false);
-            } else {
-                cursor_plane.hot_x = cursor_damage.hot_x;
-                cursor_plane.hot_y = cursor_damage.hot_y;
-
-                let w: i32 = cursor_damage.width;
-                let h: i32 = cursor_damage.height;
-                let cursor_image = cursor_damage.cursor_img_bytes;
-                let cursor_ptr = self
-                    .adapter
-                    .map_cursor_framebuffer(&cursor_plane.framebuffer);
-
-                //Clear previous image from backing storage
-                unsafe {
-                    core::ptr::write_bytes(cursor_ptr as *mut u8, 0, 64 * 64 * 4);
-                }
-
-                //Write image to backing storage
-                for row in 0..h {
-                    let start: usize = (w * row) as usize;
-                    let end: usize = (w * row + w) as usize;
-
-                    unsafe {
-                        core::ptr::copy_nonoverlapping(
-                            cursor_image[start..end].as_ptr(),
-                            cursor_ptr.cast::<u32>().offset(64 * row as isize),
-                            w as usize,
-                        );
-                    }
-                }
-
-                self.adapter.handle_cursor(cursor_plane, true);
+                self.adapter.update_plane(*screen, framebuffer, damage);
             }
+            GraphicsCommand::UpdateCursor(cursor_damage) => {
+                if !self.adapter.supports_hw_cursor() {
+                    return Err(Error::new(EINVAL));
+                }
 
-            return Ok(buf.len());
+                let cursor_plane = Self::cursor_plane_for_vt(
+                    &mut self.adapter,
+                    &mut self.cursor_planes,
+                    self.active_vt,
+                );
+
+                cursor_plane.x = cursor_damage.x;
+                cursor_plane.y = cursor_damage.y;
+
+                if cursor_damage.header == 0 {
+                    self.adapter.handle_cursor(cursor_plane, false);
+                } else {
+                    cursor_plane.hot_x = cursor_damage.hot_x;
+                    cursor_plane.hot_y = cursor_damage.hot_y;
+
+                    let w: i32 = cursor_damage.width;
+                    let h: i32 = cursor_damage.height;
+                    let cursor_image = cursor_damage.cursor_img_bytes;
+                    let cursor_ptr = self
+                        .adapter
+                        .map_cursor_framebuffer(&cursor_plane.framebuffer);
+
+                    //Clear previous image from backing storage
+                    unsafe {
+                        core::ptr::write_bytes(cursor_ptr as *mut u8, 0, 64 * 64 * 4);
+                    }
+
+                    //Write image to backing storage
+                    for row in 0..h {
+                        let start: usize = (w * row) as usize;
+                        let end: usize = (w * row + w) as usize;
+
+                        unsafe {
+                            core::ptr::copy_nonoverlapping(
+                                cursor_image[start..end].as_ptr(),
+                                cursor_ptr.cast::<u32>().offset(64 * row as isize),
+                                w as usize,
+                            );
+                        }
+                    }
+
+                    self.adapter.handle_cursor(cursor_plane, true);
+                }
+            }
+            _ => {
+                return Err(Error::new(EINVAL));
+            }
         }
-
-        let framebuffer = &self.vts_fb[vt][screen];
-
-        assert_eq!(buf.len(), std::mem::size_of::<Damage>());
-        let damage = unsafe { *buf.as_ptr().cast::<Damage>() };
-
-        self.adapter.update_plane(*screen, framebuffer, damage);
 
         Ok(buf.len())
     }
