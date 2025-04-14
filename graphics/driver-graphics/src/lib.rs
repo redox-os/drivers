@@ -30,6 +30,79 @@ pub trait Framebuffer {
     fn height(&self) -> u32;
 }
 
+struct FramebufferRing<T: GraphicsAdapter> {
+    buffers: Vec<FramebufferEntry<T>>,
+    front_buffer: usize,
+}
+
+impl<T: GraphicsAdapter> FramebufferRing<T> {
+    fn new(buffer: T::Framebuffer) -> Self {
+        let mut buffers = Vec::new();
+        buffers.push(FramebufferEntry::new(buffer));
+        Self {
+            buffers,
+            front_buffer: 0,
+        }
+    }
+
+    fn add_buffer(&mut self, buffer: T::Framebuffer) {
+        self.buffers.push(FramebufferEntry::new(buffer));
+    }
+
+    fn current_front(&mut self) -> &mut FramebufferEntry<T> {
+        &mut self.buffers[self.front_buffer]
+    }
+
+    fn find_available_buffer(&mut self) -> Option<usize> {
+        for (i, entry) in self.buffers.iter().enumerate() {
+            match entry.state {
+                BufferState::Available => {
+                    return Some(i);
+                }
+                BufferState::Rendering => {
+                    continue;
+                }
+                BufferState::ReadyForDisplay => {
+                    continue;
+                }
+                BufferState::Displaying => {
+                    continue;
+                }
+            }
+        }
+        None
+    }
+}
+
+struct FramebufferEntry<T: GraphicsAdapter> {
+    buffer: T::Framebuffer,
+    state: BufferState,
+}
+
+impl<T: GraphicsAdapter> FramebufferEntry<T> {
+    fn new(buffer: T::Framebuffer) -> Self {
+        Self {
+            buffer,
+            state: BufferState::Available,
+        }
+    }
+
+    fn set_state(&mut self, state: BufferState) {
+        self.state = state;
+    }
+
+    fn get_buffer(&self) -> &T::Framebuffer {
+        &self.buffer
+    }
+}
+
+enum BufferState {
+    Available,
+    Rendering,
+    ReadyForDisplay,
+    Displaying,
+}
+
 pub struct CursorPlane<C: CursorFramebuffer> {
     pub x: i32,
     pub y: i32,
@@ -49,7 +122,7 @@ pub struct GraphicsScheme<T: GraphicsAdapter> {
     handles: BTreeMap<usize, Handle>,
 
     active_vt: usize,
-    vts_fb: HashMap<usize, HashMap<usize, T::Framebuffer>>,
+    vts_fb: HashMap<usize, HashMap<usize, FramebufferRing<T>>>,
     cursor_planes: HashMap<usize, CursorPlane<T::Cursor>>,
 }
 
@@ -99,9 +172,20 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
                         .entry(display_id)
                         .or_insert_with(|| {
                             let (width, height) = self.adapter.display_size(display_id);
-                            self.adapter.create_dumb_framebuffer(width, height)
+                            FramebufferRing::new(
+                                self.adapter.create_dumb_framebuffer(width, height),
+                            )
                         });
-                    Self::update_whole_screen(&mut self.adapter, display_id, framebuffer);
+
+                    framebuffer
+                        .current_front()
+                        .set_state(BufferState::Displaying);
+
+                    Self::update_whole_screen(
+                        &mut self.adapter,
+                        display_id,
+                        framebuffer.current_front().get_buffer(),
+                    );
 
                     self.active_vt = vt_event.vt;
 
@@ -205,7 +289,7 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
             .entry(id)
             .or_insert_with(|| {
                 let (width, height) = self.adapter.display_size(id);
-                self.adapter.create_dumb_framebuffer(width, height)
+                FramebufferRing::new(self.adapter.create_dumb_framebuffer(width, height))
             });
 
         self.next_id += 1;
@@ -216,25 +300,43 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
 
     fn fpath(&mut self, id: usize, buf: &mut [u8]) -> syscall::Result<usize> {
         let Handle::Screen { vt, screen } = self.handles.get(&id).ok_or(Error::new(EBADF))?;
-        let framebuffer = &self.vts_fb[vt][screen];
+
+        let framebuffer = &mut self
+            .vts_fb
+            .get_mut(vt)
+            .and_then(|vt_map| vt_map.get_mut(screen))
+            .expect("Framebuffer not found")
+            .current_front()
+            .get_buffer();
+
         let path = format!(
             "{}:{vt}.{screen}/{}/{}",
             self.scheme_name,
             framebuffer.width(),
             framebuffer.height()
         );
+
         buf[..path.len()].copy_from_slice(path.as_bytes());
         Ok(path.len())
     }
 
     fn fsync(&mut self, id: usize) -> syscall::Result<usize> {
         let Handle::Screen { vt, screen } = self.handles.get(&id).ok_or(Error::new(EBADF))?;
+
         if *vt != self.active_vt {
             // This is a protection against background VT's spamming us with flush requests. We will
             // flush the framebuffer on the next VT switch anyway
             return Ok(0);
         }
-        let framebuffer = &self.vts_fb[vt][screen];
+
+        let framebuffer = &mut self
+            .vts_fb
+            .get_mut(vt)
+            .and_then(|vt_map| vt_map.get_mut(screen))
+            .expect("Framebuffer not found")
+            .current_front()
+            .get_buffer();
+
         Self::update_whole_screen(&mut self.adapter, *screen, framebuffer);
         Ok(0)
     }
@@ -276,7 +378,13 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
 
         match command {
             GraphicsCommand::UpdateDisplay(damage) => {
-                let framebuffer = &self.vts_fb[vt][screen];
+                let framebuffer = &mut self
+                    .vts_fb
+                    .get_mut(vt)
+                    .and_then(|vt_map| vt_map.get_mut(screen))
+                    .expect("Framebuffer not found")
+                    .current_front()
+                    .get_buffer();
 
                 self.adapter.update_plane(*screen, framebuffer, damage);
             }
@@ -329,6 +437,20 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
                     self.adapter.handle_cursor(cursor_plane, true);
                 }
             }
+            GraphicsCommand::CreateFramebuffer(create_framebuffer) => {
+                let framebuffer = self
+                    .vts_fb
+                    .get_mut(vt)
+                    .and_then(|vt_map| vt_map.get_mut(screen))
+                    .expect("Framebuffer not found");
+
+                framebuffer.add_buffer(
+                    self.adapter.create_dumb_framebuffer(
+                        create_framebuffer.width,
+                        create_framebuffer.height,
+                    ),
+                );
+            }
             _ => {
                 return Err(Error::new(EINVAL));
             }
@@ -347,7 +469,13 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
         // log::trace!("KSMSG MMAP {} {:?} {} {}", id, _flags, _offset, _size);
         let handle = self.handles.get(&id).ok_or(Error::new(EINVAL))?;
         let Handle::Screen { vt, screen } = handle;
-        let framebuffer = &self.vts_fb[vt][screen];
+        let framebuffer = &mut self
+            .vts_fb
+            .get_mut(vt)
+            .and_then(|vt_map| vt_map.get_mut(screen))
+            .expect("Framebuffer not found")
+            .current_front()
+            .get_buffer();
         let ptr = T::map_dumb_framebuffer(&mut self.adapter, framebuffer);
         Ok(ptr as usize)
     }

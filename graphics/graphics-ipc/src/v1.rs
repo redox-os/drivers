@@ -139,6 +139,17 @@ impl GraphicsCommand {
                 let cursor_damage = unsafe { *(buf[4..].as_ptr() as *const CursorDamage) };
                 GraphicsCommand::UpdateCursor(cursor_damage)
             }
+            3 => {
+                assert_eq!(buf[4..].len(), mem::size_of::<CreateFramebuffer>());
+                let create_framebuffer =
+                    unsafe { *(buf[4..].as_ptr() as *const CreateFramebuffer) };
+                GraphicsCommand::CreateFramebuffer(create_framebuffer)
+            }
+            4 => {
+                assert_eq!(buf[4..].len(), mem::size_of::<usize>());
+                let front_buffer = unsafe { *(buf[4..].as_ptr() as *const usize) };
+                GraphicsCommand::SetFrontBuffer(front_buffer)
+            }
             _ => {
                 panic!("Unknown command type: {command_type}");
             }
