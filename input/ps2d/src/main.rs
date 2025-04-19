@@ -9,10 +9,10 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::io::AsRawFd;
 use std::{env, process};
 
+use common::acquire_port_io_rights;
 use event::{user_data, EventQueue};
 use inputd::ProducerHandle;
 use log::info;
-use syscall::call::iopl;
 
 use crate::state::Ps2d;
 
@@ -30,9 +30,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         log::LevelFilter::Info,
     );
 
-    unsafe {
-        iopl(3).expect("ps2d: failed to get I/O permission");
-    }
+    acquire_port_io_rights().expect("ps2d: failed to get I/O permission");
 
     let (keymap, keymap_name): (fn(u8, bool) -> char, &str) = match env::args().skip(1).next() {
         Some(k) => match k.to_lowercase().as_ref() {

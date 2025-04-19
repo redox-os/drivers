@@ -10,5 +10,5 @@ license = "MIT"
 [dependencies]
 libredox = "0.1.3"
 log = "0.4"
-redox_syscall = { version = "0.5", features = ["std"] }
+redox_syscall = { version = "0.5.10", features = ["std"] }
 redox-log = "0.1.2"

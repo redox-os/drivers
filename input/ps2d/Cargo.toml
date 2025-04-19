@@ -8,7 +8,7 @@ bitflags = "1"
 log = "0.4"
 orbclient = "0.3.27"
 redox_event = "0.4.1"
-redox_syscall = "0.5"
+redox_syscall = "0.5.10"
 redox-daemon = "0.1"
 libredox = "0.1.3"
 
