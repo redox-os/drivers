@@ -1,12 +1,13 @@
 use std::mem::{self, size_of, MaybeUninit};
 use std::ops::{Deref, DerefMut};
 use std::ptr;
+use std::sync::LazyLock;
 
 use libredox::call::MmapArgs;
 use libredox::{error::Result, flag, Fd};
 use syscall::PAGE_SIZE;
 
-use crate::MemoryType;
+use crate::{MemoryType, VirtaddrTranslationHandle};
 
 /// Defines the platform-specific memory type for DMA operations
 ///
@@ -68,7 +69,7 @@ pub(crate) fn phys_contiguous_fd() -> Result<Fd> {
 /// - A file descriptor to physically contiguous memory of type [DMA_MEMTY] could not be acquired
 /// - A virtual mapping for the physically contiguous memory could not be created
 /// - The virtual address returned by the memory manager was invalid.
-fn alloc_and_map(length: usize) -> Result<(usize, *mut ())> {
+fn alloc_and_map(length: usize, handle: &VirtaddrTranslationHandle) -> Result<(usize, *mut ())> {
     assert_eq!(length % PAGE_SIZE, 0);
     unsafe {
         let fd = phys_contiguous_fd()?;
@@ -80,10 +81,10 @@ fn alloc_and_map(length: usize) -> Result<(usize, *mut ())> {
             flags: flag::MAP_PRIVATE,
             prot: flag::PROT_READ | flag::PROT_WRITE,
         })?;
-        let phys = syscall::virttophys(virt as usize)?;
+        let phys = handle.translate(virt as usize)?;
         for i in 1..length.div_ceil(PAGE_SIZE) {
             debug_assert_eq!(
-                syscall::virttophys(virt as usize + i * PAGE_SIZE),
+                handle.translate(virt as usize + i * PAGE_SIZE),
                 Ok(phys + i * PAGE_SIZE),
                 "NOT CONTIGUOUS"
             );
@@ -133,7 +134,7 @@ impl<T> Dma<T> {
     /// - An '[Err]' containing an error.
     pub fn zeroed() -> Result<Dma<MaybeUninit<T>>> {
         let aligned_len = size_of::<T>().next_multiple_of(PAGE_SIZE);
-        let (phys, virt) = alloc_and_map(aligned_len)?;
+        let (phys, virt) = alloc_and_map(aligned_len, &*VIRTTOPHYS_HANDLE)?;
         Ok(Dma {
             phys,
             virt: virt.cast(),
@@ -177,6 +178,11 @@ impl<T: ?Sized> Dma<T> {
         self.phys
     }
 }
+// TODO: there should exist a "context" struct that drivers create at start, which would be passed
+// to the respective functions
+static VIRTTOPHYS_HANDLE: LazyLock<VirtaddrTranslationHandle> = LazyLock::new(|| {
+    VirtaddrTranslationHandle::new().expect("failed to acquire virttophys translation handle")
+});
 
 impl<T> Dma<[T]> {
     /// Returns a [Dma] object containing a zeroized slice of T with a given count.
@@ -184,14 +190,12 @@ impl<T> Dma<[T]> {
     /// # Arguments
     ///
     /// - 'count: [usize]' - The number of elements of type T in the allocated slice.
-    ///
-    ///
     pub fn zeroed_slice(count: usize) -> Result<Dma<[MaybeUninit<T>]>> {
         let aligned_len = count
             .checked_mul(size_of::<T>())
             .unwrap()
             .next_multiple_of(PAGE_SIZE);
-        let (phys, virt) = alloc_and_map(aligned_len)?;
+        let (phys, virt) = alloc_and_map(aligned_len, &*VIRTTOPHYS_HANDLE)?;
 
         Ok(Dma {
             phys,
