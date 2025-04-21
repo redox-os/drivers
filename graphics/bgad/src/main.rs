@@ -1,7 +1,7 @@
+use common::acquire_port_io_rights;
 use inputd::ProducerHandle;
 use pcid_interface::PciFunctionHandle;
 use redox_scheme::{RequestKind, SignalBehavior, Socket};
-use syscall::call::iopl;
 
 use crate::bga::Bga;
 use crate::scheme::BgaScheme;
@@ -19,7 +19,7 @@ fn main() {
     println!(" + BGA {}", pci_config.func.display());
 
     redox_daemon::Daemon::new(move |daemon| {
-        unsafe { iopl(3).unwrap() };
+        acquire_port_io_rights().expect("bgad: failed to get port IO permission");
 
         let socket = Socket::create("bga").expect("bgad: failed to create bga scheme");
 
