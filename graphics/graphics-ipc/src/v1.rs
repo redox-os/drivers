@@ -122,6 +122,7 @@ pub enum GraphicsCommand {
     UpdateCursor(CursorDamage),
     CreateFramebuffer(CreateFramebuffer),
     SetFrontBuffer(usize),
+    DestroyBuffer(usize),
 }
 
 impl GraphicsCommand {
@@ -147,8 +148,13 @@ impl GraphicsCommand {
             }
             4 => {
                 assert_eq!(buf[4..].len(), mem::size_of::<usize>());
-                let front_buffer = unsafe { *(buf[4..].as_ptr() as *const usize) };
-                GraphicsCommand::SetFrontBuffer(front_buffer)
+                let buffer_index = unsafe { *(buf[4..].as_ptr() as *const usize) };
+                GraphicsCommand::SetFrontBuffer(buffer_index)
+            }
+            5 => {
+                assert_eq!(buf[4..].len(), mem::size_of::<usize>());
+                let buffer_index = unsafe { *(buf[4..].as_ptr() as *const usize) };
+                GraphicsCommand::DestroyBuffer(buffer_index)
             }
             _ => {
                 panic!("Unknown command type: {command_type}");
@@ -206,4 +212,5 @@ impl Damage {
 pub struct CreateFramebuffer {
     pub width: u32,
     pub height: u32,
+    pub id: usize,
 }
