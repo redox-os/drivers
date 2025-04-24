@@ -140,18 +140,19 @@ impl GraphicsCommand {
                 let cursor_damage = unsafe { *(buf[4..].as_ptr() as *const CursorDamage) };
                 GraphicsCommand::UpdateCursor(cursor_damage)
             }
-            3 => {
+            2 => {
                 assert_eq!(buf[4..].len(), mem::size_of::<CreateFramebuffer>());
                 let create_framebuffer =
                     unsafe { *(buf[4..].as_ptr() as *const CreateFramebuffer) };
                 GraphicsCommand::CreateFramebuffer(create_framebuffer)
             }
-            4 => {
-                assert_eq!(buf[4..].len(), mem::size_of::<usize>());
+            3 => {
+                assert_eq!(buf[4..].len(), mem::size_of::<usize>(), "Line 151 v1");
                 let buffer_index = unsafe { *(buf[4..].as_ptr() as *const usize) };
+                print!("Switching FRONT: {}", buffer_index);
                 GraphicsCommand::SetFrontBuffer(buffer_index)
             }
-            5 => {
+            4 => {
                 assert_eq!(buf[4..].len(), mem::size_of::<usize>());
                 let buffer_index = unsafe { *(buf[4..].as_ptr() as *const usize) };
                 GraphicsCommand::DestroyBuffer(buffer_index)

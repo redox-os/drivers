@@ -68,7 +68,7 @@ impl<T: GraphicsAdapter> Framebuffers<T> {
     }
 
     fn set_active(&mut self, index: usize) {
-        assert!(index < self.buffers.len());
+        assert!(index < self.buffers.len(), "Line 71 lib");
         self.active_buffer = index;
     }
 
@@ -342,16 +342,16 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
 
         let Handle::Screen { vt, screen } = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
-        if *vt != self.active_vt {
-            // This is a protection against background VT's spamming us with flush requests. We will
-            // flush the framebuffer on the next VT switch anyway
-            return Ok(buf.len());
-        }
-
         let command = GraphicsCommand::command_type(&buf);
 
         match command {
             GraphicsCommand::UpdateDisplay(damage) => {
+                if *vt != self.active_vt {
+                    // This is a protection against background VT's spamming us with flush requests. We will
+                    // flush the framebuffer on the next VT switch anyway
+                    return Ok(buf.len());
+                }
+
                 let framebuffers = &mut self
                     .vts_fb
                     .get_mut(vt)
@@ -420,7 +420,7 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
                     .expect("Framebuffers not found");
 
                 framebuffers.add_buffer( 
-                    create_framebuffer.id as usize,
+                    create_framebuffer.id,
                     self.adapter.create_dumb_framebuffer(
                         create_framebuffer.width,
                         create_framebuffer.height,
@@ -469,7 +469,7 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
             .and_then(|vt_map| vt_map.get_mut(screen))
             .expect("Framebuffer not found");
 
-            let framebuffer = framebuffers.get_buffer(offset as usize).as_mut()
+            let framebuffer = framebuffers.get_buffer((offset/4096) as usize).as_mut()
             .ok_or(Error::new(EBADF))?;
 
         let ptr = T::map_dumb_framebuffer(&mut self.adapter, framebuffer);
