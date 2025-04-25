@@ -860,6 +860,7 @@ dependencies = [
  "common",
  "driver-block",
  "executor",
+ "futures",
  "libredox",
  "log",
  "parking_lot 0.12.3",
