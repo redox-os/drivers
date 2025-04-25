@@ -147,7 +147,6 @@ impl AmlPhysMemHandler {
     }
 }
 
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 impl aml::Handler for AmlPhysMemHandler {
     fn read_u8(&self, address: usize) -> u8 {
         log::trace!("read u8 {:X}", address);
@@ -156,6 +155,7 @@ impl aml::Handler for AmlPhysMemHandler {
                 return value;
             }
         }
+        log::error!("failed to read u8 {:#x}", address);
         0
     }
     fn read_u16(&self, address: usize) -> u16 {
@@ -165,6 +165,7 @@ impl aml::Handler for AmlPhysMemHandler {
                 return value;
             }
         }
+        log::error!("failed to read u16 {:#x}", address);
         0
     }
     fn read_u32(&self, address: usize) -> u32 {
@@ -174,6 +175,7 @@ impl aml::Handler for AmlPhysMemHandler {
                 return value;
             }
         }
+        log::error!("failed to read u32 {:#x}", address);
         0
     }
     fn read_u64(&self, address: usize) -> u64 {
@@ -183,40 +185,45 @@ impl aml::Handler for AmlPhysMemHandler {
                 return value;
             }
         }
+        log::error!("failed to read u64 {:#x}", address);
         0
     }
 
     fn write_u8(&mut self, address: usize, value: u8) {
-        log::error!("write u8 {:X} = {:X}", address, value);
+        log::trace!("write u8 {:X} = {:X}", address, value);
         if let Ok(mut page_cache) = self.page_cache.lock() {
-            if page_cache.write_to_phys::<u8>(address, value).is_err() {
-                log::error!("failed to get page {:#x}", address);
+            if page_cache.write_to_phys::<u8>(address, value).is_ok() {
+                return;
             }
         }
+        log::error!("failed to write u8 {:#x}", address);
     }
     fn write_u16(&mut self, address: usize, value: u16) {
-        log::error!("write u16 {:X} = {:X}", address, value);
+        log::trace!("write u16 {:X} = {:X}", address, value);
         if let Ok(mut page_cache) = self.page_cache.lock() {
-            if page_cache.write_to_phys::<u16>(address, value).is_err() {
-                log::error!("failed to get page {:#x}", address);
+            if page_cache.write_to_phys::<u16>(address, value).is_ok() {
+                return;
             }
         }
+        log::error!("failed to write u16 {:#x}", address);
     }
     fn write_u32(&mut self, address: usize, value: u32) {
-        log::error!("write u32 {:X} = {:X}", address, value);
+        log::trace!("write u32 {:X} = {:X}", address, value);
         if let Ok(mut page_cache) = self.page_cache.lock() {
-            if page_cache.write_to_phys::<u32>(address, value).is_err() {
-                log::error!("failed to get page {:#x}", address);
+            if page_cache.write_to_phys::<u32>(address, value).is_ok() {
+                return;
             }
         }
+        log::error!("failed to write u32 {:#x}", address);
     }
     fn write_u64(&mut self, address: usize, value: u64) {
-        log::error!("write u64 {:X} = {:X}", address, value);
+        log::trace!("write u64 {:X} = {:X}", address, value);
         if let Ok(mut page_cache) = self.page_cache.lock() {
-            if page_cache.write_to_phys::<u64>(address, value).is_err() {
-                log::error!("failed to get page {:#x}", address);
+            if page_cache.write_to_phys::<u64>(address, value).is_ok() {
+                return;
             }
         }
+        log::error!("failed to write u64 {:#x}", address);
     }
 
     // Pio must be enabled via syscall::iopl
@@ -246,230 +253,99 @@ impl aml::Handler for AmlPhysMemHandler {
         Pio::<u32>::new(port).write(value)
     }
 
-    fn read_pci_u8(&self, _segment: u16, _bus: u8, _device: u8, _function: u8, _offset: u16) -> u8 {
-        log::error!(
-            "read pci u8 {:X}, {:X}, {:X}, {:X}, {:X}",
-            _segment,
-            _bus,
-            _device,
-            _function,
-            _offset
-        );
-
-        0
-    }
-    fn read_pci_u16(
-        &self,
-        _segment: u16,
-        _bus: u8,
-        _device: u8,
-        _function: u8,
-        _offset: u16,
-    ) -> u16 {
-        log::error!(
-            "read pci u16 {:X}, {:X}, {:X}, {:X}, {:X}",
-            _segment,
-            _bus,
-            _device,
-            _function,
-            _offset
-        );
-
-        0
-    }
-    fn read_pci_u32(
-        &self,
-        _segment: u16,
-        _bus: u8,
-        _device: u8,
-        _function: u8,
-        _offset: u16,
-    ) -> u32 {
-        log::error!(
-            "read pci u32 {:X}, {:X}, {:X}, {:X}, {:X}",
-            _segment,
-            _bus,
-            _device,
-            _function,
-            _offset
-        );
-
-        0
-    }
-    fn write_pci_u8(
-        &self,
-        _segment: u16,
-        _bus: u8,
-        _device: u8,
-        _function: u8,
-        _offset: u16,
-        _value: u8,
-    ) {
-        log::error!(
-            "write pci u8 {:X}, {:X}, {:X}, {:X}, {:X} = {:X}",
-            _segment,
-            _bus,
-            _device,
-            _function,
-            _offset,
-            _value
-        );
-    }
-    fn write_pci_u16(
-        &self,
-        _segment: u16,
-        _bus: u8,
-        _device: u8,
-        _function: u8,
-        _offset: u16,
-        _value: u16,
-    ) {
-        log::error!(
-            "write pci u16 {:X}, {:X}, {:X}, {:X}, {:X} = {:X}",
-            _segment,
-            _bus,
-            _device,
-            _function,
-            _offset,
-            _value
-        );
-    }
-    fn write_pci_u32(
-        &self,
-        _segment: u16,
-        _bus: u8,
-        _device: u8,
-        _function: u8,
-        _offset: u16,
-        _value: u32,
-    ) {
-        log::error!(
-            "write pci u32 {:X}, {:X}, {:X}, {:X}, {:X} = {:X}",
-            _segment,
-            _bus,
-            _device,
-            _function,
-            _offset,
-            _value
-        );
-    }
-}
-
-#[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
-impl aml::Handler for AmlPhysMemHandler {
-    fn read_u8(&self, _address: usize) -> u8 {
-        log::error!("read u8 {:X}", _address);
-        0
-    }
-    fn read_u16(&self, _address: usize) -> u16 {
-        log::error!("read u16 {:X}", _address);
-        0
-    }
-    fn read_u32(&self, _address: usize) -> u32 {
-        log::error!("read u32 {:X}", _address);
-        0
-    }
-    fn read_u64(&self, _address: usize) -> u64 {
-        log::error!("read u64 {:X}", _address);
-        0
-    }
-
-    fn write_u8(&mut self, _address: usize, _value: u8) {
-        log::error!("write u8 {:X} = {:X}", _address, _value);
-    }
-    fn write_u16(&mut self, _address: usize, _value: u16) {
-        log::error!("write u16 {:X} = {:X}", _address, _value);
-    }
-    fn write_u32(&mut self, _address: usize, _value: u32) {
-        log::error!("write u32 {:X} = {:X}", _address, _value);
-    }
-    fn write_u64(&mut self, _address: usize, _value: u64) {
-        log::error!("write u64 {:X} = {:X}", _address, _value);
-    }
-
+    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
     fn read_io_u8(&self, port: u16) -> u8 {
-        log::error!("read io u8 {:X}", port);
+        log::error!("cannot read u8 from port 0x{port:04X}");
         0
     }
+    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
     fn read_io_u16(&self, port: u16) -> u16 {
-        log::error!("read io u16 {:X}", port);
+        log::error!("cannot read u16 from port 0x{port:04X}");
         0
     }
+    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
     fn read_io_u32(&self, port: u16) -> u32 {
-        log::error!("read io u32 {:X}", port);
+        log::error!("cannot read u32 from port 0x{port:04X}");
         0
     }
 
+    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
     fn write_io_u8(&self, port: u16, value: u8) {
-        log::error!("write io u8 {:X} = {:X}", port, value);
+        log::error!("cannot write 0x{value:02X} to port 0x{port:04X}");
     }
+    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
     fn write_io_u16(&self, port: u16, value: u16) {
-        log::error!("write io u16 {:X} = {:X}", port, value);
+        log::error!("cannot write 0x{value:04X} to port 0x{port:04X}");
     }
+    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
     fn write_io_u32(&self, port: u16, value: u32) {
-        log::error!("write io u32 {:X} = {:X}", port, value);
+        log::error!("cannot write 0x{value:08X} to port 0x{port:04X}");
     }
 
-    fn read_pci_u8(&self, _segment: u16, _bus: u8, _device: u8, _function: u8, _offset: u16) -> u8 {
-        log::error!("read pci u8 {:X}", _device);
-
+    fn read_pci_u8(
+        &self,
+        seg: u16,
+        bus: u8,
+        dev: u8,
+        func: u8,
+        off: u16,
+    ) -> u8 {
+        log::error!("read pci u8 {seg:04X}:{bus:02X}:{dev:02X}.{func:01X}@{off:04X}");
         0
     }
     fn read_pci_u16(
         &self,
-        _segment: u16,
-        _bus: u8,
-        _device: u8,
-        _function: u8,
-        _offset: u16,
+        seg: u16,
+        bus: u8,
+        dev: u8,
+        func: u8,
+        off: u16,
     ) -> u16 {
-        log::error!("read pci  u8 {:X}", _device);
-
+        log::error!("read pci u16 {seg:04X}:{bus:02X}:{dev:02X}.{func:01X}@{off:04X}");
         0
     }
     fn read_pci_u32(
         &self,
-        _segment: u16,
-        _bus: u8,
-        _device: u8,
-        _function: u8,
-        _offset: u16,
+        seg: u16,
+        bus: u8,
+        dev: u8,
+        func: u8,
+        off: u16,
     ) -> u32 {
-        log::error!("read pci u8 {:X}", _device);
-
+        log::error!("read pci u32 {seg:04X}:{bus:02X}:{dev:02X}.{func:01X}@{off:04X}");
         0
     }
     fn write_pci_u8(
         &self,
-        _segment: u16,
-        _bus: u8,
-        _device: u8,
-        _function: u8,
-        _offset: u16,
-        _value: u8,
+        seg: u16,
+        bus: u8,
+        dev: u8,
+        func: u8,
+        off: u16,
+        value: u8
     ) {
-        log::error!("write pci u8 {:X}", _device);
+        log::error!("write pci u8 {seg:04X}:{bus:02X}:{dev:02X}.{func:01X}@{off:04X}={value:02X}");
     }
     fn write_pci_u16(
         &self,
-        _segment: u16,
-        _bus: u8,
-        _device: u8,
-        _function: u8,
-        _offset: u16,
-        _value: u16,
+        seg: u16,
+        bus: u8,
+        dev: u8,
+        func: u8,
+        off: u16,
+        value: u16
     ) {
-        log::error!("write pci u8 {:X}", _device);
+        log::error!("write pci u16 {seg:04X}:{bus:02X}:{dev:02X}.{func:01X}@{off:04X}={value:04X}");
     }
     fn write_pci_u32(
         &self,
-        _segment: u16,
-        _bus: u8,
-        _device: u8,
-        _function: u8,
-        _offset: u16,
-        _value: u32,
+        seg: u16,
+        bus: u8,
+        dev: u8,
+        func: u8,
+        off: u16,
+        value: u32
     ) {
-        log::error!("write pci u8 {:X}", _device);
+        log::error!("write pci u32 {seg:04X}:{bus:02X}:{dev:02X}.{func:01X}@{off:04X}={value:08X}");
     }
 }
