@@ -282,70 +282,25 @@ impl aml::Handler for AmlPhysMemHandler {
         log::error!("cannot write 0x{value:08X} to port 0x{port:04X}");
     }
 
-    fn read_pci_u8(
-        &self,
-        seg: u16,
-        bus: u8,
-        dev: u8,
-        func: u8,
-        off: u16,
-    ) -> u8 {
+    fn read_pci_u8(&self, seg: u16, bus: u8, dev: u8, func: u8, off: u16) -> u8 {
         log::error!("read pci u8 {seg:04X}:{bus:02X}:{dev:02X}.{func:01X}@{off:04X}");
         0
     }
-    fn read_pci_u16(
-        &self,
-        seg: u16,
-        bus: u8,
-        dev: u8,
-        func: u8,
-        off: u16,
-    ) -> u16 {
+    fn read_pci_u16(&self, seg: u16, bus: u8, dev: u8, func: u8, off: u16) -> u16 {
         log::error!("read pci u16 {seg:04X}:{bus:02X}:{dev:02X}.{func:01X}@{off:04X}");
         0
     }
-    fn read_pci_u32(
-        &self,
-        seg: u16,
-        bus: u8,
-        dev: u8,
-        func: u8,
-        off: u16,
-    ) -> u32 {
+    fn read_pci_u32(&self, seg: u16, bus: u8, dev: u8, func: u8, off: u16) -> u32 {
         log::error!("read pci u32 {seg:04X}:{bus:02X}:{dev:02X}.{func:01X}@{off:04X}");
         0
     }
-    fn write_pci_u8(
-        &self,
-        seg: u16,
-        bus: u8,
-        dev: u8,
-        func: u8,
-        off: u16,
-        value: u8
-    ) {
+    fn write_pci_u8(&self, seg: u16, bus: u8, dev: u8, func: u8, off: u16, value: u8) {
         log::error!("write pci u8 {seg:04X}:{bus:02X}:{dev:02X}.{func:01X}@{off:04X}={value:02X}");
     }
-    fn write_pci_u16(
-        &self,
-        seg: u16,
-        bus: u8,
-        dev: u8,
-        func: u8,
-        off: u16,
-        value: u16
-    ) {
+    fn write_pci_u16(&self, seg: u16, bus: u8, dev: u8, func: u8, off: u16, value: u16) {
         log::error!("write pci u16 {seg:04X}:{bus:02X}:{dev:02X}.{func:01X}@{off:04X}={value:04X}");
     }
-    fn write_pci_u32(
-        &self,
-        seg: u16,
-        bus: u8,
-        dev: u8,
-        func: u8,
-        off: u16,
-        value: u32
-    ) {
+    fn write_pci_u32(&self, seg: u16, bus: u8, dev: u8, func: u8, off: u16, value: u32) {
         log::error!("write pci u32 {seg:04X}:{bus:02X}:{dev:02X}.{func:01X}@{off:04X}={value:08X}");
     }
 }
