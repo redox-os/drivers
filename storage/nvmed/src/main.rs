@@ -174,7 +174,10 @@ impl Disk for NvmeDisk {
 fn time_arm(time_handle: &mut File, secs: i64) -> io::Result<()> {
     let mut time_buf = [0_u8; core::mem::size_of::<libredox::data::TimeSpec>()];
     if time_handle.read(&mut time_buf)? < time_buf.len() {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "time read too small"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "time read too small",
+        ));
     }
 
     match libredox::data::timespec_from_mut_bytes(&mut time_buf) {
@@ -231,10 +234,9 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let mut time_handle = File::open(&format!("/scheme/time/{}", libredox::flag::CLOCK_MONOTONIC))
         .expect("failed to open time handle");
 
-    let mut time_events = Box::pin(executor.register_external_event(
-        time_handle.as_raw_fd() as usize,
-        event::EventFlags::READ,
-    ));
+    let mut time_events = Box::pin(
+        executor.register_external_event(time_handle.as_raw_fd() as usize, event::EventFlags::READ),
+    );
 
     // Try to init namespaces for 5 seconds
     time_arm(&mut time_handle, 5).expect("failed to arm timer");
@@ -243,17 +245,15 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         let time_future = time_events.as_mut().next();
         futures::pin_mut!(namespaces_future);
         futures::pin_mut!(time_future);
-        match futures::future::select(
-            namespaces_future,
-            time_future,
-        ).await {
+        match futures::future::select(namespaces_future, time_future).await {
             futures::future::Either::Left((namespaces, _)) => namespaces,
-            futures::future::Either::Right(_) => panic!("timeout on init")
+            futures::future::Either::Right(_) => panic!("timeout on init"),
         }
     });
     log::debug!("Initialized!");
 
     let scheme = Rc::new(RefCell::new(DiskScheme::new(
+        Some(daemon),
         scheme_name,
         namespaces
             .into_iter()
@@ -269,7 +269,6 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
             .collect(),
         &*executor,
     )));
-    daemon.ready().expect("nvmed: failed to signal readiness");
 
     let mut scheme_events = Box::pin(executor.register_external_event(
         scheme.borrow().event_handle().raw(),

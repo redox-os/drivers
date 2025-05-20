@@ -305,12 +305,17 @@ impl ExecutorTrait for TrivialExecutor {
 
 impl<T: Disk> DiskScheme<T> {
     pub fn new(
+        daemon: Option<redox_daemon::Daemon>,
         scheme_name: String,
         disks: BTreeMap<u32, T>,
         executor: &impl ExecutorTrait,
     ) -> Self {
         assert!(scheme_name.starts_with("disk"));
         let socket = Socket::nonblock(&scheme_name).expect("failed to create disk scheme");
+
+        if let Some(daemon) = daemon {
+            daemon.ready().expect("failed to signal readiness");
+        }
 
         Self {
             scheme_name,
