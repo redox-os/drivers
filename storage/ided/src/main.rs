@@ -209,6 +209,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     let scheme_name = format!("disk.{}", name);
     let mut scheme = DiskScheme::new(
+        Some(daemon),
         scheme_name,
         disks
             .into_iter()
@@ -239,8 +240,6 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let event_queue = RawEventQueue::new().expect("ided: failed to open event file");
 
     libredox::call::setrens(0, 0).expect("ided: failed to enter null namespace");
-
-    daemon.ready().expect("ided: failed to notify parent");
 
     event_queue
         .subscribe(scheme.event_handle().raw(), 0, EventFlags::READ)

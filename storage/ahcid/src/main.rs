@@ -45,6 +45,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
         let scheme_name = format!("disk.{}", name);
         let mut scheme = DiskScheme::new(
+            Some(daemon),
             scheme_name,
             disks
                 .into_iter()
@@ -67,8 +68,6 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         event_queue
             .subscribe(irq_fd, 1, EventFlags::READ)
             .expect("ahcid: failed to event irq scheme");
-
-        daemon.ready().expect("ahcid: failed to notify parent");
 
         for event in event_queue {
             let event = event.unwrap();
