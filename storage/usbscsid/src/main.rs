@@ -42,6 +42,7 @@ fn daemon(daemon: redox_daemon::Daemon, scheme: String, port: PortId, protocol: 
     // TODO: Use eventfds.
     let handle = XhciClientHandle::new(scheme.to_owned(), port);
 
+    // FIXME should this wait notifying readiness until the disk scheme is created?
     daemon.ready().expect("usbscsid: failed to signal rediness");
 
     let desc = handle
@@ -98,6 +99,7 @@ fn daemon(daemon: redox_daemon::Daemon, scheme: String, port: PortId, protocol: 
     };
 
     let mut scheme = DiskScheme::new(
+        None,
         disk_scheme_name,
         BTreeMap::from([(
             0,

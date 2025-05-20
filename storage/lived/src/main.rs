@@ -121,6 +121,7 @@ fn main() -> anyhow::Result<()> {
         };
 
         let mut scheme = DiskScheme::new(
+            Some(daemon),
             "disk.live".to_owned(),
             BTreeMap::from([(
                 0,
@@ -141,8 +142,6 @@ fn main() -> anyhow::Result<()> {
                 event::EventFlags::READ,
             )
             .unwrap();
-
-        daemon.ready().expect("failed to signal readiness");
 
         for event in event_queue {
             match event.unwrap().user_data {

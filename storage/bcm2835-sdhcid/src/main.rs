@@ -101,6 +101,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let mut disks = Vec::new();
     disks.push(sdhci);
     let mut scheme = DiskScheme::new(
+        Some(daemon),
         "disk.mmc".to_string(),
         disks
             .into_iter()
@@ -116,7 +117,6 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         .expect("mmcd: failed to event disk scheme");
 
     libredox::call::setrens(0, 0).expect("mmcd: failed to enter null namespace");
-    daemon.ready().expect("mmcd: failed to notify parent");
 
     for event in event_queue {
         let event = event.unwrap();

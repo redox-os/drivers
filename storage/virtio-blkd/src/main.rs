@@ -109,7 +109,7 @@ pub struct BlockVirtRequest {
 
 const_assert_eq!(core::mem::size_of::<BlockVirtRequest>(), 16);
 
-fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
+fn daemon(daemon: redox_daemon::Daemon) -> anyhow::Result<()> {
     let mut pcid_handle = PciFunctionHandle::connect_default();
 
     // Double check that we have the right device.
@@ -152,6 +152,7 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
     };
 
     let mut scheme = DiskScheme::new(
+        Some(daemon),
         scheme_name,
         BTreeMap::from([(0, VirtioDisk::new(queue, device_space))]),
         &driver_block::FuturesExecutor,
@@ -167,8 +168,6 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
         )
         .unwrap();
 
-    deamon.ready().expect("virtio-blkd: failed to deamonize");
-
     for event in event_queue {
         match event.unwrap().user_data {
             Event::Scheme => futures::executor::block_on(scheme.tick()).unwrap(),
@@ -179,6 +178,6 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
 }
 
 fn daemon_runner(redox_daemon: redox_daemon::Daemon) -> ! {
-    deamon(redox_daemon).unwrap();
+    daemon(redox_daemon).unwrap();
     unreachable!();
 }
