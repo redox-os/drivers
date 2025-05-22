@@ -499,14 +499,16 @@ impl Ps2 {
         Ok(mouse_extra)
     }
 
-    pub fn init(&mut self) -> Result<bool, Error> {
+    pub fn init(&mut self) -> bool {
         // Clear remaining data
         self.flush_read("init start");
 
         {
             // Disable devices
-            self.command(Command::DisableFirst)?;
-            self.command(Command::DisableSecond)?;
+            self.command(Command::DisableFirst)
+                .expect("ps2d: failed to initialize");
+            self.command(Command::DisableSecond)
+                .expect("ps2d: failed to initialize");
 
             // Clear remaining data
             self.flush_read("disable");
@@ -521,7 +523,7 @@ impl Ps2 {
                 | ConfigFlags::FIRST_DISABLED
                 | ConfigFlags::SECOND_DISABLED;
             trace!("ps2d: config set {:?}", config);
-            self.set_config(config)?;
+            self.set_config(config).expect("ps2d: failed to initialize");
 
             // Clear remaining data
             self.flush_read("disable interrupts");
@@ -529,15 +531,16 @@ impl Ps2 {
 
         {
             // Perform the self test
-            self.command(Command::TestController)?;
-            assert_eq!(self.read()?, 0x55);
+            self.command(Command::TestController)
+                .expect("ps2d: failed to initialize");
+            assert_eq!(self.read().expect("ps2d: failed to initialize"), 0x55);
 
             // Clear remaining data
             self.flush_read("test controller");
         }
 
         // Initialize keyboard
-        self.init_keyboard()?;
+        self.init_keyboard().expect("ps2d: failed to initialize");
 
         // Initialize mouse
         let (mouse_found, mouse_extra) = match self.init_mouse() {
@@ -551,7 +554,8 @@ impl Ps2 {
         {
             // Enable keyboard data reporting
             // Use inner function to prevent retries
-            self.keyboard_command_inner(KeyboardCommand::EnableReporting as u8)?;
+            self.keyboard_command_inner(KeyboardCommand::EnableReporting as u8)
+                .expect("ps2d: failed to initialize");
             // Response is ignored since scanning is now on
             //TODO: fix by using interrupts?
         }
@@ -559,7 +563,8 @@ impl Ps2 {
         if mouse_found {
             // Enable mouse data reporting
             // Use inner function to prevent retries
-            self.mouse_command_inner(MouseCommand::EnableReporting as u8)?;
+            self.mouse_command_inner(MouseCommand::EnableReporting as u8)
+                .expect("ps2d: failed to initialize");
             // Response is ignored since scanning is now on
             //TODO: fix by using interrupts?
         }
@@ -577,12 +582,12 @@ impl Ps2 {
                 config.remove(ConfigFlags::SECOND_INTERRUPT);
             }
             trace!("ps2d: config set {:?}", config);
-            self.set_config(config)?;
+            self.set_config(config).expect("ps2d: failed to initialize");
         }
 
         // Clear remaining data
         self.flush_read("init finish");
 
-        Ok(mouse_extra)
+        mouse_extra
     }
 }

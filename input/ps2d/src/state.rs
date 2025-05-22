@@ -41,7 +41,7 @@ pub struct Ps2d<F: Fn(u8, bool) -> char> {
 impl<F: Fn(u8, bool) -> char> Ps2d<F> {
     pub fn new(input: ProducerHandle, keymap: F) -> Self {
         let mut ps2 = Ps2::new();
-        let extra_packet = ps2.init().expect("ps2d: failed to initialize");
+        let extra_packet = ps2.init();
 
         // FIXME add an option for orbital to disable this when an app captures the mouse.
         let vmmouse_relative = false;
