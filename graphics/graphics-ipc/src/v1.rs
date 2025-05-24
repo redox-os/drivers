@@ -65,12 +65,17 @@ impl V1GraphicsHandle {
     }
 
     pub fn sync_rect(&self, sync_rect: Damage) -> io::Result<()> {
-        libredox::call::write(self.file.as_raw_fd() as usize, unsafe {
+        let cmd_type: u32 = 0;
+        let mut buf = Vec::with_capacity(4 + mem::size_of::<Damage>());
+        buf.extend_from_slice(&cmd_type.to_le_bytes());
+        buf.extend_from_slice(unsafe {
             slice::from_raw_parts(
                 ptr::addr_of!(sync_rect).cast::<u8>(),
                 mem::size_of::<Damage>(),
             )
-        })?;
+        });
+
+        libredox::call::write(self.file.as_raw_fd() as usize, &buf)?;
         Ok(())
     }
 }
@@ -106,6 +111,55 @@ impl Drop for DisplayMap {
     fn drop(&mut self) {
         unsafe {
             let _ = libredox::call::munmap(self.offscreen as *mut (), self.offscreen.len());
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
+#[repr(C)]
+pub enum GraphicsCommand {
+    UpdateDisplay(Damage),
+    UpdateCursor(CursorDamage),
+    CreateFramebuffer(CreateFramebuffer),
+    SetFrontBuffer(usize),
+    DestroyBuffer(usize),
+}
+
+impl GraphicsCommand {
+    pub fn command_type(buf: &[u8]) -> GraphicsCommand {
+        let command_type = u32::from_ne_bytes(buf[..4].try_into().unwrap());
+
+        match command_type {
+            0 => {
+                assert_eq!(buf[4..].len(), mem::size_of::<Damage>());
+                let damage = unsafe { *(buf[4..].as_ptr() as *const Damage) };
+                GraphicsCommand::UpdateDisplay(damage)
+            }
+            1 => {
+                assert_eq!(buf[4..].len(), mem::size_of::<CursorDamage>());
+                let cursor_damage = unsafe { *(buf[4..].as_ptr() as *const CursorDamage) };
+                GraphicsCommand::UpdateCursor(cursor_damage)
+            }
+            2 => {
+                assert_eq!(buf[4..].len(), mem::size_of::<CreateFramebuffer>());
+                let create_framebuffer =
+                    unsafe { *(buf[4..].as_ptr() as *const CreateFramebuffer) };
+                GraphicsCommand::CreateFramebuffer(create_framebuffer)
+            }
+            3 => {
+                assert_eq!(buf[4..].len(), mem::size_of::<usize>(), "Line 151 v1");
+                let buffer_index = unsafe { *(buf[4..].as_ptr() as *const usize) };
+                print!("Switching FRONT: {}", buffer_index);
+                GraphicsCommand::SetFrontBuffer(buffer_index)
+            }
+            4 => {
+                assert_eq!(buf[4..].len(), mem::size_of::<usize>());
+                let buffer_index = unsafe { *(buf[4..].as_ptr() as *const usize) };
+                GraphicsCommand::DestroyBuffer(buffer_index)
+            }
+            _ => {
+                panic!("Unknown command type: {command_type}");
+            }
         }
     }
 }
@@ -152,4 +206,12 @@ impl Damage {
         }
         self
     }
+}
+
+#[derive(Debug, Copy, Clone)]
+#[repr(C, packed)]
+pub struct CreateFramebuffer {
+    pub width: u32,
+    pub height: u32,
+    pub id: usize,
 }
