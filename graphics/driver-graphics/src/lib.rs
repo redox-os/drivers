@@ -11,7 +11,7 @@ pub trait GraphicsAdapter {
     type Framebuffer: Framebuffer;
     type Cursor: CursorFramebuffer;
 
-    fn displays(&self) -> Vec<usize>;
+    fn display_count(&self) -> usize;
     fn display_size(&self, display_id: usize) -> (u32, u32);
 
     fn create_dumb_framebuffer(&mut self, width: u32, height: u32) -> Self::Framebuffer;
@@ -91,7 +91,7 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
             VtEventKind::Activate => {
                 log::info!("activate {}", vt_event.vt);
 
-                for display_id in self.adapter.displays() {
+                for display_id in 0..self.adapter.display_count() {
                     let framebuffer = self
                         .vts_fb
                         .entry(vt_event.vt)
@@ -195,7 +195,7 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
         let vt = screen.next().unwrap_or("").parse::<usize>().unwrap();
         let id = screen.next().unwrap_or("").parse::<usize>().unwrap_or(0);
 
-        if id >= self.adapter.displays().len() {
+        if id >= self.adapter.display_count() {
             return Err(Error::new(EINVAL));
         }
 
