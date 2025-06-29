@@ -331,7 +331,7 @@ impl GraphicsAdapter for VirtGpuAdapter<'_> {
         cursor.sgl.as_ptr()
     }
 
-    fn handle_cursor(&mut self, cursor: &mut CursorPlane<VirtGpuCursor>, dirty_fb: bool) {
+    fn handle_cursor(&mut self, cursor: &CursorPlane<VirtGpuCursor>, dirty_fb: bool) {
         if dirty_fb {
             self.update_cursor(
                 &cursor.framebuffer,

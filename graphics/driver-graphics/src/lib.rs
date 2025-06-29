@@ -22,7 +22,7 @@ pub trait GraphicsAdapter {
     fn supports_hw_cursor(&self) -> bool;
     fn create_cursor_framebuffer(&mut self) -> Self::Cursor;
     fn map_cursor_framebuffer(&mut self, cursor: &Self::Cursor) -> *mut u8;
-    fn handle_cursor(&mut self, cursor: &mut CursorPlane<Self::Cursor>, dirty_fb: bool);
+    fn handle_cursor(&mut self, cursor: &CursorPlane<Self::Cursor>, dirty_fb: bool);
 }
 
 pub trait Framebuffer {
