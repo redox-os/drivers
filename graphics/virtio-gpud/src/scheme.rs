@@ -390,11 +390,8 @@ impl<'a> GpuScheme {
             }
         }
 
-        let inputd_handle = DisplayHandle::new("virtio-gpu").unwrap();
-
-        Ok((
-            GraphicsScheme::new(adapter, "display.virtio-gpu".to_owned()),
-            inputd_handle,
-        ))
+        let scheme = GraphicsScheme::new(adapter, "display.virtio-gpu".to_owned());
+        let handle = DisplayHandle::new("virtio-gpu").unwrap();
+        Ok((scheme, handle))
     }
 }
