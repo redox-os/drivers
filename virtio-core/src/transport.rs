@@ -492,6 +492,12 @@ pub trait Transport: Sync + Send {
         self.insert_status(DeviceStatusFlags::DRIVER_OK);
     }
 
+    /// Request to be notified on configuration changes on the given MSI-X vector.
+    fn setup_config_notify(&self, vector: u16);
+
+    /// Each time the device configuration changes this number will be updated.
+    fn config_generation(&self) -> u32;
+
     /// Creates a new queue.
     ///
     /// ## Panics
@@ -599,6 +605,14 @@ impl Transport for StandardTransport<'_> {
         // the device does not support our subset of features and the device is unusable.
         let confirm = common.device_status.get();
         assert!((confirm & DeviceStatusFlags::FEATURES_OK) == DeviceStatusFlags::FEATURES_OK);
+    }
+
+    fn setup_config_notify(&self, vector: u16) {
+        self.common.lock().unwrap().config_msix_vector.set(vector);
+    }
+
+    fn config_generation(&self) -> u32 {
+        u32::from(self.common.lock().unwrap().config_generation.get())
     }
 
     fn setup_queue(&self, vector: u16, irq_handle: &File) -> Result<Arc<Queue>, Error> {
