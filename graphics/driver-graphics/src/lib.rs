@@ -54,7 +54,7 @@ pub struct GraphicsScheme<T: GraphicsAdapter> {
 }
 
 enum Handle {
-    Screen { vt: usize, screen: usize },
+    V1Screen { vt: usize, screen: usize },
 }
 
 impl<T: GraphicsAdapter> GraphicsScheme<T> {
@@ -210,33 +210,39 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
 
         self.next_id += 1;
         self.handles
-            .insert(self.next_id, Handle::Screen { vt, screen: id });
+            .insert(self.next_id, Handle::V1Screen { vt, screen: id });
         Ok(self.next_id)
     }
 
     fn fpath(&mut self, id: usize, buf: &mut [u8]) -> syscall::Result<usize> {
-        let Handle::Screen { vt, screen } = self.handles.get(&id).ok_or(Error::new(EBADF))?;
-        let framebuffer = &self.vts_fb[vt][screen];
-        let path = format!(
-            "{}:{vt}.{screen}/{}/{}",
-            self.scheme_name,
-            framebuffer.width(),
-            framebuffer.height()
-        );
+        let path = match self.handles.get(&id).ok_or(Error::new(EBADF))? {
+            Handle::V1Screen { vt, screen } => {
+                let framebuffer = &self.vts_fb[vt][screen];
+                format!(
+                    "{}:{vt}.{screen}/{}/{}",
+                    self.scheme_name,
+                    framebuffer.width(),
+                    framebuffer.height()
+                )
+            }
+        };
         buf[..path.len()].copy_from_slice(path.as_bytes());
         Ok(path.len())
     }
 
     fn fsync(&mut self, id: usize) -> syscall::Result<usize> {
-        let Handle::Screen { vt, screen } = self.handles.get(&id).ok_or(Error::new(EBADF))?;
-        if *vt != self.active_vt {
-            // This is a protection against background VT's spamming us with flush requests. We will
-            // flush the framebuffer on the next VT switch anyway
-            return Ok(0);
+        match self.handles.get(&id).ok_or(Error::new(EBADF))? {
+            Handle::V1Screen { vt, screen } => {
+                if *vt != self.active_vt {
+                    // This is a protection against background VT's spamming us with flush requests. We will
+                    // flush the framebuffer on the next VT switch anyway
+                    return Ok(0);
+                }
+                let framebuffer = &self.vts_fb[vt][screen];
+                Self::update_whole_screen(&mut self.adapter, *screen, framebuffer);
+                Ok(0)
+            }
         }
-        let framebuffer = &self.vts_fb[vt][screen];
-        Self::update_whole_screen(&mut self.adapter, *screen, framebuffer);
-        Ok(0)
     }
 
     fn read(
@@ -246,88 +252,92 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
         _offset: u64,
         _fcntl_flags: u32,
     ) -> Result<usize> {
-        let _handle = self.handles.get(&id).ok_or(Error::new(EBADF))?;
+        match self.handles.get(&id).ok_or(Error::new(EBADF))? {
+            Handle::V1Screen { .. } => {
+                //Currently read is only used for Orbital to check GPU cursor support
+                //and only expects a buf to pass a 0 or 1 flag
+                if self.adapter.supports_hw_cursor() {
+                    buf[0] = 1;
+                } else {
+                    buf[0] = 0;
+                }
 
-        //Currently read is only used for Orbital to check GPU cursor support
-        //and only expects a buf to pass a 0 or 1 flag
-        if self.adapter.supports_hw_cursor() {
-            buf[0] = 1;
-        } else {
-            buf[0] = 0;
+                Ok(1)
+            }
         }
-
-        Ok(1)
     }
 
     fn write(&mut self, id: usize, buf: &[u8], _offset: u64, _fcntl_flags: u32) -> Result<usize> {
-        let Handle::Screen { vt, screen } = self.handles.get(&id).ok_or(Error::new(EBADF))?;
-
-        if *vt != self.active_vt {
-            // This is a protection against background VT's spamming us with flush requests. We will
-            // flush the framebuffer on the next VT switch anyway
-            return Ok(buf.len());
-        }
-
-        if size_of_val(buf) == std::mem::size_of::<CursorDamage>()
-            && self.adapter.supports_hw_cursor()
-        {
-            let cursor_damage = unsafe { *buf.as_ptr().cast::<CursorDamage>() };
-
-            let cursor_plane = Self::cursor_plane_for_vt(
-                &mut self.adapter,
-                &mut self.cursor_planes,
-                self.active_vt,
-            );
-
-            cursor_plane.x = cursor_damage.x;
-            cursor_plane.y = cursor_damage.y;
-
-            if cursor_damage.header == 0 {
-                self.adapter.handle_cursor(cursor_plane, false);
-            } else {
-                cursor_plane.hot_x = cursor_damage.hot_x;
-                cursor_plane.hot_y = cursor_damage.hot_y;
-
-                let w: i32 = cursor_damage.width;
-                let h: i32 = cursor_damage.height;
-                let cursor_image = cursor_damage.cursor_img_bytes;
-                let cursor_ptr = self
-                    .adapter
-                    .map_cursor_framebuffer(&cursor_plane.framebuffer);
-
-                //Clear previous image from backing storage
-                unsafe {
-                    core::ptr::write_bytes(cursor_ptr as *mut u8, 0, 64 * 64 * 4);
+        match self.handles.get(&id).ok_or(Error::new(EBADF))? {
+            Handle::V1Screen { vt, screen } => {
+                if *vt != self.active_vt {
+                    // This is a protection against background VT's spamming us with flush requests. We will
+                    // flush the framebuffer on the next VT switch anyway
+                    return Ok(buf.len());
                 }
 
-                //Write image to backing storage
-                for row in 0..h {
-                    let start: usize = (w * row) as usize;
-                    let end: usize = (w * row + w) as usize;
+                if size_of_val(buf) == std::mem::size_of::<CursorDamage>()
+                    && self.adapter.supports_hw_cursor()
+                {
+                    let cursor_damage = unsafe { *buf.as_ptr().cast::<CursorDamage>() };
 
-                    unsafe {
-                        core::ptr::copy_nonoverlapping(
-                            cursor_image[start..end].as_ptr(),
-                            cursor_ptr.cast::<u32>().offset(64 * row as isize),
-                            w as usize,
-                        );
+                    let cursor_plane = Self::cursor_plane_for_vt(
+                        &mut self.adapter,
+                        &mut self.cursor_planes,
+                        self.active_vt,
+                    );
+
+                    cursor_plane.x = cursor_damage.x;
+                    cursor_plane.y = cursor_damage.y;
+
+                    if cursor_damage.header == 0 {
+                        self.adapter.handle_cursor(cursor_plane, false);
+                    } else {
+                        cursor_plane.hot_x = cursor_damage.hot_x;
+                        cursor_plane.hot_y = cursor_damage.hot_y;
+
+                        let w: i32 = cursor_damage.width;
+                        let h: i32 = cursor_damage.height;
+                        let cursor_image = cursor_damage.cursor_img_bytes;
+                        let cursor_ptr = self
+                            .adapter
+                            .map_cursor_framebuffer(&cursor_plane.framebuffer);
+
+                        //Clear previous image from backing storage
+                        unsafe {
+                            core::ptr::write_bytes(cursor_ptr as *mut u8, 0, 64 * 64 * 4);
+                        }
+
+                        //Write image to backing storage
+                        for row in 0..h {
+                            let start: usize = (w * row) as usize;
+                            let end: usize = (w * row + w) as usize;
+
+                            unsafe {
+                                core::ptr::copy_nonoverlapping(
+                                    cursor_image[start..end].as_ptr(),
+                                    cursor_ptr.cast::<u32>().offset(64 * row as isize),
+                                    w as usize,
+                                );
+                            }
+                        }
+
+                        self.adapter.handle_cursor(cursor_plane, true);
                     }
+
+                    return Ok(buf.len());
                 }
 
-                self.adapter.handle_cursor(cursor_plane, true);
+                let framebuffer = &self.vts_fb[vt][screen];
+
+                assert_eq!(buf.len(), std::mem::size_of::<Damage>());
+                let damage = unsafe { *buf.as_ptr().cast::<Damage>() };
+
+                self.adapter.update_plane(*screen, framebuffer, damage);
+
+                Ok(buf.len())
             }
-
-            return Ok(buf.len());
         }
-
-        let framebuffer = &self.vts_fb[vt][screen];
-
-        assert_eq!(buf.len(), std::mem::size_of::<Damage>());
-        let damage = unsafe { *buf.as_ptr().cast::<Damage>() };
-
-        self.adapter.update_plane(*screen, framebuffer, damage);
-
-        Ok(buf.len())
     }
 
     fn mmap_prep(
@@ -338,9 +348,9 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
         _flags: MapFlags,
     ) -> syscall::Result<usize> {
         // log::trace!("KSMSG MMAP {} {:?} {} {}", id, _flags, _offset, _size);
-        let handle = self.handles.get(&id).ok_or(Error::new(EINVAL))?;
-        let Handle::Screen { vt, screen } = handle;
-        let framebuffer = &self.vts_fb[vt][screen];
+        let framebuffer = match self.handles.get(&id).ok_or(Error::new(EINVAL))? {
+            Handle::V1Screen { vt, screen } => &self.vts_fb[vt][screen],
+        };
         let ptr = T::map_dumb_framebuffer(&mut self.adapter, framebuffer);
         Ok(ptr as usize)
     }
