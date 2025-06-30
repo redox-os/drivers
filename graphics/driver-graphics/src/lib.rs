@@ -12,6 +12,9 @@ pub trait GraphicsAdapter {
     type Framebuffer: Framebuffer;
     type Cursor: CursorFramebuffer;
 
+    /// The maximum amount of displays that could be attached.
+    ///
+    /// This must be constant for the lifetime of the graphics adapter.
     fn display_count(&self) -> usize;
     fn display_size(&self, display_id: usize) -> (u32, u32);
 
@@ -54,17 +57,8 @@ pub struct GraphicsScheme<T: GraphicsAdapter> {
 }
 
 struct VtState<T: GraphicsAdapter> {
-    display_fbs: HashMap<usize, Arc<T::Framebuffer>>,
+    display_fbs: Vec<Arc<T::Framebuffer>>,
     cursor_plane: Option<CursorPlane<T::Cursor>>,
-}
-
-impl<T: GraphicsAdapter> Default for VtState<T> {
-    fn default() -> Self {
-        VtState {
-            display_fbs: HashMap::default(),
-            cursor_plane: None,
-        }
-    }
 }
 
 enum Handle {
@@ -104,26 +98,18 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
             VtEventKind::Activate => {
                 log::info!("activate {}", vt_event.vt);
 
-                for display_id in 0..self.adapter.display_count() {
-                    let framebuffer = Self::framebuffer_for_vt_and_display(
-                        &mut self.adapter,
-                        &mut self.vts,
-                        vt_event.vt,
-                        display_id,
-                    );
-                    Self::update_whole_screen(&mut self.adapter, display_id, framebuffer);
+                let vt_state =
+                    Self::get_or_create_vt(&mut self.adapter, &mut self.vts, vt_event.vt);
 
-                    self.active_vt = vt_event.vt;
-
-                    if self.adapter.supports_hw_cursor() {
-                        let cursor_plane = Self::cursor_plane_for_vt(
-                            &mut self.adapter,
-                            &mut self.vts,
-                            self.active_vt,
-                        );
-                        self.adapter.handle_cursor(cursor_plane, true);
-                    }
+                for (display_id, fb) in vt_state.display_fbs.iter().enumerate() {
+                    Self::update_whole_screen(&mut self.adapter, display_id, fb);
                 }
+
+                if let Some(cursor_plane) = &vt_state.cursor_plane {
+                    self.adapter.handle_cursor(cursor_plane, true);
+                }
+
+                self.active_vt = vt_event.vt;
             }
 
             VtEventKind::Resize => {
@@ -178,37 +164,31 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
         );
     }
 
-    fn framebuffer_for_vt_and_display<'a>(
+    fn get_or_create_vt<'a>(
         adapter: &mut T,
         vts: &'a mut HashMap<usize, VtState<T>>,
         vt: usize,
-        display_id: usize,
-    ) -> &'a T::Framebuffer {
-        vts.entry(vt)
-            .or_default()
-            .display_fbs
-            .entry(display_id)
-            .or_insert_with(|| {
+    ) -> &'a mut VtState<T> {
+        vts.entry(vt).or_insert_with(|| {
+            let mut display_fbs = vec![];
+            for display_id in 0..adapter.display_count() {
                 let (width, height) = adapter.display_size(display_id);
-                Arc::new(adapter.create_dumb_framebuffer(width, height))
-            })
-    }
+                display_fbs.push(Arc::new(adapter.create_dumb_framebuffer(width, height)));
+            }
 
-    fn cursor_plane_for_vt<'a>(
-        adapter: &mut T,
-        vts: &'a mut HashMap<usize, VtState<T>>,
-        vt: usize,
-    ) -> &'a mut CursorPlane<T::Cursor> {
-        vts.entry(vt)
-            .or_default()
-            .cursor_plane
-            .get_or_insert_with(|| CursorPlane {
+            let cursor_plane = adapter.supports_hw_cursor().then(|| CursorPlane {
                 x: 0,
                 y: 0,
                 hot_x: 0,
                 hot_y: 0,
                 framebuffer: adapter.create_cursor_framebuffer(),
-            })
+            });
+
+            VtState {
+                display_fbs,
+                cursor_plane,
+            }
+        })
     }
 }
 
@@ -228,7 +208,8 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
             return Err(Error::new(EINVAL));
         }
 
-        Self::framebuffer_for_vt_and_display(&mut self.adapter, &mut self.vts, vt, id);
+        // Ensure the VT exists such that the rest of the methods can freely access it.
+        Self::get_or_create_vt(&mut self.adapter, &mut self.vts, vt);
 
         self.next_id += 1;
         self.handles
@@ -239,7 +220,7 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
     fn fpath(&mut self, id: usize, buf: &mut [u8]) -> syscall::Result<usize> {
         let path = match self.handles.get(&id).ok_or(Error::new(EBADF))? {
             Handle::V1Screen { vt, screen } => {
-                let framebuffer = &self.vts[vt].display_fbs[screen];
+                let framebuffer = &self.vts[vt].display_fbs[*screen];
                 format!(
                     "{}:{vt}.{screen}/{}/{}",
                     self.scheme_name,
@@ -260,8 +241,11 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
                     // flush the framebuffer on the next VT switch anyway
                     return Ok(0);
                 }
-                let framebuffer = &self.vts[vt].display_fbs[screen];
-                Self::update_whole_screen(&mut self.adapter, *screen, framebuffer);
+                Self::update_whole_screen(
+                    &mut self.adapter,
+                    *screen,
+                    &self.vts[vt].display_fbs[*screen],
+                );
                 Ok(0)
             }
         }
@@ -298,13 +282,15 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
                     return Ok(buf.len());
                 }
 
-                if size_of_val(buf) == std::mem::size_of::<CursorDamage>()
-                    && self.adapter.supports_hw_cursor()
-                {
-                    let cursor_damage = unsafe { *buf.as_ptr().cast::<CursorDamage>() };
+                let vt_state = self.vts.get_mut(vt).unwrap();
 
-                    let cursor_plane =
-                        Self::cursor_plane_for_vt(&mut self.adapter, &mut self.vts, self.active_vt);
+                if size_of_val(buf) == std::mem::size_of::<CursorDamage>() {
+                    let Some(cursor_plane) = &mut vt_state.cursor_plane else {
+                        // Hardware cursor not supported
+                        return Err(Error::new(EINVAL));
+                    };
+
+                    let cursor_damage = unsafe { *buf.as_ptr().cast::<CursorDamage>() };
 
                     cursor_plane.x = cursor_damage.x;
                     cursor_plane.y = cursor_damage.y;
@@ -347,12 +333,11 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
                     return Ok(buf.len());
                 }
 
-                let framebuffer = &self.vts[vt].display_fbs[screen];
-
                 assert_eq!(buf.len(), std::mem::size_of::<Damage>());
                 let damage = unsafe { *buf.as_ptr().cast::<Damage>() };
 
-                self.adapter.update_plane(*screen, framebuffer, damage);
+                self.adapter
+                    .update_plane(*screen, &vt_state.display_fbs[*screen], damage);
 
                 Ok(buf.len())
             }
@@ -368,7 +353,7 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
     ) -> syscall::Result<usize> {
         // log::trace!("KSMSG MMAP {} {:?} {} {}", id, _flags, _offset, _size);
         let framebuffer = match self.handles.get(&id).ok_or(Error::new(EINVAL))? {
-            Handle::V1Screen { vt, screen } => &self.vts[vt].display_fbs[screen],
+            Handle::V1Screen { vt, screen } => &self.vts[vt].display_fbs[*screen],
         };
         let ptr = T::map_dumb_framebuffer(&mut self.adapter, framebuffer);
         Ok(ptr as usize)
