@@ -50,8 +50,21 @@ pub struct GraphicsScheme<T: GraphicsAdapter> {
     handles: BTreeMap<usize, Handle>,
 
     active_vt: usize,
-    vts_fb: HashMap<usize, HashMap<usize, Arc<T::Framebuffer>>>,
-    cursor_planes: HashMap<usize, CursorPlane<T::Cursor>>,
+    vts: HashMap<usize, VtState<T>>,
+}
+
+struct VtState<T: GraphicsAdapter> {
+    display_fbs: HashMap<usize, Arc<T::Framebuffer>>,
+    cursor_plane: Option<CursorPlane<T::Cursor>>,
+}
+
+impl<T: GraphicsAdapter> Default for VtState<T> {
+    fn default() -> Self {
+        VtState {
+            display_fbs: HashMap::default(),
+            cursor_plane: None,
+        }
+    }
 }
 
 enum Handle {
@@ -70,8 +83,7 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
             next_id: 0,
             handles: BTreeMap::new(),
             active_vt: 0,
-            vts_fb: HashMap::new(),
-            cursor_planes: HashMap::new(),
+            vts: HashMap::new(),
         }
     }
 
@@ -95,7 +107,7 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
                 for display_id in 0..self.adapter.display_count() {
                     let framebuffer = Self::framebuffer_for_vt_and_display(
                         &mut self.adapter,
-                        &mut self.vts_fb,
+                        &mut self.vts,
                         vt_event.vt,
                         display_id,
                     );
@@ -106,7 +118,7 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
                     if self.adapter.supports_hw_cursor() {
                         let cursor_plane = Self::cursor_plane_for_vt(
                             &mut self.adapter,
-                            &mut self.cursor_planes,
+                            &mut self.vts,
                             self.active_vt,
                         );
                         self.adapter.handle_cursor(cursor_plane, true);
@@ -168,13 +180,13 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
 
     fn framebuffer_for_vt_and_display<'a>(
         adapter: &mut T,
-        vts_fb: &'a mut HashMap<usize, HashMap<usize, Arc<T::Framebuffer>>>,
+        vts: &'a mut HashMap<usize, VtState<T>>,
         vt: usize,
         display_id: usize,
     ) -> &'a T::Framebuffer {
-        vts_fb
-            .entry(vt)
+        vts.entry(vt)
             .or_default()
+            .display_fbs
             .entry(display_id)
             .or_insert_with(|| {
                 let (width, height) = adapter.display_size(display_id);
@@ -184,16 +196,19 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
 
     fn cursor_plane_for_vt<'a>(
         adapter: &mut T,
-        cursor_planes: &'a mut HashMap<usize, CursorPlane<T::Cursor>>,
+        vts: &'a mut HashMap<usize, VtState<T>>,
         vt: usize,
     ) -> &'a mut CursorPlane<T::Cursor> {
-        cursor_planes.entry(vt).or_insert_with(|| CursorPlane {
-            x: 0,
-            y: 0,
-            hot_x: 0,
-            hot_y: 0,
-            framebuffer: adapter.create_cursor_framebuffer(),
-        })
+        vts.entry(vt)
+            .or_default()
+            .cursor_plane
+            .get_or_insert_with(|| CursorPlane {
+                x: 0,
+                y: 0,
+                hot_x: 0,
+                hot_y: 0,
+                framebuffer: adapter.create_cursor_framebuffer(),
+            })
     }
 }
 
@@ -213,7 +228,7 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
             return Err(Error::new(EINVAL));
         }
 
-        Self::framebuffer_for_vt_and_display(&mut self.adapter, &mut self.vts_fb, vt, id);
+        Self::framebuffer_for_vt_and_display(&mut self.adapter, &mut self.vts, vt, id);
 
         self.next_id += 1;
         self.handles
@@ -224,7 +239,7 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
     fn fpath(&mut self, id: usize, buf: &mut [u8]) -> syscall::Result<usize> {
         let path = match self.handles.get(&id).ok_or(Error::new(EBADF))? {
             Handle::V1Screen { vt, screen } => {
-                let framebuffer = &self.vts_fb[vt][screen];
+                let framebuffer = &self.vts[vt].display_fbs[screen];
                 format!(
                     "{}:{vt}.{screen}/{}/{}",
                     self.scheme_name,
@@ -245,7 +260,7 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
                     // flush the framebuffer on the next VT switch anyway
                     return Ok(0);
                 }
-                let framebuffer = &self.vts_fb[vt][screen];
+                let framebuffer = &self.vts[vt].display_fbs[screen];
                 Self::update_whole_screen(&mut self.adapter, *screen, framebuffer);
                 Ok(0)
             }
@@ -288,11 +303,8 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
                 {
                     let cursor_damage = unsafe { *buf.as_ptr().cast::<CursorDamage>() };
 
-                    let cursor_plane = Self::cursor_plane_for_vt(
-                        &mut self.adapter,
-                        &mut self.cursor_planes,
-                        self.active_vt,
-                    );
+                    let cursor_plane =
+                        Self::cursor_plane_for_vt(&mut self.adapter, &mut self.vts, self.active_vt);
 
                     cursor_plane.x = cursor_damage.x;
                     cursor_plane.y = cursor_damage.y;
@@ -335,7 +347,7 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
                     return Ok(buf.len());
                 }
 
-                let framebuffer = &self.vts_fb[vt][screen];
+                let framebuffer = &self.vts[vt].display_fbs[screen];
 
                 assert_eq!(buf.len(), std::mem::size_of::<Damage>());
                 let damage = unsafe { *buf.as_ptr().cast::<Damage>() };
@@ -356,7 +368,7 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
     ) -> syscall::Result<usize> {
         // log::trace!("KSMSG MMAP {} {:?} {} {}", id, _flags, _offset, _size);
         let framebuffer = match self.handles.get(&id).ok_or(Error::new(EINVAL))? {
-            Handle::V1Screen { vt, screen } => &self.vts_fb[vt][screen],
+            Handle::V1Screen { vt, screen } => &self.vts[vt].display_fbs[screen],
         };
         let ptr = T::map_dumb_framebuffer(&mut self.adapter, framebuffer);
         Ok(ptr as usize)
