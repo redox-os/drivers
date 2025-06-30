@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::io;
+use std::sync::Arc;
 
 use graphics_ipc::v1::{CursorDamage, Damage};
 use inputd::{VtEvent, VtEventKind};
@@ -49,7 +50,7 @@ pub struct GraphicsScheme<T: GraphicsAdapter> {
     handles: BTreeMap<usize, Handle>,
 
     active_vt: usize,
-    vts_fb: HashMap<usize, HashMap<usize, T::Framebuffer>>,
+    vts_fb: HashMap<usize, HashMap<usize, Arc<T::Framebuffer>>>,
     cursor_planes: HashMap<usize, CursorPlane<T::Cursor>>,
 }
 
@@ -92,15 +93,12 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
                 log::info!("activate {}", vt_event.vt);
 
                 for display_id in 0..self.adapter.display_count() {
-                    let framebuffer = self
-                        .vts_fb
-                        .entry(vt_event.vt)
-                        .or_default()
-                        .entry(display_id)
-                        .or_insert_with(|| {
-                            let (width, height) = self.adapter.display_size(display_id);
-                            self.adapter.create_dumb_framebuffer(width, height)
-                        });
+                    let framebuffer = Self::framebuffer_for_vt_and_display(
+                        &mut self.adapter,
+                        &mut self.vts_fb,
+                        vt_event.vt,
+                        display_id,
+                    );
                     Self::update_whole_screen(&mut self.adapter, display_id, framebuffer);
 
                     self.active_vt = vt_event.vt;
@@ -168,6 +166,22 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
         );
     }
 
+    fn framebuffer_for_vt_and_display<'a>(
+        adapter: &mut T,
+        vts_fb: &'a mut HashMap<usize, HashMap<usize, Arc<T::Framebuffer>>>,
+        vt: usize,
+        display_id: usize,
+    ) -> &'a T::Framebuffer {
+        vts_fb
+            .entry(vt)
+            .or_default()
+            .entry(display_id)
+            .or_insert_with(|| {
+                let (width, height) = adapter.display_size(display_id);
+                Arc::new(adapter.create_dumb_framebuffer(width, height))
+            })
+    }
+
     fn cursor_plane_for_vt<'a>(
         adapter: &mut T,
         cursor_planes: &'a mut HashMap<usize, CursorPlane<T::Cursor>>,
@@ -199,14 +213,7 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
             return Err(Error::new(EINVAL));
         }
 
-        self.vts_fb
-            .entry(vt)
-            .or_default()
-            .entry(id)
-            .or_insert_with(|| {
-                let (width, height) = self.adapter.display_size(id);
-                self.adapter.create_dumb_framebuffer(width, height)
-            });
+        Self::framebuffer_for_vt_and_display(&mut self.adapter, &mut self.vts_fb, vt, id);
 
         self.next_id += 1;
         self.handles
