@@ -20,8 +20,8 @@ impl GraphicsAdapter for FbAdapter {
     type Framebuffer = GraphicScreen;
     type Cursor = VesadCursor;
 
-    fn displays(&self) -> Vec<usize> {
-        (0..self.framebuffers.len()).collect()
+    fn display_count(&self) -> usize {
+        self.framebuffers.len()
     }
 
     fn display_size(&self, display_id: usize) -> (u32, u32) {
@@ -55,7 +55,7 @@ impl GraphicsAdapter for FbAdapter {
         unimplemented!("Vesad does not support this function");
     }
 
-    fn handle_cursor(&mut self, _cursor: &mut CursorPlane<VesadCursor>, _dirty_fb: bool) {
+    fn handle_cursor(&mut self, _cursor: &CursorPlane<VesadCursor>, _dirty_fb: bool) {
         unimplemented!("Vesad does not support this function");
     }
 }

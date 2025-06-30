@@ -1,13 +1,16 @@
 use std::fs::File;
 use std::os::unix::io::AsRawFd;
-use std::{cmp, io, mem, ptr, slice};
+use std::{io, mem, ptr, slice};
 
 use libredox::flag;
 
+pub use crate::common::Damage;
+pub use crate::common::DisplayMap;
+
 /// A graphics handle using the v1 graphics API.
 ///
-/// The v1 graphics API only allows a single framebuffer for each VT and supports neither page
-/// flipping nor cursor planes.
+/// The v1 graphics API only allows a single framebuffer for each VT, requires each display to be
+/// handled separately and doesn't support page flipping.
 pub struct V1GraphicsHandle {
     file: File,
 }
@@ -52,11 +55,7 @@ impl V1GraphicsHandle {
         };
         let offscreen = ptr::slice_from_raw_parts_mut(display_ptr as *mut u32, width * height);
 
-        Ok(DisplayMap {
-            offscreen,
-            width,
-            height,
-        })
+        Ok(unsafe { DisplayMap::new(offscreen, width, height) })
     }
 
     pub fn sync_full_screen(&self) -> io::Result<()> {
@@ -75,41 +74,6 @@ impl V1GraphicsHandle {
     }
 }
 
-pub struct DisplayMap {
-    offscreen: *mut [u32],
-    width: usize,
-    height: usize,
-}
-
-impl DisplayMap {
-    pub fn ptr(&self) -> *const [u32] {
-        self.offscreen
-    }
-
-    pub fn ptr_mut(&mut self) -> *mut [u32] {
-        self.offscreen
-    }
-
-    pub fn width(&self) -> usize {
-        self.width
-    }
-
-    pub fn height(&self) -> usize {
-        self.height
-    }
-}
-
-unsafe impl Send for DisplayMap {}
-unsafe impl Sync for DisplayMap {}
-
-impl Drop for DisplayMap {
-    fn drop(&mut self) {
-        unsafe {
-            let _ = libredox::call::munmap(self.offscreen as *mut (), self.offscreen.len());
-        }
-    }
-}
-
 #[derive(Debug, Copy, Clone)]
 #[repr(C, packed)]
 pub struct CursorDamage {
@@ -121,35 +85,4 @@ pub struct CursorDamage {
     pub width: i32,
     pub height: i32,
     pub cursor_img_bytes: [u32; 4096],
-}
-
-// Keep synced with orbital's SyncRect
-// Technically orbital uses i32 rather than u32, but values larger than i32::MAX
-// would be a bug anyway.
-#[derive(Debug, Copy, Clone)]
-#[repr(packed)]
-pub struct Damage {
-    pub x: u32,
-    pub y: u32,
-    pub width: u32,
-    pub height: u32,
-}
-
-impl Damage {
-    #[must_use]
-    pub fn clip(mut self, width: u32, height: u32) -> Self {
-        // Clip damage
-        let x2 = self.x + self.width;
-        self.x = cmp::min(self.x, width);
-        if x2 > width {
-            self.width = width - self.x;
-        }
-
-        let y2 = self.y + self.height;
-        self.y = cmp::min(self.y, height);
-        if y2 > height {
-            self.height = height - self.y;
-        }
-        self
-    }
 }
