@@ -149,8 +149,8 @@ impl GraphicsAdapter for VirtGpuAdapter<'_> {
     type Framebuffer = VirtGpuFramebuffer;
     type Cursor = VirtGpuCursor;
 
-    fn displays(&self) -> Vec<usize> {
-        self.displays.iter().enumerate().map(|(i, _)| i).collect()
+    fn display_count(&self) -> usize {
+        self.displays.len()
     }
 
     fn display_size(&self, display_id: usize) -> (u32, u32) {
@@ -331,7 +331,7 @@ impl GraphicsAdapter for VirtGpuAdapter<'_> {
         cursor.sgl.as_ptr()
     }
 
-    fn handle_cursor(&mut self, cursor: &mut CursorPlane<VirtGpuCursor>, dirty_fb: bool) {
+    fn handle_cursor(&mut self, cursor: &CursorPlane<VirtGpuCursor>, dirty_fb: bool) {
         if dirty_fb {
             self.update_cursor(
                 &cursor.framebuffer,
@@ -390,11 +390,8 @@ impl<'a> GpuScheme {
             }
         }
 
-        let inputd_handle = DisplayHandle::new("virtio-gpu").unwrap();
-
-        Ok((
-            GraphicsScheme::new(adapter, "display.virtio-gpu".to_owned()),
-            inputd_handle,
-        ))
+        let scheme = GraphicsScheme::new(adapter, "display.virtio-gpu".to_owned());
+        let handle = DisplayHandle::new("virtio-gpu").unwrap();
+        Ok((scheme, handle))
     }
 }
