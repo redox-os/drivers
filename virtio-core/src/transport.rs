@@ -59,7 +59,7 @@ pub fn spawn_irq_thread(irq_handle: &File, queue: &Arc<Queue<'static>>) {
     let queue_copy = queue.clone();
 
     std::thread::spawn(move || {
-        let mut event_queue = RawEventQueue::new().unwrap();
+        let event_queue = RawEventQueue::new().unwrap();
 
         event_queue
             .subscribe(irq_fd as usize, 0, event::EventFlags::READ)
