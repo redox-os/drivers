@@ -360,17 +360,17 @@ impl<T: GraphicsAdapter> SchemeSync for GraphicsScheme<T> {
     fn mmap_prep(
         &mut self,
         id: usize,
-        _offset: u64,
+        offset: u64,
         _size: usize,
         _flags: MapFlags,
         _ctx: &CallerCtx,
     ) -> syscall::Result<usize> {
         // log::trace!("KSMSG MMAP {} {:?} {} {}", id, _flags, _offset, _size);
-        let framebuffer = match self.handles.get(&id).ok_or(Error::new(EINVAL))? {
-            Handle::V1Screen { vt, screen } => &self.vts[vt].display_fbs[*screen],
+        let (framebuffer, offset) = match self.handles.get(&id).ok_or(Error::new(EINVAL))? {
+            Handle::V1Screen { vt, screen } => (&self.vts[vt].display_fbs[*screen], offset),
         };
         let ptr = T::map_dumb_framebuffer(&mut self.adapter, framebuffer);
-        Ok(ptr as usize)
+        Ok(unsafe { ptr.add(offset as usize) } as usize)
     }
 }
 
