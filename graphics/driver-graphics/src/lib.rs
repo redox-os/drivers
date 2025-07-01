@@ -5,7 +5,9 @@ use std::sync::Arc;
 use graphics_ipc::v1::{CursorDamage, Damage};
 use inputd::{VtEvent, VtEventKind};
 use libredox::Fd;
-use redox_scheme::{RequestKind, Scheme, SignalBehavior, Socket};
+use redox_scheme::scheme::SchemeSync;
+use redox_scheme::{CallerCtx, OpenResult, RequestKind, SignalBehavior, Socket};
+use syscall::schemev2::NewFdFlags;
 use syscall::{Error, MapFlags, Result, EAGAIN, EBADF, EINVAL};
 
 pub trait GraphicsAdapter {
@@ -136,7 +138,7 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
 
             match request.kind() {
                 RequestKind::Call(call) => {
-                    let response = call.handle_scheme(self);
+                    let response = call.handle_sync(self);
                     self.socket
                         .write_response(response, SignalBehavior::Restart)
                         .expect("driver-graphics: failed to write response");
@@ -192,8 +194,8 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
     }
 }
 
-impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
-    fn open(&mut self, path: &str, _flags: usize, _uid: u32, _gid: u32) -> Result<usize> {
+impl<T: GraphicsAdapter> SchemeSync for GraphicsScheme<T> {
+    fn open(&mut self, path: &str, _flags: usize, _ctx: &CallerCtx) -> Result<OpenResult> {
         if path.is_empty() {
             return Err(Error::new(EINVAL));
         }
@@ -214,10 +216,13 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
         self.next_id += 1;
         self.handles
             .insert(self.next_id, Handle::V1Screen { vt, screen: id });
-        Ok(self.next_id)
+        Ok(OpenResult::ThisScheme {
+            number: self.next_id,
+            flags: NewFdFlags::empty(),
+        })
     }
 
-    fn fpath(&mut self, id: usize, buf: &mut [u8]) -> syscall::Result<usize> {
+    fn fpath(&mut self, id: usize, buf: &mut [u8], _ctx: &CallerCtx) -> syscall::Result<usize> {
         let path = match self.handles.get(&id).ok_or(Error::new(EBADF))? {
             Handle::V1Screen { vt, screen } => {
                 let framebuffer = &self.vts[vt].display_fbs[*screen];
@@ -233,20 +238,20 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
         Ok(path.len())
     }
 
-    fn fsync(&mut self, id: usize) -> syscall::Result<usize> {
+    fn fsync(&mut self, id: usize, _ctx: &CallerCtx) -> syscall::Result<()> {
         match self.handles.get(&id).ok_or(Error::new(EBADF))? {
             Handle::V1Screen { vt, screen } => {
                 if *vt != self.active_vt {
                     // This is a protection against background VT's spamming us with flush requests. We will
                     // flush the framebuffer on the next VT switch anyway
-                    return Ok(0);
+                    return Ok(());
                 }
                 Self::update_whole_screen(
                     &mut self.adapter,
                     *screen,
                     &self.vts[vt].display_fbs[*screen],
                 );
-                Ok(0)
+                Ok(())
             }
         }
     }
@@ -257,6 +262,7 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
         buf: &mut [u8],
         _offset: u64,
         _fcntl_flags: u32,
+        _ctx: &CallerCtx,
     ) -> Result<usize> {
         match self.handles.get(&id).ok_or(Error::new(EBADF))? {
             Handle::V1Screen { .. } => {
@@ -273,7 +279,14 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
         }
     }
 
-    fn write(&mut self, id: usize, buf: &[u8], _offset: u64, _fcntl_flags: u32) -> Result<usize> {
+    fn write(
+        &mut self,
+        id: usize,
+        buf: &[u8],
+        _offset: u64,
+        _fcntl_flags: u32,
+        _ctx: &CallerCtx,
+    ) -> Result<usize> {
         match self.handles.get(&id).ok_or(Error::new(EBADF))? {
             Handle::V1Screen { vt, screen } => {
                 if *vt != self.active_vt {
@@ -350,6 +363,7 @@ impl<T: GraphicsAdapter> Scheme for GraphicsScheme<T> {
         _offset: u64,
         _size: usize,
         _flags: MapFlags,
+        _ctx: &CallerCtx,
     ) -> syscall::Result<usize> {
         // log::trace!("KSMSG MMAP {} {:?} {} {}", id, _flags, _offset, _size);
         let framebuffer = match self.handles.get(&id).ok_or(Error::new(EINVAL))? {

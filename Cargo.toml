@@ -56,4 +56,3 @@ lto = "fat"
 mio = { git = "https://gitlab.redox-os.org/redox-os/mio.git", branch = "redox-unix" }
 orbclient = { git = "https://gitlab.redox-os.org/redox-os/orbclient.git", version = "0.3.44" }
 redox-daemon = { git = "https://gitlab.redox-os.org/redox-os/redox-daemon.git" }
-redox_syscall = { git = "https://gitlab.redox-os.org/redox-os/syscall.git", branch = "master" }
