@@ -1,5 +1,8 @@
+#![feature(slice_as_array)]
+
 use std::collections::{BTreeMap, HashMap};
 use std::io;
+use std::mem::transmute;
 use std::sync::Arc;
 
 use graphics_ipc::v1::{CursorDamage, Damage};
@@ -8,7 +11,7 @@ use libredox::Fd;
 use redox_scheme::scheme::SchemeSync;
 use redox_scheme::{CallerCtx, OpenResult, RequestKind, SignalBehavior, Socket};
 use syscall::schemev2::NewFdFlags;
-use syscall::{Error, MapFlags, Result, EAGAIN, EBADF, EINVAL};
+use syscall::{Error, MapFlags, Result, EAGAIN, EBADF, EINVAL, ENOENT, EOPNOTSUPP};
 
 pub trait GraphicsAdapter {
     type Framebuffer: Framebuffer;
@@ -52,7 +55,7 @@ pub struct GraphicsScheme<T: GraphicsAdapter> {
     scheme_name: String,
     socket: Socket,
     next_id: usize,
-    handles: BTreeMap<usize, Handle>,
+    handles: BTreeMap<usize, Handle<T>>,
 
     active_vt: usize,
     vts: HashMap<usize, VtState<T>>,
@@ -63,8 +66,16 @@ struct VtState<T: GraphicsAdapter> {
     cursor_plane: Option<CursorPlane<T::Cursor>>,
 }
 
-enum Handle {
-    V1Screen { vt: usize, screen: usize },
+enum Handle<T: GraphicsAdapter> {
+    V1Screen {
+        vt: usize,
+        screen: usize,
+    },
+    V2 {
+        vt: usize,
+        next_id: usize,
+        fbs: HashMap<usize, Arc<T::Framebuffer>>,
+    },
 }
 
 impl<T: GraphicsAdapter> GraphicsScheme<T> {
@@ -100,6 +111,8 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
             VtEventKind::Activate => {
                 log::info!("activate {}", vt_event.vt);
 
+                self.active_vt = vt_event.vt;
+
                 let vt_state =
                     Self::get_or_create_vt(&mut self.adapter, &mut self.vts, vt_event.vt);
 
@@ -110,14 +123,16 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
                 if let Some(cursor_plane) = &vt_state.cursor_plane {
                     self.adapter.handle_cursor(cursor_plane, true);
                 }
-
-                self.active_vt = vt_event.vt;
             }
 
             VtEventKind::Resize => {
                 log::warn!("driver-graphics: resize is not implemented yet")
             }
         }
+    }
+
+    pub fn notify_displays_changed(&mut self) {
+        // FIXME notify clients
     }
 
     /// Process new scheme requests.
@@ -200,22 +215,40 @@ impl<T: GraphicsAdapter> SchemeSync for GraphicsScheme<T> {
             return Err(Error::new(EINVAL));
         }
 
-        let mut parts = path.split('/');
-        let mut screen = parts.next().unwrap_or("").split('.');
+        let handle = if path.starts_with("v") {
+            if !path.starts_with("v2/") {
+                return Err(Error::new(ENOENT));
+            }
+            let vt = path["v2/".len()..]
+                .parse::<usize>()
+                .map_err(|_| Error::new(EINVAL))?;
 
-        let vt = screen.next().unwrap_or("").parse::<usize>().unwrap();
-        let id = screen.next().unwrap_or("").parse::<usize>().unwrap_or(0);
+            // Ensure the VT exists such that the rest of the methods can freely access it.
+            Self::get_or_create_vt(&mut self.adapter, &mut self.vts, vt);
 
-        if id >= self.adapter.display_count() {
-            return Err(Error::new(EINVAL));
-        }
+            Handle::V2 {
+                vt,
+                next_id: 0,
+                fbs: HashMap::new(),
+            }
+        } else {
+            let mut parts = path.split('/');
+            let mut screen = parts.next().unwrap_or("").split('.');
 
-        // Ensure the VT exists such that the rest of the methods can freely access it.
-        Self::get_or_create_vt(&mut self.adapter, &mut self.vts, vt);
+            let vt = screen.next().unwrap_or("").parse::<usize>().unwrap();
+            let id = screen.next().unwrap_or("").parse::<usize>().unwrap_or(0);
 
+            if id >= self.adapter.display_count() {
+                return Err(Error::new(EINVAL));
+            }
+
+            // Ensure the VT exists such that the rest of the methods can freely access it.
+            Self::get_or_create_vt(&mut self.adapter, &mut self.vts, vt);
+
+            Handle::V1Screen { vt, screen: id }
+        };
         self.next_id += 1;
-        self.handles
-            .insert(self.next_id, Handle::V1Screen { vt, screen: id });
+        self.handles.insert(self.next_id, handle);
         Ok(OpenResult::ThisScheme {
             number: self.next_id,
             flags: NewFdFlags::empty(),
@@ -233,6 +266,11 @@ impl<T: GraphicsAdapter> SchemeSync for GraphicsScheme<T> {
                     framebuffer.height()
                 )
             }
+            Handle::V2 {
+                vt,
+                next_id: _,
+                fbs: _,
+            } => format!("/scheme/{}/v2/{vt}", self.scheme_name),
         };
         buf[..path.len()].copy_from_slice(path.as_bytes());
         Ok(path.len())
@@ -253,6 +291,7 @@ impl<T: GraphicsAdapter> SchemeSync for GraphicsScheme<T> {
                 );
                 Ok(())
             }
+            Handle::V2 { .. } => Err(Error::new(EOPNOTSUPP)),
         }
     }
 
@@ -276,6 +315,7 @@ impl<T: GraphicsAdapter> SchemeSync for GraphicsScheme<T> {
 
                 Ok(1)
             }
+            Handle::V2 { .. } => Err(Error::new(EOPNOTSUPP)),
         }
     }
 
@@ -354,6 +394,122 @@ impl<T: GraphicsAdapter> SchemeSync for GraphicsScheme<T> {
 
                 Ok(buf.len())
             }
+            Handle::V2 { .. } => Err(Error::new(EOPNOTSUPP)),
+        }
+    }
+
+    fn call(&mut self, id: usize, payload: &mut [u8], metadata: &[u64]) -> Result<usize> {
+        use graphics_ipc::v2::ipc;
+
+        match self.handles.get_mut(&id).ok_or(Error::new(EBADF))? {
+            Handle::V1Screen { .. } => {
+                return Err(Error::new(EOPNOTSUPP));
+            }
+            Handle::V2 { vt, next_id, fbs } => match metadata[0] {
+                ipc::DISPLAY_COUNT => {
+                    if payload.len() < size_of::<ipc::DisplayCount>() {
+                        return Err(Error::new(EINVAL));
+                    }
+                    let payload = unsafe {
+                        transmute::<&mut [u8; size_of::<ipc::DisplayCount>()], &mut ipc::DisplayCount>(
+                            payload.as_mut_array().unwrap(),
+                        )
+                    };
+                    payload.count = self.adapter.display_count();
+                    Ok(size_of::<ipc::DisplayCount>())
+                }
+                ipc::DISPLAY_SIZE => {
+                    if payload.len() < size_of::<ipc::DisplaySize>() {
+                        return Err(Error::new(EINVAL));
+                    }
+                    let payload = unsafe {
+                        transmute::<&mut [u8; size_of::<ipc::DisplaySize>()], &mut ipc::DisplaySize>(
+                            payload.as_mut_array().unwrap(),
+                        )
+                    };
+                    let display_id = payload.display_id;
+                    if display_id >= self.adapter.display_count() {
+                        return Err(Error::new(EINVAL));
+                    }
+                    let (width, height) = self.adapter.display_size(display_id);
+                    payload.width = width;
+                    payload.height = height;
+                    Ok(size_of::<ipc::DisplaySize>())
+                }
+                ipc::CREATE_DUMB_FRAMEBUFFER => {
+                    if payload.len() < size_of::<ipc::CreateDumbFramebuffer>() {
+                        return Err(Error::new(EINVAL));
+                    }
+                    let payload = unsafe {
+                        transmute::<
+                            &mut [u8; size_of::<ipc::CreateDumbFramebuffer>()],
+                            &mut ipc::CreateDumbFramebuffer,
+                        >(payload.as_mut_array().unwrap())
+                    };
+
+                    let fb = self
+                        .adapter
+                        .create_dumb_framebuffer(payload.width, payload.height);
+
+                    *next_id += 1;
+                    fbs.insert(*next_id, Arc::new(fb));
+                    payload.fb_id = *next_id;
+                    Ok(size_of::<ipc::CreateDumbFramebuffer>())
+                }
+                ipc::DUMB_FRAMEBUFFER_MAP_OFFSET => {
+                    if payload.len() < size_of::<ipc::DumbFramebufferMapOffset>() {
+                        return Err(Error::new(EINVAL));
+                    }
+                    let payload = unsafe {
+                        transmute::<
+                            &mut [u8; size_of::<ipc::DumbFramebufferMapOffset>()],
+                            &mut ipc::DumbFramebufferMapOffset,
+                        >(payload.as_mut_array().unwrap())
+                    };
+
+                    let fb_id = payload.fb_id;
+
+                    if !fbs.contains_key(&fb_id) {
+                        return Err(Error::new(EINVAL));
+                    }
+
+                    // FIXME use a better scheme for creating map offsets
+                    assert!(fbs[&fb_id].width() * fbs[&fb_id].height() * 4 < 0x1_000_000);
+
+                    payload.offset = fb_id * 0x10_000_000;
+
+                    Ok(size_of::<ipc::DumbFramebufferMapOffset>())
+                }
+                ipc::UPDATE_PLANE => {
+                    if payload.len() < size_of::<ipc::UpdatePlane>() {
+                        return Err(Error::new(EINVAL));
+                    }
+                    let payload = unsafe {
+                        transmute::<&mut [u8; size_of::<ipc::UpdatePlane>()], &mut ipc::UpdatePlane>(
+                            payload.as_mut_array().unwrap(),
+                        )
+                    };
+
+                    let display_id = payload.display_id;
+                    if display_id >= self.adapter.display_count() {
+                        return Err(Error::new(EINVAL));
+                    }
+
+                    let Some(framebuffer) = fbs.get(&{ payload.fb_id }) else {
+                        return Err(Error::new(EINVAL));
+                    };
+
+                    self.vts.get_mut(vt).unwrap().display_fbs[display_id] = framebuffer.clone();
+
+                    if *vt == self.active_vt {
+                        self.adapter
+                            .update_plane(display_id, framebuffer, payload.damage);
+                    }
+
+                    Ok(size_of::<ipc::UpdatePlane>())
+                }
+                _ => return Err(Error::new(EINVAL)),
+            },
         }
     }
 
@@ -368,6 +524,16 @@ impl<T: GraphicsAdapter> SchemeSync for GraphicsScheme<T> {
         // log::trace!("KSMSG MMAP {} {:?} {} {}", id, _flags, _offset, _size);
         let (framebuffer, offset) = match self.handles.get(&id).ok_or(Error::new(EINVAL))? {
             Handle::V1Screen { vt, screen } => (&self.vts[vt].display_fbs[*screen], offset),
+            Handle::V2 {
+                vt: _,
+                next_id: _,
+                fbs,
+            } => (
+                fbs.get(&(offset as usize / 0x10_000_000))
+                    .ok_or(Error::new(EINVAL))
+                    .unwrap(),
+                offset & (0x10_000_000 - 1),
+            ),
         };
         let ptr = T::map_dumb_framebuffer(&mut self.adapter, framebuffer);
         Ok(unsafe { ptr.add(offset as usize) } as usize)

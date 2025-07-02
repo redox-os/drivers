@@ -3,6 +3,7 @@ use std::io::{self, Read, Write};
 use std::mem::size_of;
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, RawFd};
 use std::os::unix::fs::OpenOptionsExt;
+use std::path::PathBuf;
 use std::slice;
 
 use libredox::flag::{O_CLOEXEC, O_NONBLOCK, O_RDWR};
@@ -60,6 +61,34 @@ impl ConsumerHandle {
         let display_path = std::str::from_utf8(&buffer[..written])
             .expect("init: display path UTF-8 check failed")
             .to_owned();
+
+        let display_file =
+            libredox::call::open(&display_path, (O_CLOEXEC | O_NONBLOCK | O_RDWR) as _, 0)
+                .map(|socket| unsafe { File::from_raw_fd(socket as RawFd) })
+                .unwrap_or_else(|err| {
+                    panic!("failed to open display {}: {}", display_path, err);
+                });
+
+        Ok(display_file)
+    }
+
+    pub fn open_display_v2(&self) -> io::Result<File> {
+        let mut buffer = [0; 1024];
+        let fd = self.0.as_raw_fd();
+        let written = libredox::call::fpath(fd as usize, &mut buffer)?;
+
+        assert!(written <= buffer.len());
+
+        let mut display_path = PathBuf::from(
+            std::str::from_utf8(&buffer[..written])
+                .expect("init: display path UTF-8 check failed")
+                .to_owned(),
+        );
+        display_path.set_file_name(format!(
+            "v2/{}",
+            display_path.file_name().unwrap().to_str().unwrap()
+        ));
+        let display_path = display_path.to_str().unwrap();
 
         let display_file =
             libredox::call::open(&display_path, (O_CLOEXEC | O_NONBLOCK | O_RDWR) as _, 0)

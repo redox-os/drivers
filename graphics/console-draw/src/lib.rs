@@ -226,4 +226,37 @@ impl TextScreen {
 
         damage
     }
+
+    pub fn resize(&mut self, old_map: &mut DisplayMap, new_map: &mut DisplayMap) {
+        // FIXME fold row when target is narrower and maybe unfold when it is wider
+        fn copy_row(
+            old_map: &mut DisplayMap,
+            new_map: &mut DisplayMap,
+            from_row: usize,
+            to_row: usize,
+        ) {
+            for x in 0..cmp::min(old_map.width, new_map.width) {
+                let old_idx = from_row * old_map.width + x;
+                let new_idx = to_row * new_map.width + x;
+                unsafe {
+                    (*new_map.offscreen)[new_idx] = (*old_map.offscreen)[old_idx];
+                }
+            }
+        }
+
+        if new_map.height >= old_map.height {
+            for row in 0..old_map.height {
+                copy_row(old_map, new_map, row, row);
+            }
+        } else {
+            let deleted_rows = (old_map.height - new_map.height).div_ceil(16);
+            for row in 0..new_map.height {
+                if row + (deleted_rows + 1) * 16 >= old_map.height {
+                    break;
+                }
+                copy_row(old_map, new_map, row + deleted_rows * 16, row);
+            }
+            self.console.state.y = self.console.state.y.saturating_sub(deleted_rows);
+        }
+    }
 }

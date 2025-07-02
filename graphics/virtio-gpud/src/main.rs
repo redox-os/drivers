@@ -31,7 +31,7 @@ use virtio_core::MSIX_PRIMARY_VECTOR;
 
 mod scheme;
 
-// const VIRTIO_GPU_EVENT_DISPLAY: u32 = 1 << 0;
+const VIRTIO_GPU_EVENT_DISPLAY: u32 = 1 << 0;
 const VIRTIO_GPU_MAX_SCANOUTS: usize = 16;
 
 #[repr(C)]
@@ -457,6 +457,8 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
         .transport
         .setup_queue(MSIX_PRIMARY_VECTOR, &device.irq_handle)?;
 
+    device.transport.setup_config_notify(MSIX_PRIMARY_VECTOR);
+
     device.transport.run_device();
     deamon.ready().unwrap();
 
@@ -471,6 +473,7 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
         enum Source {
             Input,
             Scheme,
+            Interrupt,
         }
     }
 
@@ -490,8 +493,15 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
             event::EventFlags::READ,
         )
         .unwrap();
+    event_queue
+        .subscribe(
+            device.irq_handle.as_raw_fd() as usize,
+            Source::Interrupt,
+            event::EventFlags::READ,
+        )
+        .unwrap();
 
-    let all = [Source::Input, Source::Scheme];
+    let all = [Source::Input, Source::Scheme, Source::Interrupt];
     for event in all
         .into_iter()
         .chain(event_queue.map(|e| e.expect("virtio-gpud: failed to get next event").user_data))
@@ -510,6 +520,23 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
                     .tick()
                     .expect("virtio-gpud: failed to process scheme events");
             }
+            Source::Interrupt => loop {
+                let before_gen = device.transport.config_generation();
+
+                let events = config.events_read.get();
+
+                if events & VIRTIO_GPU_EVENT_DISPLAY != 0 {
+                    futures::executor::block_on(scheme.adapter_mut().update_displays(config))
+                        .unwrap();
+                    scheme.notify_displays_changed();
+                    config.events_clear.set(VIRTIO_GPU_EVENT_DISPLAY);
+                }
+
+                let after_gen = device.transport.config_generation();
+                if before_gen == after_gen {
+                    break;
+                }
+            },
         }
     }
 
