@@ -528,6 +528,7 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
                 if events & VIRTIO_GPU_EVENT_DISPLAY != 0 {
                     futures::executor::block_on(scheme.adapter_mut().update_displays(config))
                         .unwrap();
+                    scheme.notify_displays_changed();
                     config.events_clear.set(VIRTIO_GPU_EVENT_DISPLAY);
                 }
 
