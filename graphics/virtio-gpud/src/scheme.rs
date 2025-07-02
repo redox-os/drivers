@@ -64,6 +64,40 @@ pub struct VirtGpuAdapter<'a> {
 }
 
 impl VirtGpuAdapter<'_> {
+    pub async fn update_displays(&mut self, config: &mut GpuConfig) -> Result<(), Error> {
+        let mut display_info = self.get_display_info().await?;
+        let raw_displays = &mut display_info.display_info[..config.num_scanouts() as usize];
+
+        self.displays.resize(
+            raw_displays.len(),
+            Display {
+                width: 0,
+                height: 0,
+                active_resource: None,
+            },
+        );
+        for (i, info) in raw_displays.iter().enumerate() {
+            log::info!(
+                "virtio-gpu: display {i} ({}x{}px)",
+                info.rect.width,
+                info.rect.height
+            );
+
+            if info.rect.width == 0 || info.rect.height == 0 {
+                // QEMU gives all displays other than the first a zero width and height, but trying
+                // to attach a zero sized framebuffer to the display will result an error, so
+                // default to 640x480px.
+                self.displays[i].width = 640;
+                self.displays[i].height = 480;
+            } else {
+                self.displays[i].width = info.rect.width;
+                self.displays[i].height = info.rect.height;
+            }
+        }
+
+        Ok(())
+    }
+
     async fn send_request<T>(&self, request: Dma<T>) -> Result<Dma<ControlHeader>, Error> {
         let header = Dma::new(ControlHeader::default())?;
         let command = ChainBuilder::new()
@@ -350,7 +384,7 @@ pub struct GpuScheme {}
 
 impl<'a> GpuScheme {
     pub async fn new(
-        config: &'a mut GpuConfig,
+        config: &mut GpuConfig,
         control_queue: Arc<Queue<'a>>,
         cursor_queue: Arc<Queue<'a>>,
         transport: Arc<dyn Transport>,
@@ -362,33 +396,7 @@ impl<'a> GpuScheme {
             displays: vec![],
         };
 
-        let mut display_info = adapter.get_display_info().await?;
-        let raw_displays = &mut display_info.display_info[..config.num_scanouts() as usize];
-
-        for info in raw_displays.iter() {
-            log::info!(
-                "virtio-gpu: opening display ({}x{}px)",
-                info.rect.width,
-                info.rect.height
-            );
-
-            if info.rect.width == 0 || info.rect.height == 0 {
-                // QEMU gives all displays other than the first a zero width and height, but trying
-                // to attach a zero sized framebuffer to the display will result an error, so
-                // default to 640x480px.
-                adapter.displays.push(Display {
-                    width: 640,
-                    height: 480,
-                    active_resource: None,
-                });
-            } else {
-                adapter.displays.push(Display {
-                    width: info.rect.width,
-                    height: info.rect.height,
-                    active_resource: None,
-                });
-            }
-        }
+        adapter.update_displays(config).await?;
 
         let scheme = GraphicsScheme::new(adapter, "display.virtio-gpu".to_owned());
         let handle = DisplayHandle::new("virtio-gpu").unwrap();
