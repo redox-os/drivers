@@ -25,20 +25,37 @@ impl Into<GpuRect> for Damage {
     }
 }
 
-pub struct VirtGpuFramebuffer {
+pub struct VirtGpuFramebuffer<'a> {
+    queue: Arc<Queue<'a>>,
     id: ResourceId,
     sgl: sgl::Sgl,
     width: u32,
     height: u32,
 }
 
-impl Framebuffer for VirtGpuFramebuffer {
+impl Framebuffer for VirtGpuFramebuffer<'_> {
     fn width(&self) -> u32 {
         self.width
     }
 
     fn height(&self) -> u32 {
         self.height
+    }
+}
+
+impl Drop for VirtGpuFramebuffer<'_> {
+    fn drop(&mut self) {
+        futures::executor::block_on(async {
+            let request = Dma::new(ResourceUnref::new(self.id)).unwrap();
+
+            let header = Dma::new(ControlHeader::default()).unwrap();
+            let command = ChainBuilder::new()
+                .chain(Buffer::new(&request))
+                .chain(Buffer::new(&header).flags(DescriptorFlags::WRITE_ONLY))
+                .build();
+
+            self.queue.send(command).await;
+        });
     }
 }
 
@@ -179,8 +196,8 @@ impl VirtGpuAdapter<'_> {
     }
 }
 
-impl GraphicsAdapter for VirtGpuAdapter<'_> {
-    type Framebuffer = VirtGpuFramebuffer;
+impl<'a> GraphicsAdapter for VirtGpuAdapter<'a> {
+    type Framebuffer = VirtGpuFramebuffer<'a>;
     type Cursor = VirtGpuCursor;
 
     fn display_count(&self) -> usize {
@@ -244,6 +261,7 @@ impl GraphicsAdapter for VirtGpuAdapter<'_> {
             assert_eq!(header.ty, CommandTy::RespOkNodata);
 
             VirtGpuFramebuffer {
+                queue: self.control_queue.clone(),
                 id: res_id,
                 sgl,
                 width,
