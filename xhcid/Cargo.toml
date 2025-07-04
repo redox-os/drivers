@@ -21,7 +21,7 @@ lazy_static = "1.4"
 log = "0.4"
 redox-daemon = "0.1"
 redox_event = "0.4.1"
-redox-scheme = "0.4"
+redox-scheme = "0.6.2"
 redox_syscall = "0.5"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

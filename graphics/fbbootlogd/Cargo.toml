@@ -9,7 +9,7 @@ ransid = "0.4"
 redox_event = "0.4"
 redox_syscall = "0.5"
 redox-daemon = "0.1"
-redox-scheme = "0.4"
+redox-scheme = "0.6.2"
 
 console-draw = { path = "../console-draw" }
 graphics-ipc = { path = "../graphics-ipc" }

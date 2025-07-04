@@ -114,7 +114,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
                 match req.kind() {
                     RequestKind::Call(call) => {
-                        let response = call.handle_scheme(&mut scheme);
+                        let response = call.handle_sync(&mut scheme);
                         socket
                             .write_response(response, SignalBehavior::Restart)
                             .expect("acpid: failed to write response");

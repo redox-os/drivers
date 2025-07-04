@@ -19,9 +19,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use inputd::{VtActivate, VtEvent, VtEventKind};
 
 use libredox::errno::ESTALE;
-use redox_scheme::{RequestKind, Scheme, SignalBehavior, Socket};
+use redox_scheme::scheme::SchemeSync;
+use redox_scheme::{CallerCtx, OpenResult, RequestKind, Response, SignalBehavior, Socket};
 
 use orbclient::{Event, EventOption};
+use syscall::schemev2::NewFdFlags;
 use syscall::{Error as SysError, EventFlags, EINVAL};
 
 enum Handle {
@@ -121,8 +123,8 @@ impl InputScheme {
     }
 }
 
-impl Scheme for InputScheme {
-    fn open(&mut self, path: &str, _flags: usize, _uid: u32, _gid: u32) -> syscall::Result<usize> {
+impl SchemeSync for InputScheme {
+    fn open(&mut self, path: &str, _flags: usize, _ctx: &CallerCtx) -> syscall::Result<OpenResult> {
         let mut path_parts = path.split('/');
 
         let command = path_parts.next().ok_or(SysError::new(EINVAL))?;
@@ -211,10 +213,13 @@ impl Scheme for InputScheme {
         log::info!("inputd: {path} channel has been opened");
 
         self.handles.insert(fd, handle_ty);
-        Ok(fd)
+        Ok(OpenResult::ThisScheme {
+            number: fd,
+            flags: NewFdFlags::empty(),
+        })
     }
 
-    fn fpath(&mut self, id: usize, buf: &mut [u8]) -> syscall::Result<usize> {
+    fn fpath(&mut self, id: usize, buf: &mut [u8], _ctx: &CallerCtx) -> syscall::Result<usize> {
         let handle = self.handles.get(&id).ok_or(SysError::new(EINVAL))?;
 
         if let Handle::Consumer { vt, .. } = handle {
@@ -236,6 +241,7 @@ impl Scheme for InputScheme {
         buf: &mut [u8],
         _offset: u64,
         _fcntl_flags: u32,
+        _ctx: &CallerCtx,
     ) -> syscall::Result<usize> {
         let handle = self.handles.get_mut(&id).ok_or(SysError::new(EINVAL))?;
 
@@ -294,6 +300,7 @@ impl Scheme for InputScheme {
         buf: &[u8],
         _offset: u64,
         _fcntl_flags: u32,
+        _ctx: &CallerCtx,
     ) -> syscall::Result<usize> {
         self.has_new_events = true;
 
@@ -429,6 +436,7 @@ impl Scheme for InputScheme {
         &mut self,
         id: usize,
         flags: syscall::EventFlags,
+        _ctx: &CallerCtx,
     ) -> syscall::Result<syscall::EventFlags> {
         let handle = self.handles.get_mut(&id).ok_or(SysError::new(EINVAL))?;
 
@@ -496,7 +504,7 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
         match request.kind() {
             RequestKind::Call(call_request) => {
                 socket_file.write_response(
-                    call_request.handle_scheme(&mut scheme),
+                    call_request.handle_sync(&mut scheme),
                     SignalBehavior::Restart,
                 )?;
             }
@@ -527,7 +535,10 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
                     }
 
                     // Notify the consumer that we have some events to read. Yum yum.
-                    socket_file.post_fevent(*id, EventFlags::EVENT_READ.bits())?;
+                    socket_file.write_response(
+                        Response::post_fevent(*id, EventFlags::EVENT_READ.bits()),
+                        SignalBehavior::Restart,
+                    )?;
 
                     *notified = true;
                 }
@@ -542,7 +553,10 @@ fn deamon(deamon: redox_daemon::Daemon) -> anyhow::Result<()> {
                     }
 
                     // Notify the consumer that we have some events to read. Yum yum.
-                    socket_file.post_fevent(*id, EventFlags::EVENT_READ.bits())?;
+                    socket_file.write_response(
+                        Response::post_fevent(*id, EventFlags::EVENT_READ.bits()),
+                        SignalBehavior::Restart,
+                    )?;
 
                     *notified = true;
                 }

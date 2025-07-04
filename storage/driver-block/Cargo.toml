@@ -15,4 +15,4 @@ futures = { version = "0.3.28", features = ["executor"] }
 
 redox-daemon = "0.1"
 redox_syscall = { version = "0.5", features = ["std"] }
-redox-scheme = "0.5"
+redox-scheme = "0.6.2"

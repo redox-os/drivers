@@ -1,7 +1,9 @@
 use inputd::ProducerHandle;
-use redox_scheme::Scheme;
+use redox_scheme::scheme::SchemeSync;
+use redox_scheme::{CallerCtx, OpenResult};
 use std::str;
 use syscall::data::Stat;
+use syscall::schemev2::NewFdFlags;
 use syscall::{Error, Result, EACCES, EINVAL, MODE_CHR};
 
 use crate::bga::Bga;
@@ -25,10 +27,13 @@ impl BgaScheme {
     }
 }
 
-impl Scheme for BgaScheme {
-    fn open(&mut self, _path: &str, _flags: usize, uid: u32, _gid: u32) -> Result<usize> {
-        if uid == 0 {
-            Ok(0)
+impl SchemeSync for BgaScheme {
+    fn open(&mut self, _path: &str, _flags: usize, ctx: &CallerCtx) -> Result<OpenResult> {
+        if ctx.uid == 0 {
+            Ok(OpenResult::ThisScheme {
+                number: 0,
+                flags: NewFdFlags::empty(),
+            })
         } else {
             Err(Error::new(EACCES))
         }
@@ -40,6 +45,7 @@ impl Scheme for BgaScheme {
         buf: &mut [u8],
         _offset: u64,
         _fcntl_flags: u32,
+        _ctx: &CallerCtx,
     ) -> Result<usize> {
         let mut i = 0;
         let data = format!("{},{}\n", self.bga.width(), self.bga.height()).into_bytes();
@@ -50,7 +56,14 @@ impl Scheme for BgaScheme {
         Ok(i)
     }
 
-    fn write(&mut self, _id: usize, buf: &[u8], _offset: u64, _fcntl_flags: u32) -> Result<usize> {
+    fn write(
+        &mut self,
+        _id: usize,
+        buf: &[u8],
+        _offset: u64,
+        _fcntl_flags: u32,
+        _ctx: &CallerCtx,
+    ) -> Result<usize> {
         let string = str::from_utf8(buf).or(Err(Error::new(EINVAL)))?;
         let string = string.trim();
 
@@ -75,7 +88,7 @@ impl Scheme for BgaScheme {
         Ok(buf.len())
     }
 
-    fn fpath(&mut self, _file: usize, buf: &mut [u8]) -> Result<usize> {
+    fn fpath(&mut self, _file: usize, buf: &mut [u8], _ctx: &CallerCtx) -> Result<usize> {
         let mut i = 0;
         let scheme_path = b"bga";
         while i < buf.len() && i < scheme_path.len() {
@@ -85,16 +98,16 @@ impl Scheme for BgaScheme {
         Ok(i)
     }
 
-    fn fstat(&mut self, _id: usize, stat: &mut Stat) -> Result<usize> {
+    fn fstat(&mut self, _id: usize, stat: &mut Stat, _ctx: &CallerCtx) -> Result<()> {
         *stat = Stat {
             st_mode: MODE_CHR | 0o666,
             ..Default::default()
         };
 
-        Ok(0)
+        Ok(())
     }
 
-    fn fcntl(&mut self, _id: usize, _cmd: usize, _arg: usize) -> Result<usize> {
+    fn fcntl(&mut self, _id: usize, _cmd: usize, _arg: usize, _ctx: &CallerCtx) -> Result<usize> {
         Ok(0)
     }
 }
