@@ -25,10 +25,11 @@ use std::{cmp, fmt, io, mem, str};
 use common::dma::Dma;
 use futures::executor::block_on;
 use log::{debug, error, info, trace, warn};
+use redox_scheme::scheme::SchemeSync;
 use smallvec::SmallVec;
 
 use common::io::Io;
-use redox_scheme::{CallerCtx, OpenResult, Scheme};
+use redox_scheme::{CallerCtx, OpenResult};
 use syscall::schemev2::NewFdFlags;
 use syscall::{
     Error, Result, Stat, EACCES, EBADF, EBADFD, EBADMSG, EINVAL, EIO, EISDIR, ENOENT, ENOSYS,
@@ -2098,8 +2099,8 @@ impl Xhci {
     }
 }
 
-impl Scheme for &Xhci {
-    fn xopen(&mut self, path_str: &str, flags: usize, ctx: &CallerCtx) -> Result<OpenResult> {
+impl SchemeSync for &Xhci {
+    fn open(&mut self, path_str: &str, flags: usize, ctx: &CallerCtx) -> Result<OpenResult> {
         if ctx.uid != 0 {
             return Err(Error::new(EACCES));
         }
@@ -2152,7 +2153,7 @@ impl Scheme for &Xhci {
         })
     }
 
-    fn fstat(&mut self, id: usize, stat: &mut Stat) -> Result<usize> {
+    fn fstat(&mut self, id: usize, stat: &mut Stat, _ctx: &CallerCtx) -> Result<()> {
         let guard = self.handles.get(&id).ok_or(Error::new(EBADF))?;
 
         stat.st_mode = match (&*guard).get_handle_type() {
@@ -2174,10 +2175,10 @@ impl Scheme for &Xhci {
             _ => {}
         }
 
-        Ok(0)
+        Ok(())
     }
 
-    fn fpath(&mut self, fd: usize, buffer: &mut [u8]) -> Result<usize> {
+    fn fpath(&mut self, fd: usize, buffer: &mut [u8], _ctx: &CallerCtx) -> Result<usize> {
         let mut cursor = io::Cursor::new(buffer);
 
         let guard = self.handles.get(&fd).ok_or(Error::new(EBADF))?;
@@ -2195,7 +2196,14 @@ impl Scheme for &Xhci {
         Ok(src_len)
     }
 
-    fn read(&mut self, fd: usize, buf: &mut [u8], offset: u64, _fcntl_flags: u32) -> Result<usize> {
+    fn read(
+        &mut self,
+        fd: usize,
+        buf: &mut [u8],
+        offset: u64,
+        _fcntl_flags: u32,
+        _ctx: &CallerCtx,
+    ) -> Result<usize> {
         let offset = offset as usize;
         let mut guard = self.handles.get_mut(&fd).ok_or(Error::new(EBADF))?;
         trace!(
@@ -2258,7 +2266,14 @@ impl Scheme for &Xhci {
             }
         }
     }
-    fn write(&mut self, fd: usize, buf: &[u8], _offset: u64, _fcntl_flags: u32) -> Result<usize> {
+    fn write(
+        &mut self,
+        fd: usize,
+        buf: &[u8],
+        _offset: u64,
+        _fcntl_flags: u32,
+        _ctx: &CallerCtx,
+    ) -> Result<usize> {
         let mut guard = self.handles.get_mut(&fd).ok_or(Error::new(EBADF))?;
         trace!(
             "WRITE fd={}, handle={:?}, buf=(addr {:p}, length {})",

@@ -4,7 +4,9 @@ use std::ptr;
 use console_draw::TextScreen;
 use graphics_ipc::v2::V2GraphicsHandle;
 use inputd::ConsumerHandle;
-use redox_scheme::Scheme;
+use redox_scheme::scheme::SchemeSync;
+use redox_scheme::{CallerCtx, OpenResult};
+use syscall::schemev2::NewFdFlags;
 use syscall::{Error, Result, EINVAL, ENOENT};
 
 pub struct DisplayMap {
@@ -110,16 +112,19 @@ impl FbbootlogScheme {
     }
 }
 
-impl Scheme for FbbootlogScheme {
-    fn open(&mut self, path_str: &str, _flags: usize, _uid: u32, _gid: u32) -> Result<usize> {
+impl SchemeSync for FbbootlogScheme {
+    fn open(&mut self, path_str: &str, _flags: usize, _ctx: &CallerCtx) -> Result<OpenResult> {
         if !path_str.is_empty() {
             return Err(Error::new(ENOENT));
         }
 
-        Ok(0)
+        Ok(OpenResult::ThisScheme {
+            number: 0,
+            flags: NewFdFlags::empty(),
+        })
     }
 
-    fn fpath(&mut self, _id: usize, buf: &mut [u8]) -> Result<usize> {
+    fn fpath(&mut self, _id: usize, buf: &mut [u8], _ctx: &CallerCtx) -> Result<usize> {
         let path = b"fbbootlog:";
 
         let mut i = 0;
@@ -131,8 +136,8 @@ impl Scheme for FbbootlogScheme {
         Ok(i)
     }
 
-    fn fsync(&mut self, _id: usize) -> Result<usize> {
-        Ok(0)
+    fn fsync(&mut self, _id: usize, _ctx: &CallerCtx) -> Result<()> {
+        Ok(())
     }
 
     fn read(
@@ -141,11 +146,19 @@ impl Scheme for FbbootlogScheme {
         _buf: &mut [u8],
         _offset: u64,
         _fcntl_flags: u32,
+        _ctx: &CallerCtx,
     ) -> Result<usize> {
         Err(Error::new(EINVAL))
     }
 
-    fn write(&mut self, _id: usize, buf: &[u8], _offset: u64, _fcntl_flags: u32) -> Result<usize> {
+    fn write(
+        &mut self,
+        _id: usize,
+        buf: &[u8],
+        _offset: u64,
+        _fcntl_flags: u32,
+        _ctx: &CallerCtx,
+    ) -> Result<usize> {
         if let Some(map) = &mut self.display_map {
             Self::handle_resize(map, &mut self.text_screen);
 

@@ -210,7 +210,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
         match request.kind() {
             RequestKind::Call(call_request) => {
-                let resp = call_request.handle_scheme(&mut &*hci);
+                let resp = call_request.handle_sync(&mut &*hci);
                 socket
                     .write_response(resp, SignalBehavior::Restart)
                     .expect("xhcid: failed to write scheme");

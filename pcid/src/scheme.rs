@@ -1,7 +1,8 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use pci_types::PciAddress;
-use redox_scheme::{CallerCtx, OpenResult, Scheme};
+use redox_scheme::scheme::SchemeSync;
+use redox_scheme::{CallerCtx, OpenResult};
 use syscall::dirent::{DirEntry, DirentBuf, DirentKind};
 use syscall::error::{Error, Result, EACCES, EBADF, EINVAL, EIO, EISDIR, ENOENT, ENOTDIR};
 use syscall::flag::{MODE_CHR, MODE_DIR, O_DIRECTORY, O_STAT};
@@ -45,8 +46,8 @@ enum ChannelState {
 
 const DEVICE_CONTENTS: &[&str] = &["channel"];
 
-impl Scheme for PciScheme {
-    fn xopen(&mut self, path: &str, flags: usize, ctx: &CallerCtx) -> Result<OpenResult> {
+impl SchemeSync for PciScheme {
+    fn open(&mut self, path: &str, flags: usize, ctx: &CallerCtx) -> Result<OpenResult> {
         log::trace!("OPEN `{}` flags {}", path, flags);
 
         // TODO: Check flags are correct
@@ -97,7 +98,7 @@ impl Scheme for PciScheme {
             flags: NewFdFlags::POSITIONED,
         })
     }
-    fn fstat(&mut self, id: usize, stat: &mut syscall::Stat) -> Result<usize> {
+    fn fstat(&mut self, id: usize, stat: &mut syscall::Stat, _ctx: &CallerCtx) -> Result<()> {
         let handle = self.handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
         let (len, mode) = match handle.inner {
@@ -107,7 +108,7 @@ impl Scheme for PciScheme {
         };
         stat.st_size = len as u64;
         stat.st_mode = mode;
-        Ok(0)
+        Ok(())
     }
     fn read(
         &mut self,
@@ -115,6 +116,7 @@ impl Scheme for PciScheme {
         buf: &mut [u8],
         _offset: u64,
         _fcntl_flags: u32,
+        _ctx: &CallerCtx,
     ) -> Result<usize> {
         let handle = self.handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
@@ -174,7 +176,14 @@ impl Scheme for PciScheme {
         Ok(buf)
     }
 
-    fn write(&mut self, id: usize, buf: &[u8], _offset: u64, _fcntl_flags: u32) -> Result<usize> {
+    fn write(
+        &mut self,
+        id: usize,
+        buf: &[u8],
+        _offset: u64,
+        _fcntl_flags: u32,
+        _ctx: &CallerCtx,
+    ) -> Result<usize> {
         let handle = self.handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
         if handle.stat {

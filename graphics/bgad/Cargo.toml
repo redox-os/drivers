@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 orbclient = "0.3.47"
 redox-daemon = "0.1"
-redox-scheme = "0.4"
+redox-scheme = "0.6.2"
 redox_syscall = "0.5"
 
 common = { path = "../../common" }

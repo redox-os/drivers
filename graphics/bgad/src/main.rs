@@ -47,10 +47,10 @@ fn main() {
             };
             match request.kind() {
                 RequestKind::Call(call) => {
-                    let response = call.handle_scheme(&mut scheme);
+                    let response = call.handle_sync(&mut scheme);
 
                     socket
-                        .write_responses(&[response], SignalBehavior::Restart)
+                        .write_response(response, SignalBehavior::Restart)
                         .expect("bgad: failed to write next scheme response");
                 }
                 RequestKind::OnClose { id } => {
