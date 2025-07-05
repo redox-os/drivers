@@ -3,10 +3,8 @@ extern crate syscall;
 
 use driver_graphics::GraphicsScheme;
 use event::{user_data, EventQueue};
-use inputd::{DisplayHandle, VtEventKind};
+use inputd::DisplayHandle;
 use std::env;
-use std::fs::File;
-use std::io::Write;
 use std::os::fd::AsRawFd;
 
 use crate::scheme::{FbAdapter, FrameBuffer};
@@ -103,11 +101,6 @@ fn inner(daemon: redox_daemon::Daemon, framebuffers: Vec<FrameBuffer>) -> ! {
         )
         .unwrap();
 
-    let mut disable_graphical_debug = Some(
-        File::open("/scheme/debug/disable-graphical-debug")
-            .expect("vesad: Failed to open /scheme/debug/disable-graphical-debug"),
-    );
-
     libredox::call::setrens(0, 0).expect("vesad: failed to enter null namespace");
 
     daemon.ready().expect("failed to notify parent");
@@ -123,16 +116,6 @@ fn inner(daemon: redox_daemon::Daemon, framebuffers: Vec<FrameBuffer>) -> ! {
                     .read_vt_event()
                     .expect("vesad: failed to read display handle")
                 {
-                    if let VtEventKind::Activate = vt_event.kind {
-                        // Disable the kernel graphical debug writing once switching vt's for the
-                        // first time. This way the kernel graphical debug remains enabled if the
-                        // userspace logging infrastructure doesn't start up because for example a
-                        // kernel panic happened prior to it starting up or logd crashed.
-                        if let Some(mut disable_graphical_debug) = disable_graphical_debug.take() {
-                            let _ = disable_graphical_debug.write(&[1]);
-                        }
-                    }
-
                     scheme.handle_vt_event(vt_event);
                 }
             }
