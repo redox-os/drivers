@@ -9,10 +9,8 @@ use std::fs::File;
 use std::io::Write;
 use std::os::fd::AsRawFd;
 
-use crate::framebuffer::FrameBuffer;
-use crate::scheme::FbAdapter;
+use crate::scheme::{FbAdapter, FrameBuffer};
 
-mod framebuffer;
 mod scheme;
 
 fn main() {
