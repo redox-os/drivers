@@ -95,6 +95,8 @@ impl FbbootlogScheme {
                             },
                         );
 
+                        let _ = map.display_handle.destroy_dumb_framebuffer(map.fb);
+
                         map.fb = fb;
                         map.inner = new_map;
 

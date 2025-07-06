@@ -496,6 +496,23 @@ impl<T: GraphicsAdapter> SchemeSync for GraphicsScheme<T> {
 
                     Ok(size_of::<ipc::DumbFramebufferMapOffset>())
                 }
+                ipc::DESTROY_DUMB_FRAMEBUFFER => {
+                    if payload.len() < size_of::<ipc::DestroyDumbFramebuffer>() {
+                        return Err(Error::new(EINVAL));
+                    }
+                    let payload = unsafe {
+                        transmute::<
+                            &mut [u8; size_of::<ipc::DestroyDumbFramebuffer>()],
+                            &mut ipc::DestroyDumbFramebuffer,
+                        >(payload.as_mut_array().unwrap())
+                    };
+
+                    if fbs.remove(&{ payload.fb_id }).is_none() {
+                        return Err(Error::new(ENOENT));
+                    }
+
+                    Ok(size_of::<ipc::DestroyDumbFramebuffer>())
+                }
                 ipc::UPDATE_PLANE => {
                     if payload.len() < size_of::<ipc::UpdatePlane>() {
                         return Err(Error::new(EINVAL));
