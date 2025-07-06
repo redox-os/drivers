@@ -33,10 +33,13 @@ unsafe fn sys_call<T>(
     ))
 }
 
-/// A graphics handle using the (currently unstable) v2 graphics API.
+/// A graphics handle using the v2 graphics API.
 ///
 /// The v2 graphics API allows creating framebuffers on the fly, using them for page flipping and
 /// handles all displays using a single fd.
+///
+/// This API is not yet stable. Do not depend on it outside of the drivers repo until it has been
+/// stabilized.
 pub struct V2GraphicsHandle {
     file: File,
 }
