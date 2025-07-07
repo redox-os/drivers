@@ -1,6 +1,7 @@
+use console_draw::TextScreen;
 use graphics_ipc::v2::{Damage, V2GraphicsHandle};
 use inputd::ConsumerHandle;
-use std::io;
+use std::{io, ptr};
 
 pub struct Display {
     pub input_handle: ConsumerHandle,
@@ -53,6 +54,55 @@ impl Display {
             }
             Err(err) => {
                 eprintln!("failed to resize display: {}", err);
+            }
+        }
+    }
+
+    pub fn handle_resize(map: &mut DisplayMap, text_screen: &mut TextScreen) {
+        let (width, height) = match map.display_handle.display_size(0) {
+            Ok((width, height)) => (width, height),
+            Err(err) => {
+                eprintln!("fbcond: failed to get display size: {}", err);
+                (map.inner.width() as u32, map.inner.height() as u32)
+            }
+        };
+
+        if width as usize != map.inner.width() || height as usize != map.inner.height() {
+            match map.display_handle.create_dumb_framebuffer(width, height) {
+                Ok(fb) => match map.display_handle.map_dumb_framebuffer(fb, width, height) {
+                    Ok(mut new_map) => {
+                        let count = new_map.ptr().len();
+                        unsafe {
+                            ptr::write_bytes(new_map.ptr_mut() as *mut u32, 0, count);
+                        }
+
+                        text_screen.resize(
+                            &mut console_draw::DisplayMap {
+                                offscreen: map.inner.ptr_mut(),
+                                width: map.inner.width(),
+                                height: map.inner.height(),
+                            },
+                            &mut console_draw::DisplayMap {
+                                offscreen: new_map.ptr_mut(),
+                                width: new_map.width(),
+                                height: new_map.height(),
+                            },
+                        );
+
+                        let _ = map.display_handle.destroy_dumb_framebuffer(map.fb);
+
+                        map.fb = fb;
+                        map.inner = new_map;
+
+                        eprintln!("fbcond: mapped display");
+                    }
+                    Err(err) => {
+                        eprintln!("fbcond: failed to open display: {}", err);
+                    }
+                },
+                Err(err) => {
+                    eprintln!("fbcond: failed to create framebuffer: {}", err);
+                }
             }
         }
     }
