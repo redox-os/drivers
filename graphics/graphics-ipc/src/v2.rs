@@ -33,10 +33,13 @@ unsafe fn sys_call<T>(
     ))
 }
 
-/// A graphics handle using the (currently unstable) v2 graphics API.
+/// A graphics handle using the v2 graphics API.
 ///
 /// The v2 graphics API allows creating framebuffers on the fly, using them for page flipping and
 /// handles all displays using a single fd.
+///
+/// This API is not yet stable. Do not depend on it outside of the drivers repo until it has been
+/// stabilized.
 pub struct V2GraphicsHandle {
     file: File,
 }
@@ -121,6 +124,19 @@ impl V2GraphicsHandle {
         Ok(unsafe { DisplayMap::new(offscreen, width as usize, height as usize) })
     }
 
+    pub fn destroy_dumb_framebuffer(&self, id: usize) -> io::Result<usize> {
+        let mut cmd = ipc::DestroyDumbFramebuffer { fb_id: id };
+        unsafe {
+            sys_call(
+                &self.file,
+                &mut cmd,
+                0,
+                &[ipc::DESTROY_DUMB_FRAMEBUFFER, 0, 0],
+            )?;
+        }
+        Ok(cmd.fb_id)
+    }
+
     pub fn update_plane(&self, display_id: usize, fb_id: usize, damage: Damage) -> io::Result<()> {
         let mut cmd = ipc::UpdatePlane {
             display_id,
@@ -169,7 +185,13 @@ pub mod ipc {
         pub offset: usize,
     }
 
-    pub const UPDATE_PLANE: u64 = 5;
+    pub const DESTROY_DUMB_FRAMEBUFFER: u64 = 5;
+    #[repr(C, packed)]
+    pub struct DestroyDumbFramebuffer {
+        pub fb_id: usize,
+    }
+
+    pub const UPDATE_PLANE: u64 = 6;
     #[repr(C, packed)]
     pub struct UpdatePlane {
         pub display_id: usize,
