@@ -122,6 +122,8 @@ impl TextScreen {
 
     pub fn write(&mut self, buf: &[u8]) -> Result<usize> {
         if let Some(map) = &mut self.display.map {
+            Display::handle_resize(map, &mut self.inner);
+
             let damage = self.inner.write(
                 &mut console_draw::DisplayMap {
                     offscreen: map.inner.ptr_mut(),

@@ -1,6 +1,7 @@
-use graphics_ipc::v1::{Damage, V1GraphicsHandle};
+use console_draw::TextScreen;
+use graphics_ipc::v2::{Damage, V2GraphicsHandle};
 use inputd::ConsumerHandle;
-use std::io;
+use std::{io, ptr};
 
 pub struct Display {
     pub input_handle: ConsumerHandle,
@@ -8,8 +9,9 @@ pub struct Display {
 }
 
 pub struct DisplayMap {
-    display_handle: V1GraphicsHandle,
-    pub inner: graphics_ipc::v1::DisplayMap,
+    display_handle: V2GraphicsHandle,
+    fb: usize,
+    pub inner: graphics_ipc::v2::DisplayMap,
 }
 
 impl Display {
@@ -26,12 +28,17 @@ impl Display {
 
     /// Re-open the display after a handoff.
     pub fn reopen_for_handoff(&mut self) {
-        let display_file = self.input_handle.open_display().unwrap();
-        let new_display_handle = V1GraphicsHandle::from_file(display_file).unwrap();
+        let display_file = self.input_handle.open_display_v2().unwrap();
+        let new_display_handle = V2GraphicsHandle::from_file(display_file).unwrap();
 
         eprintln!("fbcond: Opened new display");
 
-        match new_display_handle.map_display() {
+        let (width, height) = new_display_handle.display_size(0).unwrap();
+        let fb = new_display_handle
+            .create_dumb_framebuffer(width, height)
+            .unwrap();
+
+        match new_display_handle.map_dumb_framebuffer(fb, width, height) {
             Ok(map) => {
                 eprintln!(
                     "fbcond: Mapped new display with size {}x{}",
@@ -41,6 +48,7 @@ impl Display {
 
                 self.map = Some(DisplayMap {
                     display_handle: new_display_handle,
+                    fb,
                     inner: map,
                 });
             }
@@ -50,9 +58,58 @@ impl Display {
         }
     }
 
-    pub fn sync_rect(&mut self, sync_rect: Damage) {
+    pub fn handle_resize(map: &mut DisplayMap, text_screen: &mut TextScreen) {
+        let (width, height) = match map.display_handle.display_size(0) {
+            Ok((width, height)) => (width, height),
+            Err(err) => {
+                eprintln!("fbcond: failed to get display size: {}", err);
+                (map.inner.width() as u32, map.inner.height() as u32)
+            }
+        };
+
+        if width as usize != map.inner.width() || height as usize != map.inner.height() {
+            match map.display_handle.create_dumb_framebuffer(width, height) {
+                Ok(fb) => match map.display_handle.map_dumb_framebuffer(fb, width, height) {
+                    Ok(mut new_map) => {
+                        let count = new_map.ptr().len();
+                        unsafe {
+                            ptr::write_bytes(new_map.ptr_mut() as *mut u32, 0, count);
+                        }
+
+                        text_screen.resize(
+                            &mut console_draw::DisplayMap {
+                                offscreen: map.inner.ptr_mut(),
+                                width: map.inner.width(),
+                                height: map.inner.height(),
+                            },
+                            &mut console_draw::DisplayMap {
+                                offscreen: new_map.ptr_mut(),
+                                width: new_map.width(),
+                                height: new_map.height(),
+                            },
+                        );
+
+                        let _ = map.display_handle.destroy_dumb_framebuffer(map.fb);
+
+                        map.fb = fb;
+                        map.inner = new_map;
+
+                        eprintln!("fbcond: mapped display");
+                    }
+                    Err(err) => {
+                        eprintln!("fbcond: failed to open display: {}", err);
+                    }
+                },
+                Err(err) => {
+                    eprintln!("fbcond: failed to create framebuffer: {}", err);
+                }
+            }
+        }
+    }
+
+    pub fn sync_rect(&mut self, damage: Damage) {
         if let Some(map) = &self.map {
-            map.display_handle.sync_rect(sync_rect).unwrap();
+            map.display_handle.update_plane(0, map.fb, damage).unwrap();
         }
     }
 }
