@@ -1,7 +1,8 @@
 #![feature(slice_as_array)]
 
 use std::collections::{BTreeMap, HashMap};
-use std::io;
+use std::fs::File;
+use std::io::{self, Write};
 use std::mem::transmute;
 use std::sync::Arc;
 
@@ -53,6 +54,7 @@ pub struct GraphicsScheme<T: GraphicsAdapter> {
     adapter: T,
 
     scheme_name: String,
+    disable_graphical_debug: Option<File>,
     socket: Socket,
     next_id: usize,
     handles: BTreeMap<usize, Handle<T>>,
@@ -83,9 +85,15 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
         assert!(scheme_name.starts_with("display"));
         let socket = Socket::nonblock(&scheme_name).expect("failed to create graphics scheme");
 
+        let disable_graphical_debug = Some(
+            File::open("/scheme/debug/disable-graphical-debug")
+                .expect("vesad: Failed to open /scheme/debug/disable-graphical-debug"),
+        );
+
         GraphicsScheme {
             adapter,
             scheme_name,
+            disable_graphical_debug,
             socket,
             next_id: 0,
             handles: BTreeMap::new(),
@@ -110,6 +118,14 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
         match vt_event.kind {
             VtEventKind::Activate => {
                 log::info!("activate {}", vt_event.vt);
+
+                // Disable the kernel graphical debug writing once switching vt's for the
+                // first time. This way the kernel graphical debug remains enabled if the
+                // userspace logging infrastructure doesn't start up because for example a
+                // kernel panic happened prior to it starting up or logd crashed.
+                if let Some(mut disable_graphical_debug) = self.disable_graphical_debug.take() {
+                    let _ = disable_graphical_debug.write(&[1]);
+                }
 
                 self.active_vt = vt_event.vt;
 
@@ -479,6 +495,23 @@ impl<T: GraphicsAdapter> SchemeSync for GraphicsScheme<T> {
                     payload.offset = fb_id * 0x10_000_000;
 
                     Ok(size_of::<ipc::DumbFramebufferMapOffset>())
+                }
+                ipc::DESTROY_DUMB_FRAMEBUFFER => {
+                    if payload.len() < size_of::<ipc::DestroyDumbFramebuffer>() {
+                        return Err(Error::new(EINVAL));
+                    }
+                    let payload = unsafe {
+                        transmute::<
+                            &mut [u8; size_of::<ipc::DestroyDumbFramebuffer>()],
+                            &mut ipc::DestroyDumbFramebuffer,
+                        >(payload.as_mut_array().unwrap())
+                    };
+
+                    if fbs.remove(&{ payload.fb_id }).is_none() {
+                        return Err(Error::new(ENOENT));
+                    }
+
+                    Ok(size_of::<ipc::DestroyDumbFramebuffer>())
                 }
                 ipc::UPDATE_PLANE => {
                     if payload.len() < size_of::<ipc::UpdatePlane>() {

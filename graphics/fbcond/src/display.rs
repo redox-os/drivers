@@ -26,7 +26,8 @@ impl Display {
 
     /// Re-open the display after a handoff.
     pub fn reopen_for_handoff(&mut self) {
-        let new_display_handle = Self::open_display(&self.input_handle).unwrap();
+        let display_file = self.input_handle.open_display().unwrap();
+        let new_display_handle = V1GraphicsHandle::from_file(display_file).unwrap();
 
         eprintln!("fbcond: Opened new display");
 
@@ -47,12 +48,6 @@ impl Display {
                 eprintln!("failed to resize display: {}", err);
             }
         }
-    }
-
-    fn open_display(input_handle: &ConsumerHandle) -> io::Result<V1GraphicsHandle> {
-        let display_file = input_handle.open_display()?;
-
-        V1GraphicsHandle::from_file(display_file)
     }
 
     pub fn sync_rect(&mut self, sync_rect: Damage) {

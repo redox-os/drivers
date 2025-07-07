@@ -11,6 +11,8 @@ pub use crate::common::DisplayMap;
 ///
 /// The v1 graphics API only allows a single framebuffer for each VT, requires each display to be
 /// handled separately and doesn't support page flipping.
+///
+/// This API is stable. No breaking changes are allowed to be made without a version bump.
 pub struct V1GraphicsHandle {
     file: File,
 }
