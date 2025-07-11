@@ -1,5 +1,5 @@
 use std::convert::TryInto;
-use std::{cmp, mem, ptr, slice};
+use std::{cmp, mem, ptr, slice, thread, time};
 
 use driver_network::NetworkAdapter;
 
@@ -350,8 +350,9 @@ impl Intel8254x {
         // TIPG Packet Gap
         // TODO ...
 
+        print!("   - Waiting for link up: {:X}\n", self.read_reg(STATUS));
         while self.read_reg(STATUS) & 2 != 2 {
-            print!("   - Waiting for link up: {:X}\n", self.read_reg(STATUS));
+            thread::sleep(time::Duration::from_millis(100));
         }
         print!(
             "   - Link is up with speed {}\n",
