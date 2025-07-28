@@ -6,5 +6,5 @@ mod probe;
 
 mod msi;
 
-pub use probe::{probe_device, reinit, Device, MSIX_PRIMARY_VECTOR};
 pub use msi::enable_msix;
+pub use probe::{probe_device, reinit, Device, MSIX_PRIMARY_VECTOR};
