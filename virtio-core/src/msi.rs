@@ -32,7 +32,7 @@ pub fn enable_msix(pcid_handle: &mut PciFunctionHandle) -> Result<File, Error> {
     let interrupt_handle = {
         let table_entry_pointer = info.table_entry_pointer(MSIX_PRIMARY_VECTOR as usize);
 
-       let (msg_addr_and_data, interrupt_handle) = pcid_handle.allocate_interrupt();
+        let (msg_addr_and_data, interrupt_handle) = pcid_handle.allocate_interrupt();
 
         table_entry_pointer.write_addr_and_data(msg_addr_and_data);
         table_entry_pointer.unmask();
