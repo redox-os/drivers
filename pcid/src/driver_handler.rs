@@ -1,6 +1,7 @@
 use pci_types::capability::{MultipleMessageSupport, PciCapability};
 use pci_types::{ConfigRegionAccess, EndpointHeader};
 use pcid_interface::PciFunction;
+use std::os::fd::{FromRawFd, IntoRawFd, RawFd};
 
 use crate::cfg_access::Pcie;
 
@@ -274,6 +275,10 @@ impl<'a> DriverHandler<'a> {
                     self.pcie.write(self.func.addr, offset, value);
                 }
                 return PcidClientResponse::WriteConfig;
+            }
+            PcidClientRequest::AllocateInterrupt(addr) => {
+                let (addr_and_data, handle) = irq_helpers::allocate_interrupt(addr);
+                return PcidClientResponse::InterruptAllocated(addr_and_data, handle.into_raw_fd());
             }
             _ => unreachable!(),
         }

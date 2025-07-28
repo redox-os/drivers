@@ -9,6 +9,7 @@ use std::io::{self, prelude::*};
 use std::num::NonZeroU8;
 
 use crate::driver_interface::msi::MsiAddrAndData;
+use crate::PciFunction;
 
 /// Read the local APIC ID of the bootstrap processor.
 pub fn read_bsp_apic_id() -> io::Result<usize> {
@@ -201,4 +202,42 @@ pub fn allocate_single_interrupt_vector_for_msi(cpu_id: usize) -> (MsiAddrAndDat
         },
         interrupt_handle,
     )
+}
+
+#[cfg(target_arch = "aarch64")]
+pub fn allocate_interrupt_for_device(pci_addr: PciFunction) -> (MsiAddrAndData, File) {
+    // This function now works for ALL architectures. The logic is in the kernel.
+
+    let scheme_path = format!("/scheme/irq/pci-{}/msi", pci_addr.addr);
+
+    let mut interrupt_handle =
+        File::open(&scheme_path).expect("Failed to open MSI interrupt scheme path");
+
+    let mut buffer = [0u8; 12];
+    interrupt_handle
+        .read_exact(&mut buffer)
+        .expect("Failed to read MSI address/data");
+
+    let addr = u64::from_le_bytes(buffer[0..8].try_into().unwrap());
+    let data = u32::from_le_bytes(buffer[8..12].try_into().unwrap());
+
+    let msi_addr_and_data = MsiAddrAndData { addr, data };
+
+    (msi_addr_and_data, interrupt_handle)
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+pub fn allocate_interrupt(_addr: PciFunction) -> (MsiAddrAndData, File) {
+    let destination_id = crate::irq_helpers::read_bsp_apic_id().expect("fail read_bsp_apic_id");
+    crate::irq_helpers::allocate_single_interrupt_vector_for_msi(destination_id)
+}
+
+#[cfg(any(target_arch = "aarch64"))]
+pub fn allocate_interrupt(addr: PciFunction) -> (MsiAddrAndData, File) {
+    crate::irq_helpers::allocate_interrupt_for_device(addr)
+}
+
+#[cfg(any(target_arch = "riscv64"))]
+pub fn allocate_interrupt(addr: PciFunction) -> (MsiAddrAndData, File) {
+    unimplemented!("riscv64 interrupt allocation from the AIA/IMSIC is not implemented");
 }
