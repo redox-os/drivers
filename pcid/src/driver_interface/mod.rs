@@ -220,6 +220,7 @@ pub enum SetFeatureInfo {
 #[derive(Debug, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum PcidClientRequest {
+    AllocateInterrupt(PciFunction),
     EnableDevice,
     RequestConfig,
     RequestFeatures,
@@ -245,6 +246,7 @@ pub enum PcidClientResponse {
     Config(SubdriverArguments),
     AllFeatures(Vec<PciFeature>),
     VendorCapabilities(Vec<VendorSpecificCapability>),
+    InterruptAllocated(msi::MsiAddrAndData, RawFd),
     FeatureEnabled(PciFeature),
     FeatureStatus(PciFeature, FeatureStatus),
     Error(PcidServerResponseError),
@@ -468,6 +470,20 @@ impl PciFunctionHandle {
                 ptr: NonNull::new(ptr.cast::<u8>()).expect("Mapping a BAR resulted in a nullptr"),
                 bar_size,
             })
+        }
+    }
+    pub fn allocate_interrupt(&mut self) -> (msi::MsiAddrAndData, File) {
+        self.send(&PcidClientRequest::AllocateInterrupt(self.config.func));
+
+        match self.recv() {
+            PcidClientResponse::InterruptAllocated(addr_and_data, fd) => {
+                let file_handle = unsafe { File::from_raw_fd(fd) };
+                (addr_and_data, file_handle)
+            }
+            other => {
+                log::error!("received wrong pcid response: {other:?}");
+                process::exit(1);
+            }
         }
     }
 }

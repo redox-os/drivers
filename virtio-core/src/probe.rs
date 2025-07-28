@@ -150,7 +150,7 @@ pub fn probe_device(pcid_handle: &mut PciFunctionHandle) -> Result<Device, Error
 
     // According to the virtio specification, the device REQUIRED to support MSI-X.
     assert!(has_msix, "virtio: device does not support MSI-X");
-    let irq_handle = crate::arch::enable_msix(pcid_handle)?;
+    let irq_handle = crate::enable_msix(pcid_handle)?;
 
     log::info!("virtio: using standard PCI transport");
 
