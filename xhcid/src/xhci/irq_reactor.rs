@@ -333,7 +333,16 @@ impl IrqReactor {
                 );
             {
                 let mut ports = self.hci.ports.lock().unwrap();
-                let port = &mut ports[port_id.root_hub_port_index()];
+                let root_port_index = port_id.root_hub_port_index();
+                if root_port_index >= ports.len() {
+                    warn!(
+                        "Received out of bounds transmit device numeration request on root index {} at port {} [port len was: {}]",
+                        root_port_index, port_id, ports.len()
+                    );
+                    return;
+                }
+
+                let port = &mut ports[root_port_index];
                 port.clear_csc();
             }
         } else {
