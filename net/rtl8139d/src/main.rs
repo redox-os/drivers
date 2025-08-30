@@ -1,17 +1,14 @@
 use std::fs::File;
 use std::io::{Read, Write};
 use std::os::unix::io::AsRawFd;
-use std::ptr::NonNull;
-use std::rc::Rc;
 
 use driver_network::NetworkScheme;
 use event::{user_data, EventQueue};
 #[cfg(target_arch = "x86_64")]
 use pcid_interface::irq_helpers::allocate_single_interrupt_vector_for_msi;
 use pcid_interface::irq_helpers::read_bsp_apic_id;
-use pcid_interface::msi::{MsixInfo, MsixTableEntry};
 use pcid_interface::{
-    MappedBar, MsiSetFeatureInfo, PciFeature, PciFeatureInfo, PciFunctionHandle, SetFeatureInfo,
+    MsiSetFeatureInfo, PciFeature, PciFeatureInfo, PciFunctionHandle, SetFeatureInfo,
 };
 
 pub mod device;
@@ -25,21 +22,6 @@ where
         a / b + T::from(1u8)
     } else {
         a / b
-    }
-}
-
-pub struct MappedMsixRegs {
-    pub virt_table_base: NonNull<MsixTableEntry>,
-    pub info: MsixInfo,
-}
-
-impl MappedMsixRegs {
-    pub unsafe fn table_entry_pointer_unchecked(&mut self, k: usize) -> &mut MsixTableEntry {
-        &mut *self.virt_table_base.as_ptr().offset(k as isize)
-    }
-    pub fn table_entry_pointer(&mut self, k: usize) -> &mut MsixTableEntry {
-        assert!(k < self.info.table_size as usize);
-        unsafe { self.table_entry_pointer_unchecked(k) }
     }
 }
 
@@ -83,19 +65,7 @@ fn get_int_method(pcid_handle: &mut PciFunctionHandle) -> File {
             PciFeatureInfo::Msi(_) => panic!(),
             PciFeatureInfo::MsiX(s) => s,
         };
-        msix_info.validate(pci_config.func.bars);
-
-        let bar_address = unsafe { pcid_handle.map_bar(msix_info.table_bar) }
-            .ptr
-            .as_ptr() as usize;
-
-        let virt_table_base =
-            (bar_address + msix_info.table_offset as usize) as *mut MsixTableEntry;
-
-        let mut info = MappedMsixRegs {
-            virt_table_base: NonNull::new(virt_table_base).unwrap(),
-            info: msix_info,
-        };
+        let mut info = unsafe { msix_info.map_and_mask_all(pcid_handle) };
 
         // Allocate one msi vector.
 
@@ -103,7 +73,6 @@ fn get_int_method(pcid_handle: &mut PciFunctionHandle) -> File {
             // primary interrupter
             let k = 0;
 
-            assert_eq!(std::mem::size_of::<MsixTableEntry>(), 16);
             let table_entry_pointer = info.table_entry_pointer(k);
 
             let destination_id = read_bsp_apic_id().expect("rtl8139d: failed to read BSP apic id");

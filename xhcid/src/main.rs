@@ -26,13 +26,11 @@
 extern crate bitflags;
 
 use std::fs::File;
-use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
 
 #[cfg(target_arch = "x86_64")]
 use pcid_interface::irq_helpers::allocate_single_interrupt_vector_for_msi;
 use pcid_interface::irq_helpers::read_bsp_apic_id;
-use pcid_interface::msi::MsixTableEntry;
 use pcid_interface::{
     MsiSetFeatureInfo, PciFeature, PciFeatureInfo, PciFunctionHandle, SetFeatureInfo,
 };
@@ -50,10 +48,7 @@ mod usb;
 mod xhci;
 
 #[cfg(target_arch = "x86_64")]
-fn get_int_method(
-    pcid_handle: &mut PciFunctionHandle,
-    bar0_address: usize,
-) -> (Option<File>, InterruptMethod) {
+fn get_int_method(pcid_handle: &mut PciFunctionHandle) -> (Option<File>, InterruptMethod) {
     let pci_config = pcid_handle.config();
 
     let all_pci_features = pcid_handle.fetch_all_features();
@@ -92,16 +87,7 @@ fn get_int_method(
             PciFeatureInfo::Msi(_) => panic!(),
             PciFeatureInfo::MsiX(s) => s,
         };
-        msix_info.validate(pci_config.func.bars);
-
-        assert_eq!(msix_info.table_bar, 0);
-        let virt_table_base =
-            (bar0_address + msix_info.table_offset as usize) as *mut MsixTableEntry;
-
-        let mut info = xhci::MappedMsixRegs {
-            virt_table_base: NonNull::new(virt_table_base).unwrap(),
-            info: msix_info,
-        };
+        let mut info = unsafe { msix_info.map_and_mask_all(pcid_handle) };
 
         // Allocate one msi vector.
 
@@ -109,7 +95,6 @@ fn get_int_method(
             // primary interrupter
             let k = 0;
 
-            assert_eq!(std::mem::size_of::<MsixTableEntry>(), 16);
             let table_entry_pointer = info.table_entry_pointer(k);
 
             let destination_id = read_bsp_apic_id().expect("xhcid: failed to read BSP apic id");
@@ -141,10 +126,7 @@ fn get_int_method(
 
 //TODO: MSI on non-x86_64?
 #[cfg(not(target_arch = "x86_64"))]
-fn get_int_method(
-    pcid_handle: &mut PciFunctionHandle,
-    address: usize,
-) -> (Option<File>, InterruptMethod) {
+fn get_int_method(pcid_handle: &mut PciFunctionHandle) -> (Option<File>, InterruptMethod) {
     let pci_config = pcid_handle.config();
 
     if let Some(irq) = pci_config.func.legacy_interrupt_line {
@@ -179,7 +161,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     let address = unsafe { pcid_handle.map_bar(0) }.ptr.as_ptr() as usize;
 
-    let (irq_file, interrupt_method) = (None, InterruptMethod::Polling); //get_int_method(&mut pcid_handle, address);
+    let (irq_file, interrupt_method) = (None, InterruptMethod::Polling); //get_int_method(&mut pcid_handle);
                                                                          //TODO: Fix interrupts.
 
     println!(" + XHCI {}", pci_config.func.display());

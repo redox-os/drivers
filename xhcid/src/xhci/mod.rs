@@ -12,11 +12,11 @@
 use std::collections::BTreeMap;
 use std::convert::TryFrom;
 use std::fs::File;
-use std::ptr::NonNull;
 use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use std::{mem, process, slice, thread};
+use pcid_interface::msi::MappedMsixRegs;
 use syscall::error::{Error, Result, EBADF, EBADMSG, EIO, ENOENT};
 use syscall::{EAGAIN, PAGE_SIZE};
 
@@ -28,7 +28,6 @@ use serde::Deserialize;
 
 use crate::usb;
 
-use pcid_interface::msi::{MsixInfo, MsixTableEntry};
 use pcid_interface::PciFunctionHandle;
 
 mod capability;
@@ -76,20 +75,6 @@ pub enum InterruptMethod {
 
     /// Extended message signaled interrupts.
     MsiX(Mutex<MappedMsixRegs>),
-}
-
-pub struct MappedMsixRegs {
-    pub virt_table_base: NonNull<MsixTableEntry>,
-    pub info: MsixInfo,
-}
-impl MappedMsixRegs {
-    pub unsafe fn table_entry_pointer_unchecked(&mut self, k: usize) -> &mut MsixTableEntry {
-        &mut *self.virt_table_base.as_ptr().offset(k as isize)
-    }
-    pub fn table_entry_pointer(&mut self, k: usize) -> &mut MsixTableEntry {
-        assert!(k < self.info.table_size as usize);
-        unsafe { self.table_entry_pointer_unchecked(k) }
-    }
 }
 
 impl Xhci {

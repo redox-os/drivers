@@ -21,7 +21,7 @@ pub mod queues;
 use self::executor::NvmeExecutor;
 pub use self::queues::{NvmeCmd, NvmeCmdQueue, NvmeComp, NvmeCompQueue};
 
-use pcid_interface::msi::{MsiInfo, MsixInfo, MsixTableEntry};
+use pcid_interface::msi::{MappedMsixRegs, MsiInfo};
 use pcid_interface::PciFunctionHandle;
 
 #[cfg(target_arch = "aarch64")]
@@ -131,11 +131,6 @@ impl InterruptMethod {
             false
         }
     }
-}
-
-pub struct MappedMsixRegs {
-    pub info: MsixInfo,
-    pub table: &'static mut [MsixTableEntry],
 }
 
 #[repr(C, packed)]
@@ -316,7 +311,7 @@ impl Nvme {
                 self.regs.get_mut().intmc.write(0x0000_0001);
             }
             &mut InterruptMethod::MsiX(ref mut cfg) => {
-                cfg.table[0].unmask();
+                cfg.table_entry_pointer(0).unmask();
             }
         }
 
@@ -442,10 +437,7 @@ impl Nvme {
             }
             &mut InterruptMethod::MsiX(ref mut cfg) => {
                 for (vector, mask) in vectors {
-                    cfg.table
-                        .get_mut(vector as usize)
-                        .expect("nvmed: internal error: MSI-X vector out of range")
-                        .set_masked(mask);
+                    cfg.table_entry_pointer(vector.into()).set_masked(mask);
                 }
             }
         }

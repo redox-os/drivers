@@ -1,8 +1,6 @@
 use std::fs::File;
-use std::ptr::NonNull;
 use std::sync::Arc;
 
-use pcid_interface::msi::{MsixInfo, MsixTableEntry};
 use pcid_interface::*;
 
 use crate::spec::*;
@@ -20,23 +18,6 @@ pub struct Device {
 unsafe impl Send for Device {}
 unsafe impl Sync for Device {}
 
-pub struct MappedMsixRegs {
-    pub virt_table_base: NonNull<MsixTableEntry>,
-    pub info: MsixInfo,
-}
-
-impl MappedMsixRegs {
-    pub unsafe fn table_entry_pointer_unchecked(&mut self, k: usize) -> &mut MsixTableEntry {
-        &mut *self.virt_table_base.as_ptr().add(k)
-    }
-
-    pub fn table_entry_pointer(&mut self, k: usize) -> &mut MsixTableEntry {
-        assert!(k < self.info.table_size as usize);
-        unsafe { self.table_entry_pointer_unchecked(k) }
-    }
-}
-
-static_assertions::const_assert_eq!(std::mem::size_of::<MsixTableEntry>(), 16);
 
 pub const MSIX_PRIMARY_VECTOR: u16 = 0;
 
