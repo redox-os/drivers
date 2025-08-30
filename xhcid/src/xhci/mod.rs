@@ -13,10 +13,9 @@ use std::collections::BTreeMap;
 use std::convert::TryFrom;
 use std::fs::File;
 use std::sync::atomic::AtomicUsize;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 
 use std::{mem, process, slice, thread};
-use pcid_interface::msi::MappedMsixRegs;
 use syscall::error::{Error, Result, EBADF, EBADMSG, EIO, ENOENT};
 use syscall::{EAGAIN, PAGE_SIZE};
 
@@ -70,11 +69,8 @@ pub enum InterruptMethod {
     /// Legacy PCI INTx# interrupt pin.
     Intx,
 
-    /// Message signaled interrupts.
+    /// (Extended) Message signaled interrupts.
     Msi,
-
-    /// Extended message signaled interrupts.
-    MsiX(Mutex<MappedMsixRegs>),
 }
 
 impl Xhci {
@@ -1142,32 +1138,8 @@ impl Xhci {
         Ok(ring)
     }
 
-    pub fn uses_msi(&self) -> bool {
-        if let InterruptMethod::Msi = self.interrupt_method {
-            true
-        } else {
-            false
-        }
-    }
-    pub fn uses_msix(&self) -> bool {
-        if let InterruptMethod::MsiX(_) = self.interrupt_method {
-            true
-        } else {
-            false
-        }
-    }
-    // TODO: Perhaps use an rwlock?
-    pub fn msix_info(&self) -> Option<MutexGuard<'_, MappedMsixRegs>> {
-        match self.interrupt_method {
-            InterruptMethod::MsiX(ref info) => Some(info.lock().unwrap()),
-            _ => None,
-        }
-    }
-    pub fn msix_info_mut(&self) -> Option<MutexGuard<'_, MappedMsixRegs>> {
-        match self.interrupt_method {
-            InterruptMethod::MsiX(ref info) => Some(info.lock().unwrap()),
-            _ => None,
-        }
+    fn uses_msi_interrupts(&self) -> bool {
+        matches!(self.interrupt_method, InterruptMethod::Msi)
     }
 
     /// Checks whether an IRQ has been received from *this* device, in case of an interrupt. Always
@@ -1175,7 +1147,7 @@ impl Xhci {
     pub fn received_irq(&self) -> bool {
         let mut runtime_regs = self.run.lock().unwrap();
 
-        if self.uses_msi() || self.uses_msix() {
+        if self.uses_msi_interrupts() {
             // Since using MSI and MSI-X implies having no IRQ sharing whatsoever, the IP bit
             // doesn't have to be touched.
             trace!(
