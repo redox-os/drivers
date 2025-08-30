@@ -1153,14 +1153,14 @@ impl Xhci {
             trace!(
                 "Successfully received MSI/MSI-X interrupt, IP={}, EHB={}",
                 runtime_regs.ints[0].iman.readf(1),
-                runtime_regs.ints[0].erdp_low.readf(3)
+                runtime_regs.ints[0].erdp_low.readf(1 << 3)
             );
             true
         } else if runtime_regs.ints[0].iman.readf(1) {
             trace!(
                 "Successfully received INTx# interrupt, IP={}, EHB={}",
                 runtime_regs.ints[0].iman.readf(1),
-                runtime_regs.ints[0].erdp_low.readf(3)
+                runtime_regs.ints[0].erdp_low.readf(1 << 3)
             );
             // If MSI and/or MSI-X are not used, the interrupt might have to be shared, and thus there is
             // a special register to specify whether the IRQ actually came from the xHC.
