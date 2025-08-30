@@ -35,32 +35,7 @@ fn get_int_method(pcid_handle: &mut PciFunctionHandle) -> File {
     let has_msi = all_pci_features.iter().any(|feature| feature.is_msi());
     let has_msix = all_pci_features.iter().any(|feature| feature.is_msix());
 
-    if has_msi && !has_msix {
-        let capability = match pcid_handle.feature_info(PciFeature::Msi) {
-            PciFeatureInfo::Msi(s) => s,
-            PciFeatureInfo::MsiX(_) => panic!(),
-        };
-        // TODO: Allow allocation of up to 32 vectors.
-
-        // TODO: Find a way to abstract this away, potantially as a helper module for
-        // pcid_interface, so that this can be shared between nvmed, xhcid, ixgebd, etc..
-
-        let destination_id = read_bsp_apic_id().expect("rtl8139d: failed to read BSP apic id");
-        let (msg_addr_and_data, interrupt_handle) =
-            allocate_single_interrupt_vector_for_msi(destination_id);
-
-        let set_feature_info = MsiSetFeatureInfo {
-            multi_message_enable: Some(0),
-            message_address_and_data: Some(msg_addr_and_data),
-            mask_bits: None,
-        };
-        pcid_handle.set_feature_info(SetFeatureInfo::Msi(set_feature_info));
-
-        pcid_handle.enable_feature(PciFeature::Msi);
-        log::info!("Enabled MSI");
-
-        interrupt_handle
-    } else if has_msix {
+    if has_msix {
         let msix_info = match pcid_handle.feature_info(PciFeature::MsiX) {
             PciFeatureInfo::Msi(_) => panic!(),
             PciFeatureInfo::MsiX(s) => s,
@@ -88,6 +63,31 @@ fn get_int_method(pcid_handle: &mut PciFunctionHandle) -> File {
         log::info!("Enabled MSI-X");
 
         method
+    } else if has_msi {
+        let capability = match pcid_handle.feature_info(PciFeature::Msi) {
+            PciFeatureInfo::Msi(s) => s,
+            PciFeatureInfo::MsiX(_) => panic!(),
+        };
+        // TODO: Allow allocation of up to 32 vectors.
+
+        // TODO: Find a way to abstract this away, potantially as a helper module for
+        // pcid_interface, so that this can be shared between nvmed, xhcid, ixgebd, etc..
+
+        let destination_id = read_bsp_apic_id().expect("rtl8139d: failed to read BSP apic id");
+        let (msg_addr_and_data, interrupt_handle) =
+            allocate_single_interrupt_vector_for_msi(destination_id);
+
+        let set_feature_info = MsiSetFeatureInfo {
+            multi_message_enable: Some(0),
+            message_address_and_data: Some(msg_addr_and_data),
+            mask_bits: None,
+        };
+        pcid_handle.set_feature_info(SetFeatureInfo::Msi(set_feature_info));
+
+        pcid_handle.enable_feature(PciFeature::Msi);
+        log::info!("Enabled MSI");
+
+        interrupt_handle
     } else if let Some(irq) = pci_config.func.legacy_interrupt_line {
         // legacy INTx# interrupt pins.
         irq.irq_handle("rtl8139d")

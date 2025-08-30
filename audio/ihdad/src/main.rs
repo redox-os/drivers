@@ -35,9 +35,8 @@ fn get_int_method(pcid_handle: &mut PciFunctionHandle) -> File {
     log::debug!("PCI FEATURES: {:?}", all_pci_features);
 
     let has_msi = all_pci_features.iter().any(|feature| feature.is_msi());
-    let has_msix = all_pci_features.iter().any(|feature| feature.is_msix());
 
-    if has_msi && !has_msix {
+    if has_msi {
         let capability = match pcid_handle.feature_info(PciFeature::Msi) {
             PciFeatureInfo::Msi(s) => s,
             PciFeatureInfo::MsiX(_) => panic!(),
