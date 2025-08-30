@@ -7,7 +7,7 @@ use crate::cfg_access::Pcie;
 pub struct DriverHandler<'a> {
     func: PciFunction,
     endpoint_header: &'a mut EndpointHeader,
-    capabilities: Vec<PciCapability>,
+    capabilities: &'a mut [PciCapability],
 
     pcie: &'a Pcie,
 }
@@ -16,7 +16,7 @@ impl<'a> DriverHandler<'a> {
     pub fn new(
         func: PciFunction,
         endpoint_header: &'a mut EndpointHeader,
-        capabilities: Vec<PciCapability>,
+        capabilities: &'a mut [PciCapability],
         pcie: &'a Pcie,
     ) -> Self {
         DriverHandler {
@@ -36,8 +36,11 @@ impl<'a> DriverHandler<'a> {
         #[forbid(non_exhaustive_omitted_patterns)]
         match request {
             PcidClientRequest::EnableDevice => {
-                self.func.legacy_interrupt_line =
-                    crate::enable_function(&self.pcie, &mut self.endpoint_header);
+                self.func.legacy_interrupt_line = crate::enable_function(
+                    &self.pcie,
+                    &mut self.endpoint_header,
+                    &mut self.capabilities,
+                );
 
                 PcidClientResponse::EnabledDevice
             }

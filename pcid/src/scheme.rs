@@ -242,8 +242,11 @@ impl PciScheme {
                     if func.enabled {
                         return Err(Error::new(ENOLCK));
                     }
-                    func.inner.legacy_interrupt_line =
-                        crate::enable_function(&self.pcie, &mut func.endpoint_header);
+                    func.inner.legacy_interrupt_line = crate::enable_function(
+                        &self.pcie,
+                        &mut func.endpoint_header,
+                        &mut func.capabilities,
+                    );
                     func.enabled = true;
                     Handle::Channel {
                         addr,
@@ -287,7 +290,7 @@ impl PciScheme {
                 let response = crate::driver_handler::DriverHandler::new(
                     func.inner.clone(),
                     &mut func.endpoint_header,
-                    func.capabilities.clone(),
+                    &mut func.capabilities,
                     &*pci_state,
                 )
                 .respond(request);

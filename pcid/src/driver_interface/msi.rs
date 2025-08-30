@@ -1,6 +1,8 @@
 use std::fmt;
+use std::ptr::NonNull;
 
 use crate::driver_interface::PciBar;
+use crate::PciFunctionHandle;
 
 use common::io::{Io, Mmio};
 use serde::{Deserialize, Serialize};
@@ -32,7 +34,32 @@ pub struct MsixInfo {
 }
 
 impl MsixInfo {
-    pub fn validate(&self, bars: [PciBar; 6]) {
+    pub unsafe fn map_and_mask_all(self, pcid_handle: &mut PciFunctionHandle) -> MappedMsixRegs {
+        self.validate(pcid_handle.config().func.bars);
+
+        let virt_table_base = unsafe {
+            pcid_handle
+                .map_bar(self.table_bar)
+                .ptr
+                .as_ptr()
+                .byte_add(self.table_offset as usize)
+        };
+
+        let mut info = MappedMsixRegs {
+            virt_table_base: NonNull::new(virt_table_base.cast::<MsixTableEntry>()).unwrap(),
+            info: self,
+        };
+
+        // Mask all interrupts in case some earlier driver/os already unmasked them (according to
+        // the PCI Local Bus spec 3.0, they are masked after system reset).
+        for i in 0..info.info.table_size {
+            info.table_entry_pointer(i.into()).mask();
+        }
+
+        info
+    }
+
+    fn validate(&self, bars: [PciBar; 6]) {
         if self.table_bar > 5 {
             panic!(
                 "MSI-X Table BIR contained a reserved enum value: {}",
@@ -78,6 +105,21 @@ impl MsixInfo {
     }
 }
 
+pub struct MappedMsixRegs {
+    pub virt_table_base: NonNull<MsixTableEntry>,
+    pub info: MsixInfo,
+}
+impl MappedMsixRegs {
+    pub unsafe fn table_entry_pointer_unchecked(&mut self, k: usize) -> &mut MsixTableEntry {
+        &mut *self.virt_table_base.as_ptr().add(k)
+    }
+
+    pub fn table_entry_pointer(&mut self, k: usize) -> &mut MsixTableEntry {
+        assert!(k < self.info.table_size as usize);
+        unsafe { self.table_entry_pointer_unchecked(k) }
+    }
+}
+
 #[repr(C, packed)]
 pub struct MsixTableEntry {
     pub addr_lo: Mmio<u32>,
@@ -85,6 +127,10 @@ pub struct MsixTableEntry {
     pub msg_data: Mmio<u32>,
     pub vec_ctl: Mmio<u32>,
 }
+
+const _: () = {
+    assert!(size_of::<MsixTableEntry>() == 16);
+};
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 pub mod x86 {
