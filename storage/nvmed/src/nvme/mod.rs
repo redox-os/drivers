@@ -21,7 +21,7 @@ pub mod queues;
 use self::executor::NvmeExecutor;
 pub use self::queues::{NvmeCmd, NvmeCmdQueue, NvmeComp, NvmeCompQueue};
 
-use pcid_interface::msi::{MappedMsixRegs, MsiInfo};
+use pcid_interface::msi::MappedMsixRegs;
 use pcid_interface::PciFunctionHandle;
 
 /// Used in conjunction with `InterruptMethod`, primarily by the CQ executor.
@@ -31,46 +31,6 @@ pub enum InterruptSources {
     Msi(BTreeMap<u8, File>),
     Intx(File),
 }
-impl InterruptSources {
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = (u16, &mut File)> {
-        use std::collections::btree_map::IterMut as BTreeIterMut;
-        use std::iter::Once;
-
-        enum IterMut<'a> {
-            Msi(BTreeIterMut<'a, u8, File>),
-            MsiX(BTreeIterMut<'a, u16, File>),
-            Intx(Once<&'a mut File>),
-        }
-        impl<'a> Iterator for IterMut<'a> {
-            type Item = (u16, &'a mut File);
-
-            fn next(&mut self) -> Option<Self::Item> {
-                match self {
-                    &mut Self::Msi(ref mut iter) => iter
-                        .next()
-                        .map(|(&vector, handle)| (u16::from(vector), handle)),
-                    &mut Self::MsiX(ref mut iter) => {
-                        iter.next().map(|(&vector, handle)| (vector, handle))
-                    }
-                    &mut Self::Intx(ref mut iter) => iter.next().map(|handle| (0u16, handle)),
-                }
-            }
-            fn size_hint(&self) -> (usize, Option<usize>) {
-                match self {
-                    &Self::Msi(ref iter) => iter.size_hint(),
-                    &Self::MsiX(ref iter) => iter.size_hint(),
-                    &Self::Intx(ref iter) => iter.size_hint(),
-                }
-            }
-        }
-
-        match self {
-            &mut Self::MsiX(ref mut map) => IterMut::MsiX(map.iter_mut()),
-            &mut Self::Msi(ref mut map) => IterMut::Msi(map.iter_mut()),
-            &mut Self::Intx(ref mut single) => IterMut::Intx(std::iter::once(single)),
-        }
-    }
-}
 
 /// The way interrupts are sent. Unlike other PCI-based interfaces, like XHCI, it doesn't seem like
 /// NVME supports operating with interrupts completely disabled.
@@ -78,35 +38,9 @@ pub enum InterruptMethod {
     /// Traditional level-triggered, INTx# interrupt pins.
     Intx,
     /// Message signaled interrupts
-    Msi {
-        msi_info: MsiInfo,
-        log2_multiple_message_enabled: u8,
-    },
+    Msi,
     /// Extended message signaled interrupts
     MsiX(MappedMsixRegs),
-}
-impl InterruptMethod {
-    fn is_intx(&self) -> bool {
-        if let Self::Intx = self {
-            true
-        } else {
-            false
-        }
-    }
-    fn is_msi(&self) -> bool {
-        if let Self::Msi { .. } = self {
-            true
-        } else {
-            false
-        }
-    }
-    fn is_msix(&self) -> bool {
-        if let Self::MsiX(_) = self {
-            true
-        } else {
-            false
-        }
-    }
 }
 
 #[repr(C, packed)]
@@ -373,18 +307,11 @@ impl Nvme {
                     self.regs.write().intmc.write(0x0000_0001);
                 }
             }
-            &mut InterruptMethod::Msi {
-                msi_info: _,
-                log2_multiple_message_enabled: log2_enabled_messages,
-            } => {
+            &mut InterruptMethod::Msi => {
                 let mut to_mask = 0x0000_0000;
                 let mut to_clear = 0x0000_0000;
 
                 for (vector, mask) in vectors {
-                    assert!(
-                        vector < (1 << log2_enabled_messages),
-                        "nvmed: internal error: MSI vector out of range"
-                    );
                     let vector = vector as u8;
 
                     if mask {
