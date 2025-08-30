@@ -87,7 +87,7 @@ impl NvmeCompQueue {
                 return some;
             } else {
                 unsafe {
-                    super::pause();
+                    std::hint::spin_loop();
                 }
             }
         }

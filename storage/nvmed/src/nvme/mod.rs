@@ -24,30 +24,6 @@ pub use self::queues::{NvmeCmd, NvmeCmdQueue, NvmeComp, NvmeCompQueue};
 use pcid_interface::msi::{MappedMsixRegs, MsiInfo};
 use pcid_interface::PciFunctionHandle;
 
-#[cfg(target_arch = "aarch64")]
-#[inline(always)]
-pub(crate) unsafe fn pause() {
-    std::arch::aarch64::__yield();
-}
-
-#[cfg(target_arch = "x86")]
-#[inline(always)]
-pub(crate) unsafe fn pause() {
-    std::arch::x86::_mm_pause();
-}
-
-#[cfg(target_arch = "x86_64")]
-#[inline(always)]
-pub(crate) unsafe fn pause() {
-    std::arch::x86_64::_mm_pause();
-}
-
-#[cfg(target_arch = "riscv64")]
-#[inline(always)]
-pub(crate) unsafe fn pause() {
-    std::arch::riscv64::pause();
-}
-
 /// Used in conjunction with `InterruptMethod`, primarily by the CQ executor.
 #[derive(Debug)]
 pub enum InterruptSources {
@@ -299,7 +275,7 @@ impl Nvme {
             let csts = self.regs.get_mut().csts.read();
             log::trace!("CSTS: {:X}", csts);
             if csts & 1 == 1 {
-                pause();
+                std::hint::spin_loop();
             } else {
                 break;
             }
@@ -364,7 +340,7 @@ impl Nvme {
             let csts = self.regs.get_mut().csts.read();
             log::debug!("CSTS: {:X}", csts);
             if csts & 1 == 0 {
-                pause();
+                std::hint::spin_loop();
             } else {
                 break;
             }
