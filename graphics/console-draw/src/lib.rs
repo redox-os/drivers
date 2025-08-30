@@ -117,7 +117,7 @@ impl TextScreen {
 
 impl TextScreen {
     pub fn write(&mut self, map: &mut DisplayMap, buf: &[u8], input: &mut VecDeque<u8>) -> Damage {
-        let mut min_changed = usize::MAX;
+        let mut min_changed = map.height;
         let mut max_changed = 0;
         let mut line_changed = |line| {
             if line < min_changed {
