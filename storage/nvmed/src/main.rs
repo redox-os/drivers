@@ -70,22 +70,8 @@ fn get_int_method(
             _ => unreachable!(),
         };
 
-        let (msi_vector_number, irq_handle) = {
-            use pcid_interface::{MsiSetFeatureInfo, SetFeatureInfo};
-
-            let bsp_cpu_id =
-                irq_helpers::read_bsp_apic_id().expect("nvmed: failed to read BSP APIC ID");
-            let (msg_addr_and_data, irq_handle) =
-                irq_helpers::allocate_single_interrupt_vector_for_msi(bsp_cpu_id);
-
-            pcid_handle.set_feature_info(SetFeatureInfo::Msi(MsiSetFeatureInfo {
-                message_address_and_data: Some(msg_addr_and_data),
-                multi_message_enable: Some(0), // enable 2^0=1 vectors
-                mask_bits: None,
-            }));
-
-            (0, irq_handle)
-        };
+        let msi_vector_number = 0;
+        let irq_handle = irq_helpers::allocate_first_msi_interrupt_on_bsp(pcid_handle);
 
         let interrupt_method = InterruptMethod::Msi {
             msi_info,

@@ -28,12 +28,12 @@ extern crate bitflags;
 use std::fs::File;
 use std::sync::{Arc, Mutex};
 
-#[cfg(target_arch = "x86_64")]
-use pcid_interface::irq_helpers::allocate_single_interrupt_vector_for_msi;
 use pcid_interface::irq_helpers::read_bsp_apic_id;
-use pcid_interface::{
-    MsiSetFeatureInfo, PciFeature, PciFeatureInfo, PciFunctionHandle, SetFeatureInfo,
+#[cfg(target_arch = "x86_64")]
+use pcid_interface::irq_helpers::{
+    allocate_first_msi_interrupt_on_bsp, allocate_single_interrupt_vector_for_msi,
 };
+use pcid_interface::{PciFeature, PciFeatureInfo, PciFunctionHandle};
 
 use redox_scheme::{RequestKind, SignalBehavior, Socket};
 
@@ -89,29 +89,7 @@ fn get_int_method(pcid_handle: &mut PciFunctionHandle) -> (Option<File>, Interru
 
         method
     } else if has_msi {
-        let mut capability = match pcid_handle.feature_info(PciFeature::Msi) {
-            PciFeatureInfo::Msi(s) => s,
-            PciFeatureInfo::MsiX(_) => panic!(),
-        };
-        // TODO: Allow allocation of up to 32 vectors.
-
-        // TODO: Find a way to abstract this away, potantially as a helper module for
-        // pcid_interface, so that this can be shared between nvmed, xhcid, ixgebd, etc..
-
-        let destination_id = read_bsp_apic_id().expect("xhcid: failed to read BSP apic id");
-        let (msg_addr_and_data, interrupt_handle) =
-            allocate_single_interrupt_vector_for_msi(destination_id);
-
-        let set_feature_info = MsiSetFeatureInfo {
-            multi_message_enable: Some(0),
-            message_address_and_data: Some(msg_addr_and_data),
-            mask_bits: None,
-        };
-        pcid_handle.set_feature_info(SetFeatureInfo::Msi(set_feature_info));
-
-        pcid_handle.enable_feature(PciFeature::Msi);
-        log::debug!("Enabled MSI");
-
+        let interrupt_handle = allocate_first_msi_interrupt_on_bsp(pcid_handle);
         (Some(interrupt_handle), InterruptMethod::Msi)
     } else if let Some(irq) = pci_config.func.legacy_interrupt_line {
         log::debug!("Legacy IRQ {}", irq);

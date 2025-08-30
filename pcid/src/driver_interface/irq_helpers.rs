@@ -202,3 +202,28 @@ pub fn allocate_single_interrupt_vector_for_msi(cpu_id: usize) -> (MsiAddrAndDat
         interrupt_handle,
     )
 }
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+pub fn allocate_first_msi_interrupt_on_bsp(
+    pcid_handle: &mut crate::driver_interface::PciFunctionHandle,
+) -> File {
+    use crate::driver_interface::{MsiSetFeatureInfo, PciFeature, SetFeatureInfo};
+
+    // TODO: Allow allocation of up to 32 vectors.
+
+    let destination_id = read_bsp_apic_id().expect("failed to read BSP apic id");
+    let (msg_addr_and_data, interrupt_handle) =
+        allocate_single_interrupt_vector_for_msi(destination_id);
+
+    let set_feature_info = MsiSetFeatureInfo {
+        multi_message_enable: Some(0),
+        message_address_and_data: Some(msg_addr_and_data),
+        mask_bits: None,
+    };
+    pcid_handle.set_feature_info(SetFeatureInfo::Msi(set_feature_info));
+
+    pcid_handle.enable_feature(PciFeature::Msi);
+    log::info!("Enabled MSI");
+
+    interrupt_handle
+}
