@@ -1,14 +1,10 @@
-#![cfg_attr(target_arch = "aarch64", feature(stdarch_arm_hints))] // Required for yield instruction
-#![cfg_attr(target_arch = "riscv64", feature(riscv_ext_intrinsics))] // Required for pause instruction
-
 use std::cell::RefCell;
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::os::fd::AsRawFd;
-use std::ptr::NonNull;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::{slice, usize};
+use std::usize;
 
 use driver_block::{Disk, DiskScheme};
 use pcid_interface::{PciFeature, PciFeatureInfo, PciFunction, PciFunctionHandle};
@@ -39,35 +35,17 @@ fn get_int_method(
     // TODO: Allocate more than one vector when possible and useful.
     if has_msix {
         // Extended message signaled interrupts.
-        use self::nvme::MappedMsixRegs;
-        use pcid_interface::msi::MsixTableEntry;
 
         let msix_info = match pcid_handle.feature_info(PciFeature::MsiX) {
             PciFeatureInfo::MsiX(msix) => msix,
             _ => unreachable!(),
         };
-        msix_info.validate(function.bars);
-        fn bar_base(pcid_handle: &mut PciFunctionHandle, bir: u8) -> Result<NonNull<u8>> {
-            Ok(unsafe { pcid_handle.map_bar(bir) }.ptr)
-        }
-        let table_bar_base: *mut u8 = bar_base(pcid_handle, msix_info.table_bar)?.as_ptr();
-        let table_base = unsafe { table_bar_base.offset(msix_info.table_offset as isize) };
-
-        let vector_count = msix_info.table_size;
-        let table_entries: &'static mut [MsixTableEntry] = unsafe {
-            slice::from_raw_parts_mut(table_base as *mut MsixTableEntry, vector_count as usize)
-        };
-
-        // Mask all interrupts in case some earlier driver/os already unmasked them (according to
-        // the PCI Local Bus spec 3.0, they are masked after system reset).
-        for table_entry in table_entries.iter_mut() {
-            table_entry.mask();
-        }
+        let mut info = unsafe { msix_info.map_and_mask_all(pcid_handle) };
 
         pcid_handle.enable_feature(PciFeature::MsiX);
 
         let (msix_vector_number, irq_handle) = {
-            let entry: &mut MsixTableEntry = &mut table_entries[0];
+            let entry = info.table_entry_pointer(0);
 
             let bsp_cpu_id =
                 irq_helpers::read_bsp_apic_id().expect("nvmed: failed to read APIC ID");
@@ -79,10 +57,7 @@ fn get_int_method(
             (0, irq_handle)
         };
 
-        let interrupt_method = InterruptMethod::MsiX(MappedMsixRegs {
-            info: msix_info,
-            table: table_entries,
-        });
+        let interrupt_method = InterruptMethod::MsiX(info);
         let interrupt_sources =
             InterruptSources::MsiX(std::iter::once((msix_vector_number, irq_handle)).collect());
 
@@ -95,22 +70,8 @@ fn get_int_method(
             _ => unreachable!(),
         };
 
-        let (msi_vector_number, irq_handle) = {
-            use pcid_interface::{MsiSetFeatureInfo, SetFeatureInfo};
-
-            let bsp_cpu_id =
-                irq_helpers::read_bsp_apic_id().expect("nvmed: failed to read BSP APIC ID");
-            let (msg_addr_and_data, irq_handle) =
-                irq_helpers::allocate_single_interrupt_vector_for_msi(bsp_cpu_id);
-
-            pcid_handle.set_feature_info(SetFeatureInfo::Msi(MsiSetFeatureInfo {
-                message_address_and_data: Some(msg_addr_and_data),
-                multi_message_enable: Some(0), // enable 2^0=1 vectors
-                mask_bits: None,
-            }));
-
-            (0, irq_handle)
-        };
+        let msi_vector_number = 0;
+        let irq_handle = irq_helpers::allocate_first_msi_interrupt_on_bsp(pcid_handle);
 
         let interrupt_method = InterruptMethod::Msi {
             msi_info,
