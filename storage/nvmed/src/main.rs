@@ -65,18 +65,11 @@ fn get_int_method(
         Ok((interrupt_method, interrupt_sources))
     } else if has_msi {
         // Message signaled interrupts.
-        let msi_info = match pcid_handle.feature_info(PciFeature::Msi) {
-            PciFeatureInfo::Msi(msi) => msi,
-            _ => unreachable!(),
-        };
 
         let msi_vector_number = 0;
         let irq_handle = irq_helpers::allocate_first_msi_interrupt_on_bsp(pcid_handle);
 
-        let interrupt_method = InterruptMethod::Msi {
-            msi_info,
-            log2_multiple_message_enabled: 0,
-        };
+        let interrupt_method = InterruptMethod::Msi;
         let interrupt_sources =
             InterruptSources::Msi(std::iter::once((msi_vector_number, irq_handle)).collect());
 

@@ -18,7 +18,6 @@ pub struct Device {
 unsafe impl Send for Device {}
 unsafe impl Sync for Device {}
 
-
 pub const MSIX_PRIMARY_VECTOR: u16 = 0;
 
 /// VirtIO Device Probe
