@@ -121,7 +121,7 @@ impl IrqReactor {
     fn pause(&self) {
         std::thread::sleep(std::time::Duration::from_millis(2));
     }
-    fn run_polling(mut self) {
+    fn run_polling(mut self) -> ! {
         debug!("Running IRQ reactor in polling mode.");
         let hci_clone = Arc::clone(&self.hci);
 
@@ -204,11 +204,11 @@ impl IrqReactor {
         run.ints[0].iman.writef(1 << 1, true);
     }
 
-    fn run_with_irq_file(mut self) {
+    fn run_with_irq_file(mut self) -> ! {
         debug!("Running IRQ reactor with IRQ file and event queue");
 
         let hci_clone = Arc::clone(&self.hci);
-        let mut event_queue =
+        let event_queue =
             RawEventQueue::new().expect("xhcid irq_reactor: failed to create IRQ event queue");
         let irq_fd = self.irq_file.as_ref().unwrap().as_raw_fd();
         event_queue
@@ -226,7 +226,8 @@ impl IrqReactor {
         };
 
         trace!("IRQ reactor has grabbed the next index in the event ring.");
-        for _event in event_queue {
+        'trb_loop: loop {
+            let _event = event_queue.next_event().unwrap();
             trace!("IRQ event queue notified");
             let mut buffer = [0u8; 8];
 
@@ -240,7 +241,7 @@ impl IrqReactor {
             if !self.hci.received_irq() {
                 // continue only when an IRQ to this device was received
                 trace!("no interrupt pending");
-                break;
+                continue 'trb_loop;
             }
 
             self.mask_interrupts();
@@ -265,7 +266,7 @@ impl IrqReactor {
                     }
                     //hci_clone.event_handler_finished();
                     self.unmask_interrupts();
-                    return;
+                    continue 'trb_loop;
                 } else {
                     count += 1
                 }
@@ -287,7 +288,7 @@ impl IrqReactor {
                         debug!("The interrupt bit is no longer pending.");
                     }
                     self.unmask_interrupts();
-                    return;
+                    continue 'trb_loop;
                 }
                 self.handle_requests();
 
@@ -309,9 +310,7 @@ impl IrqReactor {
 
                 event_trb_index = event_ring.ring.next_index();
             }
-            trace!("Exited event loop!");
         }
-        trace!("IRQ Reactor has finished handling the interrupt");
     }
 
     /// Handles device attach/detach events as indicated by a PortStatusChange
@@ -538,7 +537,7 @@ impl IrqReactor {
         error!("TODO: grow event ring");
     }
 
-    pub fn run(mut self) {
+    pub fn run(self) -> ! {
         if self.irq_file.is_some() {
             self.run_with_irq_file();
         } else {

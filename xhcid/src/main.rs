@@ -26,7 +26,7 @@
 extern crate bitflags;
 
 use std::fs::File;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use pcid_interface::irq_helpers::read_bsp_apic_id;
 #[cfg(target_arch = "x86_64")]
@@ -78,10 +78,7 @@ fn get_int_method(pcid_handle: &mut PciFunctionHandle) -> (Option<File>, Interru
             table_entry_pointer.write_addr_and_data(msg_addr_and_data);
             table_entry_pointer.unmask();
 
-            (
-                Some(interrupt_handle),
-                InterruptMethod::MsiX(Mutex::new(info)),
-            )
+            (Some(interrupt_handle), InterruptMethod::Msi)
         };
 
         pcid_handle.enable_feature(PciFeature::MsiX);
