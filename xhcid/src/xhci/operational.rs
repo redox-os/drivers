@@ -76,6 +76,16 @@ pub struct OperationalRegs {
     // The standard has 400-13FFh has a Port Register Set here (likely defined in port.rs).
 }
 
+// Run/stop
+pub const USB_CMD_RS: u32 = 1 << 0;
+/// Host controller reset
+pub const USB_CMD_HCRST: u32 = 1 << 1;
+
+/// Host controller halted
+pub const USB_STS_HCH: u32 = 1 << 0;
+/// Host controller not ready
+pub const USB_STS_CNR: u32 = 1 << 11;
+
 /// The mask to get the CIE bit from the Config register. See [OperationalRegs]
 pub const OP_CONFIG_CIE_BIT: u32 = 1 << 9;
 

@@ -49,7 +49,7 @@ use self::doorbell::Doorbell;
 use self::event::EventRing;
 use self::extended::{CapabilityId, ExtendedCapabilitiesIter, ProtocolSpeed, SupportedProtoCap};
 use self::irq_reactor::{EventDoorbell, IrqReactor, NewPendingTrb, RingId};
-use self::operational::OperationalRegs;
+use self::operational::*;
 use self::port::Port;
 use self::ring::Ring;
 use self::runtime::RuntimeRegs;
@@ -372,23 +372,23 @@ impl Xhci {
         let (max_slots, max_ports) = {
             debug!("Waiting for xHC becoming ready.");
             // Wait until controller is ready
-            while op.usb_sts.readf(1 << 11) {
+            while op.usb_sts.readf(USB_STS_CNR) {
                 trace!("Waiting for the xHC to be ready.");
             }
 
             debug!("Stopping the xHC");
             // Set run/stop to 0
-            op.usb_cmd.writef(1, false);
+            op.usb_cmd.writef(USB_CMD_RS, false);
 
             debug!("Waiting for the xHC to stop.");
             // Wait until controller not running
-            while !op.usb_sts.readf(1) {
+            while !op.usb_sts.readf(USB_STS_HCH) {
                 trace!("Waiting for the xHC to stop.");
             }
 
             debug!("Resetting the xHC.");
-            op.usb_cmd.writef(1 << 1, true);
-            while op.usb_sts.readf(1 << 1) {
+            op.usb_cmd.writef(USB_CMD_HCRST, true);
+            while op.usb_cmd.readf(USB_CMD_HCRST) {
                 trace!("Waiting for the xHC to reset.");
             }
 
