@@ -40,7 +40,10 @@ use syscall::{
 use super::{port, usb};
 use super::{EndpointState, PortId, Xhci};
 
-use super::context::{SlotState, StreamContextArray, StreamContextType};
+use super::context::{
+    SlotState, StreamContextArray, StreamContextType, CONTEXT_32, CONTEXT_64,
+    SLOT_CONTEXT_STATE_MASK, SLOT_CONTEXT_STATE_SHIFT,
+};
 use super::extended::ProtocolSpeed;
 use super::irq_reactor::{EventDoorbell, RingId};
 use super::ring::Ring;
@@ -543,7 +546,7 @@ impl AnyDescriptor {
     }
 }
 
-impl Xhci {
+impl<const N: usize> Xhci<N> {
     async fn new_if_desc(
         &self,
         port_id: PortId,
@@ -927,13 +930,13 @@ impl Xhci {
     fn port_state(
         &self,
         port: PortId,
-    ) -> Result<chashmap::ReadGuard<'_, PortId, super::PortState>> {
+    ) -> Result<chashmap::ReadGuard<'_, PortId, super::PortState<N>>> {
         self.port_states.get(&port).ok_or(Error::new(EBADF))
     }
     fn port_state_mut(
         &self,
         port: PortId,
-    ) -> Result<chashmap::WriteGuard<'_, PortId, super::PortState>> {
+    ) -> Result<chashmap::WriteGuard<'_, PortId, super::PortState<N>>> {
         self.port_states.get_mut(&port).ok_or(Error::new(EBADF))
     }
 
@@ -1103,10 +1106,10 @@ impl Xhci {
 
             let ring_ptr = if usb_log_max_streams.is_some() {
                 let mut array =
-                    StreamContextArray::new(self.cap.ac64(), 1 << (primary_streams + 1))?;
+                    StreamContextArray::new::<N>(self.cap.ac64(), 1 << (primary_streams + 1))?;
 
                 // TODO: Use as many stream rings as needed.
-                array.add_ring(self.cap.ac64(), 1, true)?;
+                array.add_ring::<N>(self.cap.ac64(), 1, true)?;
                 let array_ptr = array.register();
 
                 assert_eq!(
@@ -1124,7 +1127,7 @@ impl Xhci {
 
                 array_ptr
             } else {
-                let ring = Ring::new(self.cap.ac64(), 16, true)?;
+                let ring = Ring::new::<N>(self.cap.ac64(), 16, true)?;
                 let ring_ptr = ring.register();
 
                 assert_eq!(
@@ -1146,23 +1149,15 @@ impl Xhci {
             let mut input_context = port_state.input_context.lock().unwrap();
             input_context.add_context.writef(1 << endp_num_xhc, true);
 
-            let endp_ctx = input_context
-                .device
-                .endpoints
-                .get_mut(endp_num_xhc as usize - 1)
-                .ok_or_else(|| {
-                    warn!("failed to find endpoint {}", endp_num_xhc - 1);
-                    Error::new(EIO)
-                })?;
-
-            endp_ctx.a.write(
+            let endp_i = endp_num_xhc as usize - 1;
+            input_context.device.endpoints[endp_i].a.write(
                 u32::from(mult) << 8
                     | u32::from(primary_streams) << 10
                     | u32::from(linear_stream_array) << 15
                     | u32::from(interval) << 16
                     | u32::from(max_esit_payload_hi) << 24,
             );
-            endp_ctx.b.write(
+            input_context.device.endpoints[endp_i].b.write(
                 max_error_count << 1
                     | u32::from(ep_ty) << 3
                     | u32::from(host_initiate_disable) << 7
@@ -1170,10 +1165,14 @@ impl Xhci {
                     | u32::from(max_packet_size) << 16,
             );
 
-            endp_ctx.trl.write(ring_ptr as u32);
-            endp_ctx.trh.write((ring_ptr >> 32) as u32);
+            input_context.device.endpoints[endp_i]
+                .trl
+                .write(ring_ptr as u32);
+            input_context.device.endpoints[endp_i]
+                .trh
+                .write((ring_ptr >> 32) as u32);
 
-            endp_ctx
+            input_context.device.endpoints[endp_i]
                 .c
                 .write(u32::from(avg_trb_len) | (u32::from(max_esit_payload_lo) << 16));
 
@@ -2099,7 +2098,7 @@ impl Xhci {
     }
 }
 
-impl SchemeSync for &Xhci {
+impl<const N: usize> SchemeSync for &Xhci<N> {
     fn open(&mut self, path_str: &str, flags: usize, ctx: &CallerCtx) -> Result<OpenResult> {
         if ctx.uid != 0 {
             return Err(Error::new(EACCES));
@@ -2237,13 +2236,13 @@ impl SchemeSync for &Xhci {
             },
             &mut Handle::PortState(port_num) => {
                 let ps = self.port_states.get(&port_num).ok_or(Error::new(EBADF))?;
-                let state = self
+                let ctx = self
                     .dev_ctx
                     .contexts
                     .get(ps.slot as usize)
-                    .ok_or(Error::new(EBADF))?
-                    .slot
-                    .state();
+                    .ok_or(Error::new(EBADF))?;
+                let state = ((ctx.slot.d.read() & SLOT_CONTEXT_STATE_MASK)
+                    >> SLOT_CONTEXT_STATE_SHIFT) as u8;
 
                 let string = match state {
                     0 => Some(PortState::EnabledOrDisabled),
@@ -2257,7 +2256,7 @@ impl SchemeSync for &Xhci {
                 .unwrap_or("unknown")
                 .as_bytes();
 
-                Ok(Xhci::write_dyn_string(string, buf, offset))
+                Ok(Xhci::<N>::write_dyn_string(string, buf, offset))
             }
             &mut Handle::PortReq(port_num, ref mut st) => {
                 let state = std::mem::replace(st, PortReqState::Tmp);
@@ -2316,7 +2315,7 @@ impl SchemeSync for &Xhci {
         }
     }
 }
-impl Xhci {
+impl<const N: usize> Xhci<N> {
     pub fn on_close(&self, fd: usize) {
         self.handles.remove(&fd);
     }
@@ -2351,9 +2350,7 @@ impl Xhci {
             .contexts
             .get(slot as usize)
             .ok_or(Error::new(EBADFD))?
-            .endpoints
-            .get(endp_num_xhc as usize - 1)
-            .ok_or(Error::new(EBADFD))?
+            .endpoints[endp_num_xhc as usize - 1]
             .a
             .read()
             & super::context::ENDPOINT_CONTEXT_STATUS_MASK;

@@ -11,13 +11,13 @@ pub struct DeviceEnumerationRequest {
     pub port_id: PortId,
 }
 
-pub struct DeviceEnumerator {
-    hci: Arc<Xhci>,
+pub struct DeviceEnumerator<const N: usize> {
+    hci: Arc<Xhci<N>>,
     request_queue: crossbeam_channel::Receiver<DeviceEnumerationRequest>,
 }
 
-impl DeviceEnumerator {
-    pub fn new(hci: Arc<Xhci>) -> Self {
+impl<const N: usize> DeviceEnumerator<N> {
+    pub fn new(hci: Arc<Xhci<N>>) -> Self {
         let request_queue = hci.device_enumerator_receiver.clone();
         DeviceEnumerator { hci, request_queue }
     }

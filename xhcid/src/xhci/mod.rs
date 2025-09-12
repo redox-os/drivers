@@ -43,8 +43,12 @@ mod runtime;
 pub mod scheme;
 mod trb;
 
-use self::capability::CapabilityRegs;
-use self::context::{DeviceContextList, InputContext, ScratchpadBufferArray, StreamContextArray};
+pub use self::capability::CapabilityRegs;
+use self::context::{
+    DeviceContextList, InputContext, ScratchpadBufferArray, StreamContextArray,
+    SLOT_CONTEXT_STATE_MASK, SLOT_CONTEXT_STATE_SHIFT,
+};
+pub use self::context::{CONTEXT_32, CONTEXT_64};
 use self::doorbell::Doorbell;
 use self::event::EventRing;
 use self::extended::{CapabilityId, ExtendedCapabilitiesIter, ProtocolSpeed, SupportedProtoCap};
@@ -73,7 +77,7 @@ pub enum InterruptMethod {
     Msi,
 }
 
-impl Xhci {
+impl<const N: usize> Xhci<N> {
     /// Gets descriptors, before the port state is initiated.
     async fn get_desc_raw<T>(
         &self,
@@ -246,7 +250,7 @@ impl Xhci {
 }
 
 /// The eXtensible Host Controller Interface (XHCI) data structure
-pub struct Xhci {
+pub struct Xhci<const N: usize> {
     // immutable
     /// The Host Controller Interface Capability Registers. These read-only registers specify the
     /// limits and capabilities of the host controller implementation (See XHCI section 5.3)
@@ -270,7 +274,7 @@ pub struct Xhci {
     primary_event_ring: Mutex<EventRing>,
 
     // immutable
-    dev_ctx: DeviceContextList,
+    dev_ctx: DeviceContextList<N>,
     scratchpad_buf_arr: Option<ScratchpadBufferArray>,
 
     // used for the extended capabilities, and so far none of them are mutated, and thus no lock.
@@ -278,7 +282,7 @@ pub struct Xhci {
 
     handles: CHashMap<usize, scheme::Handle>,
     next_handle: AtomicUsize,
-    port_states: CHashMap<PortId, PortState>,
+    port_states: CHashMap<PortId, PortState<N>>,
     drivers: CHashMap<PortId, Vec<process::Child>>,
     scheme_name: String,
 
@@ -297,19 +301,19 @@ pub struct Xhci {
     device_enumerator_receiver: Receiver<DeviceEnumerationRequest>,
 }
 
-unsafe impl Send for Xhci {}
-unsafe impl Sync for Xhci {}
+unsafe impl<const N: usize> Send for Xhci<N> {}
+unsafe impl<const N: usize> Sync for Xhci<N> {}
 
-struct PortState {
+struct PortState<const N: usize> {
     slot: u8,
     protocol_speed: &'static ProtocolSpeed,
     cfg_idx: Option<u8>,
-    input_context: Mutex<Dma<InputContext>>,
+    input_context: Mutex<Dma<InputContext<N>>>,
     dev_desc: Option<DevDesc>,
     endpoint_states: BTreeMap<u8, EndpointState>,
 }
 
-impl PortState {
+impl<const N: usize> PortState<N> {
     //TODO: fetch using endpoint number instead
     fn get_endp_desc(&self, endp_idx: u8) -> Option<&EndpDesc> {
         let cfg_idx = self.cfg_idx?;
@@ -350,13 +354,13 @@ impl EndpointState {
     }
 }
 
-impl Xhci {
+impl<const N: usize> Xhci<N> {
     pub fn new(
         scheme_name: String,
         address: usize,
         interrupt_method: InterruptMethod,
         pcid_handle: PciFunctionHandle,
-    ) -> Result<Xhci> {
+    ) -> Result<Self> {
         //Locate the capability registers from the mapped PCI Bar
         let cap = unsafe { &mut *(address as *mut CapabilityRegs) };
         debug!("CAP REGS BASE {:X}", address);
@@ -419,7 +423,7 @@ impl Xhci {
         // Create the command ring with 4096 / 16 (TRB size) entries, so that it uses all of the
         // DMA allocation (which is at least a 4k page).
         let entries_per_page = PAGE_SIZE / mem::size_of::<Trb>();
-        let cmd = Ring::new(cap.ac64(), entries_per_page, true)?;
+        let cmd = Ring::new::<N>(cap.ac64(), entries_per_page, true)?;
 
         let (irq_reactor_sender, irq_reactor_receiver) = crossbeam_channel::unbounded();
 
@@ -439,7 +443,7 @@ impl Xhci {
             scratchpad_buf_arr: None, // initialized in init()
 
             cmd: Mutex::new(cmd),
-            primary_event_ring: Mutex::new(EventRing::new(cap.ac64())?),
+            primary_event_ring: Mutex::new(EventRing::new::<N>(cap.ac64())?),
             handles: CHashMap::new(),
             next_handle: AtomicUsize::new(0),
             port_states: CHashMap::new(),
@@ -469,7 +473,11 @@ impl Xhci {
 
         // Warm reset
         debug!("Reset xHC");
-        self.op.get_mut().unwrap().usb_cmd.writef(USB_CMD_HCRST, true);
+        self.op
+            .get_mut()
+            .unwrap()
+            .usb_cmd
+            .writef(USB_CMD_HCRST, true);
         while self.op.get_mut().unwrap().usb_cmd.readf(USB_CMD_HCRST) {
             thread::yield_now();
         }
@@ -531,7 +539,11 @@ impl Xhci {
             debug!("Enabling Primary Interrupter.");
             int.iman.writef(1 << 1 | 1, true);
         }
-        self.op.get_mut().unwrap().usb_cmd.writef(USB_CMD_INTE, true);
+        self.op
+            .get_mut()
+            .unwrap()
+            .usb_cmd
+            .writef(USB_CMD_INTE, true);
 
         // Setup the scratchpad buffers that are required for the xHC to function.
         self.setup_scratchpads()?;
@@ -674,7 +686,7 @@ impl Xhci {
         if buf_count == 0 {
             return Ok(());
         }
-        let scratchpad_buf_arr = ScratchpadBufferArray::new(self.cap.ac64(), buf_count)?;
+        let scratchpad_buf_arr = ScratchpadBufferArray::new::<N>(self.cap.ac64(), buf_count)?;
         self.dev_ctx.dcbaa[0] = scratchpad_buf_arr.register() as u64;
         debug!(
             "Setting up {} scratchpads, at {:#0x}",
@@ -733,7 +745,8 @@ impl Xhci {
     }
 
     pub fn slot_state(&self, slot: usize) -> u8 {
-        self.dev_ctx.contexts[slot].slot.state()
+        ((self.dev_ctx.contexts[slot].slot.d.read() & SLOT_CONTEXT_STATE_MASK)
+            >> SLOT_CONTEXT_STATE_SHIFT) as u8
     }
     pub unsafe fn alloc_dma_zeroed_raw<T>(_ac64: bool) -> Result<Dma<T>> {
         // TODO: ac64
@@ -792,7 +805,7 @@ impl Xhci {
                 .lookup_psiv(port_id, speed)
                 .expect("Failed to retrieve speed ID");
 
-            let mut input = unsafe { self.alloc_dma_zeroed::<InputContext>()? };
+            let mut input = unsafe { self.alloc_dma_zeroed::<InputContext<N>>()? };
 
             info!("Attempting to address the device");
             let mut ring = match self
@@ -940,7 +953,7 @@ impl Xhci {
 
     pub async fn update_max_packet_size(
         &self,
-        input_context: &mut Dma<InputContext>,
+        input_context: &mut Dma<InputContext<N>>,
         slot_id: u8,
         dev_desc: usb::DeviceDescriptor8Byte,
     ) -> Result<()> {
@@ -951,11 +964,10 @@ impl Xhci {
             // For later USB versions, packet_size is the shift
             1u32 << dev_desc.packet_size
         };
-        let endp_ctx = &mut input_context.device.endpoints[0];
-        let mut b = endp_ctx.b.read();
+        let mut b = input_context.device.endpoints[0].b.read();
         b &= 0x0000_FFFF;
         b |= (new_max_packet_size) << 16;
-        endp_ctx.b.write(b);
+        input_context.device.endpoints[0].b.write(b);
 
         let (event_trb, command_trb) = self
             .execute_command(|trb, cycle| {
@@ -971,7 +983,7 @@ impl Xhci {
 
     pub async fn update_default_control_pipe(
         &self,
-        input_context: &mut Dma<InputContext>,
+        input_context: &mut Dma<InputContext<N>>,
         slot_id: u8,
         dev_desc: &DevDesc,
     ) -> Result<()> {
@@ -986,11 +998,10 @@ impl Xhci {
             // For later USB versions, packet_size is the shift
             1u32 << dev_desc.packet_size
         };
-        let endp_ctx = &mut input_context.device.endpoints[0];
-        let mut b = endp_ctx.b.read();
+        let mut b = input_context.device.endpoints[0].b.read();
         b &= 0x0000_FFFF;
         b |= (new_max_packet_size) << 16;
-        endp_ctx.b.write(b);
+        input_context.device.endpoints[0].b.write(b);
 
         let (event_trb, command_trb) = self
             .execute_command(|trb, cycle| {
@@ -1007,7 +1018,7 @@ impl Xhci {
 
     pub async fn address_device(
         &self,
-        input_context: &mut Dma<InputContext>,
+        input_context: &mut Dma<InputContext<N>>,
         port: PortId,
         slot_ty: u8,
         slot: u8,
@@ -1044,19 +1055,17 @@ impl Xhci {
             }
         }
 
-        let mut ring = Ring::new(self.cap.ac64(), 16, true)?;
+        let mut ring = Ring::new::<N>(self.cap.ac64(), 16, true)?;
 
         {
             input_context.add_context.write(1 << 1 | 1); // Enable the slot (zeroth bit) and the control endpoint (first bit).
-
-            let slot_ctx = &mut input_context.device.slot;
 
             let route_string = port.route_string;
             let context_entries = 1u8;
             let hub = false;
 
             assert_eq!(route_string & 0x000F_FFFF, route_string);
-            slot_ctx.a.write(
+            input_context.device.slot.a.write(
                 route_string
                     | (u32::from(speed) << 20)
                     | (u32::from(mtt) << 25)
@@ -1067,7 +1076,7 @@ impl Xhci {
             let max_exit_latency = 0u16;
             let root_hub_port_num = port.root_hub_port_num;
             let number_of_ports = 0u8;
-            slot_ctx.b.write(
+            input_context.device.slot.b.write(
                 u32::from(max_exit_latency)
                     | (u32::from(root_hub_port_num) << 16)
                     | (u32::from(number_of_ports) << 24),
@@ -1078,29 +1087,28 @@ impl Xhci {
             let interrupter = 0u8;
 
             assert_eq!(ttt & 0b11, ttt);
-            slot_ctx.c.write(
+            input_context.device.slot.c.write(
                 u32::from(parent_hub_slot_id)
                     | (u32::from(parent_port_num) << 8)
                     | (u32::from(ttt) << 16)
                     | (u32::from(interrupter) << 22),
             );
 
-            let endp_ctx = &mut input_context.device.endpoints[0];
-
             let max_error_count = 3u8; // recommended value according to the XHCI spec
             let ep_ty = 4u8; // control endpoint, bidirectional
-            let max_packet_size: u32 = if protocol_speed.is_lowspeed() || protocol_speed.is_fullspeed() {
-                8
-            } else if protocol_speed.is_highspeed() {
-                64
-            } else {
-                512
-            };
+            let max_packet_size: u32 =
+                if protocol_speed.is_lowspeed() || protocol_speed.is_fullspeed() {
+                    8
+                } else if protocol_speed.is_highspeed() {
+                    64
+                } else {
+                    512
+                };
             let host_initiate_disable = false; // only applies to streams
             let max_burst_size = 0u8; // TODO
 
             assert_eq!(max_error_count & 0b11, max_error_count);
-            endp_ctx.b.write(
+            input_context.device.endpoints[0].b.write(
                 (u32::from(max_error_count) << 1)
                     | (u32::from(ep_ty) << 3)
                     | (u32::from(host_initiate_disable) << 7)
@@ -1110,12 +1118,18 @@ impl Xhci {
 
             let dequeue_cycle_state = true;
             let tr = ring.register();
-            endp_ctx.trh.write((tr >> 32) as u32);
-            endp_ctx.trl.write((tr as u32) | u32::from(dequeue_cycle_state));
+            input_context.device.endpoints[0]
+                .trh
+                .write((tr >> 32) as u32);
+            input_context.device.endpoints[0]
+                .trl
+                .write((tr as u32) | u32::from(dequeue_cycle_state));
 
             // The default control pipe can always use 8 bytes
             let avg_trb_len = 8u8;
-            endp_ctx.c.write(u32::from(avg_trb_len));
+            input_context.device.endpoints[0]
+                .c
+                .write(u32::from(avg_trb_len));
         }
 
         let input_context_physical = input_context.physical();
@@ -1394,7 +1408,7 @@ impl Xhci {
             .find(|speed| speed.psiv() == psiv)
     }
 }
-pub fn start_irq_reactor(hci: &Arc<Xhci>, irq_file: Option<File>) {
+pub fn start_irq_reactor<const N: usize>(hci: &Arc<Xhci<N>>, irq_file: Option<File>) {
     let hci_clone = Arc::clone(&hci);
 
     debug!("About to start IRQ reactor");
@@ -1405,7 +1419,7 @@ pub fn start_irq_reactor(hci: &Arc<Xhci>, irq_file: Option<File>) {
     }));
 }
 
-pub fn start_device_enumerator(hci: &Arc<Xhci>) {
+pub fn start_device_enumerator<const N: usize>(hci: &Arc<Xhci<N>>) {
     let hci_clone = Arc::clone(&hci);
 
     debug!("About to start Device Enumerator");

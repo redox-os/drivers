@@ -22,6 +22,9 @@
 //! - USB2  - [Universal Serial Bus Specification](https://www.usb.org/document-library/usb-20-specification)
 //! - USB32 - [Universal Serial Bus 3.2 Specification Revision 1.1](https://usb.org/document-library/usb-32-revision-11-june-2022)
 //!
+#![allow(warnings)]
+#![feature(generic_const_exprs)]
+
 #[macro_use]
 extern crate bitflags;
 
@@ -117,8 +120,11 @@ fn main() {
     redox_daemon::Daemon::new(daemon).expect("xhcid: failed to daemonize");
 }
 
-fn daemon(daemon: redox_daemon::Daemon) -> ! {
-    let mut pcid_handle = PciFunctionHandle::connect_default();
+//TODO: cleanup CSZ support
+fn daemon_with_context_size<const N: usize>(
+    daemon: redox_daemon::Daemon,
+    mut pcid_handle: PciFunctionHandle,
+) -> ! {
     let pci_config = pcid_handle.config();
 
     let mut name = pci_config.func.name();
@@ -147,7 +153,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     daemon.ready().expect("xhcid: failed to notify parent");
 
     let hci = Arc::new(
-        Xhci::new(scheme_name, address, interrupt_method, pcid_handle)
+        Xhci::<N>::new(scheme_name, address, interrupt_method, pcid_handle)
             .expect("xhcid: failed to allocate device"),
     );
 
@@ -177,5 +183,16 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
             }
             _ => {}
         }
+    }
+}
+
+fn daemon(daemon: redox_daemon::Daemon) -> ! {
+    let mut pcid_handle = PciFunctionHandle::connect_default();
+    let address = unsafe { pcid_handle.map_bar(0) }.ptr.as_ptr() as usize;
+    let cap = unsafe { &mut *(address as *mut xhci::CapabilityRegs) };
+    if cap.csz() {
+        daemon_with_context_size::<{ xhci::CONTEXT_64 }>(daemon, pcid_handle)
+    } else {
+        daemon_with_context_size::<{ xhci::CONTEXT_32 }>(daemon, pcid_handle)
     }
 }
