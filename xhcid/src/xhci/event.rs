@@ -23,10 +23,10 @@ pub struct EventRing {
 }
 
 impl EventRing {
-    pub fn new(ac64: bool) -> Result<EventRing> {
+    pub fn new<const N: usize>(ac64: bool) -> Result<EventRing> {
         let mut ring = EventRing {
-            ste: unsafe { Xhci::alloc_dma_zeroed_unsized_raw(ac64, 1)? },
-            ring: Ring::new(ac64, 256, false)?,
+            ste: unsafe { Xhci::<N>::alloc_dma_zeroed_unsized_raw(ac64, 1)? },
+            ring: Ring::new::<N>(ac64, 256, false)?,
         };
 
         ring.ste[0]

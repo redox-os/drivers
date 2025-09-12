@@ -15,10 +15,10 @@ pub struct Ring {
 }
 
 impl Ring {
-    pub fn new(ac64: bool, length: usize, link: bool) -> Result<Ring> {
+    pub fn new<const N: usize>(ac64: bool, length: usize, link: bool) -> Result<Ring> {
         Ok(Ring {
             link,
-            trbs: unsafe { Xhci::alloc_dma_zeroed_unsized_raw(ac64, length)? },
+            trbs: unsafe { Xhci::<N>::alloc_dma_zeroed_unsized_raw(ac64, length)? },
             i: 0,
             cycle: link,
         })

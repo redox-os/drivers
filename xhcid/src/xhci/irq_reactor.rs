@@ -92,8 +92,8 @@ impl StateKind {
     }
 }
 
-pub struct IrqReactor {
-    hci: Arc<Xhci>,
+pub struct IrqReactor<const N: usize> {
+    hci: Arc<Xhci<N>>,
     irq_file: Option<File>,
     irq_receiver: Receiver<NewPendingTrb>,
     device_enumerator_sender: Sender<DeviceEnumerationRequest>,
@@ -104,8 +104,8 @@ pub struct IrqReactor {
 
 pub type NewPendingTrb = State;
 
-impl IrqReactor {
-    pub fn new(hci: Arc<Xhci>, irq_file: Option<File>) -> Self {
+impl<const N: usize> IrqReactor<N> {
+    pub fn new(hci: Arc<Xhci<N>>, irq_file: Option<File>) -> Self {
         let device_enumerator_sender = hci.device_enumerator_sender.clone();
         let irq_receiver = hci.irq_reactor_receiver.clone();
 
@@ -559,7 +559,7 @@ pub struct EventDoorbell {
 }
 
 impl EventDoorbell {
-    pub fn new(hci: &Xhci, index: usize, data: u32) -> Self {
+    pub fn new<const N: usize>(hci: &Xhci<N>, index: usize, data: u32) -> Self {
         Self {
             //TODO: simplify this logic, maybe just use a raw pointer?
             dbs: hci.dbs.clone(),
@@ -625,7 +625,7 @@ impl Future for EventTrbFuture {
     }
 }
 
-impl Xhci {
+impl<const N: usize> Xhci<N> {
     pub fn get_transfer_trb(&self, paddr: u64, id: RingId) -> Option<Trb> {
         self.with_ring(id, |ring| ring.phys_addr_to_entry(self.cap.ac64(), paddr))
             .flatten()

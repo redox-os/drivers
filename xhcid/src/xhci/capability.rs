@@ -120,6 +120,10 @@ pub struct CapabilityRegs {
 pub const HCC_PARAMS1_AC64_BIT: u32 = 1 << HCC_PARAMS1_AC64_SHIFT;
 /// The shift to use to get the AC64 bit from HCCParams1. See [CapabilityRegs]
 pub const HCC_PARAMS1_AC64_SHIFT: u8 = 0;
+/// The mask to use to get the CSZ bit from HCCPARAMS1. See [CapabilityRegs]
+pub const HCC_PARAMS1_CSZ_BIT: u32 = 1 << HCC_PARAMS1_CSZ_SHIFT;
+/// The shift to use to get the CSZ bit from HCCParams1. See [CapabilityRegs]
+pub const HCC_PARAMS1_CSZ_SHIFT: u8 = 2;
 /// The Mask to use to get the MAXPSASIZE value from HCCParams1. See [CapabilityRegs]
 pub const HCC_PARAMS1_MAXPSASIZE_MASK: u32 = 0xF000; // 15:12
 /// The shift to use to get the MAXPSASIZE value from HCCParams1. See [CapabilityRegs]
@@ -159,6 +163,11 @@ impl CapabilityRegs {
     /// Gets the ACS64 bit from HCCParams1.
     pub fn ac64(&self) -> bool {
         self.hcc_params1.readf(HCC_PARAMS1_AC64_BIT)
+    }
+
+    /// Gets the context size (CSZ) bit from HCCParams1.
+    pub fn csz(&self) -> bool {
+        self.hcc_params1.readf(HCC_PARAMS1_CSZ_BIT)
     }
 
     /// Gets the LEC bit from HCCParams2.

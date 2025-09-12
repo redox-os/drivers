@@ -10,23 +10,24 @@ use common::dma::Dma;
 use super::ring::Ring;
 use super::Xhci;
 
+pub const CONTEXT_32: usize = 0;
+pub const CONTEXT_64: usize = 1;
+
 #[repr(C, packed)]
-pub struct SlotContext {
+struct Rsvd64<const N: usize>([[Mmio<u32>; 8]; N]);
+
+#[repr(C, packed)]
+pub struct SlotContext<const N: usize> {
     pub a: Mmio<u32>,
     pub b: Mmio<u32>,
     pub c: Mmio<u32>,
     pub d: Mmio<u32>,
     _rsvd: [Mmio<u32>; 4],
+    _rsvd64: Rsvd64<N>,
 }
 
 pub const SLOT_CONTEXT_STATE_MASK: u32 = 0xF800_0000;
 pub const SLOT_CONTEXT_STATE_SHIFT: u8 = 27;
-
-impl SlotContext {
-    pub fn state(&self) -> u8 {
-        ((self.d.read() & SLOT_CONTEXT_STATE_MASK) >> SLOT_CONTEXT_STATE_SHIFT) as u8
-    }
-}
 
 #[repr(u8)]
 pub enum SlotState {
@@ -37,32 +38,34 @@ pub enum SlotState {
 }
 
 #[repr(C, packed)]
-pub struct EndpointContext {
+pub struct EndpointContext<const N: usize> {
     pub a: Mmio<u32>,
     pub b: Mmio<u32>,
     pub trl: Mmio<u32>,
     pub trh: Mmio<u32>,
     pub c: Mmio<u32>,
     _rsvd: [Mmio<u32>; 3],
+    _rsvd64: Rsvd64<N>,
 }
 
 pub const ENDPOINT_CONTEXT_STATUS_MASK: u32 = 0x7;
 
 #[repr(C, packed)]
-pub struct DeviceContext {
-    pub slot: SlotContext,
-    pub endpoints: [EndpointContext; 31],
+pub struct DeviceContext<const N: usize> {
+    pub slot: SlotContext<N>,
+    pub endpoints: [EndpointContext<N>; 31],
 }
 
 #[repr(C, packed)]
-pub struct InputContext {
+pub struct InputContext<const N: usize> {
     pub drop_context: Mmio<u32>,
     pub add_context: Mmio<u32>,
     _rsvd: [Mmio<u32>; 5],
     pub control: Mmio<u32>,
-    pub device: DeviceContext,
+    _rsvd64: Rsvd64<N>,
+    pub device: DeviceContext<N>,
 }
-impl InputContext {
+impl<const N: usize> InputContext<N> {
     pub fn dump_control(&self) {
         debug!(
             "INPUT CONTEXT: {} {} [{} {} {} {} {}] {}",
@@ -78,19 +81,19 @@ impl InputContext {
     }
 }
 
-pub struct DeviceContextList {
+pub struct DeviceContextList<const N: usize> {
     pub dcbaa: Dma<[u64; 256]>,
-    pub contexts: Box<[Dma<DeviceContext>]>,
+    pub contexts: Box<[Dma<DeviceContext<N>>]>,
 }
 
-impl DeviceContextList {
-    pub fn new(ac64: bool, max_slots: u8) -> Result<DeviceContextList> {
-        let mut dcbaa = unsafe { Xhci::alloc_dma_zeroed_raw::<[u64; 256]>(ac64)? };
+impl<const N: usize> DeviceContextList<N> {
+    pub fn new(ac64: bool, max_slots: u8) -> Result<Self> {
+        let mut dcbaa = unsafe { Xhci::<N>::alloc_dma_zeroed_raw::<[u64; 256]>(ac64)? };
         let mut contexts = vec![];
 
         // Create device context buffers for each slot
         for i in 0..max_slots as usize {
-            let context: Dma<DeviceContext> = unsafe { Xhci::alloc_dma_zeroed_raw(ac64) }?;
+            let context: Dma<DeviceContext<N>> = unsafe { Xhci::<N>::alloc_dma_zeroed_raw(ac64) }?;
             dcbaa[i] = context.physical() as u64;
             contexts.push(context);
         }
@@ -134,19 +137,24 @@ pub struct StreamContextArray {
 }
 
 impl StreamContextArray {
-    pub fn new(ac64: bool, count: usize) -> Result<Self> {
+    pub fn new<const N: usize>(ac64: bool, count: usize) -> Result<Self> {
         unsafe {
             Ok(Self {
-                contexts: Xhci::alloc_dma_zeroed_unsized_raw(ac64, count)?,
+                contexts: Xhci::<N>::alloc_dma_zeroed_unsized_raw(ac64, count)?,
                 rings: BTreeMap::new(),
             })
         }
     }
-    pub fn add_ring(&mut self, ac64: bool, stream_id: u16, link: bool) -> Result<()> {
+    pub fn add_ring<const N: usize>(
+        &mut self,
+        ac64: bool,
+        stream_id: u16,
+        link: bool,
+    ) -> Result<()> {
         // NOTE: stream_id 0 is reserved
         assert_ne!(stream_id, 0);
 
-        let ring = Ring::new(ac64, 16, link)?;
+        let ring = Ring::new::<N>(ac64, 16, link)?;
         let pointer = ring.register();
         let sct = StreamContextType::PrimaryRing;
 
@@ -182,8 +190,9 @@ pub struct ScratchpadBufferArray {
     pub pages: Vec<Dma<[u8; PAGE_SIZE]>>,
 }
 impl ScratchpadBufferArray {
-    pub fn new(ac64: bool, entries: u16) -> Result<Self> {
-        let mut entries = unsafe { Xhci::alloc_dma_zeroed_unsized_raw(ac64, entries as usize)? };
+    pub fn new<const N: usize>(ac64: bool, entries: u16) -> Result<Self> {
+        let mut entries =
+            unsafe { Xhci::<N>::alloc_dma_zeroed_unsized_raw(ac64, entries as usize)? };
 
         let pages = entries
             .iter_mut()
@@ -201,5 +210,19 @@ impl ScratchpadBufferArray {
     }
     pub fn register(&self) -> usize {
         self.entries.physical()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use core::mem;
+
+    #[test]
+    fn context_size() {
+        assert_eq!(mem::size_of::<SlotContext<CONTEXT_32>>(), 32);
+        assert_eq!(mem::size_of::<SlotContext<CONTEXT_64>>(), 64);
+        assert_eq!(mem::size_of::<EndpointContext<CONTEXT_32>>(), 32);
+        assert_eq!(mem::size_of::<EndpointContext<CONTEXT_64>>(), 64);
     }
 }
