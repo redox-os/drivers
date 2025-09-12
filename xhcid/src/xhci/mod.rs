@@ -465,12 +465,12 @@ impl Xhci {
     pub fn init(&mut self, max_slots: u8) -> Result<()> {
         // Set run/stop to 0
         debug!("Stopping xHC.");
-        self.op.get_mut().unwrap().usb_cmd.writef(1, false);
+        self.op.get_mut().unwrap().usb_cmd.writef(USB_CMD_RS, false);
 
         // Warm reset
         debug!("Reset xHC");
-        self.op.get_mut().unwrap().usb_cmd.writef(1 << 1, true);
-        while self.op.get_mut().unwrap().usb_cmd.readf(1 << 1) {
+        self.op.get_mut().unwrap().usb_cmd.writef(USB_CMD_HCRST, true);
+        while self.op.get_mut().unwrap().usb_cmd.readf(USB_CMD_HCRST) {
             thread::yield_now();
         }
 
@@ -531,18 +531,18 @@ impl Xhci {
             debug!("Enabling Primary Interrupter.");
             int.iman.writef(1 << 1 | 1, true);
         }
-        self.op.get_mut().unwrap().usb_cmd.writef(1 << 2, true);
+        self.op.get_mut().unwrap().usb_cmd.writef(USB_CMD_INTE, true);
 
         // Setup the scratchpad buffers that are required for the xHC to function.
         self.setup_scratchpads()?;
 
         // Set run/stop to 1
         debug!("Starting xHC.");
-        self.op.get_mut().unwrap().usb_cmd.writef(1, true);
+        self.op.get_mut().unwrap().usb_cmd.writef(USB_CMD_RS, true);
 
         // Wait until controller is running
         debug!("Waiting for start request to complete.");
-        while self.op.get_mut().unwrap().usb_sts.readf(1) {
+        while self.op.get_mut().unwrap().usb_sts.readf(USB_STS_HCH) {
             trace!("Waiting for XHCI to report running status.");
         }
 
@@ -796,7 +796,7 @@ impl Xhci {
 
             info!("Attempting to address the device");
             let mut ring = match self
-                .address_device(&mut input, port_id, slot_ty, slot, protocol_speed)
+                .address_device(&mut input, port_id, slot_ty, slot, protocol_speed, speed)
                 .await
             {
                 Ok(device_ring) => device_ring,
@@ -1012,6 +1012,7 @@ impl Xhci {
         slot_ty: u8,
         slot: u8,
         protocol_speed: &ProtocolSpeed,
+        speed: u8,
     ) -> Result<Ring> {
         // Collect MTT, parent port number, parent slot ID
         let mut mtt = false;
@@ -1057,6 +1058,7 @@ impl Xhci {
             assert_eq!(route_string & 0x000F_FFFF, route_string);
             slot_ctx.a.write(
                 route_string
+                    | (u32::from(speed) << 20)
                     | (u32::from(mtt) << 25)
                     | (u32::from(hub) << 26)
                     | (u32::from(context_entries) << 27),
@@ -1087,16 +1089,12 @@ impl Xhci {
 
             let max_error_count = 3u8; // recommended value according to the XHCI spec
             let ep_ty = 4u8; // control endpoint, bidirectional
-            let max_packet_size: u32 = if protocol_speed.is_lowspeed() {
-                8 // only valid value
-            } else if protocol_speed.is_fullspeed() {
-                64 // valid values are 8, 16, 32, 64
+            let max_packet_size: u32 = if protocol_speed.is_lowspeed() || protocol_speed.is_fullspeed() {
+                8
             } else if protocol_speed.is_highspeed() {
-                64 // only valid value
-            } else if protocol_speed.is_superspeed_gen_x() {
-                512 // only valid value
+                64
             } else {
-                unreachable!()
+                512
             };
             let host_initiate_disable = false; // only applies to streams
             let max_burst_size = 0u8; // TODO
@@ -1110,9 +1108,14 @@ impl Xhci {
                     | (u32::from(max_packet_size) << 16),
             );
 
+            let dequeue_cycle_state = true;
             let tr = ring.register();
             endp_ctx.trh.write((tr >> 32) as u32);
-            endp_ctx.trl.write(tr as u32);
+            endp_ctx.trl.write((tr as u32) | u32::from(dequeue_cycle_state));
+
+            // The default control pipe can always use 8 bytes
+            let avg_trb_len = 8u8;
+            endp_ctx.c.write(u32::from(avg_trb_len));
         }
 
         let input_context_physical = input_context.physical();

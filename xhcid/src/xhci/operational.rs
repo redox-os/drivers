@@ -80,6 +80,8 @@ pub struct OperationalRegs {
 pub const USB_CMD_RS: u32 = 1 << 0;
 /// Host controller reset
 pub const USB_CMD_HCRST: u32 = 1 << 1;
+// Interrupter enable
+pub const USB_CMD_INTE: u32 = 1 << 2;
 
 /// Host controller halted
 pub const USB_STS_HCH: u32 = 1 << 0;
