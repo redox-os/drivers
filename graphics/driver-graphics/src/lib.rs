@@ -225,6 +225,8 @@ impl<T: GraphicsAdapter> GraphicsScheme<T> {
     }
 }
 
+const MAP_FAKE_OFFSET_MULTIPLIER: usize = 0x10_000_000;
+
 impl<T: GraphicsAdapter> SchemeSync for GraphicsScheme<T> {
     fn open(&mut self, path: &str, _flags: usize, _ctx: &CallerCtx) -> Result<OpenResult> {
         if path.is_empty() {
@@ -490,9 +492,12 @@ impl<T: GraphicsAdapter> SchemeSync for GraphicsScheme<T> {
                     }
 
                     // FIXME use a better scheme for creating map offsets
-                    assert!(fbs[&fb_id].width() * fbs[&fb_id].height() * 4 < 0x1_000_000);
+                    assert!(
+                        ((fbs[&fb_id].width() * fbs[&fb_id].height() * 4) as usize)
+                            < MAP_FAKE_OFFSET_MULTIPLIER
+                    );
 
-                    payload.offset = fb_id * 0x10_000_000;
+                    payload.offset = fb_id * MAP_FAKE_OFFSET_MULTIPLIER;
 
                     Ok(size_of::<ipc::DumbFramebufferMapOffset>())
                 }
@@ -562,10 +567,10 @@ impl<T: GraphicsAdapter> SchemeSync for GraphicsScheme<T> {
                 next_id: _,
                 fbs,
             } => (
-                fbs.get(&(offset as usize / 0x10_000_000))
+                fbs.get(&(offset as usize / MAP_FAKE_OFFSET_MULTIPLIER))
                     .ok_or(Error::new(EINVAL))
                     .unwrap(),
-                offset & (0x10_000_000 - 1),
+                offset & (MAP_FAKE_OFFSET_MULTIPLIER as u64 - 1),
             ),
         };
         let ptr = T::map_dumb_framebuffer(&mut self.adapter, framebuffer);
