@@ -2,7 +2,7 @@
 
 #![feature(int_roundings)]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 
 use std::os::fd::AsRawFd;
@@ -18,7 +18,9 @@ use syscall::PAGE_SIZE;
 use anyhow::{anyhow, bail, Context};
 
 struct LiveDisk {
-    the_data: &'static mut [u8],
+    original: &'static [u8],
+    //TODO: drop overlay blocks if they match the original
+    overlay: HashMap<u64, Box<[u8]>>,
 }
 
 impl LiveDisk {
@@ -59,14 +61,14 @@ impl LiveDisk {
             .next_multiple_of(PAGE_SIZE);
         let size = end - start;
 
-        let the_data = unsafe {
+        let original = unsafe {
             let file = File::open("/scheme/memory/physical")?;
             let base = libredox::call::mmap(MmapArgs {
                 fd: file.as_raw_fd() as usize,
                 addr: core::ptr::null_mut(),
                 offset: start as u64,
                 length: size,
-                prot: flag::PROT_READ | flag::PROT_WRITE,
+                prot: flag::PROT_READ,
                 flags: flag::MAP_SHARED,
             })
             .map_err(|err| anyhow!("failed to mmap livedisk: {}", err))?;
@@ -74,39 +76,59 @@ impl LiveDisk {
             std::slice::from_raw_parts_mut(base as *mut u8, size)
         };
 
-        Ok(LiveDisk { the_data })
+        Ok(LiveDisk {
+            original,
+            overlay: HashMap::new(),
+        })
     }
 }
 
 impl Disk for LiveDisk {
     fn block_size(&self) -> u32 {
-        512
+        PAGE_SIZE as u32
     }
 
     fn size(&self) -> u64 {
-        self.the_data.len() as u64
+        self.original.len() as u64
     }
 
-    async fn read(&mut self, block: u64, buffer: &mut [u8]) -> syscall::Result<usize> {
-        let block = block as usize;
-        let block_size = self.block_size() as usize;
-        if block * block_size + buffer.len() > self.size() as usize {
-            return Err(syscall::Error::new(EOVERFLOW));
+    async fn read(&mut self, mut block: u64, buffer: &mut [u8]) -> syscall::Result<usize> {
+        let mut offset = (block as usize) * PAGE_SIZE;
+        if offset + buffer.len() > self.original.len() {
+            return Err(syscall::Error::new(EINVAL));
         }
-        buffer
-            .copy_from_slice(&self.the_data[block * block_size..block * block_size + buffer.len()]);
-        Ok(block_size)
+        for chunk in buffer.chunks_mut(PAGE_SIZE) {
+            match self.overlay.get(&block) {
+                Some(overlay) => {
+                    chunk.copy_from_slice(&overlay[..chunk.len()]);
+                }
+                None => {
+                    chunk.copy_from_slice(&self.original[offset..offset + chunk.len()]);
+                }
+            }
+            block += 1;
+            offset += PAGE_SIZE;
+        }
+        Ok(buffer.len())
     }
 
-    async fn write(&mut self, block: u64, buffer: &[u8]) -> syscall::Result<usize> {
-        let block = block as usize;
-        let block_size = self.block_size() as usize;
-        if block * block_size + buffer.len() > self.size() as usize {
-            return Err(syscall::Error::new(EOVERFLOW));
+    async fn write(&mut self, mut block: u64, buffer: &[u8]) -> syscall::Result<usize> {
+        let mut offset = (block as usize) * PAGE_SIZE;
+        if offset + buffer.len() > self.original.len() {
+            return Err(syscall::Error::new(EINVAL));
         }
-        self.the_data[block * block_size..block * block_size + buffer.len()]
-            .copy_from_slice(buffer);
-        Ok(block_size)
+        for chunk in buffer.chunks(PAGE_SIZE) {
+            self.overlay.entry(block).or_insert_with(|| {
+                let offset = (block as usize) * PAGE_SIZE;
+                self.original[offset..offset + PAGE_SIZE]
+                    .to_vec()
+                    .into_boxed_slice()
+            })[..chunk.len()]
+                .copy_from_slice(chunk);
+            block += 1;
+            offset += PAGE_SIZE;
+        }
+        Ok(buffer.len())
     }
 }
 
