@@ -1,6 +1,7 @@
 use rustc_hash::FxHashMap;
 use std::convert::{TryFrom, TryInto};
 use std::ops::Deref;
+use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::{fmt, mem};
 use syscall::PAGE_SIZE;
@@ -11,9 +12,13 @@ use common::io::{Io, Pio};
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use thiserror::Error;
 
-use aml::{AmlContext, AmlError, AmlHandle, AmlName};
+use acpi::{
+    aml::{namespace::AmlName, AmlError, Interpreter},
+    platform::AcpiPlatform,
+    AcpiTables,
+};
 use amlserde::aml_serde_name::aml_to_symbol;
-use amlserde::{AmlHandleLookup, AmlSerde};
+use amlserde::AmlSerde;
 
 #[cfg(target_arch = "x86_64")]
 pub mod dmar;
@@ -232,7 +237,7 @@ pub struct Ssdt(Sdt);
 // must empty the cache so it is rebuilt.
 // If you modify an SDT, you must discard the aml_context and rebuild it.
 pub struct AmlSymbols {
-    aml_context: AmlContext,
+    aml_context: Interpreter<AmlPhysMemHandler>,
     // k = name, v = description
     symbol_cache: FxHashMap<String, String>,
     page_cache: Arc<Mutex<AmlPageCache>>,
@@ -241,17 +246,19 @@ pub struct AmlSymbols {
 impl AmlSymbols {
     pub fn new() -> Self {
         let page_cache = Arc::new(Mutex::new(AmlPageCache::default()));
+        let handler = AmlPhysMemHandler::new(Arc::clone(&page_cache));
+        //TODO: use these parsed tables for the rest of acpid and return errors instead of unwrap
+        let rsdp_address = usize::from_str_radix(&std::env::var("RSDP_ADDR").unwrap(), 16).unwrap();
+        let tables = unsafe { AcpiTables::from_rsdp(handler.clone(), rsdp_address).unwrap() };
+        let platform = AcpiPlatform::new(tables, handler).unwrap();
         Self {
-            aml_context: AmlContext::new(
-                Box::new(AmlPhysMemHandler::new(Arc::clone(&page_cache))),
-                aml::DebugVerbosity::None,
-            ),
+            aml_context: Interpreter::new_from_platform(&platform).unwrap(),
             symbol_cache: FxHashMap::default(),
             page_cache,
         }
     }
 
-    pub fn mut_aml_context(&mut self) -> &mut AmlContext {
+    pub fn mut_aml_context(&mut self) -> &mut Interpreter<AmlPhysMemHandler> {
         &mut self.aml_context
     }
 
@@ -260,7 +267,7 @@ impl AmlSymbols {
     }
 
     pub fn parse_table(&mut self, aml: &[u8]) -> Result<(), AmlError> {
-        self.aml_context.parse_table(aml)
+        self.aml_context.load_table(aml)
     }
 
     pub fn lookup(&self, symbol: &str) -> Option<String> {
@@ -272,18 +279,19 @@ impl AmlSymbols {
     }
 
     pub fn build_cache(&mut self) {
-        let mut symbol_list: Vec<(AmlName, String, AmlHandle)> = Vec::with_capacity(5000);
+        let mut symbol_list: Vec<(AmlName, String)> = Vec::with_capacity(5000);
 
         if self
             .aml_context
             .namespace
+            .lock()
             .traverse(|level_aml_name, level| {
                 for (child_seg, handle) in level.values.iter() {
                     if let Ok(aml_name) =
                         AmlName::from_name_seg(child_seg.to_owned()).resolve(level_aml_name)
                     {
                         let name = aml_to_symbol(&aml_name);
-                        symbol_list.push((aml_name, name, handle.to_owned()));
+                        symbol_list.push((aml_name, name));
                     } else {
                         log::error!(
                             "AmlName resolve failed, {:?}:{:?}",
@@ -300,24 +308,12 @@ impl AmlSymbols {
             return;
         }
 
-        let mut handle_lookup = AmlHandleLookup::new();
-
-        for (aml_name, name, handle) in &symbol_list {
-            handle_lookup.insert(handle.to_owned(), aml_name.to_owned());
-        }
-
         let mut symbol_cache: FxHashMap<String, String> = FxHashMap::default();
 
-        for (aml_name, name, handle) in &symbol_list {
+        for (aml_name, name) in &symbol_list {
             // create an empty entry, in case something goes wrong with serialization
             symbol_cache.insert(name.to_owned(), "".to_owned());
-            if let Some(ser_value) = AmlSerde::from_aml(
-                &mut self.aml_context,
-                &handle_lookup,
-                &aml_to_symbol(aml_name),
-                aml_name,
-                handle,
-            ) {
+            if let Some(ser_value) = AmlSerde::from_aml(&mut self.aml_context, aml_name) {
                 if let Ok(ser_string) = ron::ser::to_string_pretty(&ser_value, Default::default()) {
                     // replace the empty entry
                     symbol_cache.insert(name.to_owned(), ser_string);
@@ -536,7 +532,7 @@ impl AcpiContext {
 
         let aml_symbols = self.aml_symbols.read();
 
-        let s5_aml_name = match aml::AmlName::from_str("\\_S5") {
+        let s5_aml_name = match acpi::aml::namespace::AmlName::from_str("\\_S5") {
             Ok(aml_name) => aml_name,
             Err(error) => {
                 log::error!("Could not build AmlName for \\_S5, {:?}", error);
@@ -544,7 +540,7 @@ impl AcpiContext {
             }
         };
 
-        let s5 = match aml_symbols.aml_context.namespace.get_by_path(&s5_aml_name) {
+        let s5 = match aml_symbols.aml_context.namespace.lock().get(s5_aml_name) {
             Ok(s5) => s5,
             Err(error) => {
                 log::error!("Cannot set S-state, missing \\_S5, {:?}", error);
@@ -552,23 +548,23 @@ impl AcpiContext {
             }
         };
 
-        let package = match s5 {
-            aml::AmlValue::Package(package) => package,
+        let package = match s5.deref() {
+            acpi::aml::object::Object::Package(package) => package,
             _ => {
                 log::error!("Cannot set S-state, \\_S5 is not a package");
                 return;
             }
         };
 
-        let slp_typa = match package[0] {
-            aml::AmlValue::Integer(i) => i,
+        let slp_typa = match package[0].deref() {
+            acpi::aml::object::Object::Integer(i) => i.to_owned(),
             _ => {
                 log::error!("typa is not an Integer");
                 return;
             }
         };
-        let slp_typb = match package[1] {
-            aml::AmlValue::Integer(i) => i,
+        let slp_typb = match package[1].deref() {
+            acpi::aml::object::Object::Integer(i) => i.to_owned(),
             _ => {
                 log::error!("typb is not an Integer");
                 return;
