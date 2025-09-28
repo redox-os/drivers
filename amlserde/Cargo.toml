@@ -9,7 +9,6 @@ license = "MIT/Apache-2.0"
 edition = "2021"
 
 [dependencies]
-aml = { git = "https://github.com/rw-vanc/acpi.git", branch = "cumulative" }
-rustc-hash = "1.1.0"
+acpi = { git = "https://github.com/jackpot51/acpi.git" }
 serde = { version = "1.0", features = ["derive"] }
 toml = "0.7.3"
