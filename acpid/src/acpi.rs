@@ -12,7 +12,11 @@ use common::io::{Io, Pio};
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use thiserror::Error;
 
-use acpi::aml::{namespace::AmlName, AmlError, Interpreter};
+use acpi::{
+    aml::{namespace::AmlName, AmlError, Interpreter},
+    platform::AcpiPlatform,
+    AcpiTables,
+};
 use amlserde::aml_serde_name::aml_to_symbol;
 use amlserde::AmlSerde;
 
@@ -242,8 +246,13 @@ pub struct AmlSymbols {
 impl AmlSymbols {
     pub fn new() -> Self {
         let page_cache = Arc::new(Mutex::new(AmlPageCache::default()));
+        let handler = AmlPhysMemHandler::new(Arc::clone(&page_cache));
+        //TODO: use these parsed tables for the rest of acpid and return errors instead of unwrap
+        let rsdp_address = usize::from_str_radix(&std::env::var("RSDP_ADDR").unwrap(), 16).unwrap();
+        let tables = unsafe { AcpiTables::from_rsdp(handler.clone(), rsdp_address).unwrap() };
+        let platform = AcpiPlatform::new(tables, handler).unwrap();
         Self {
-            aml_context: Interpreter::new(AmlPhysMemHandler::new(Arc::clone(&page_cache)), TODO),
+            aml_context: Interpreter::new_from_platform(&platform).unwrap(),
             symbol_cache: FxHashMap::default(),
             page_cache,
         }
