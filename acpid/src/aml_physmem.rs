@@ -1,9 +1,11 @@
+use acpi::{aml::AmlError, Handle, PciAddress, PhysicalMapping};
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use common::io::{Io, Pio};
 use num_traits::PrimInt;
 use rustc_hash::FxHashMap;
 use std::fmt::LowerHex;
 use std::mem::size_of;
+use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
 use syscall::PAGE_SIZE;
 
@@ -21,7 +23,7 @@ impl MappedPage {
             common::physmap(
                 phys_page,
                 PAGE_SIZE,
-                common::Prot::RO,
+                common::Prot::RW,
                 common::MemoryType::default(),
             )
             .map_err(|error| std::io::Error::from_raw_os_error(error.errno()))?
@@ -135,6 +137,7 @@ impl AmlPageCache {
     }
 }
 
+#[derive(Clone)]
 pub struct AmlPhysMemHandler {
     page_cache: Arc<Mutex<AmlPageCache>>,
 }
@@ -147,7 +150,35 @@ impl AmlPhysMemHandler {
     }
 }
 
-impl aml::Handler for AmlPhysMemHandler {
+impl acpi::Handler for AmlPhysMemHandler {
+    unsafe fn map_physical_region<T>(&self, phys: usize, size: usize) -> PhysicalMapping<Self, T> {
+        let phys_page = phys & PAGE_MASK;
+        let offset = phys & OFFSET_MASK;
+        let pages = (offset + size + PAGE_SIZE - 1) / PAGE_SIZE;
+        let map_size = pages * PAGE_SIZE;
+        let virt_page = common::physmap(
+            phys_page,
+            map_size,
+            common::Prot::RW,
+            common::MemoryType::default(),
+        )
+        .expect("failed to map physical region") as usize;
+        PhysicalMapping {
+            physical_start: phys,
+            virtual_start: NonNull::new((virt_page + offset) as *mut T).unwrap(),
+            region_length: size,
+            mapped_length: map_size,
+            handler: self.clone(),
+        }
+    }
+    fn unmap_physical_region<T>(region: &PhysicalMapping<Self, T>) {
+        let virt_page = region.virtual_start.addr().get() & PAGE_MASK;
+        unsafe {
+            libredox::call::munmap(virt_page as *mut (), region.mapped_length)
+                .expect("failed to unmap physical region")
+        }
+    }
+
     fn read_u8(&self, address: usize) -> u8 {
         log::trace!("read u8 {:X}", address);
         if let Ok(mut page_cache) = self.page_cache.lock() {
@@ -189,7 +220,7 @@ impl aml::Handler for AmlPhysMemHandler {
         0
     }
 
-    fn write_u8(&mut self, address: usize, value: u8) {
+    fn write_u8(&self, address: usize, value: u8) {
         log::trace!("write u8 {:X} = {:X}", address, value);
         if let Ok(mut page_cache) = self.page_cache.lock() {
             if page_cache.write_to_phys::<u8>(address, value).is_ok() {
@@ -198,7 +229,7 @@ impl aml::Handler for AmlPhysMemHandler {
         }
         log::error!("failed to write u8 {:#x}", address);
     }
-    fn write_u16(&mut self, address: usize, value: u16) {
+    fn write_u16(&self, address: usize, value: u16) {
         log::trace!("write u16 {:X} = {:X}", address, value);
         if let Ok(mut page_cache) = self.page_cache.lock() {
             if page_cache.write_to_phys::<u16>(address, value).is_ok() {
@@ -207,7 +238,7 @@ impl aml::Handler for AmlPhysMemHandler {
         }
         log::error!("failed to write u16 {:#x}", address);
     }
-    fn write_u32(&mut self, address: usize, value: u32) {
+    fn write_u32(&self, address: usize, value: u32) {
         log::trace!("write u32 {:X} = {:X}", address, value);
         if let Ok(mut page_cache) = self.page_cache.lock() {
             if page_cache.write_to_phys::<u32>(address, value).is_ok() {
@@ -216,7 +247,7 @@ impl aml::Handler for AmlPhysMemHandler {
         }
         log::error!("failed to write u32 {:#x}", address);
     }
-    fn write_u64(&mut self, address: usize, value: u64) {
+    fn write_u64(&self, address: usize, value: u64) {
         log::trace!("write u64 {:X} = {:X}", address, value);
         if let Ok(mut page_cache) = self.page_cache.lock() {
             if page_cache.write_to_phys::<u64>(address, value).is_ok() {
@@ -282,25 +313,54 @@ impl aml::Handler for AmlPhysMemHandler {
         log::error!("cannot write 0x{value:08X} to port 0x{port:04X}");
     }
 
-    fn read_pci_u8(&self, seg: u16, bus: u8, dev: u8, func: u8, off: u16) -> u8 {
-        log::error!("read pci u8 {seg:04X}:{bus:02X}:{dev:02X}.{func:01X}@{off:04X}");
+    fn read_pci_u8(&self, addr: PciAddress, off: u16) -> u8 {
+        log::error!("read pci u8 {addr}@{off:04X}");
         0
     }
-    fn read_pci_u16(&self, seg: u16, bus: u8, dev: u8, func: u8, off: u16) -> u16 {
-        log::error!("read pci u16 {seg:04X}:{bus:02X}:{dev:02X}.{func:01X}@{off:04X}");
+    fn read_pci_u16(&self, addr: PciAddress, off: u16) -> u16 {
+        log::error!("read pci u16 {addr}@{off:04X}");
         0
     }
-    fn read_pci_u32(&self, seg: u16, bus: u8, dev: u8, func: u8, off: u16) -> u32 {
-        log::error!("read pci u32 {seg:04X}:{bus:02X}:{dev:02X}.{func:01X}@{off:04X}");
+    fn read_pci_u32(&self, addr: PciAddress, off: u16) -> u32 {
+        log::error!("read pci u32 {addr}@{off:04X}");
         0
     }
-    fn write_pci_u8(&self, seg: u16, bus: u8, dev: u8, func: u8, off: u16, value: u8) {
-        log::error!("write pci u8 {seg:04X}:{bus:02X}:{dev:02X}.{func:01X}@{off:04X}={value:02X}");
+    fn write_pci_u8(&self, addr: PciAddress, off: u16, value: u8) {
+        log::error!("write pci u8 {addr}@{off:04X}={value:02X}");
     }
-    fn write_pci_u16(&self, seg: u16, bus: u8, dev: u8, func: u8, off: u16, value: u16) {
-        log::error!("write pci u16 {seg:04X}:{bus:02X}:{dev:02X}.{func:01X}@{off:04X}={value:04X}");
+    fn write_pci_u16(&self, addr: PciAddress, off: u16, value: u16) {
+        log::error!("write pci u16 {addr}@{off:04X}={value:04X}");
     }
-    fn write_pci_u32(&self, seg: u16, bus: u8, dev: u8, func: u8, off: u16, value: u32) {
-        log::error!("write pci u32 {seg:04X}:{bus:02X}:{dev:02X}.{func:01X}@{off:04X}={value:08X}");
+    fn write_pci_u32(&self, addr: PciAddress, off: u16, value: u32) {
+        log::error!("write pci u32 {addr}@{off:04X}={value:08X}");
+    }
+
+    fn nanos_since_boot(&self) -> u64 {
+        let ts = libredox::call::clock_gettime(libredox::flag::CLOCK_MONOTONIC)
+            .expect("failed to get time");
+        (ts.tv_sec as u64) * 1_000_000_000 + (ts.tv_nsec as u64)
+    }
+
+    fn stall(&self, microseconds: u64) {
+        let start = std::time::Instant::now();
+        while start.elapsed().as_micros() < microseconds.into() {
+            std::hint::spin_loop();
+        }
+    }
+
+    fn sleep(&self, milliseconds: u64) {
+        std::thread::sleep(std::time::Duration::from_millis(milliseconds));
+    }
+
+    fn create_mutex(&self) -> Handle {
+        todo!("Handler::create_mutex");
+    }
+
+    fn acquire(&self, mutex: Handle, timeout: u16) -> Result<(), AmlError> {
+        todo!("Handler::aquire");
+    }
+
+    fn release(&self, mutex: Handle) {
+        todo!("Handler::release");
     }
 }
