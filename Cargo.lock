@@ -420,9 +420,7 @@ version = "0.1.0"
 dependencies = [
  "common",
  "log",
- "pcid",
  "redox_syscall",
- "xhcid",
 ]
 
 [[package]]

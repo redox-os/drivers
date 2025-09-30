@@ -9,4 +9,6 @@ license = "MIT"
 [dependencies]
 log = "0.4"
 redox_syscall = "0.5"
+dwc3 = { path = "../dwc3" }
+pcid = { path = "../../../pcid" }
 common = { path = "../../../common" }
