@@ -1,0 +1,7 @@
+[[drivers]]
+name = "XHCI"
+class = 0x0C
+subclass = 0x03
+interface = 0x30
+command = ["xhcid"]
+use_channel = true

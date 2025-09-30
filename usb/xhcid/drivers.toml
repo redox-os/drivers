@@ -1,0 +1,17 @@
+[[drivers]]
+name = "SCSI over USB"
+class = 8 # Mass Storage class
+subclass = 6 # SCSI transparent command set
+command = ["usbscsid", "$SCHEME", "$PORT", "$IF_PROTO"]
+
+[[drivers]]
+name = "USB HUB"
+class = 9 # HUB class
+subclass = -1
+command = ["usbhubd", "$SCHEME", "$PORT", "$IF_NUM"]
+
+[[drivers]]
+name = "USB HID"
+class = 3 # HID class
+subclass = -1
+command = ["usbhidd", "$SCHEME", "$PORT", "$IF_NUM"]
