@@ -406,6 +406,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "driver-udc"
+version = "0.1.0"
+dependencies = [
+ "libredox",
+ "redox-scheme 0.4.0",
+ "redox_syscall",
+]
+
+[[package]]
 name = "dwc3"
 version = "0.1.0"
 dependencies = [
