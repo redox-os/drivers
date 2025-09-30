@@ -406,6 +406,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "dwc3"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "log",
+ "pcid",
+ "redox_syscall",
+ "xhcid",
+]
+
+[[package]]
 name = "e1000d"
 version = "0.1.0"
 dependencies = [
