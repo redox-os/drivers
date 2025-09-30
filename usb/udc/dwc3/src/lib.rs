@@ -10,6 +10,9 @@ use syscall::{
 use core::ptr::NonNull;
 
 use alloc::alloc::{alloc_zeroed, Layout};
+use common::dma::Dma;
+use std::ops::{Deref, DerefMut};
+
 
 
 pub struct DWC3 {
@@ -73,7 +76,9 @@ impl DWC3 {
         self.event_buf.unwrap().as_mut().cache = NonNull::new(alloc_zeroed(layout) as *mut u8);
 
         /* allocate the dma buffer */
-        self.event_buf.unwrap().as_mut().buf = NonNull::new(/*todo :dma memory*/0 as *mut u8);
+        let dma = Dma::<u8>::zeroed().expect("dwc: alloc_event: failed to get DMA memory");
+        self.event_buf.unwrap().as_mut().dma = dma.physical() as usize;
+        self.event_buf.unwrap().as_mut().buf = NonNull::new(dma.assume_init().deref_mut() as *mut u8);
 
         self.event_buf.unwrap().as_mut().length = size;
 
