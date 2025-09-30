@@ -384,6 +384,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "driver-gadget"
+version = "0.1.0"
+dependencies = [
+ "libredox",
+ "redox-scheme 0.6.2",
+ "redox_syscall",
+]
+
+[[package]]
 name = "driver-graphics"
 version = "0.1.0"
 dependencies = [
