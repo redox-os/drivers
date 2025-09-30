@@ -9,11 +9,13 @@ members = [
     "pcid-spawner",
     "rtcd",
     "vboxd",
-    "xhcid",
-    "usbctl",
-    "usbhubd",
     "inputd",
     "virtio-core",
+
+    "usb/xhcid",
+    "usb/usbctl",
+    "usb/usbhubd",
+
 
     "audio/ac97d",
     "audio/ihdad",
