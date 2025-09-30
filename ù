@@ -1,14 +1,19 @@
 [package]
-name = "usbhubd"
+name = "usbhidd"
 version = "0.1.0"
+authors = ["4lDO2 <4lDO2@protonmail.com>"]
 edition = "2018"
 license = "MIT"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+bitflags = "2"
 log = "0.4"
+orbclient = "0.3.47"
 redox_syscall = "0.5"
-xhcid = { path = "../xhcid" }
+rehid = { git = "https://gitlab.redox-os.org/redox-os/rehid.git" }
+xhcid = { path = "../../usb/xhcid" }
 
 common = { path = "../../common" }
+inputd = { path = "../../inputd" }
