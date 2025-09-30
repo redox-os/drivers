@@ -9,6 +9,6 @@ license = "MIT"
 [dependencies]
 log = "0.4"
 redox_syscall = "0.5"
-xhcid = { path = "../xhcid" }
-pcid = { path = "../pcid" }
+xhcid = { path = "../../xhcid" }
+pcid = { path = "../../../pcid" }
 common = { path = "../../../common" }
