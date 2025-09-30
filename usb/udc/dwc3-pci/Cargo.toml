@@ -1,5 +1,5 @@
 [package]
-name = "dwc3"
+name = "dwc3-pci"
 version = "0.1.0"
 edition = "2018"
 license = "MIT"
@@ -8,6 +8,7 @@ license = "MIT"
 
 [dependencies]
 log = "0.4"
+redox-daemon = "0.1.2"
 redox_syscall = "0.5"
 dwc3 = { path = "../dwc3" }
 pcid = { path = "../../../pcid" }

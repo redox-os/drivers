@@ -410,7 +410,7 @@ name = "driver-udc"
 version = "0.1.0"
 dependencies = [
  "libredox",
- "redox-scheme 0.4.0",
+ "redox-scheme 0.6.2",
  "redox_syscall",
 ]
 
@@ -419,7 +419,21 @@ name = "dwc3"
 version = "0.1.0"
 dependencies = [
  "common",
+ "driver-udc",
  "log",
+ "redox_event",
+ "redox_syscall",
+]
+
+[[package]]
+name = "dwc3-pci"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "dwc3",
+ "log",
+ "pcid",
+ "redox-daemon",
  "redox_syscall",
 ]
 

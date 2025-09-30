@@ -1,6 +1,7 @@
 pub mod pci;
 
 use pcid_interface::PciFunctionHandle;
+use dwc3::dwc3_init;
 
 fn main() {
     common::setup_logging(
@@ -11,18 +12,23 @@ fn main() {
         log::LevelFilter::Info,
     );
 
-    let pcid_handle = PciFunctionHandle::connect_default();
+    let mut pcid_handle = PciFunctionHandle::connect_default();
     let pci_config = pcid_handle.config();
     
     let mut name = pci_config.func.name();
     name.push_str("_dwc3");
 
-    let bar0 = pci_config.func.bars[0].expect_port();
     let irq = pci_config
         .func
         .legacy_interrupt_line
-        .expect("dwc3: no legacy interrupts supported");
-    eprintln!(" + DWC3 {}", pci_config.func.display());
+        .expect("dwc3-pci: no legacy interrupts supported");
+    eprintln!(" + dwc3-pci {}", pci_config.func.display());
 
-    
+    redox_daemon::Daemon::new(move |daemon| {
+        let address = unsafe { pcid_handle.map_bar(0) }.ptr.as_ptr() as usize;
+        let scheme = dwc3_init(name, address).unwrap();
+
+        unreachable!();
+    })
+    .expect("dwc3-pci: failed to create daemon");
 }
