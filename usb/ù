@@ -1,0 +1,80 @@
+pub mod device;
+
+use libredox::Fd;
+use driver_udc::{UDCAdapter, UDCScheme};
+use syscall::{
+    Error, Result, Stat, EACCES, EAGAIN, EBADF, EINTR, EINVAL, EWOULDBLOCK, MODE_FILE,
+};
+use event::{EventFlags, EventQueue};
+
+pub struct DWC3 {
+
+}
+
+impl DWC3 {
+    pub fn new() -> Self {
+        DWC3 {}
+    }
+}
+
+impl UDCAdapter for DWC3 {
+    fn write_ep(&mut self, ep: usize, buf: &[u8]) -> Result<usize> {
+        todo!("Todo");
+    }
+
+    fn read_ep(&mut self, ep: usize, buf: &mut [u8]) -> Result<Option<usize>> {
+        todo!("Todo");
+    }
+}
+
+pub fn dwc3_init(dev_name: String, address: usize, irq_fd: Fd) -> Result<UDCScheme<DWC3>> {
+    let scheme_name = format!("udc.{}", dev_name);
+    let dwc3 = DWC3::new();
+    let scheme = UDCScheme::new(
+        dwc3,
+        scheme_name,
+        address,
+    );
+
+    let event_queue = EventQueue::new().expect("dwc3: failed to create event queue");
+
+    libredox::call::setrens(0, 0).expect("dwc3: failed to enter null namespace");
+
+    event::user_data! {
+        enum Event {
+            Scheme,
+        }
+    };
+
+    event_queue
+        .subscribe(scheme.event_handle().raw(), Event::Scheme, EventFlags::READ)
+        .expect("dwc3: failed to event scheme socket");
+
+    event_queue
+            .subscribe(irq_fd, Event::Scheme, EventFlags::READ)
+            .expect("dwc3: failed to event irq scheme");
+
+    Ok(scheme)
+}
+
+#[repr(C,packed)]
+struct DWC3EventBuffer {
+    buf: usize,
+    cache: usize,
+    length: u32, 
+}
+
+pub fn dwc3_set_mode() {
+}
+
+pub fn dwc3_soft_reset() {
+}
+
+pub fn dwc3_event_buffers_setup() {
+}
+
+pub fn dwc3_event_buffers_cleanup() {
+}
+
+pub fn dwc3_init_mode() {
+}

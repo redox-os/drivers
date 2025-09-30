@@ -2,17 +2,147 @@ pub mod device;
 
 use driver_udc::{UDCAdapter, UDCScheme};
 use syscall::{
-    Error, EventFlags, Result, Stat, EACCES, EAGAIN, EBADF, EINTR, EINVAL, EWOULDBLOCK, MODE_FILE,
+    Error, Result, Stat, EACCES, EAGAIN, EBADF, EINTR, EINVAL, EWOULDBLOCK, MODE_FILE,
 };
-use event::{user_data, EventQueue};
+
+const DWC3_XHCI_REGS_START: u32 = 0x0;
+const DWC3_XHCI_REGS_END: u32 = 0x7fff;
+const DWC3_GLOBALS_REGS_START: u32 = 0xc100;
+const DWC3_GLOBALS_REGS_END: u32 = 0xc6ff;
+const DWC3_DEVICE_REGS_START: u32 = 0xc700;
+const DWC3_DEVICE_REGS_END: u32 = 0xcbff;
+const DWC3_OTG_REGS_START: u32 = 0xcc00;
+const DWC3_OTG_REGS_END: u32 = 0xccff;
+
+const DWC3_GSBUSCFG0: u32 = 0xc100;
+const DWC3_GSBUSCFG1: u32 = 0xc104;
+const DWC3_GTXTHRCFG: u32 = 0xc108;
+const DWC3_GRXTHRCFG: u32 = 0xc10c;
+const DWC3_GCTL: u32 = 0xc110;
+const DWC3_GEVTEN: u32 = 0xc114;
+const DWC3_GSTS: u32 = 0xc118;
+const DWC3_GUCTL1: u32 = 0xc11c;
+const DWC3_GSNPSID: u32 = 0xc120;
+const DWC3_GGPIO: u32 = 0xc124;
+const DWC3_GUID: u32 = 0xc128;
+const DWC3_GUCTL: u32 = 0xc12c;
+const DWC3_GBUSERRADDR0: u32 = 0xc130;
+const DWC3_GBUSERRADDR1: u32 = 0xc134;
+const DWC3_GPRTBIMAP0: u32 = 0xc138;
+const DWC3_GPRTBIMAP1: u32 = 0xc13c;
+const DWC3_GHWPARAMS0: u32 = 0xc140;
+const DWC3_GHWPARAMS1: u32 = 0xc144;
+const DWC3_GHWPARAMS2: u32 = 0xc148;
+const DWC3_GHWPARAMS3: u32 = 0xc14c;
+const DWC3_GHWPARAMS4: u32 = 0xc150;
+const DWC3_GHWPARAMS5: u32 = 0xc154;
+const DWC3_GHWPARAMS6: u32 = 0xc158;
+const DWC3_GHWPARAMS7: u32 = 0xc15c;
+const DWC3_GDBGFIFOSPACE: u32 = 0xc160;
+const DWC3_GDBGLTSSM: u32 = 0xc164;
+const DWC3_GDBGBMU: u32 = 0xc16c;
+const DWC3_GDBGLSPMUX: u32 = 0xc170;
+const DWC3_GDBGLSP: u32 = 0xc174;
+const DWC3_GDBGEPINFO0: u32 = 0xc178;
+const DWC3_GDBGEPINFO1: u32 = 0xc17c;
+const DWC3_GPRTBIMAP_HS0: u32 = 0xc180;
+const DWC3_GPRTBIMAP_HS1: u32 = 0xc184;
+const DWC3_GPRTBIMAP_FS0: u32 = 0xc188;
+const DWC3_GPRTBIMAP_FS1: u32 = 0xc18c;
+const DWC3_GUCTL2: u32 = 0xc19c;
+
+const DWC3_GUSB3PIPECTL_UX_EXIT_PX: u32 = 1 << 27;
+const DWC3_GUSB3PIPECTL_SUSPHY: u32 = 1 << 17;
 
 pub struct DWC3 {
+    address: usize,
 
+    num_usb3_ports: u32, 
+    num_usb2_ports: u32, 
 }
 
 impl DWC3 {
-    pub fn new() -> Self {
-        DWC3 {}
+    pub fn new(address: usize) -> Result<Self> {
+        let mut dwc3 = DWC3 {
+            address,
+
+            num_usb3_ports: 0,
+            num_usb2_ports: 0,
+        };
+
+        unsafe { dwc3.init() };
+
+        Ok(dwc3)
+    }
+
+    unsafe fn init(&mut self) {
+        self.writel(DWC3_GUID, 0xdeadbeef);
+
+        self.phy_setup().expect("dwc: failed to run phy_setup()");
+
+    }
+
+    pub fn set_mode() {
+    }
+
+    pub fn soft_reset() {
+    }
+
+    pub fn event_buffers_setup() {
+    }
+
+    pub fn event_buffers_cleanup() {
+    }
+
+    pub fn init_mode() {
+    }
+
+    unsafe fn phy_setup(&mut self) -> Result<()> {
+	for i in 0u32..self.num_usb3_ports {
+            self.ss_phy_setup(i)?;
+	}
+
+	for i in 0u32..self.num_usb2_ports {
+            self.hs_phy_setup(i)?;
+	}
+
+        Ok(())
+    }
+
+    unsafe fn ss_phy_setup(&mut self, index: u32) -> Result<()> {
+	let mut reg: u32;
+
+	reg = self.readl(Self::gusb3pipectl(index));
+
+        /*
+	 * Make sure UX_EXIT_PX is cleared as that causes issues with some
+	 * PHYs. Also, this bit is not supposed to be used in normal operation.
+	 */
+        reg &= !DWC3_GUSB3PIPECTL_UX_EXIT_PX;
+
+	/* Ensure the GUSB3PIPECTL.SUSPENDENABLE is cleared prior to phy init. */
+	reg &= !DWC3_GUSB3PIPECTL_SUSPHY;
+
+	self.writel(Self::gusb3pipectl(index), reg);
+
+        Ok(())
+    }
+
+    fn hs_phy_setup(&mut self, index: u32) -> Result<()> {
+
+        Ok(())
+    }
+
+    const fn gusb3pipectl(n: u32) -> u32 {
+        0xc2c0 + n * 0x04
+    }
+
+    unsafe fn readl(&self, offset: u32) -> u32 {
+        *((self.address + offset as usize) as *const u32)
+    }
+
+    unsafe fn writel(&mut self, offset: u32, val: u32) {
+        *((self.address + offset as usize) as *mut u32) = val;
     }
 }
 
@@ -26,14 +156,11 @@ impl UDCAdapter for DWC3 {
     }
 }
 
-pub fn dwc3_init(dev_name: String, address: usize) -> Result<UDCScheme<DWC3>> {
-    let scheme_name = format!("udc.{}", dev_name);
-    let dwc3 = DWC3::new();
-    let scheme = UDCScheme::new(
-        dwc3,
-        scheme_name,
-        address,
-    );
-
-    Ok(scheme)
+#[repr(C,packed)]
+struct DWC3EventBuffer {
+    buf: usize,
+    cache: usize,
+    length: u32, 
 }
+
+

@@ -26,13 +26,11 @@ pub struct UDCScheme<T: UDCAdapter> {
     scheme_name: String,
     socket: Socket,
     next_id: usize,
-    handles: BTreeMap<usize, Handle>,
-    
-    address: usize,
+    handles: BTreeMap<usize, Handle>,    
 }
 
 impl<T: UDCAdapter> UDCScheme<T> {
-    pub fn new(udc: T, scheme_name: String, address: usize) -> Self {
+    pub fn new(udc: T, scheme_name: String) -> Self {
         assert!(scheme_name.starts_with("udc"));
         let socket = Socket::nonblock(&scheme_name).expect("failed to create UDC scheme");
 
@@ -42,7 +40,6 @@ impl<T: UDCAdapter> UDCScheme<T> {
             socket,
             next_id: 0,
             handles: BTreeMap::new(),
-            address,
         }
     }
 
