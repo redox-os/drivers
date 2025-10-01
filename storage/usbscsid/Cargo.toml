@@ -16,4 +16,4 @@ redox-daemon = "0.1"
 redox_event = "0.4"
 redox_syscall = { version = "0.5", features = ["std"] }
 thiserror = "1"
-xhcid = { path = "../../xhcid" }
+xhcid = { path = "../../usb/xhcid" }

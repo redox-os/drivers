@@ -11,4 +11,4 @@ log = "0.4"
 redox_syscall = "0.5"
 xhcid = { path = "../xhcid" }
 
-common = { path = "../common" }
+common = { path = "../../common" }
