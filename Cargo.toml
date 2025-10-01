@@ -12,11 +12,6 @@ members = [
     "inputd",
     "virtio-core",
 
-    "usb/xhcid",
-    "usb/usbctl",
-    "usb/usbhubd",
-
-
     "audio/ac97d",
     "audio/ihdad",
     "audio/sb16d",
@@ -49,6 +44,10 @@ members = [
     "storage/nvmed",
     "storage/usbscsid",
     "storage/virtio-blkd",
+
+    "usb/xhcid",
+    "usb/usbctl",
+    "usb/usbhubd",
 ]
 
 [profile.release]
