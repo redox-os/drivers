@@ -1,7 +1,8 @@
+#![feature(macro_metavar_expr_concat)]
+
 #![allow(dead_code)]
 #![allow(non_upper_case_globals)]
 #![allow(unused_parens)]
-#![feature(concat_idents)]
 
 extern crate event;
 extern crate syscall;

@@ -127,27 +127,27 @@ const ADVERTISE_1000FULL: u32 = 0x0200;
 
 macro_rules! FIELD_GETX {
     ($x:expr, $name:ident) => {
-        ((($x) >> concat_idents!($name, _SHIFT)) & concat_idents!($name, _MASK))
+        ((($x) >> ${concat($name, _SHIFT)} & ${concat($name, _MASK)}))
     };
 }
 
 macro_rules! FIELDX {
     ($name:ident, $v:expr) => {
-        (((($v) as u32) & concat_idents!($name, _MASK)) << concat_idents!($name, _SHIFT))
+        (((($v) as u32) & ${concat($name, _MASK)}) << ${concat($name, _SHIFT)})
     };
 }
 
 macro_rules! FIELD_SETS {
     ($x:expr, $name:ident, $v:expr) => {{
-        ($x) = (($x) & !(concat_idents!($name, _MASK) << concat_idents!($name, _SHIFT)))
-            | (((($v) as u16) & concat_idents!($name, _MASK)) << concat_idents!($name, _SHIFT))
+        ($x) = (($x) & !(${concat($name, _MASK)} << ${concat($name, _SHIFT)}))
+            | (((($v) as u16) & ${concat($name, _MASK)}) << ${concat($name, _SHIFT)})
     }};
 }
 
 macro_rules! FIELD_SET32 {
     ($x:expr, $name:ident, $v:expr) => {{
-        ($x) = (($x) & !(concat_idents!($name, _MASK) << concat_idents!($name, _SHIFT)))
-            | (((($v) as u32) & concat_idents!($name, _MASK)) << concat_idents!($name, _SHIFT))
+        ($x) = (($x) & !(${concat($name, _MASK)} << ${concat($name, _SHIFT)}))
+            | (((($v) as u32) & ${concat($name, _MASK)}) << ${concat($name, _SHIFT)})
     }};
 }
 
