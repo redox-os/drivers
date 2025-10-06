@@ -72,6 +72,9 @@ If you don't have datasheets, we recommend you to do reverse-engineering of avai
 
 You should use the [redox-scheme](https://crates.io/crates/redox-scheme) and [redox_event](https://crates.io/crates/redox_event) crates to create your drivers, you can also read the [example driver](https://gitlab.redox-os.org/redox-os/exampled) or read the code of other drivers with the same type of your device.
 
+- If your driver only has one event to listen you just need to use the `redox-scheme` crate
+- If your driver need to listen for interrups and requests you need to use the `redox-scheme` and `redox_event` crates
+
 Before testing your changes, be aware of [this](https://doc.redox-os.org/book/coding-and-building.html#a-note-about-drivers).
 
 ### References
