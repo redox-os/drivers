@@ -64,15 +64,17 @@ If you want to port a driver from a monolithic OS to Redox you will need to rewr
 
 ### Write a Driver
 
-Datasheets are preferable, when they are freely available. Be aware that datasheets are often provided under a [Non-Disclosure Agreement](https://en.wikipedia.org/wiki/Non-disclosure_agreement) from hardware vendors, which can affect the ability to create an MIT-licensed driver.
+Datasheets are preferable (much more easy depending on device complexity), when they are freely available. Be aware that datasheets are often provided under a [Non-Disclosure Agreement](https://en.wikipedia.org/wiki/Non-disclosure_agreement) from hardware vendors, which can affect the ability to create an MIT-licensed driver.
 
 If you don't have datasheets, we recommend you to do reverse-engineering of available C code on BSD drivers.
 
-You can use the [example](https://gitlab.redox-os.org/redox-os/exampled) driver or read the code of other drivers with the same type of your device.
+### Libraries
+
+You should use the [redox-scheme](https://crates.io/crates/redox-scheme) and [redox_event](https://crates.io/crates/redox_event) crates to create your drivers, you can also read the [example driver](https://gitlab.redox-os.org/redox-os/exampled) or read the code of other drivers with the same type of your device.
 
 Before testing your changes, be aware of [this](https://doc.redox-os.org/book/coding-and-building.html#a-note-about-drivers).
 
-### Driver References
+### References
 
 If you want to reverse enginner the existing drivers, you can access the BSD code using these links:
 
