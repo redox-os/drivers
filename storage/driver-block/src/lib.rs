@@ -144,11 +144,10 @@ impl<T: Disk> DiskWrapper<T> {
                     if block >= size_in_blocks {
                         return Err(io::Error::from_raw_os_error(syscall::EOVERFLOW));
                     }
-                    loop {
-                        let bytes = self.executor.block_on(disk.read(block, block_bytes))?;
-                        assert_eq!(bytes, block_bytes.len());
-                        return Ok(());
-                    }
+
+                    let bytes = self.executor.block_on(disk.read(block, block_bytes))?;
+                    assert_eq!(bytes, block_bytes.len());
+                    Ok(())
                 };
                 let bytes_read = block_read(self.offset, blksize, buf, read_block)?;
 
