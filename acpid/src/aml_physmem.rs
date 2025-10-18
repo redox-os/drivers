@@ -1,12 +1,16 @@
 use acpi::{aml::AmlError, Handle, PciAddress, PhysicalMapping};
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use common::io::{Io, Pio};
+use core::time;
 use num_traits::PrimInt;
 use rustc_hash::FxHashMap;
+use std::collections::HashMap;
 use std::fmt::LowerHex;
 use std::mem::size_of;
+use std::ops::RemAssign;
 use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
+use std::thread::ThreadId;
 use syscall::PAGE_SIZE;
 
 const PAGE_MASK: usize = !(PAGE_SIZE - 1);
@@ -140,13 +144,68 @@ impl AmlPageCache {
 #[derive(Clone)]
 pub struct AmlPhysMemHandler {
     page_cache: Arc<Mutex<AmlPageCache>>,
+    mutexes: Arc<Mutex<AmlMutexes>>,
 }
 
 /// Read from a physical address.
 /// Generic parameter must be u8, u16, u32 or u64.
 impl AmlPhysMemHandler {
-    pub fn new(page_cache: Arc<Mutex<AmlPageCache>>) -> Self {
-        Self { page_cache }
+    pub fn new(page_cache: Arc<Mutex<AmlPageCache>>, mutexes: Arc<Mutex<AmlMutexes>>) -> Self {
+        Self {
+            page_cache,
+            mutexes,
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct AmlMutexes {
+    mutexes: HashMap<Handle, (ThreadId, bool)>,
+    next_handle: u32,
+}
+impl AmlMutexes {
+    pub fn create_new(&mut self) -> Option<Handle> {
+        if self.mutexes.len() == u32::MAX as usize {
+            return None;
+        }
+
+        while self.mutexes.contains_key(&Handle(self.next_handle)) {
+            self.next_handle.wrapping_add(1);
+        }
+
+        let new_handle = Handle(self.next_handle);
+        self.mutexes
+            .insert(new_handle, (std::thread::current().id(), false));
+
+        self.next_handle.wrapping_add(1);
+
+        Some(new_handle)
+    }
+    pub fn count(&self) -> u32 {
+        // Handle is a warper around u32
+        self.mutexes.len() as u32
+    }
+
+    pub fn try_acquire(&mut self, handle: Handle) -> Option<bool> {
+        let Some((thread_id, mutex_state)) = self.mutexes.get_mut(&handle) else {
+            return None; // TODO: better error value
+        };
+        if *mutex_state == false {
+            *mutex_state = true;
+            *thread_id = std::thread::current().id();
+            return Some(true);
+        } else if *thread_id == std::thread::current().id() {
+            // a thread can lock mutexes multiple times
+            return Some(true);
+        } else {
+            return Some(false);
+        }
+    }
+    pub fn release(&mut self, handle: Handle) {
+        // TODO: handle the bunch of error cases
+        if let Some((_, mutex_state)) = self.mutexes.get_mut(&handle) {
+            *mutex_state = false;
+        }
     }
 }
 
@@ -353,16 +412,68 @@ impl acpi::Handler for AmlPhysMemHandler {
     }
 
     fn create_mutex(&self) -> Handle {
-        log::warn!("TODO: Handler::create_mutex");
-        Handle(0)
+        let mut mutexes = self.mutexes.lock().expect("AML mutex mutex poisoned!");
+        let new_handle = mutexes
+            .create_new()
+            .expect("Failed to create new AML mutex!");
+
+        log::warn!("Creating new mutex - existing mutexes: {}", mutexes.count());
+        drop(mutexes);
+
+        new_handle
     }
 
     fn acquire(&self, mutex: Handle, timeout: u16) -> Result<(), AmlError> {
-        log::warn!("TODO: Handler::aquire");
-        Ok(())
+        log::info!("Trying to acquire AML mutex: {}", mutex.0);
+
+        match timeout {
+            0 => match self
+                .mutexes
+                .lock()
+                .expect("AML mutex mutex poisoned!")
+                .try_acquire(mutex)
+            {
+                None => return Result::Err(AmlError::PrtNoEntry), // TODO: check if there's a better error for a non existing mutex
+                Some(false) => return Result::Err(AmlError::MutexAcquireTimeout),
+                Some(true) => return Result::Ok(()),
+            },
+            u16::MAX => loop {
+                match self
+                    .mutexes
+                    .lock()
+                    .expect("AML mutex mutex poisoned!")
+                    .try_acquire(mutex)
+                {
+                    None => return Result::Err(AmlError::PrtNoEntry), // TODO: check if there's a better error for a non existing mutex
+                    Some(false) => {}
+                    Some(true) => return Result::Ok(()),
+                };
+                std::hint::spin_loop();
+            },
+            timeout => {
+                let start = std::time::Instant::now();
+                while start.elapsed().as_millis() < timeout as u128 {
+                    match self
+                        .mutexes
+                        .lock()
+                        .expect("AML mutex mutex poisoned!")
+                        .try_acquire(mutex)
+                    {
+                        None => return Result::Err(AmlError::PrtNoEntry), // TODO: check if there's a better error for a non existing mutex
+                        Some(false) => {}
+                        Some(true) => return Result::Ok(()),
+                    };
+                    std::hint::spin_loop();
+                }
+                return Result::Err(AmlError::MutexAcquireTimeout);
+            }
+        }
     }
 
     fn release(&self, mutex: Handle) {
-        log::warn!("TODO: Handler::release");
+        let mut mutexes = self.mutexes.lock().expect("AML mutex mutex poisoned!");
+        mutexes.release(mutex);
+        drop(mutex);
+        log::info!("AML mutex: {} released", mutex.0);
     }
 }

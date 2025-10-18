@@ -1,9 +1,15 @@
+use acpi::aml::namespace::{AmlName, NameComponent, NameSeg};
+use acpi::aml::object::{Object, WrappedObject};
 use core::str;
 use parking_lot::RwLockReadGuard;
 use redox_scheme::scheme::SchemeSync;
 use redox_scheme::{CallerCtx, OpenResult};
+use ron::de::SpannedError;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::convert::{TryFrom, TryInto};
+use std::ops::Deref;
+use std::str::FromStr;
 use syscall::dirent::{DirEntry, DirentBuf, DirentKind};
 use syscall::schemev2::NewFdFlags;
 
@@ -12,9 +18,10 @@ use syscall::error::{Error, Result};
 use syscall::error::{EBADF, EBADFD, EINVAL, EIO, EISDIR, ENOENT, ENOTDIR};
 use syscall::flag::{MODE_DIR, MODE_FILE};
 use syscall::flag::{O_ACCMODE, O_DIRECTORY, O_RDONLY, O_STAT, O_SYMLINK};
-use syscall::EOPNOTSUPP;
+use syscall::{EOPNOTSUPP, EOVERFLOW};
 
 use crate::acpi::{AcpiContext, AmlSymbols, SdtSignature};
+use crate::aml::{AmlMethodArgs, AmlObject};
 
 pub struct AcpiScheme<'acpi> {
     ctx: &'acpi AcpiContext,
@@ -31,7 +38,7 @@ enum HandleKind<'a> {
     Tables,
     Table(SdtSignature),
     Symbols(RwLockReadGuard<'a, AmlSymbols>),
-    Symbol(String),
+    Symbol { name: String, description: String },
 }
 
 impl HandleKind<'_> {
@@ -41,7 +48,7 @@ impl HandleKind<'_> {
             Self::Tables => true,
             Self::Table(_) => false,
             Self::Symbols(_) => true,
-            Self::Symbol(_) => false,
+            Self::Symbol { .. } => false,
         }
     }
     fn len(&self, acpi_ctx: &AcpiContext) -> Result<usize> {
@@ -51,7 +58,7 @@ impl HandleKind<'_> {
                 .sdt_from_signature(signature)
                 .ok_or(Error::new(EBADFD))?
                 .length(),
-            Self::Symbol(description) => description.len(),
+            Self::Symbol { description, .. } => description.len(),
             // Directories
             Self::TopLevel | Self::Symbols(_) | Self::Tables => 0,
         })
@@ -179,7 +186,10 @@ impl SchemeSync for AcpiScheme<'_> {
 
             ["symbols", symbol] => {
                 if let Some(description) = self.ctx.aml_lookup(symbol) {
-                    HandleKind::Symbol(description)
+                    HandleKind::Symbol {
+                        name: (*symbol).to_owned(),
+                        description,
+                    }
                 } else {
                     return Err(Error::new(ENOENT));
                 }
@@ -259,7 +269,7 @@ impl SchemeSync for AcpiScheme<'_> {
                 .sdt_from_signature(signature)
                 .ok_or(Error::new(EBADFD))?
                 .as_slice(),
-            HandleKind::Symbol(description) => description.as_bytes(),
+            HandleKind::Symbol { description, .. } => description.as_bytes(),
             _ => return Err(Error::new(EINVAL)),
         };
 
@@ -348,15 +358,48 @@ impl SchemeSync for AcpiScheme<'_> {
         Ok(buf)
     }
 
-    fn write(
-        &mut self,
-        _id: usize,
-        _buf: &[u8],
-        _offset: u64,
-        _fcntl: u32,
-        _ctx: &CallerCtx,
-    ) -> Result<usize> {
-        Err(Error::new(EBADF))
+    fn call(&mut self, id: usize, payload: &mut [u8], _metadata: &[u64]) -> Result<usize> {
+        let handle = self.handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+
+        let Ok(arg_objects): Result<AmlMethodArgs, SpannedError> = ron::de::from_bytes(payload)
+        else {
+            return Err(Error::new(EINVAL));
+        };
+
+        let HandleKind::Symbol { name, .. } = &handle.kind else {
+            return Err(Error::new(EINVAL));
+        };
+
+        let Ok(aml_name) = AmlName::from_str(&name) else {
+            log::error!("Failed to convert symbol name: \"{name}\" to aml name!");
+            return Err(Error::new(EBADF));
+        };
+
+        let args = arg_objects.into_objects();
+
+        let Ok(aml_result) = self.ctx.aml_eval(aml_name, args) else {
+            return Err(Error::new(EINVAL));
+        };
+        let Some(serializable_result) = AmlObject::from_object(aml_result.deref().clone()) else {
+            log::warn!("Returned aml object not serializable");
+            return Err(Error::new(EBADF));
+        };
+
+        let Ok(serialized_result) = ron::ser::to_string(&serializable_result) else {
+            log::error!("Failed to serialize aml result object!");
+            return Err(Error::new(EBADF));
+        };
+
+        let byte_result = serialized_result.as_bytes();
+        let result_len = byte_result.len();
+
+        if result_len > payload.len() {
+            return Err(Error::new(EOVERFLOW));
+        }
+
+        payload[..result_len].copy_from_slice(byte_result);
+
+        Ok(result_len)
     }
 }
 

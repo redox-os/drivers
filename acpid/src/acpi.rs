@@ -1,4 +1,6 @@
+use acpi::aml::object::WrappedObject;
 use rustc_hash::FxHashMap;
+use std::collections::HashMap;
 use std::convert::{TryFrom, TryInto};
 use std::ops::Deref;
 use std::str::FromStr;
@@ -22,7 +24,7 @@ use amlserde::AmlSerde;
 
 #[cfg(target_arch = "x86_64")]
 pub mod dmar;
-use crate::aml_physmem::{AmlPageCache, AmlPhysMemHandler};
+use crate::aml_physmem::{AmlMutexes, AmlPageCache, AmlPhysMemHandler};
 
 /// The raw SDT header struct, as defined by the ACPI specification.
 #[derive(Copy, Clone, Debug)]
@@ -241,12 +243,14 @@ pub struct AmlSymbols {
     // k = name, v = description
     symbol_cache: FxHashMap<String, String>,
     page_cache: Arc<Mutex<AmlPageCache>>,
+    //mutexes: Arc<Mutex<HashMap<Handle, bool>>>,
 }
 
 impl AmlSymbols {
     pub fn new() -> Self {
         let page_cache = Arc::new(Mutex::new(AmlPageCache::default()));
-        let handler = AmlPhysMemHandler::new(Arc::clone(&page_cache));
+        let mutexes = Arc::new(Mutex::new(AmlMutexes::default()));
+        let handler = AmlPhysMemHandler::new(Arc::clone(&page_cache), Arc::clone(&mutexes));
         //TODO: use these parsed tables for the rest of acpid and return errors instead of unwrap
         let rsdp_address = usize::from_str_radix(&std::env::var("RSDP_ADDR").unwrap(), 16).unwrap();
         let tables = unsafe { AcpiTables::from_rsdp(handler.clone(), rsdp_address).unwrap() };
@@ -255,6 +259,7 @@ impl AmlSymbols {
             aml_context: Interpreter::new_from_platform(&platform).unwrap(),
             symbol_cache: FxHashMap::default(),
             page_cache,
+            //mutexes,
         }
     }
 
@@ -344,6 +349,21 @@ pub struct AcpiContext {
 }
 
 impl AcpiContext {
+    pub fn aml_eval(
+        &self,
+        symbol: AmlName,
+        args: Vec<WrappedObject>,
+    ) -> Result<WrappedObject, AmlError> {
+        let interpreter = &mut self.aml_symbols.write().aml_context;
+        interpreter.acquire_global_lock(16)?;
+
+        let result = interpreter.evaluate(symbol, args);
+
+        interpreter.release_global_lock()?;
+
+        result
+    }
+
     pub fn init(rxsdt_physaddrs: impl Iterator<Item = u64>) -> Self {
         let tables = rxsdt_physaddrs
             .map(|physaddr| {
