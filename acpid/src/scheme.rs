@@ -357,6 +357,16 @@ impl SchemeSync for AcpiScheme<'_> {
 
         Ok(buf)
     }
+    fn write(
+        &mut self,
+        _id: usize,
+        _buf: &[u8],
+        _offset: u64,
+        _fcntl: u32,
+        _ctx: &CallerCtx,
+    ) -> Result<usize> {
+        Err(Error::new(EBADF))
+    }
 
     fn call(&mut self, id: usize, payload: &mut [u8], _metadata: &[u64]) -> Result<usize> {
         let handle = self.handles.get_mut(&id).ok_or(Error::new(EBADF))?;
