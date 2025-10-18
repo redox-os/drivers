@@ -20,7 +20,7 @@ dependencies = [
 [[package]]
 name = "acpi"
 version = "6.0.1"
-source = "git+https://github.com/jackpot51/acpi.git#1c404f42bae2c1c5e8e65f6f86a956c212e97311"
+source = "git+https://github.com/jackpot51/acpi.git#33b23373c8affe75c60f2872a525394331aa859e"
 dependencies = [
  "bit_field",
  "bitflags 2.9.0",
@@ -634,6 +634,7 @@ version = "0.1.0"
 dependencies = [
  "amlserde",
  "common",
+ "fdt 0.1.5",
  "log",
  "ron",
 ]
