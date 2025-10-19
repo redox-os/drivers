@@ -1,60 +1,5 @@
-use amlserde::{AmlSerde, AmlSerdeValue};
-use std::{error::Error, fs};
-
-fn acpi() -> Result<(), Box<dyn Error>> {
-    for entry_res in fs::read_dir("/scheme/acpi/symbols")? {
-        let entry = entry_res?;
-        if let Some(file_name) = entry.file_name().to_str() {
-            if file_name.ends_with("_CID") || file_name.ends_with("_HID") {
-                let ron = fs::read_to_string(entry.path())?;
-                let AmlSerde { name, value } = ron::from_str(&ron)?;
-                let id = match value {
-                    AmlSerdeValue::Integer(integer) => {
-                        let vendor = integer & 0xFFFF;
-                        let device = (integer >> 16) & 0xFFFF;
-                        let vendor_rev = ((vendor & 0xFF) << 8) | vendor >> 8;
-                        let vendor_1 = (((vendor_rev >> 10) & 0x1f) as u8 + 64) as char;
-                        let vendor_2 = (((vendor_rev >> 5) & 0x1f) as u8 + 64) as char;
-                        let vendor_3 = (((vendor_rev >> 0) & 0x1f) as u8 + 64) as char;
-                        //TODO: simplify this nibble swap
-                        let device_1 = (device >> 4) & 0xF;
-                        let device_2 = (device >> 0) & 0xF;
-                        let device_3 = (device >> 12) & 0xF;
-                        let device_4 = (device >> 8) & 0xF;
-                        format!(
-                            "{}{}{}{:01X}{:01X}{:01X}{:01X}",
-                            vendor_1, vendor_2, vendor_3, device_1, device_2, device_3, device_4
-                        )
-                    }
-                    AmlSerdeValue::String(string) => string,
-                    _ => {
-                        log::warn!("{}: unsupported value {:x?}", name, value);
-                        continue;
-                    }
-                };
-                let what = match id.as_str() {
-                    // https://uefi.org/specs/ACPI/6.5/05_ACPI_Software_Programming_Model.html
-                    "ACPI0006" => "GPE block device",
-                    "ACPI0010" => "Processor control device",
-                    // https://uefi.org/sites/default/files/resources/devids%20%285%29.txt
-                    "PNP0103" => "HPET",
-                    "PNP0303" => "IBM Enhanced (101/102-key, PS/2 mouse support)",
-                    "PNP0400" => "Standard LPT printer port",
-                    "PNP0501" => "16550A-compatible COM port",
-                    "PNP0A03" => "PCI bus",
-                    "PNP0A05" => "Generic ACPI bus",
-                    "PNP0A06" => "Generic ACPI Extended-IO bus (EIO bus)",
-                    "PNP0B00" => "AT real-time clock",
-                    "PNP0C0F" => "PCI interrupt link device",
-                    "PNP0F13" => "PS/2 port for PS/2-style mouse",
-                    _ => "?",
-                };
-                log::debug!("{}: {} ({})", name, id, what);
-            }
-        }
-    }
-    Ok(())
-}
+mod backend;
+use self::backend::{AcpiBackend, Backend, DeviceTreeBackend, LegacyBackend};
 
 fn main() {
     common::setup_logging(
@@ -65,6 +10,34 @@ fn main() {
         log::LevelFilter::Debug,
     );
 
+    // Prefer DTB if available (matches kernel preference)
+    let mut backend: Box<dyn Backend> = match DeviceTreeBackend::new() {
+        Ok(ok) => {
+            log::info!("using devicetree backend");
+            Box::new(ok)
+        }
+        Err(err) => {
+            log::debug!("cannot use devicetree backend: {}", err);
+            match AcpiBackend::new() {
+                Ok(ok) => {
+                    log::info!("using ACPI backend");
+                    Box::new(ok)
+                }
+                Err(err) => {
+                    log::debug!("cannot use ACPI backend: {}", err);
+
+                    log::info!("using legacy backend");
+                    Box::new(LegacyBackend)
+                }
+            }
+        }
+    };
+
     //TODO: HWD is meant to locate PCI/XHCI/etc devices in ACPI and DeviceTree definitions and start their drivers
-    acpi().unwrap();
+    match backend.probe() {
+        Ok(()) => {}
+        Err(err) => {
+            log::error!("failed to probe with error {}", err);
+        }
+    }
 }
