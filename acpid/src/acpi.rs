@@ -1,6 +1,5 @@
 use acpi::aml::object::WrappedObject;
 use rustc_hash::FxHashMap;
-use std::collections::HashMap;
 use std::convert::{TryFrom, TryInto};
 use std::ops::Deref;
 use std::str::FromStr;
@@ -24,7 +23,7 @@ use amlserde::AmlSerde;
 
 #[cfg(target_arch = "x86_64")]
 pub mod dmar;
-use crate::aml_physmem::{AmlMutexes, AmlPageCache, AmlPhysMemHandler};
+use crate::aml_physmem::{AmlPageCache, AmlPhysMemHandler};
 
 /// The raw SDT header struct, as defined by the ACPI specification.
 #[derive(Copy, Clone, Debug)]
@@ -249,8 +248,7 @@ pub struct AmlSymbols {
 impl AmlSymbols {
     pub fn new() -> Self {
         let page_cache = Arc::new(Mutex::new(AmlPageCache::default()));
-        let mutexes = Arc::new(Mutex::new(AmlMutexes::default()));
-        let handler = AmlPhysMemHandler::new(Arc::clone(&page_cache), Arc::clone(&mutexes));
+        let handler = AmlPhysMemHandler::new(Arc::clone(&page_cache));
         //TODO: use these parsed tables for the rest of acpid and return errors instead of unwrap
         let rsdp_address = usize::from_str_radix(&std::env::var("RSDP_ADDR").unwrap(), 16).unwrap();
         let tables = unsafe { AcpiTables::from_rsdp(handler.clone(), rsdp_address).unwrap() };

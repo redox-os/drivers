@@ -5,7 +5,6 @@ use parking_lot::RwLockReadGuard;
 use redox_scheme::scheme::SchemeSync;
 use redox_scheme::{CallerCtx, OpenResult};
 use ron::de::SpannedError;
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::convert::{TryFrom, TryInto};
 use std::ops::Deref;
@@ -21,7 +20,7 @@ use syscall::flag::{O_ACCMODE, O_DIRECTORY, O_RDONLY, O_STAT, O_SYMLINK};
 use syscall::{EOPNOTSUPP, EOVERFLOW};
 
 use crate::acpi::{AcpiContext, AmlSymbols, SdtSignature};
-use crate::aml::{AmlMethodArgs, AmlObject};
+use crate::aml::SerializableAmlObject;
 
 pub struct AcpiScheme<'acpi> {
     ctx: &'acpi AcpiContext,
@@ -371,7 +370,8 @@ impl SchemeSync for AcpiScheme<'_> {
     fn call(&mut self, id: usize, payload: &mut [u8], _metadata: &[u64]) -> Result<usize> {
         let handle = self.handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
-        let Ok(arg_objects): Result<AmlMethodArgs, SpannedError> = ron::de::from_bytes(payload)
+        let Ok(arg_objects): Result<Vec<SerializableAmlObject>, SpannedError> =
+            ron::de::from_bytes(payload)
         else {
             return Err(Error::new(EINVAL));
         };
@@ -380,23 +380,29 @@ impl SchemeSync for AcpiScheme<'_> {
             return Err(Error::new(EINVAL));
         };
 
+        let name = format!("\\{}", name);
         let Ok(aml_name) = AmlName::from_str(&name) else {
             log::error!("Failed to convert symbol name: \"{name}\" to aml name!");
             return Err(Error::new(EBADF));
         };
 
-        let args = arg_objects.into_objects();
+        let args = arg_objects
+            .into_iter()
+            .map(|arg_kind| WrappedObject::new(arg_kind.into_object()))
+            .collect();
 
         let Ok(aml_result) = self.ctx.aml_eval(aml_name, args) else {
             return Err(Error::new(EINVAL));
         };
-        let Some(serializable_result) = AmlObject::from_object(aml_result.deref().clone()) else {
-            log::warn!("Returned aml object not serializable");
+        let Some(serializable_result) =
+            SerializableAmlObject::from_object(aml_result.deref().clone())
+        else {
+            log::error!("Result of aml eval is not serializable!");
             return Err(Error::new(EBADF));
         };
 
         let Ok(serialized_result) = ron::ser::to_string(&serializable_result) else {
-            log::error!("Failed to serialize aml result object!");
+            log::error!("Failed to serialize aml result!");
             return Err(Error::new(EBADF));
         };
 
