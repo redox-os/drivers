@@ -242,7 +242,6 @@ pub struct AmlSymbols {
     // k = name, v = description
     symbol_cache: FxHashMap<String, String>,
     page_cache: Arc<Mutex<AmlPageCache>>,
-    //mutexes: Arc<Mutex<HashMap<Handle, bool>>>,
 }
 
 impl AmlSymbols {
@@ -257,7 +256,6 @@ impl AmlSymbols {
             aml_context: Interpreter::new_from_platform(&platform).unwrap(),
             symbol_cache: FxHashMap::default(),
             page_cache,
-            //mutexes,
         }
     }
 
