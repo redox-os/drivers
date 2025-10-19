@@ -417,7 +417,7 @@ impl acpi::Handler for AmlPhysMemHandler {
             .create_new()
             .expect("Failed to create new AML mutex!");
 
-        log::warn!("Creating new mutex - existing mutexes: {}", mutexes.count());
+        log::warn!("Created new mutex - current mutexes: {}", mutexes.count());
         drop(mutexes);
 
         new_handle
@@ -448,7 +448,12 @@ impl acpi::Handler for AmlPhysMemHandler {
                     Some(false) => {}
                     Some(true) => return Result::Ok(()),
                 };
-                std::hint::spin_loop();
+                log::info!(
+                    "Waiting to acquire AML mutex: {}, timeout: {}",
+                    mutex.0,
+                    timeout
+                );
+                //std::hint::spin_loop();
             },
             timeout => {
                 let start = std::time::Instant::now();
@@ -463,7 +468,13 @@ impl acpi::Handler for AmlPhysMemHandler {
                         Some(false) => {}
                         Some(true) => return Result::Ok(()),
                     };
-                    std::hint::spin_loop();
+                    log::info!(
+                        "Waiting to acquire AML mutex: {}, timeout: {}, elapsed: {}",
+                        mutex.0,
+                        timeout,
+                        start.elapsed().as_millis()
+                    );
+                    //std::hint::spin_loop();
                 }
                 return Result::Err(AmlError::MutexAcquireTimeout);
             }
@@ -473,7 +484,7 @@ impl acpi::Handler for AmlPhysMemHandler {
     fn release(&self, mutex: Handle) {
         let mut mutexes = self.mutexes.lock().expect("AML mutex mutex poisoned!");
         mutexes.release(mutex);
-        drop(mutex);
+        drop(mutexes);
         log::info!("AML mutex: {} released", mutex.0);
     }
 }
