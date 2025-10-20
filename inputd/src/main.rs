@@ -205,7 +205,7 @@ impl SchemeSync for InputScheme {
             "control" => Handle::Control,
 
             _ => {
-                log::error!("inputd: invalid path {path}");
+                log::error!("inputd: invalid path '{path}'");
                 return Err(SysError::new(EINVAL));
             }
         };

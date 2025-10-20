@@ -36,7 +36,9 @@ impl Backend for DeviceTreeBackend {
 
     fn probe(&mut self) -> Result<(), Box<dyn Error>> {
         let dt = fdt::Fdt::new(&self.dtb).map_err(|err| format!("failed to parse dtb: {}", err))?;
-        let root = dt.find_node("/").ok_or_else(|| format!("failed to find root node"))?;
+        let root = dt
+            .find_node("/")
+            .ok_or_else(|| format!("failed to find root node"))?;
         Self::dump(&root, 0);
         Ok(())
     }

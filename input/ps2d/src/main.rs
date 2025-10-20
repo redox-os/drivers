@@ -13,11 +13,15 @@ use common::acquire_port_io_rights;
 use event::{user_data, EventQueue};
 use inputd::ProducerHandle;
 use log::info;
+use redox_scheme::{RequestKind, SignalBehavior, Socket};
+use syscall::{EAGAIN, EWOULDBLOCK};
 
+use crate::scheme::Ps2Scheme;
 use crate::state::Ps2d;
 
 mod controller;
 mod keymap;
+mod scheme;
 mod state;
 mod vm;
 
@@ -32,18 +36,11 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     acquire_port_io_rights().expect("ps2d: failed to get I/O permission");
 
-    let (keymap, keymap_name): (fn(u8, bool) -> char, &str) = match env::args().skip(1).next() {
-        Some(k) => match k.to_lowercase().as_ref() {
-            "dvorak" => (keymap::dvorak::get_char, "dvorak"),
-            "us" => (keymap::us::get_char, "us"),
-            "gb" => (keymap::gb::get_char, "gb"),
-            "azerty" => (keymap::azerty::get_char, "azerty"),
-            "bepo" => (keymap::bepo::get_char, "bepo"),
-            "it" => (keymap::it::get_char, "it"),
-            &_ => (keymap::us::get_char, "us"),
-        },
-        None => (keymap::us::get_char, "us"),
-    };
+    let (mut keymap, mut keymap_name): (fn(u8, bool) -> char, &str) =
+        match env::args().skip(1).next() {
+            Some(k) => get_keymap_from_str(&k),
+            None => (keymap::us::get_char, "us"),
+        };
 
     info!("ps2d: using keymap '{}'", keymap_name);
 
@@ -53,6 +50,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         enum Source {
             Keyboard,
             Mouse,
+            Scheme,
         }
     }
 
@@ -89,13 +87,28 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         )
         .unwrap();
 
+    let mut ps2d = Ps2d::new(input, keymap);
+
+    let scheme_file = Socket::nonblock("ps2").expect("ps2d: failed to create ps2 scheme");
+
+    let mut scheme_handle = Ps2Scheme::new(
+        keymap_name.to_owned(),
+        vec!["dvorak", "us", "gb", "azerty", "bepo", "it"],
+    );
+
+    event_queue
+        .subscribe(
+            scheme_file.inner().raw(),
+            Source::Scheme,
+            event::EventFlags::READ,
+        )
+        .unwrap();
+
     libredox::call::setrens(0, 0).expect("ps2d: failed to enter null namespace");
 
     daemon
         .ready()
         .expect("ps2d: failed to mark daemon as ready");
-
-    let mut ps2d = Ps2d::new(input, keymap);
 
     let mut data = [0; 256];
     for event in event_queue.map(|e| e.expect("ps2d: failed to get next event").user_data) {
@@ -111,6 +124,39 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         let (file, keyboard) = match event {
             Source::Keyboard => (&mut key_file, true),
             Source::Mouse => (&mut mouse_file, false),
+            Source::Scheme => {
+                loop {
+                    let request = match scheme_file.next_request(SignalBehavior::Interrupt) {
+                        Ok(Some(request)) => request,
+                        Ok(None) => {
+                            // Scheme likely got unmounted
+                            std::process::exit(0);
+                        }
+                        Err(err) if err.errno == EWOULDBLOCK || err.errno == EAGAIN => break,
+                        Err(err) => panic!("ps2: failed to read scheme: {:?}", err),
+                    };
+
+                    match request.kind() {
+                        RequestKind::Call(call) => {
+                            let response = call.handle_sync(&mut scheme_handle);
+
+                            scheme_file
+                                .write_response(response, SignalBehavior::Restart)
+                                .expect("ps2: failed to write next scheme response");
+                        }
+                        RequestKind::OnClose { id: _ } => {}
+                        _ => (),
+                    }
+                }
+
+                if keymap_name != &scheme_handle.keymap {
+                    (keymap, keymap_name) = get_keymap_from_str(&scheme_handle.keymap);
+                    info!("ps2d: updating to new keymap '{:?}'", keymap_name);
+                    ps2d.update_keymap(keymap);
+                }
+
+                continue;
+            }
         };
 
         loop {
@@ -126,6 +172,18 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     }
 
     process::exit(0);
+}
+
+fn get_keymap_from_str(k: &str) -> (fn(u8, bool) -> char, &'static str) {
+    match k.to_lowercase().as_ref() {
+        "dvorak" => (keymap::dvorak::get_char, "dvorak"),
+        "us" => (keymap::us::get_char, "us"),
+        "gb" => (keymap::gb::get_char, "gb"),
+        "azerty" => (keymap::azerty::get_char, "azerty"),
+        "bepo" => (keymap::bepo::get_char, "bepo"),
+        "it" => (keymap::it::get_char, "it"),
+        &_ => (keymap::us::get_char, "us"),
+    }
 }
 
 fn main() {
