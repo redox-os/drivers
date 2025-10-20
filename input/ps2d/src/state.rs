@@ -67,6 +67,10 @@ impl<F: Fn(u8, bool) -> char> Ps2d<F> {
         }
     }
 
+    pub fn update_keymap(&mut self, keymap: F) {
+        self.get_char = keymap;
+    }
+
     pub fn irq(&mut self) {
         while let Some((keyboard, data)) = self.ps2.next() {
             self.handle(keyboard, data);
