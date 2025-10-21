@@ -44,7 +44,7 @@ impl DiskATA {
         let mut fb = unsafe { Dma::zeroed()?.assume_init() };
         let buf = unsafe { Dma::zeroed()?.assume_init() };
 
-        port.init(&mut clb, &mut ctbas, &mut fb);
+        port.init(&mut clb, &mut ctbas, &mut fb)?;
 
         let size = unsafe { port.identify(&mut clb, &mut ctbas).unwrap_or(0) };
 
@@ -138,7 +138,7 @@ impl DiskATA {
                     &mut self.clb,
                     &mut self.ctbas,
                     &mut self.buf,
-                ) {
+                )? {
                     request.running_opt = Some((slot, sectors));
                 }
 

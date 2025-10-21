@@ -42,7 +42,7 @@ impl DiskATAPI {
         let mut fb = unsafe { Dma::zeroed()?.assume_init() };
         let mut buf = unsafe { Dma::zeroed()?.assume_init() };
 
-        port.init(&mut clb, &mut ctbas, &mut fb);
+        port.init(&mut clb, &mut ctbas, &mut fb)?;
 
         let size = unsafe { port.identify_packet(&mut clb, &mut ctbas).unwrap_or(0) };
 

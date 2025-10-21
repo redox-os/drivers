@@ -1,6 +1,7 @@
 use log::{debug, error, info, trace};
 use std::mem::size_of;
 use std::ops::DerefMut;
+use std::time::{Duration, Instant};
 use std::{ptr, u32};
 
 use common::io::{Io, Mmio};
@@ -28,6 +29,8 @@ const HBA_SIG_ATA: u32 = 0x00000101;
 const HBA_SIG_ATAPI: u32 = 0xEB140101;
 const HBA_SIG_PM: u32 = 0x96690101;
 const HBA_SIG_SEMB: u32 = 0xC33C0101;
+
+const TIMEOUT: Duration = Duration::new(5, 0);
 
 #[derive(Debug)]
 pub enum HbaPortType {
@@ -76,22 +79,34 @@ impl HbaPort {
         }
     }
 
-    pub fn start(&mut self) {
+    pub fn start(&mut self) -> Result<()> {
+        let timer = Instant::now();
         while self.cmd.readf(HBA_PORT_CMD_CR) {
             core::hint::spin_loop();
+            if timer.elapsed() >= TIMEOUT {
+                log::error!("HBA start timed out");
+                return Err(Error::new(EIO));
+            }
         }
 
         self.cmd.writef(HBA_PORT_CMD_FRE | HBA_PORT_CMD_ST, true);
+        Ok(())
     }
 
-    pub fn stop(&mut self) {
+    pub fn stop(&mut self) -> Result<()> {
         self.cmd.writef(HBA_PORT_CMD_ST, false);
 
+        let timer = Instant::now();
         while self.cmd.readf(HBA_PORT_CMD_FR | HBA_PORT_CMD_CR) {
             core::hint::spin_loop();
+            if timer.elapsed() >= TIMEOUT {
+                log::error!("HBA stop timed out");
+                return Err(Error::new(EIO));
+            }
         }
 
         self.cmd.writef(HBA_PORT_CMD_FRE, false);
+        Ok(())
     }
 
     pub fn slot(&self) -> Option<u32> {
@@ -109,8 +124,8 @@ impl HbaPort {
         clb: &mut Dma<[HbaCmdHeader; 32]>,
         ctbas: &mut [Dma<HbaCmdTable>; 32],
         fb: &mut Dma<[u8; 256]>,
-    ) {
-        self.stop();
+    ) -> Result<()> {
+        self.stop()?;
 
         for i in 0..32 {
             let cmdheader = &mut clb[i];
@@ -139,13 +154,14 @@ impl HbaPort {
         self.cmd.writef(1 << 2 | 1 << 1, true);
 
         debug!("   - AHCI init {:X}", self.cmd.read());
+        Ok(())
     }
 
     pub unsafe fn identify(
         &mut self,
         clb: &mut Dma<[HbaCmdHeader; 32]>,
         ctbas: &mut [Dma<HbaCmdTable>; 32],
-    ) -> Option<u64> {
+    ) -> Result<u64> {
         self.identify_inner(ATA_CMD_IDENTIFY, clb, ctbas)
     }
 
@@ -153,7 +169,7 @@ impl HbaPort {
         &mut self,
         clb: &mut Dma<[HbaCmdHeader; 32]>,
         ctbas: &mut [Dma<HbaCmdTable>; 32],
-    ) -> Option<u64> {
+    ) -> Result<u64> {
         self.identify_inner(ATA_CMD_IDENTIFY_PACKET, clb, ctbas)
     }
 
@@ -163,7 +179,7 @@ impl HbaPort {
         cmd: u8,
         clb: &mut Dma<[HbaCmdHeader; 32]>,
         ctbas: &mut [Dma<HbaCmdTable>; 32],
-    ) -> Option<u64> {
+    ) -> Result<u64> {
         let dest: Dma<[u16; 256]> = Dma::new([0; 256]).unwrap();
 
         let slot = self.ata_start(clb, ctbas, |cmdheader, cmdfis, prdt_entries, _acmd| {
@@ -181,73 +197,72 @@ impl HbaPort {
             cmdfis.device.write(0);
             cmdfis.countl.write(1);
             cmdfis.counth.write(0);
-        })?;
+        })?
+        .ok_or(Error::new(EIO))?;
 
-        if self.ata_stop(slot).is_ok() {
-            let mut serial = String::new();
-            for word in 10..20 {
-                let d = dest[word];
-                let a = ((d >> 8) as u8) as char;
-                if a != '\0' {
-                    serial.push(a);
-                }
-                let b = (d as u8) as char;
-                if b != '\0' {
-                    serial.push(b);
-                }
+        self.ata_stop(slot)?;
+
+        let mut serial = String::new();
+        for word in 10..20 {
+            let d = dest[word];
+            let a = ((d >> 8) as u8) as char;
+            if a != '\0' {
+                serial.push(a);
             }
-
-            let mut firmware = String::new();
-            for word in 23..27 {
-                let d = dest[word];
-                let a = ((d >> 8) as u8) as char;
-                if a != '\0' {
-                    firmware.push(a);
-                }
-                let b = (d as u8) as char;
-                if b != '\0' {
-                    firmware.push(b);
-                }
+            let b = (d as u8) as char;
+            if b != '\0' {
+                serial.push(b);
             }
-
-            let mut model = String::new();
-            for word in 27..47 {
-                let d = dest[word];
-                let a = ((d >> 8) as u8) as char;
-                if a != '\0' {
-                    model.push(a);
-                }
-                let b = (d as u8) as char;
-                if b != '\0' {
-                    model.push(b);
-                }
-            }
-
-            let mut sectors = (dest[100] as u64)
-                | ((dest[101] as u64) << 16)
-                | ((dest[102] as u64) << 32)
-                | ((dest[103] as u64) << 48);
-
-            let lba_bits = if sectors == 0 {
-                sectors = (dest[60] as u64) | ((dest[61] as u64) << 16);
-                28
-            } else {
-                48
-            };
-
-            info!(
-                "   + Serial: {} Firmware: {} Model: {} {}-bit LBA Size: {} MB",
-                serial.trim(),
-                firmware.trim(),
-                model.trim(),
-                lba_bits,
-                sectors / 2048
-            );
-
-            Some(sectors * 512)
-        } else {
-            None
         }
+
+        let mut firmware = String::new();
+        for word in 23..27 {
+            let d = dest[word];
+            let a = ((d >> 8) as u8) as char;
+            if a != '\0' {
+                firmware.push(a);
+            }
+            let b = (d as u8) as char;
+            if b != '\0' {
+                firmware.push(b);
+            }
+        }
+
+        let mut model = String::new();
+        for word in 27..47 {
+            let d = dest[word];
+            let a = ((d >> 8) as u8) as char;
+            if a != '\0' {
+                model.push(a);
+            }
+            let b = (d as u8) as char;
+            if b != '\0' {
+                model.push(b);
+            }
+        }
+
+        let mut sectors = (dest[100] as u64)
+            | ((dest[101] as u64) << 16)
+            | ((dest[102] as u64) << 32)
+            | ((dest[103] as u64) << 48);
+
+        let lba_bits = if sectors == 0 {
+            sectors = (dest[60] as u64) | ((dest[61] as u64) << 16);
+            28
+        } else {
+            48
+        };
+
+        info!(
+            "   + Serial: {} Firmware: {} Model: {} {}-bit LBA Size: {} MB",
+            serial.trim(),
+            firmware.trim(),
+            model.trim(),
+            lba_bits,
+            sectors / 2048
+        );
+
+        Ok(sectors * 512)
     }
 
     pub fn ata_dma(
@@ -258,7 +273,7 @@ impl HbaPort {
         clb: &mut Dma<[HbaCmdHeader; 32]>,
         ctbas: &mut [Dma<HbaCmdTable>; 32],
         buf: &mut Dma<[u8; 256 * 512]>,
-    ) -> Option<u32> {
+    ) -> Result<Option<u32>> {
         trace!(
             "AHCI {:X} DMA BLOCK: {:X} SECTORS: {} WRITE: {}",
             (self as *mut HbaPort) as usize,
@@ -338,7 +353,7 @@ impl HbaPort {
                 cmdfis.featureh.write(0);
 
                 unsafe { ptr::write_volatile(acmd.as_mut_ptr() as *mut [u8; 16], *cmd) };
-            })
+            })?
             .ok_or(Error::new(EIO))?;
         self.ata_stop(slot)
     }
@@ -348,7 +363,7 @@ impl HbaPort {
         clb: &mut Dma<[HbaCmdHeader; 32]>,
         ctbas: &mut [Dma<HbaCmdTable>; 32],
         callback: F,
-    ) -> Option<u32>
+    ) -> Result<Option<u32>>
     where
         F: FnOnce(
             &mut HbaCmdHeader,
@@ -360,44 +375,49 @@ impl HbaPort {
         //TODO: Should probably remove
         self.is.write(u32::MAX);
 
-        if let Some(slot) = self.slot() {
-            {
-                let cmdheader = &mut clb[slot as usize];
-                cmdheader
-                    .cfl
-                    .write((size_of::<FisRegH2D>() / size_of::<u32>()) as u8);
+        let Some(slot) = self.slot() else {
+            return Ok(None);
+        };
 
-                let cmdtbl = &mut ctbas[slot as usize];
-                unsafe {
-                    ptr::write_bytes(
-                        cmdtbl.deref_mut() as *mut HbaCmdTable as *mut u8,
-                        0,
-                        size_of::<HbaCmdTable>(),
-                    );
-                }
+        {
+            let cmdheader = &mut clb[slot as usize];
+            cmdheader
+                .cfl
+                .write((size_of::<FisRegH2D>() / size_of::<u32>()) as u8);
 
-                let cmdfis = unsafe { &mut *(cmdtbl.cfis.as_mut_ptr() as *mut FisRegH2D) };
-                cmdfis.fis_type.write(FisType::RegH2D as u8);
-
-                let prdt_entry = unsafe { &mut *(&mut cmdtbl.prdt_entry as *mut _) };
-                let acmd = unsafe { &mut *(&mut cmdtbl.acmd as *mut _) };
-
-                callback(cmdheader, cmdfis, prdt_entry, acmd)
+            let cmdtbl = &mut ctbas[slot as usize];
+            unsafe {
+                ptr::write_bytes(
+                    cmdtbl.deref_mut() as *mut HbaCmdTable as *mut u8,
+                    0,
+                    size_of::<HbaCmdTable>(),
+                );
             }
 
-            while self.tfd.readf((ATA_DEV_BUSY | ATA_DEV_DRQ) as u32) {
-                core::hint::spin_loop();
-            }
+            let cmdfis = unsafe { &mut *(cmdtbl.cfis.as_mut_ptr() as *mut FisRegH2D) };
+            cmdfis.fis_type.write(FisType::RegH2D as u8);
 
-            self.ci.writef(1 << slot, true);
+            let prdt_entry = unsafe { &mut *(&mut cmdtbl.prdt_entry as *mut _) };
+            let acmd = unsafe { &mut *(&mut cmdtbl.acmd as *mut _) };
 
-            //TODO: Should probably remove
-            self.start();
-
-            Some(slot)
-        } else {
-            None
+            callback(cmdheader, cmdfis, prdt_entry, acmd)
         }
+
+        let timer = Instant::now();
+        while self.tfd.readf((ATA_DEV_BUSY | ATA_DEV_DRQ) as u32) {
+            core::hint::spin_loop();
+            if timer.elapsed() >= TIMEOUT {
+                log::error!("HBA ata_start timeout");
+                return Err(Error::new(EIO));
+            }
+        }
+
+        self.ci.writef(1 << slot, true);
+
+        //TODO: Should probably remove
+        self.start()?;
+
+        Ok(Some(slot))
     }
 
     pub fn ata_running(&self, slot: u32) -> bool {
@@ -405,11 +425,16 @@ impl HbaPort {
     }
 
     pub fn ata_stop(&mut self, slot: u32) -> Result<()> {
+        let timer = Instant::now();
         while self.ata_running(slot) {
             core::hint::spin_loop();
+            if timer.elapsed() >= TIMEOUT {
+                log::error!("HBA ata_stop timeout");
+                return Err(Error::new(EIO));
+            }
         }
 
-        self.stop();
+        self.stop()?;
 
         if self.is.read() & HBA_PORT_IS_ERR != 0 {
             let (is, ie, cmd, tfd, ssts, sctl, serr, sact, ci, sntf, fbs) = (
