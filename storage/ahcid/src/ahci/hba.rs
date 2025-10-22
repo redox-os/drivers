@@ -182,23 +182,24 @@ impl HbaPort {
     ) -> Result<u64> {
         let dest: Dma<[u16; 256]> = Dma::new([0; 256]).unwrap();
 
-        let slot = self.ata_start(clb, ctbas, |cmdheader, cmdfis, prdt_entries, _acmd| {
-            cmdheader.prdtl.write(1);
+        let slot = self
+            .ata_start(clb, ctbas, |cmdheader, cmdfis, prdt_entries, _acmd| {
+                cmdheader.prdtl.write(1);
 
-            let prdt_entry = &mut prdt_entries[0];
-            prdt_entry.dba_low.write(dest.physical() as u32);
-            prdt_entry
-                .dba_high
-                .write((dest.physical() as u64 >> 32) as u32);
-            prdt_entry.dbc.write(512 | 1);
+                let prdt_entry = &mut prdt_entries[0];
+                prdt_entry.dba_low.write(dest.physical() as u32);
+                prdt_entry
+                    .dba_high
+                    .write((dest.physical() as u64 >> 32) as u32);
+                prdt_entry.dbc.write(512 | 1);
 
-            cmdfis.pm.write(1 << 7);
-            cmdfis.command.write(cmd);
-            cmdfis.device.write(0);
-            cmdfis.countl.write(1);
-            cmdfis.counth.write(0);
-        })?
-        .ok_or(Error::new(EIO))?;
+                cmdfis.pm.write(1 << 7);
+                cmdfis.command.write(cmd);
+                cmdfis.device.write(0);
+                cmdfis.countl.write(1);
+                cmdfis.counth.write(0);
+            })?
+            .ok_or(Error::new(EIO))?;
 
         self.ata_stop(slot)?;
 
