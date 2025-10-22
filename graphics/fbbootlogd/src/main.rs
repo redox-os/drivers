@@ -107,7 +107,11 @@ fn inner(daemon: redox_daemon::Daemon) -> ! {
                         .expect("fbbootlogd: error while reading events")
                     {
                         ConsumerHandleEvent::Events(&[]) => break,
-                        ConsumerHandleEvent::Events(_) => {}
+                        ConsumerHandleEvent::Events(events) => {
+                            for event in events {
+                                scheme.handle_input(&event);
+                            }
+                        }
                         ConsumerHandleEvent::Handoff => {
                             eprintln!("fbbootlogd: handoff requested");
                             scheme.handle_handoff();
