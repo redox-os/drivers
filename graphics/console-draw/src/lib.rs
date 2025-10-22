@@ -263,11 +263,11 @@ impl TextScreen {
 
 pub struct TextBuffer {
     pub lines: VecDeque<Vec<u8>>,
-    pub lines_max: u32,
+    pub lines_max: usize,
 }
 
 impl TextBuffer {
-    pub fn new(max: u32) -> Self {
+    pub fn new(max: usize) -> Self {
         let mut lines = VecDeque::new();
         lines.push_back(Vec::new());
         Self {
@@ -288,7 +288,7 @@ impl TextBuffer {
             }
         }
 
-        let max_len = self.lines_max as usize;
+        let max_len = self.lines_max;
         while self.lines.len() > max_len {
             self.lines.pop_front();
         }

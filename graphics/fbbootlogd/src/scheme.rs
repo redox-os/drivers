@@ -74,6 +74,9 @@ impl FbbootlogScheme {
     pub fn handle_input(&mut self, ev: &Event) {
         match ev.to_option() {
             EventOption::Key(key_event) => {
+                if !key_event.pressed {
+                    return;
+                }
                 match key_event.scancode {
                     0x48 => {
                         // Up
@@ -103,7 +106,7 @@ impl FbbootlogScheme {
                     }
                     0x4F => {
                         // End
-                        self.scrollback_offset = 1000;
+                        self.scrollback_offset = self.text_buffer.lines_max;
                     }
                     _ => return,
                 }
