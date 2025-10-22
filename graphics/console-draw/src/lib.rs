@@ -260,3 +260,37 @@ impl TextScreen {
         }
     }
 }
+
+pub struct TextBuffer {
+    pub lines: VecDeque<Vec<u8>>,
+    pub lines_max: u32,
+}
+
+impl TextBuffer {
+    pub fn new(max: u32) -> Self {
+        let mut lines = VecDeque::new();
+        lines.push_back(Vec::new());
+        Self {
+            lines,
+            lines_max: max,
+        }
+    }
+    pub fn write(&mut self, buf: &[u8]) {
+        if buf.is_empty() {
+            return;
+        }
+
+        for &byte in buf {
+            self.lines.back_mut().unwrap().push(byte);
+
+            if byte == b'\n' {
+                self.lines.push_back(Vec::new());
+            }
+        }
+
+        let max_len = self.lines_max as usize;
+        while self.lines.len() > max_len {
+            self.lines.pop_front();
+        }
+    }
+}

@@ -1,9 +1,10 @@
 use std::collections::VecDeque;
-use std::ptr;
+use std::{cmp, ptr};
 
 use console_draw::TextScreen;
 use graphics_ipc::v2::V2GraphicsHandle;
 use inputd::ConsumerHandle;
+use orbclient::{Event, EventOption};
 use redox_scheme::scheme::SchemeSync;
 use redox_scheme::{CallerCtx, OpenResult};
 use syscall::schemev2::NewFdFlags;
@@ -19,6 +20,9 @@ pub struct FbbootlogScheme {
     pub input_handle: ConsumerHandle,
     display_map: Option<DisplayMap>,
     text_screen: console_draw::TextScreen,
+    text_buffer: console_draw::TextBuffer,
+    is_scrollback: bool,
+    scrollback_offset: usize,
 }
 
 impl FbbootlogScheme {
@@ -27,6 +31,9 @@ impl FbbootlogScheme {
             input_handle: ConsumerHandle::new_vt().expect("fbbootlogd: Failed to open vt"),
             display_map: None,
             text_screen: console_draw::TextScreen::new(),
+            text_buffer: console_draw::TextBuffer::new(1000),
+            is_scrollback: false,
+            scrollback_offset: 1000,
         };
 
         scheme.handle_handoff();
@@ -60,6 +67,81 @@ impl FbbootlogScheme {
             }
             Err(err) => {
                 eprintln!("fbbootlogd: failed to open display: {}", err);
+            }
+        }
+    }
+
+    pub fn handle_input(&mut self, ev: &Event) {
+        match ev.to_option() {
+            EventOption::Key(key_event) => {
+                match key_event.scancode {
+                    0x48 => {
+                        // Up
+                        if self.scrollback_offset >= 1 {
+                            self.scrollback_offset -= 1;
+                        }
+                    }
+                    0x49 => {
+                        // Page up
+                        if self.scrollback_offset >= 10 {
+                            self.scrollback_offset -= 10;
+                        } else {
+                            self.scrollback_offset = 0;
+                        }
+                    }
+                    0x50 => {
+                        // Down
+                        self.scrollback_offset += 1;
+                    }
+                    0x51 => {
+                        // Page down
+                        self.scrollback_offset += 10;
+                    }
+                    0x47 => {
+                        // Home
+                        self.scrollback_offset = 0;
+                    }
+                    0x4F => {
+                        // End
+                        self.scrollback_offset = 1000;
+                    }
+                    _ => return,
+                }
+            }
+            _ => return,
+        }
+        self.handle_scrollback_render();
+    }
+
+    fn handle_scrollback_render(&mut self) {
+        let Some(map) = &mut self.display_map else {
+            return;
+        };
+        self.is_scrollback = true;
+        let buffer_len = self.text_buffer.lines.len();
+        self.scrollback_offset = cmp::min(self.scrollback_offset, buffer_len - 10);
+        let mut i = self.scrollback_offset;
+        let dmap = &mut console_draw::DisplayMap {
+            offscreen: map.inner.ptr_mut(),
+            width: map.inner.width(),
+            height: map.inner.height(),
+        };
+        self.text_screen
+            .write(dmap, b"\x1B[1;1H\x1B[2J", &mut VecDeque::new());
+        while i < buffer_len {
+            let mut damage =
+                self.text_screen
+                    .write(dmap, &self.text_buffer.lines[i][..], &mut VecDeque::new());
+            i += 1;
+            let yd = damage.y + damage.height;
+            if i == buffer_len || yd + 48 >= dmap.height as u32 {
+                // render until end of screen
+                damage.height = (dmap.height as u32) - damage.y;
+                map.display_handle.update_plane(0, map.fb, damage).unwrap();
+                self.is_scrollback = i < buffer_len;
+                break;
+            } else {
+                map.display_handle.update_plane(0, map.fb, damage).unwrap();
             }
         }
     }
@@ -163,19 +245,22 @@ impl SchemeSync for FbbootlogScheme {
     ) -> Result<usize> {
         if let Some(map) = &mut self.display_map {
             Self::handle_resize(map, &mut self.text_screen);
+            self.text_buffer.write(buf);
 
-            let damage = self.text_screen.write(
-                &mut console_draw::DisplayMap {
-                    offscreen: map.inner.ptr_mut(),
-                    width: map.inner.width(),
-                    height: map.inner.height(),
-                },
-                buf,
-                &mut VecDeque::new(),
-            );
+            if !self.is_scrollback {
+                let damage = self.text_screen.write(
+                    &mut console_draw::DisplayMap {
+                        offscreen: map.inner.ptr_mut(),
+                        width: map.inner.width(),
+                        height: map.inner.height(),
+                    },
+                    buf,
+                    &mut VecDeque::new(),
+                );
 
-            if let Some(map) = &self.display_map {
-                map.display_handle.update_plane(0, map.fb, damage).unwrap();
+                if let Some(map) = &self.display_map {
+                    map.display_handle.update_plane(0, map.fb, damage).unwrap();
+                }
             }
         }
 
