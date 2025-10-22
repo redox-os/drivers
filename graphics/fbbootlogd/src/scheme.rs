@@ -23,6 +23,7 @@ pub struct FbbootlogScheme {
     text_buffer: console_draw::TextBuffer,
     is_scrollback: bool,
     scrollback_offset: usize,
+    shift: bool,
 }
 
 impl FbbootlogScheme {
@@ -34,6 +35,7 @@ impl FbbootlogScheme {
             text_buffer: console_draw::TextBuffer::new(1000),
             is_scrollback: false,
             scrollback_offset: 1000,
+            shift: false,
         };
 
         scheme.handle_handoff();
@@ -74,7 +76,9 @@ impl FbbootlogScheme {
     pub fn handle_input(&mut self, ev: &Event) {
         match ev.to_option() {
             EventOption::Key(key_event) => {
-                if !key_event.pressed {
+                if key_event.scancode == 0x2A || key_event.scancode == 0x36 {
+                    self.shift = key_event.pressed;
+                } else if !key_event.pressed || !self.shift {
                     return;
                 }
                 match key_event.scancode {
@@ -120,15 +124,20 @@ impl FbbootlogScheme {
         let Some(map) = &mut self.display_map else {
             return;
         };
-        self.is_scrollback = true;
         let buffer_len = self.text_buffer.lines.len();
-        self.scrollback_offset = cmp::min(self.scrollback_offset, buffer_len - 10);
-        let mut i = self.scrollback_offset;
         let dmap = &mut console_draw::DisplayMap {
             offscreen: map.inner.ptr_mut(),
             width: map.inner.width(),
             height: map.inner.height(),
         };
+        // for both extra space on wrapping text and a scrollback indicator
+        let spare_lines = 3;
+        self.is_scrollback = true;
+        self.scrollback_offset = cmp::min(
+            self.scrollback_offset,
+            buffer_len - dmap.height / 16 + spare_lines,
+        );
+        let mut i = self.scrollback_offset;
         self.text_screen
             .write(dmap, b"\x1B[1;1H\x1B[2J", &mut VecDeque::new());
         while i < buffer_len {
@@ -136,8 +145,8 @@ impl FbbootlogScheme {
                 self.text_screen
                     .write(dmap, &self.text_buffer.lines[i][..], &mut VecDeque::new());
             i += 1;
-            let yd = damage.y + damage.height;
-            if i == buffer_len || yd + 48 >= dmap.height as u32 {
+            let yd = (damage.y + damage.height) as usize;
+            if i == buffer_len || yd + spare_lines * 16 > dmap.height {
                 // render until end of screen
                 damage.height = (dmap.height as u32) - damage.y;
                 map.display_handle.update_plane(0, map.fb, damage).unwrap();
