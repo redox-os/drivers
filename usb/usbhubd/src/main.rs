@@ -30,7 +30,7 @@ fn main() {
         interface_num
     );
 
-    let name = format!("{}_{}_{}_hub", scheme, port, interface_num);
+    let name = format!("{}_{}_{}_hub", scheme, port_id, interface_num);
     common::setup_logging(
         "usb",
         "device",
