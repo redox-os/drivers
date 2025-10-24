@@ -21,7 +21,7 @@ fn main() {
     redox_daemon::Daemon::new(move |daemon| {
         common::setup_logging(
             "audio",
-            "pcie",
+            "pci",
             "sb16",
             log::LevelFilter::Info,
             log::LevelFilter::Info,

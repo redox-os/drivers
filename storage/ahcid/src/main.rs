@@ -31,7 +31,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     common::setup_logging(
         "disk",
-        "pcie",
+        "pci",
         &name,
         log::LevelFilter::Info,
         log::LevelFilter::Info,

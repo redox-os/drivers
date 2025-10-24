@@ -38,8 +38,8 @@ fn main() {
     redox_daemon::Daemon::new(move |daemon| {
         common::setup_logging(
             "audio",
-            "pcie",
-            "ac97",
+            "pci",
+            &name,
             log::LevelFilter::Info,
             log::LevelFilter::Info,
         );

@@ -102,20 +102,20 @@ fn map_bar(pcid_handle: &mut PciFunctionHandle) -> *mut u8 {
 }
 
 fn daemon(daemon: redox_daemon::Daemon) -> ! {
-    common::setup_logging(
-        "net",
-        "pcie",
-        "rtl8139",
-        log::LevelFilter::Info,
-        log::LevelFilter::Info,
-    );
-
     let mut pcid_handle = PciFunctionHandle::connect_default();
 
     let pci_config = pcid_handle.config();
 
     let mut name = pci_config.func.name();
     name.push_str("_rtl8139");
+
+    common::setup_logging(
+        "net",
+        "pci",
+        &name,
+        log::LevelFilter::Info,
+        log::LevelFilter::Info,
+    );
 
     log::info!(" + RTL8139 {}", pci_config.func.display());
 

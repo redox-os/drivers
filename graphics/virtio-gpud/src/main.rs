@@ -551,7 +551,7 @@ fn daemon_runner(redox_daemon: redox_daemon::Daemon) -> ! {
 pub fn main() {
     common::setup_logging(
         "misc",
-        "pcie",
+        "pci",
         "virtio-gpud",
         log::LevelFilter::Trace,
         log::LevelFilter::Trace,

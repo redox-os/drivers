@@ -33,7 +33,7 @@ pub enum Error {
 pub fn main() -> anyhow::Result<()> {
     common::setup_logging(
         "disk",
-        "pcie",
+        "pci",
         "virtio-blkd",
         log::LevelFilter::Trace,
         log::LevelFilter::Trace,

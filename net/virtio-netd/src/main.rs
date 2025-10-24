@@ -122,7 +122,7 @@ fn daemon_runner(redox_daemon: redox_daemon::Daemon) -> ! {
 pub fn main() {
     common::setup_logging(
         "net",
-        "pcie",
+        "pci",
         "virtio-netd",
         log::LevelFilter::Trace,
         log::LevelFilter::Trace,

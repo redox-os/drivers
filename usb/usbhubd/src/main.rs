@@ -6,13 +6,6 @@ use xhcid_interface::{
 };
 
 fn main() {
-    common::setup_logging(
-        "usb",
-        "device",
-        "hub",
-        log::LevelFilter::Info,
-        log::LevelFilter::Info,
-    );
 
     let mut args = env::args().skip(1);
 
@@ -35,6 +28,15 @@ fn main() {
         scheme,
         port_id,
         interface_num
+    );
+
+    let name = format!("{}_{}_{}_hub", scheme, port, interface_num);
+    common::setup_logging(
+        "usb",
+        "device",
+        &name,
+        log::LevelFilter::Info,
+        log::LevelFilter::Info,
     );
 
     let handle = XhciClientHandle::new(scheme.clone(), port_id);

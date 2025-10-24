@@ -167,14 +167,6 @@ fn send_key_event(
 }
 
 fn main() {
-    common::setup_logging(
-        "usb",
-        "device",
-        "hid",
-        log::LevelFilter::Info,
-        log::LevelFilter::Info,
-    );
-
     let mut args = env::args().skip(1);
 
     const USAGE: &'static str = "usbhidd <scheme> <port> <interface>";
@@ -190,6 +182,15 @@ fn main() {
         .expect(USAGE)
         .parse::<u8>()
         .expect("Expected integer as input of interface");
+    
+    let name = format!("{}_{}_{}_hid", scheme, port, interface_num);
+    common::setup_logging(
+        "usb",
+        "device",
+        &name,
+        log::LevelFilter::Info,
+        log::LevelFilter::Info,
+    );
 
     log::info!(
         "USB HID driver spawned with scheme `{}`, port {}, interface {}",

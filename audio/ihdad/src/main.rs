@@ -59,20 +59,20 @@ fn get_int_method(pcid_handle: &mut PciFunctionHandle) -> File {
 }
 
 fn daemon(daemon: redox_daemon::Daemon) -> ! {
-    common::setup_logging(
-        "audio",
-        "pcie",
-        "ihda",
-        log::LevelFilter::Info,
-        log::LevelFilter::Info,
-    );
-
     let mut pcid_handle = PciFunctionHandle::connect_default();
 
     let pci_config = pcid_handle.config();
 
     let mut name = pci_config.func.name();
     name.push_str("_ihda");
+
+    common::setup_logging(
+        "audio",
+        "pci",
+        &name,
+        log::LevelFilter::Info,
+        log::LevelFilter::Info,
+    );
 
     log::info!(" + IHDA {}", pci_config.func.display());
 
