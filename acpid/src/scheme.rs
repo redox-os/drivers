@@ -1,9 +1,14 @@
+use acpi::aml::namespace::AmlName;
+use amlserde::aml_serde_name::to_aml_format;
+use amlserde::AmlSerdeValue;
 use core::str;
 use parking_lot::RwLockReadGuard;
 use redox_scheme::scheme::SchemeSync;
 use redox_scheme::{CallerCtx, OpenResult};
+use ron::de::SpannedError;
 use std::collections::BTreeMap;
 use std::convert::{TryFrom, TryInto};
+use std::str::FromStr;
 use syscall::dirent::{DirEntry, DirentBuf, DirentKind};
 use syscall::schemev2::NewFdFlags;
 
@@ -12,7 +17,7 @@ use syscall::error::{Error, Result};
 use syscall::error::{EBADF, EBADFD, EINVAL, EIO, EISDIR, ENOENT, ENOTDIR};
 use syscall::flag::{MODE_DIR, MODE_FILE};
 use syscall::flag::{O_ACCMODE, O_DIRECTORY, O_RDONLY, O_STAT, O_SYMLINK};
-use syscall::EOPNOTSUPP;
+use syscall::{EOPNOTSUPP, EOVERFLOW, EPERM};
 
 use crate::acpi::{AcpiContext, AmlSymbols, SdtSignature};
 
@@ -25,13 +30,14 @@ pub struct AcpiScheme<'acpi> {
 struct Handle<'a> {
     kind: HandleKind<'a>,
     stat: bool,
+    allowed_to_eval: bool,
 }
 enum HandleKind<'a> {
     TopLevel,
     Tables,
     Table(SdtSignature),
     Symbols(RwLockReadGuard<'a, AmlSymbols>),
-    Symbol(String),
+    Symbol { name: String, description: String },
 }
 
 impl HandleKind<'_> {
@@ -41,7 +47,7 @@ impl HandleKind<'_> {
             Self::Tables => true,
             Self::Table(_) => false,
             Self::Symbols(_) => true,
-            Self::Symbol(_) => false,
+            Self::Symbol { .. } => false,
         }
     }
     fn len(&self, acpi_ctx: &AcpiContext) -> Result<usize> {
@@ -51,7 +57,7 @@ impl HandleKind<'_> {
                 .sdt_from_signature(signature)
                 .ok_or(Error::new(EBADFD))?
                 .length(),
-            Self::Symbol(description) => description.len(),
+            Self::Symbol { description, .. } => description.len(),
             // Directories
             Self::TopLevel | Self::Symbols(_) | Self::Tables => 0,
         })
@@ -143,7 +149,7 @@ fn parse_table(table: &[u8]) -> Option<SdtSignature> {
 }
 
 impl SchemeSync for AcpiScheme<'_> {
-    fn open(&mut self, path: &str, flags: usize, _ctx: &CallerCtx) -> Result<OpenResult> {
+    fn open(&mut self, path: &str, flags: usize, ctx: &CallerCtx) -> Result<OpenResult> {
         let path = path.trim_start_matches('/');
 
         let flag_stat = flags & O_STAT == O_STAT;
@@ -179,7 +185,10 @@ impl SchemeSync for AcpiScheme<'_> {
 
             ["symbols", symbol] => {
                 if let Some(description) = self.ctx.aml_lookup(symbol) {
-                    HandleKind::Symbol(description)
+                    HandleKind::Symbol {
+                        name: (*symbol).to_owned(),
+                        description,
+                    }
                 } else {
                     return Err(Error::new(ENOENT));
                 }
@@ -194,9 +203,13 @@ impl SchemeSync for AcpiScheme<'_> {
             return Err(Error::new(ENOTDIR));
         }
 
-        if flags & O_ACCMODE != O_RDONLY && !flag_stat {
+        let allowed_to_eval = if flags & O_ACCMODE == O_RDONLY || flag_stat {
+            false
+        } else if ctx.uid != 0 {
+            true
+        } else {
             return Err(Error::new(EINVAL));
-        }
+        };
 
         if flags & O_SYMLINK == O_SYMLINK && !flag_stat {
             return Err(Error::new(EINVAL));
@@ -210,6 +223,7 @@ impl SchemeSync for AcpiScheme<'_> {
             Handle {
                 stat: flag_stat,
                 kind,
+                allowed_to_eval,
             },
         );
 
@@ -259,7 +273,7 @@ impl SchemeSync for AcpiScheme<'_> {
                 .sdt_from_signature(signature)
                 .ok_or(Error::new(EBADFD))?
                 .as_slice(),
-            HandleKind::Symbol(description) => description.as_bytes(),
+            HandleKind::Symbol { description, .. } => description.as_bytes(),
             _ => return Err(Error::new(EINVAL)),
         };
 
@@ -357,6 +371,47 @@ impl SchemeSync for AcpiScheme<'_> {
         _ctx: &CallerCtx,
     ) -> Result<usize> {
         Err(Error::new(EBADF))
+    }
+
+    fn call(&mut self, id: usize, payload: &mut [u8], _metadata: &[u64]) -> Result<usize> {
+        let handle = self.handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+        if !handle.allowed_to_eval {
+            return Err(Error::new(EPERM));
+        }
+
+        let Ok(args): Result<Vec<AmlSerdeValue>, SpannedError> = ron::de::from_bytes(payload)
+        else {
+            return Err(Error::new(EINVAL));
+        };
+
+        let HandleKind::Symbol { name, .. } = &handle.kind else {
+            return Err(Error::new(EBADF));
+        };
+
+        let Ok(aml_name) = AmlName::from_str(&to_aml_format(name)) else {
+            log::error!("Failed to convert symbol name: \"{name}\" to aml name!");
+            return Err(Error::new(EBADF));
+        };
+
+        let Ok(result) = self.ctx.aml_eval(aml_name, args) else {
+            return Err(Error::new(EINVAL));
+        };
+
+        let Ok(serialized_result) = ron::ser::to_string(&result) else {
+            log::error!("Failed to serialize aml result!");
+            return Err(Error::new(EINVAL));
+        };
+
+        let byte_result = serialized_result.as_bytes();
+        let result_len = byte_result.len();
+
+        if result_len > payload.len() {
+            return Err(Error::new(EOVERFLOW));
+        }
+
+        payload[..result_len].copy_from_slice(byte_result);
+
+        Ok(result_len)
     }
 }
 
