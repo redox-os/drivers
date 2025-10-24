@@ -356,6 +356,7 @@ impl SchemeSync for AcpiScheme<'_> {
 
         Ok(buf)
     }
+    
     fn write(
         &mut self,
         _id: usize,
