@@ -1,5 +1,6 @@
-use acpi::aml::namespace::{AmlName, NameComponent, NameSeg};
-use acpi::aml::object::{Object, WrappedObject};
+use acpi::aml::namespace::AmlName;
+use amlserde::aml_serde_name::to_aml_format;
+use amlserde::AmlSerdeValue;
 use core::str;
 use parking_lot::RwLockReadGuard;
 use redox_scheme::scheme::SchemeSync;
@@ -7,7 +8,6 @@ use redox_scheme::{CallerCtx, OpenResult};
 use ron::de::SpannedError;
 use std::collections::BTreeMap;
 use std::convert::{TryFrom, TryInto};
-use std::ops::Deref;
 use std::str::FromStr;
 use syscall::dirent::{DirEntry, DirentBuf, DirentKind};
 use syscall::schemev2::NewFdFlags;
@@ -17,10 +17,9 @@ use syscall::error::{Error, Result};
 use syscall::error::{EBADF, EBADFD, EINVAL, EIO, EISDIR, ENOENT, ENOTDIR};
 use syscall::flag::{MODE_DIR, MODE_FILE};
 use syscall::flag::{O_ACCMODE, O_DIRECTORY, O_RDONLY, O_STAT, O_SYMLINK};
-use syscall::{EOPNOTSUPP, EOVERFLOW};
+use syscall::{EOPNOTSUPP, EOVERFLOW, EPERM};
 
 use crate::acpi::{AcpiContext, AmlSymbols, SdtSignature};
-use crate::aml::SerializableAmlObject;
 
 pub struct AcpiScheme<'acpi> {
     ctx: &'acpi AcpiContext,
@@ -31,6 +30,7 @@ pub struct AcpiScheme<'acpi> {
 struct Handle<'a> {
     kind: HandleKind<'a>,
     stat: bool,
+    allowed_to_eval: bool,
 }
 enum HandleKind<'a> {
     TopLevel,
@@ -149,7 +149,7 @@ fn parse_table(table: &[u8]) -> Option<SdtSignature> {
 }
 
 impl SchemeSync for AcpiScheme<'_> {
-    fn open(&mut self, path: &str, flags: usize, _ctx: &CallerCtx) -> Result<OpenResult> {
+    fn open(&mut self, path: &str, flags: usize, ctx: &CallerCtx) -> Result<OpenResult> {
         let path = path.trim_start_matches('/');
 
         let flag_stat = flags & O_STAT == O_STAT;
@@ -203,9 +203,13 @@ impl SchemeSync for AcpiScheme<'_> {
             return Err(Error::new(ENOTDIR));
         }
 
-        if flags & O_ACCMODE != O_RDONLY && !flag_stat {
+        let allowed_to_eval = if flags & O_ACCMODE == O_RDONLY || flag_stat {
+            false
+        } else if ctx.uid != 0 {
+            true
+        } else {
             return Err(Error::new(EINVAL));
-        }
+        };
 
         if flags & O_SYMLINK == O_SYMLINK && !flag_stat {
             return Err(Error::new(EINVAL));
@@ -219,6 +223,7 @@ impl SchemeSync for AcpiScheme<'_> {
             Handle {
                 stat: flag_stat,
                 kind,
+                allowed_to_eval,
             },
         );
 
@@ -356,7 +361,7 @@ impl SchemeSync for AcpiScheme<'_> {
 
         Ok(buf)
     }
-    
+
     fn write(
         &mut self,
         _id: usize,
@@ -370,41 +375,31 @@ impl SchemeSync for AcpiScheme<'_> {
 
     fn call(&mut self, id: usize, payload: &mut [u8], _metadata: &[u64]) -> Result<usize> {
         let handle = self.handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+        if !handle.allowed_to_eval {
+            return Err(Error::new(EPERM));
+        }
 
-        let Ok(arg_objects): Result<Vec<SerializableAmlObject>, SpannedError> =
-            ron::de::from_bytes(payload)
+        let Ok(args): Result<Vec<AmlSerdeValue>, SpannedError> = ron::de::from_bytes(payload)
         else {
             return Err(Error::new(EINVAL));
         };
 
         let HandleKind::Symbol { name, .. } = &handle.kind else {
-            return Err(Error::new(EINVAL));
+            return Err(Error::new(EBADF));
         };
 
-        let name = format!("\\{}", name);
-        let Ok(aml_name) = AmlName::from_str(&name) else {
+        let Ok(aml_name) = AmlName::from_str(&to_aml_format(name)) else {
             log::error!("Failed to convert symbol name: \"{name}\" to aml name!");
             return Err(Error::new(EBADF));
         };
 
-        let args = arg_objects
-            .into_iter()
-            .map(|arg_kind| WrappedObject::new(arg_kind.into_object()))
-            .collect();
-
-        let Ok(aml_result) = self.ctx.aml_eval(aml_name, args) else {
+        let Ok(result) = self.ctx.aml_eval(aml_name, args) else {
             return Err(Error::new(EINVAL));
         };
-        let Some(serializable_result) =
-            SerializableAmlObject::from_object(aml_result.deref().clone())
-        else {
-            log::error!("Result of aml eval is not serializable!");
-            return Err(Error::new(EBADF));
-        };
 
-        let Ok(serialized_result) = ron::ser::to_string(&serializable_result) else {
+        let Ok(serialized_result) = ron::ser::to_string(&result) else {
             log::error!("Failed to serialize aml result!");
-            return Err(Error::new(EBADF));
+            return Err(Error::new(EINVAL));
         };
 
         let byte_result = serialized_result.as_bytes();

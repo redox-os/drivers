@@ -9,7 +9,6 @@ use redox_scheme::{RequestKind, SignalBehavior, Socket};
 use syscall::{EAGAIN, EWOULDBLOCK};
 
 mod acpi;
-mod aml;
 mod aml_physmem;
 
 mod scheme;
