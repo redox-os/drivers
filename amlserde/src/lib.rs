@@ -1,14 +1,24 @@
 use acpi::{
     aml::{
         namespace::AmlName,
-        object::{FieldAccessType, FieldUnitKind, FieldUpdateRule, Object, ReferenceKind},
-        op_region::RegionSpace,
+        object::{
+            FieldAccessType, FieldFlags, FieldUnit, FieldUnitKind, FieldUpdateRule, MethodFlags,
+            Object, ReferenceKind, WrappedObject,
+        },
+        op_region::{OpRegion, RegionSpace},
         Interpreter,
     },
-    Handler,
+    Handle, Handler,
 };
 use serde::{Deserialize, Serialize};
-use std::{ops::Deref, sync::atomic::Ordering};
+use std::{
+    ops::{Deref, Shl},
+    str::FromStr,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AmlSerde {
@@ -25,7 +35,7 @@ pub enum AmlSerdeValue {
         region: AmlSerdeRegionSpace,
         offset: u64,
         length: u64,
-        parent_device: Option<String>,
+        parent_device: String,
     },
     Field {
         kind: AmlSerdeFieldKind,
@@ -44,7 +54,7 @@ pub enum AmlSerdeValue {
     BufferField {
         offset: u64,
         length: u64,
-        data: Option<Box<AmlSerdeValue>>,
+        data: Box<AmlSerdeValue>,
     },
     Processor {
         id: u8,
@@ -57,7 +67,7 @@ pub enum AmlSerdeValue {
     },
     Reference {
         kind: AmlSerdeReferenceKind,
-        inner: Option<Box<AmlSerdeValue>>,
+        inner: Box<AmlSerdeValue>,
     },
     Package {
         contents: Vec<AmlSerdeValue>,
@@ -90,41 +100,53 @@ pub enum AmlSerdeRegionSpace {
 #[derive(Debug, Serialize, Deserialize)]
 pub enum AmlSerdeFieldKind {
     Normal {
-        region: Option<Box<AmlSerdeValue>>,
+        region: Box<AmlSerdeValue>,
     },
     Bank {
-        region: Option<Box<AmlSerdeValue>>,
-        bank: Option<Box<AmlSerdeValue>>,
+        region: Box<AmlSerdeValue>,
+        bank: Box<AmlSerdeValue>,
         bank_value: u64,
     },
     Index {
-        index: Option<Box<AmlSerdeValue>>,
-        data: Option<Box<AmlSerdeValue>>,
+        index: Box<AmlSerdeValue>,
+        data: Box<AmlSerdeValue>,
     },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AmlSerdeFieldFlags {
     pub access_type: AmlSerdeFieldAccessType,
-    pub lock_rule: bool,
+    pub lock_rule: bool, // bit 4
     pub update_rule: AmlSerdeFieldUpdateRule,
 }
-
-#[derive(Debug, Serialize, Deserialize)]
-pub enum AmlSerdeFieldAccessType {
-    Any,
-    Byte,
-    Word,
-    DWord,
-    QWord,
-    Buffer,
+impl Into<u8> for AmlSerdeFieldFlags {
+    fn into(self) -> u8 {
+        // bits 0..4
+        (self.access_type as u8) +
+        // bit 4
+        (self.lock_rule as u8).shl(4) +
+        // bits 5..7
+        (self.update_rule as u8).shl(5)
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum AmlSerdeFieldAccessType {
+    Any = 0,
+    Byte = 1,
+    Word = 2,
+    DWord = 3,
+    QWord = 4,
+    Buffer = 5,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[repr(u8)]
 pub enum AmlSerdeFieldUpdateRule {
-    Preserve,
-    WriteAsOnes,
-    WriteAsZeros,
+    Preserve = 0,
+    WriteAsOnes = 1,
+    WriteAsZeros = 2,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -168,7 +190,7 @@ impl AmlSerdeValue {
         AmlSerdeValue::String("".to_owned())
     }
 
-    fn from_aml_value(aml_value: &Object) -> Option<Self> {
+    pub fn from_aml_value(aml_value: &Object) -> Option<Self> {
         Some(match aml_value {
             Object::Uninitialized => AmlSerdeValue::Uninitialized,
             Object::Integer(n) => AmlSerdeValue::Integer(n.to_owned()),
@@ -190,25 +212,25 @@ impl AmlSerdeValue {
                 },
                 offset: region.base,
                 length: region.length,
-                parent_device: Some(region.parent_device_path.to_string()),
+                parent_device: region.parent_device_path.to_string(),
             },
             Object::FieldUnit(field) => AmlSerdeValue::Field {
                 kind: match &field.kind {
                     FieldUnitKind::Normal { region } => AmlSerdeFieldKind::Normal {
-                        region: AmlSerdeValue::from_aml_value(region.deref()).map(Box::new),
+                        region: AmlSerdeValue::from_aml_value(region.deref()).map(Box::new)?,
                     },
                     FieldUnitKind::Bank {
                         region,
                         bank,
                         bank_value,
                     } => AmlSerdeFieldKind::Bank {
-                        region: AmlSerdeValue::from_aml_value(region.deref()).map(Box::new),
-                        bank: AmlSerdeValue::from_aml_value(bank.deref()).map(Box::new),
+                        region: AmlSerdeValue::from_aml_value(region.deref()).map(Box::new)?,
+                        bank: AmlSerdeValue::from_aml_value(bank.deref()).map(Box::new)?,
                         bank_value: bank_value.to_owned(),
                     },
                     FieldUnitKind::Index { index, data } => AmlSerdeFieldKind::Index {
-                        index: AmlSerdeValue::from_aml_value(index.deref()).map(Box::new),
-                        data: AmlSerdeValue::from_aml_value(data.deref()).map(Box::new),
+                        index: AmlSerdeValue::from_aml_value(index.deref()).map(Box::new)?,
+                        data: AmlSerdeValue::from_aml_value(data.deref()).map(Box::new)?,
                     },
                 },
                 flags: AmlSerdeFieldFlags {
@@ -252,7 +274,7 @@ impl AmlSerdeValue {
             } => AmlSerdeValue::BufferField {
                 offset: offset.to_owned() as u64,
                 length: length.to_owned() as u64,
-                data: AmlSerdeValue::from_aml_value(buffer.deref()).map(Box::new),
+                data: AmlSerdeValue::from_aml_value(buffer.deref()).map(Box::new)?,
             },
             Object::Processor {
                 proc_id,
@@ -273,7 +295,7 @@ impl AmlSerdeValue {
                     ReferenceKind::LocalOrArg => AmlSerdeReferenceKind::LocalOrArg,
                     ReferenceKind::Unresolved => AmlSerdeReferenceKind::Unresolved,
                 },
-                inner: AmlSerdeValue::from_aml_value(inner.deref()).map(Box::new),
+                inner: AmlSerdeValue::from_aml_value(inner.deref()).map(Box::new)?,
             },
             Object::Package(aml_contents) => AmlSerdeValue::Package {
                 contents: aml_contents
@@ -291,6 +313,129 @@ impl AmlSerdeValue {
             Object::RawDataBuffer => AmlSerdeValue::RawDataBuffer,
             Object::ThermalZone => AmlSerdeValue::ThermalZone,
             Object::Debug => AmlSerdeValue::Debug,
+        })
+    }
+    pub fn to_aml_object(self) -> Option<Object> {
+        Some(match self {
+            AmlSerdeValue::Uninitialized => Object::Uninitialized,
+            AmlSerdeValue::Integer(n) => Object::Integer(n),
+            AmlSerdeValue::String(s) => Object::String(s),
+            AmlSerdeValue::OpRegion {
+                region,
+                offset,
+                length,
+                parent_device,
+            } => Object::OpRegion(OpRegion {
+                space: match region {
+                    AmlSerdeRegionSpace::PciConfig => RegionSpace::PciConfig,
+                    AmlSerdeRegionSpace::EmbeddedControl => RegionSpace::EmbeddedControl,
+                    AmlSerdeRegionSpace::SMBus => RegionSpace::SmBus,
+                    AmlSerdeRegionSpace::SystemCmos => RegionSpace::SystemCmos,
+                    AmlSerdeRegionSpace::PciBarTarget => RegionSpace::PciBarTarget,
+                    AmlSerdeRegionSpace::IPMI => RegionSpace::Ipmi,
+                    AmlSerdeRegionSpace::GeneralPurposeIo => RegionSpace::GeneralPurposeIo,
+                    AmlSerdeRegionSpace::GenericSerialBus => RegionSpace::GenericSerialBus,
+                    AmlSerdeRegionSpace::SystemMemory => RegionSpace::SystemMemory,
+                    AmlSerdeRegionSpace::SystemIo => RegionSpace::SystemIO,
+                    AmlSerdeRegionSpace::Pcc => RegionSpace::Pcc,
+                    AmlSerdeRegionSpace::OemDefined(n) => RegionSpace::Oem(n),
+                },
+                base: offset,
+                length,
+                //
+                parent_device_path: AmlName::from_str(&parent_device).ok()?, // TODO: Error value hidden
+            }),
+            AmlSerdeValue::Field {
+                kind,
+                flags,
+                offset,
+                length,
+            } => Object::FieldUnit(FieldUnit {
+                kind: match kind {
+                    AmlSerdeFieldKind::Normal { region } => FieldUnitKind::Normal {
+                        region: region.to_aml_object()?.wrap(),
+                    },
+                    AmlSerdeFieldKind::Bank {
+                        region,
+                        bank,
+                        bank_value,
+                    } => FieldUnitKind::Bank {
+                        region: region.to_aml_object()?.wrap(),
+                        bank: bank.to_aml_object()?.wrap(),
+                        bank_value: bank_value.to_owned(),
+                    },
+                    AmlSerdeFieldKind::Index { index, data } => FieldUnitKind::Index {
+                        index: index.to_aml_object()?.wrap(),
+                        data: data.to_aml_object()?.wrap(),
+                    },
+                },
+                flags: FieldFlags(flags.into()),
+                bit_index: offset as usize,
+                bit_length: length as usize,
+            }),
+            AmlSerdeValue::Device => Object::Device,
+            AmlSerdeValue::Event(event) => Object::Event(Arc::new(AtomicU64::new(event))),
+            AmlSerdeValue::Method {
+                arg_count,
+                serialize,
+                sync_level,
+            } => Object::Method {
+                code: (return None), //TODO figure out what to do here
+                //TODO check specs to see if all bit patterns are allowed
+                flags: MethodFlags(
+                    (arg_count as u8).clamp(0, 7)
+                        + (serialize as u8).shl(3)
+                        + sync_level.clamp(0, 15).shl(4),
+                ),
+            },
+            //TODO: handle native method?
+            AmlSerdeValue::Buffer(buffer_data) => Object::Buffer(buffer_data),
+            AmlSerdeValue::BufferField {
+                data,
+                offset,
+                length,
+            } => Object::BufferField {
+                offset: offset as usize,
+                length: length as usize,
+                buffer: data.to_aml_object()?.wrap(),
+            },
+            AmlSerdeValue::Processor {
+                id,
+                pblk_address,
+                pblk_len,
+            } => Object::Processor {
+                proc_id: id,
+                pblk_address,
+                pblk_length: pblk_len,
+            },
+            AmlSerdeValue::Mutex { mutex, sync_level } => Object::Mutex {
+                mutex: Handle(mutex),
+                sync_level: sync_level,
+            },
+            AmlSerdeValue::Reference { kind, inner } => Object::Reference {
+                kind: match kind {
+                    AmlSerdeReferenceKind::RefOf => ReferenceKind::RefOf,
+                    AmlSerdeReferenceKind::LocalOrArg => ReferenceKind::LocalOrArg,
+                    AmlSerdeReferenceKind::Unresolved => ReferenceKind::Unresolved,
+                },
+                inner: inner.to_aml_object()?.wrap(),
+            },
+            AmlSerdeValue::Package { contents } => Object::Package(
+                contents
+                    .into_iter()
+                    .map(|item| item.to_aml_object().map(Object::wrap)) // TODO: see if errors should be ignored here
+                    .collect::<Option<Vec<WrappedObject>>>()?,
+            ),
+            AmlSerdeValue::PowerResource {
+                system_level,
+                resource_order,
+            } => Object::PowerResource {
+                system_level: system_level.to_owned(),
+                resource_order: resource_order.to_owned(),
+            },
+            AmlSerdeValue::RawDataBuffer => Object::RawDataBuffer,
+            AmlSerdeValue::ThermalZone => Object::ThermalZone,
+            AmlSerdeValue::Debug => Object::Debug,
         })
     }
 }

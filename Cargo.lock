@@ -50,6 +50,7 @@ dependencies = [
  "redox_syscall",
  "ron",
  "rustc-hash",
+ "serde",
  "thiserror",
 ]
 

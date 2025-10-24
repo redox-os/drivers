@@ -1,3 +1,4 @@
+use acpi::aml::object::{Object, WrappedObject};
 use rustc_hash::FxHashMap;
 use std::convert::{TryFrom, TryInto};
 use std::ops::Deref;
@@ -18,7 +19,7 @@ use acpi::{
     AcpiTables,
 };
 use amlserde::aml_serde_name::aml_to_symbol;
-use amlserde::AmlSerde;
+use amlserde::{AmlSerde, AmlSerdeValue};
 
 #[cfg(target_arch = "x86_64")]
 pub mod dmar;
@@ -328,6 +329,21 @@ impl AmlSymbols {
     }
 }
 
+#[derive(Debug, Error)]
+pub enum AmlEvalError {
+    #[error("AML error")]
+    AmlError(AmlError),
+    #[error("Failed to serialize argument")]
+    SerializationError,
+    #[error("Failed to deserialize")]
+    DeserializationError,
+}
+impl From<AmlError> for AmlEvalError {
+    fn from(value: AmlError) -> Self {
+        AmlEvalError::AmlError(value)
+    }
+}
+
 pub struct AcpiContext {
     tables: Vec<Sdt>,
     dsdt: Option<Dsdt>,
@@ -344,6 +360,38 @@ pub struct AcpiContext {
 }
 
 impl AcpiContext {
+    pub fn aml_eval(
+        &self,
+        symbol: AmlName,
+        args: Vec<AmlSerdeValue>,
+    ) -> Result<AmlSerdeValue, AmlEvalError> {
+        let interpreter = &mut self.aml_symbols.write().aml_context;
+        interpreter.acquire_global_lock(16)?;
+
+        let args = args
+            .into_iter()
+            .map(|aml_serde_value| {
+                aml_serde_value
+                    .to_aml_object()
+                    .map(Object::wrap)
+                    .ok_or(AmlEvalError::DeserializationError)
+            })
+            .collect::<Result<Vec<WrappedObject>, AmlEvalError>>()?;
+
+        let result = interpreter.evaluate(symbol, args);
+        interpreter
+            .release_global_lock()
+            .expect("Failed to release GIL!"); //TODO: check if this should panic
+
+        result
+            .map_err(AmlEvalError::from)
+            .map(|object| {
+                AmlSerdeValue::from_aml_value(object.deref())
+                    .ok_or(AmlEvalError::SerializationError)
+            })
+            .flatten()
+    }
+
     pub fn init(rxsdt_physaddrs: impl Iterator<Item = u64>) -> Self {
         let tables = rxsdt_physaddrs
             .map(|physaddr| {

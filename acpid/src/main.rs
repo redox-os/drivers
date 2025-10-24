@@ -10,6 +10,7 @@ use syscall::{EAGAIN, EWOULDBLOCK};
 
 mod acpi;
 mod aml_physmem;
+
 mod scheme;
 
 fn daemon(daemon: redox_daemon::Daemon) -> ! {

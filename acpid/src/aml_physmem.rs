@@ -358,7 +358,7 @@ impl acpi::Handler for AmlPhysMemHandler {
     }
 
     fn acquire(&self, mutex: Handle, timeout: u16) -> Result<(), AmlError> {
-        log::warn!("TODO: Handler::aquire");
+        log::warn!("TODO: Handler::acquire");
         Ok(())
     }
 
