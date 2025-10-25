@@ -12,6 +12,14 @@ members = [
     "inputd",
     "virtio-core",
 
+    "usb/xhcid",
+    "usb/usbctl",
+    "usb/usbhubd",
+    "usb/udc/driver-udc",
+    "usb/udc/dwc3",
+    "usb/udc/dwc3-pci",
+    "usb/gadget/driver-gadget",
+
     "audio/ac97d",
     "audio/ihdad",
     "audio/sb16d",
