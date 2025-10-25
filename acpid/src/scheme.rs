@@ -205,7 +205,7 @@ impl SchemeSync for AcpiScheme<'_> {
 
         let allowed_to_eval = if flags & O_ACCMODE == O_RDONLY || flag_stat {
             false
-        } else if ctx.uid != 0 {
+        } else if ctx.uid == 0 {
             true
         } else {
             return Err(Error::new(EINVAL));
