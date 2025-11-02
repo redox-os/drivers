@@ -24,36 +24,7 @@ struct LiveDisk {
 }
 
 impl LiveDisk {
-    fn new() -> anyhow::Result<LiveDisk> {
-        let mut phys = 0;
-        let mut size = 0;
-
-        // TODO: handle error
-        for line in std::fs::read_to_string("/scheme/sys/env")
-            .context("failed to read env")?
-            .lines()
-        {
-            let mut parts = line.splitn(2, '=');
-            let name = parts.next().unwrap_or("");
-            let value = parts.next().unwrap_or("");
-
-            if name == "DISK_LIVE_ADDR" {
-                phys = usize::from_str_radix(value, 16).unwrap_or(0);
-            }
-
-            if name == "DISK_LIVE_SIZE" {
-                size = usize::from_str_radix(value, 16).unwrap_or(0);
-            }
-        }
-
-        if phys == 0 || size == 0 {
-            bail!(
-                "either livedisk phys ({}) or size ({}) was zero",
-                phys,
-                size
-            );
-        }
-
+    fn new(phys: usize, size: usize) -> anyhow::Result<LiveDisk> {
         let start = phys.div_floor(PAGE_SIZE) * PAGE_SIZE;
         let end = phys
             .checked_add(size)
@@ -133,6 +104,32 @@ impl Disk for LiveDisk {
 }
 
 fn main() -> anyhow::Result<()> {
+    let mut phys = 0;
+    let mut size = 0;
+
+    // TODO: handle error
+    for line in std::fs::read_to_string("/scheme/sys/env")
+        .context("failed to read env")?
+        .lines()
+    {
+        let mut parts = line.splitn(2, '=');
+        let name = parts.next().unwrap_or("");
+        let value = parts.next().unwrap_or("");
+
+        if name == "DISK_LIVE_ADDR" {
+            phys = usize::from_str_radix(value, 16).unwrap_or(0);
+        }
+
+        if name == "DISK_LIVE_SIZE" {
+            size = usize::from_str_radix(value, 16).unwrap_or(0);
+        }
+    }
+
+    if phys == 0 || size == 0 {
+        // No live disk data, no need to say anything or exit with error
+        std::process::exit(0);
+    }
+
     redox_daemon::Daemon::new(move |daemon| {
         let event_queue = event::EventQueue::new().unwrap();
 
@@ -147,7 +144,7 @@ fn main() -> anyhow::Result<()> {
             "disk.live".to_owned(),
             BTreeMap::from([(
                 0,
-                LiveDisk::new().unwrap_or_else(|err| {
+                LiveDisk::new(phys, size).unwrap_or_else(|err| {
                     eprintln!("failed to initialize livedisk scheme: {}", err);
                     std::process::exit(1)
                 }),

@@ -765,7 +765,7 @@ impl<const N: usize> Xhci<N> {
 
     pub async fn attach_device(&self, port_id: PortId) -> syscall::Result<()> {
         if self.port_states.contains_key(&port_id) {
-            println!("Already contains port {}", port_id);
+            debug!("Already contains port {}", port_id);
             return Err(syscall::Error::new(EAGAIN));
         }
 
@@ -798,7 +798,7 @@ impl<const N: usize> Xhci<N> {
                 }
             };
 
-            info!("Enabled port {}, which the xHC mapped to {}", port_id, slot);
+            debug!("Enabled port {}, which the xHC mapped to {}", port_id, slot);
 
             //TODO: get correct speed for child devices
             let protocol_speed = self
@@ -895,7 +895,7 @@ impl<const N: usize> Xhci<N> {
                         match child.try_wait() {
                             Ok(status_opt) => match status_opt {
                                 Some(status) => {
-                                    info!(
+                                    debug!(
                                         "driver process {} for port {} exited with status {}",
                                         child.id(),
                                         port_id,
@@ -904,7 +904,7 @@ impl<const N: usize> Xhci<N> {
                                 }
                                 None => {
                                     //TODO: kill harder
-                                    info!(
+                                    warn!(
                                         "driver process {} for port {} still running",
                                         child.id(),
                                         port_id
@@ -912,7 +912,7 @@ impl<const N: usize> Xhci<N> {
                                 }
                             },
                             Err(err) => {
-                                info!(
+                                warn!(
                                     "failed to wait for the driver process {} for port {}: {}",
                                     child.id(),
                                     port_id,
@@ -934,16 +934,16 @@ impl<const N: usize> Xhci<N> {
         }
 
         if let Some(state) = self.port_states.remove(&port_id) {
-            info!("disabling port slot {} for port {}", state.slot, port_id);
+            debug!("disabling port slot {} for port {}", state.slot, port_id);
             let result = self.disable_port_slot(state.slot).await;
-            info!(
+            debug!(
                 "disabled port slot {} for port {} with result: {:?}",
                 state.slot, port_id, result
             );
 
             result
         } else {
-            warn!(
+            debug!(
                 "Attempted to detach from port {}, which wasn't previously attached.",
                 port_id
             );

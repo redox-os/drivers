@@ -553,8 +553,8 @@ pub fn main() {
         "misc",
         "pci",
         "virtio-gpud",
-        log::LevelFilter::Trace,
-        log::LevelFilter::Trace,
+        log::LevelFilter::Warn,
+        log::LevelFilter::Info,
     );
     redox_daemon::Daemon::new(daemon_runner).expect("virtio-core: failed to daemonize");
 }

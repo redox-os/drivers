@@ -35,7 +35,7 @@ impl<const N: usize> DeviceEnumerator<N> {
             let port_id = request.port_id;
             let port_array_index = port_id.root_hub_port_index();
 
-            info!("Device Enumerator request for port {}", port_id);
+            debug!("Device Enumerator request for port {}", port_id);
 
             let (len, flags) = {
                 let ports = self.hci.ports.lock().unwrap();
@@ -54,7 +54,7 @@ impl<const N: usize> DeviceEnumerator<N> {
             };
 
             if flags.contains(PortFlags::CCS) {
-                info!(
+                debug!(
                     "Received Device Connect Port Status Change Event with port flags {:?}",
                     flags
                 );
@@ -114,14 +114,14 @@ impl<const N: usize> DeviceEnumerator<N> {
                     }
                     Err(err) => {
                         if err.errno == EAGAIN {
-                            info!("Received a device connect notification for an already connected device. Ignoring...")
+                            debug!("Received a device connect notification for an already connected device. Ignoring...")
                         } else {
                             warn!("processing of device attach request failed! Error: {}", err);
                         }
                     }
                 }
             } else {
-                info!(
+                debug!(
                     "Device Enumerator received Detach request on port {} which is in state {}",
                     port_id,
                     self.hci.get_pls(port_id)

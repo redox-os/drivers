@@ -23,7 +23,7 @@ fn main() {
             "audio",
             "pci",
             "sb16",
-            log::LevelFilter::Info,
+            log::LevelFilter::Warn,
             log::LevelFilter::Info,
         );
 

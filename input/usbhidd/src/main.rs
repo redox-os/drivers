@@ -188,7 +188,7 @@ fn main() {
         "usb",
         "device",
         &name,
-        log::LevelFilter::Info,
+        log::LevelFilter::Warn,
         log::LevelFilter::Info,
     );
 

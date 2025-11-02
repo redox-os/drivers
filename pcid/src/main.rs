@@ -191,12 +191,13 @@ fn main() {
     let mut args = pico_args::Arguments::from_env();
     let verbosity = (0..).find(|_| !args.contains("-v")).unwrap_or(0);
     let log_level = match verbosity {
-        0 => log::LevelFilter::Info,
-        1 => log::LevelFilter::Debug,
+        0 => log::LevelFilter::Warn,
+        1 => log::LevelFilter::Info,
+        2 => log::LevelFilter::Debug,
         _ => log::LevelFilter::Trace,
     };
 
-    common::setup_logging("bus", "pci", "pcid", log_level, log::LevelFilter::Trace);
+    common::setup_logging("bus", "pci", "pcid", log_level, log::LevelFilter::Info);
 
     redox_daemon::Daemon::new(move |daemon| main_inner(daemon)).unwrap();
 }

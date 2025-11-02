@@ -40,7 +40,7 @@ fn main() {
             "audio",
             "pci",
             &name,
-            log::LevelFilter::Info,
+            log::LevelFilter::Warn,
             log::LevelFilter::Info,
         );
 

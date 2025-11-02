@@ -113,7 +113,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         "net",
         "pci",
         &name,
-        log::LevelFilter::Info,
+        log::LevelFilter::Warn,
         log::LevelFilter::Info,
     );
 

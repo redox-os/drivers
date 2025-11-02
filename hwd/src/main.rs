@@ -6,8 +6,8 @@ fn main() {
         "misc",
         "hwd",
         "hwd",
-        log::LevelFilter::Debug,
-        log::LevelFilter::Debug,
+        log::LevelFilter::Warn,
+        log::LevelFilter::Info,
     );
 
     // Prefer DTB if available (matches kernel preference)

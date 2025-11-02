@@ -89,7 +89,7 @@ impl Backend for AcpiBackend {
                         "PNP0F13" => "PS/2 port for PS/2-style mouse",
                         _ => "?",
                     };
-                    log::debug!("{}: {} ({})", name, id, what);
+                    log::info!("{}: {} ({})", name, id, what);
                 }
             }
         }

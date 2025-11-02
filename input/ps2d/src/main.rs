@@ -30,7 +30,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         "misc",
         "ps2",
         "ps2",
-        log::LevelFilter::Info,
+        log::LevelFilter::Warn,
         log::LevelFilter::Info,
     );
 

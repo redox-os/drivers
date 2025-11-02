@@ -70,7 +70,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         "audio",
         "pci",
         &name,
-        log::LevelFilter::Info,
+        log::LevelFilter::Warn,
         log::LevelFilter::Info,
     );
 

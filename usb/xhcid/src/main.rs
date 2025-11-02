@@ -134,7 +134,7 @@ fn daemon_with_context_size<const N: usize>(
         "usb",
         "host",
         &name,
-        log::LevelFilter::Info,
+        log::LevelFilter::Warn,
         log::LevelFilter::Info,
     );
 

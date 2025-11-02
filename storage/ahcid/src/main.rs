@@ -33,7 +33,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         "disk",
         "pci",
         &name,
-        log::LevelFilter::Info,
+        log::LevelFilter::Warn,
         log::LevelFilter::Info,
     );
 
