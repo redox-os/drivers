@@ -150,7 +150,7 @@ impl NetworkAdapter for Rtl8139 {
                 Ok(Some(i))
             } else {
                 //TODO: better error types
-                eprintln!("rtl8139d: invalid receive status 0x{:X}", rxsts);
+                log::error!("invalid receive status 0x{:X}", rxsts);
                 Err(Error::new(EIO))
             };
 
@@ -264,36 +264,36 @@ impl Rtl8139 {
             mac_high as u8,
             (mac_high >> 8) as u8,
         ];
-        println!(
-            "   - MAC: {:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}",
+        log::debug!(
+            "MAC: {:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}",
             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
         );
         self.mac_address = mac;
 
         // Reset - this will disable tx and rx, reinitialize FIFOs, and set the system buffer pointer to the initial value
-        println!("  - Reset");
+        log::debug!("Reset");
         self.regs.cr.writef(CR_RST, true);
         while self.regs.cr.readf(CR_RST) {
             core::hint::spin_loop();
         }
 
         // Set up rx buffer
-        println!("  - Receive buffer");
+        log::debug!("Receive buffer");
         self.regs
             .rbstart
             .write(self.receive_buffer.physical() as u32);
 
-        println!("  - Interrupt mask");
+        log::debug!("Interrupt mask");
         self.regs.imr.write(IMR_TOK | IMR_ROK);
 
-        println!("  - Receive configuration");
+        log::debug!("Receive configuration");
         self.regs
             .rcr
             .write(RCR_RBLEN_64K | RCR_AB | RCR_AM | RCR_APM | RCR_AAP);
 
-        println!("  - Enable RX and TX");
+        log::debug!("Enable RX and TX");
         self.regs.cr.writef(CR_RE | CR_TE, true);
 
-        println!("  - Complete!");
+        log::debug!("Complete!");
     }
 }

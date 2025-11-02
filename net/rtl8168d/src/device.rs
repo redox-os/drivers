@@ -231,21 +231,21 @@ impl Rtl8168 {
             mac_high as u8,
             (mac_high >> 8) as u8,
         ];
-        println!(
-            "   - MAC: {:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}",
+        log::debug!(
+            "MAC: {:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}",
             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
         );
         self.mac_address = mac;
 
         // Reset - this will disable tx and rx, reinitialize FIFOs, and set the system buffer pointer to the initial value
-        println!("  - Reset");
+        log::debug!("Reset");
         self.regs.cmd.writef(1 << 4, true);
         while self.regs.cmd.readf(1 << 4) {
             core::hint::spin_loop();
         }
 
         // Set up rx buffers
-        println!("  - Receive buffers");
+        log::debug!("Receive buffers");
         for i in 0..self.receive_ring.len() {
             let rd = &mut self.receive_ring[i];
             let data = &mut self.receive_buffer[i];
@@ -258,7 +258,7 @@ impl Rtl8168 {
         }
 
         // Set up normal priority tx buffers
-        println!("  - Transmit buffers (normal priority)");
+        log::debug!("Transmit buffers (normal priority)");
         for i in 0..self.transmit_ring.len() {
             self.transmit_ring[i]
                 .buffer_low
@@ -272,7 +272,7 @@ impl Rtl8168 {
         }
 
         // Set up high priority tx buffers
-        println!("  - Transmit buffers (high priority)");
+        log::debug!("Transmit buffers (high priority)");
         for i in 0..self.transmit_ring_h.len() {
             self.transmit_ring_h[i]
                 .buffer_low
@@ -285,7 +285,7 @@ impl Rtl8168 {
             td.ctrl.writef(EOR, true);
         }
 
-        println!("  - Set config");
+        log::debug!("Set config");
         // Unlock config
         self.regs.cmd_9346.write(1 << 7 | 1 << 6);
 
@@ -331,6 +331,6 @@ impl Rtl8168 {
         // Lock config
         self.regs.cmd_9346.write(0);
 
-        println!("  - Complete!");
+        log::debug!("Complete!");
     }
 }
