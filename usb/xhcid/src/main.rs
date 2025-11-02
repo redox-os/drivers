@@ -145,7 +145,7 @@ fn daemon_with_context_size<const N: usize>(
     let (irq_file, interrupt_method) = (None, InterruptMethod::Polling); //get_int_method(&mut pcid_handle);
                                                                          //TODO: Fix interrupts.
 
-    println!(" + XHCI {}", pci_config.func.display());
+    log::info!(" + XHCI {}", pci_config.func.display());
 
     let scheme_name = format!("usb.{}", name);
     let socket = Socket::create(scheme_name.clone()).expect("xhcid: failed to create usb scheme");
