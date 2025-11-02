@@ -3,24 +3,6 @@ use log::{debug, error, info, trace};
 
 use std::{fmt, thread, time::Duration};
 
-#[cfg(target_arch = "aarch64")]
-#[inline(always)]
-pub(crate) unsafe fn pause() {
-    std::arch::aarch64::__yield();
-}
-
-#[cfg(target_arch = "x86")]
-#[inline(always)]
-pub(crate) unsafe fn pause() {
-    std::arch::x86::_mm_pause();
-}
-
-#[cfg(target_arch = "x86_64")]
-#[inline(always)]
-pub(crate) unsafe fn pause() {
-    std::arch::x86_64::_mm_pause();
-}
-
 #[derive(Debug)]
 pub enum Error {
     CommandRetry,
@@ -133,7 +115,7 @@ impl Ps2 {
     }
 
     fn wait_read(&mut self) -> Result<(), Error> {
-        let mut timeout = 500;
+        let mut timeout = 100;
         while timeout > 0 {
             if self.status().contains(StatusFlags::OUTPUT_FULL) {
                 return Ok(());
@@ -145,7 +127,7 @@ impl Ps2 {
     }
 
     fn wait_write(&mut self) -> Result<(), Error> {
-        let mut timeout = 500;
+        let mut timeout = 100;
         while timeout > 0 {
             if !self.status().contains(StatusFlags::INPUT_FULL) {
                 return Ok(());
@@ -163,10 +145,8 @@ impl Ps2 {
                 let val = self.data.read();
                 trace!("ps2d: flush {}: {:X}", message, val);
             }
-            unsafe {
-                pause();
-            }
             timeout -= 1;
+            thread::sleep(Duration::from_millis(1));
         }
     }
 
