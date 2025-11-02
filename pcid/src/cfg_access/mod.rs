@@ -170,7 +170,7 @@ impl Mcfg {
                 let bytes = fs::read(table_path)?.into_boxed_slice();
                 match Mcfg::parse(&*bytes) {
                     Some((_mcfg, allocs)) => {
-                        log::info!("MCFG ALLOCS {:?}", allocs.0);
+                        log::debug!("MCFG ALLOCS {:?}", allocs.0);
                         return f(allocs, Vec::new(), [u32::MAX, u32::MAX, u32::MAX, u32::MAX]);
                     }
                     None => {

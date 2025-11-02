@@ -75,7 +75,7 @@ fn handle_parsed_header(
     }
 
     if !string.is_empty() {
-        info!("    BAR{}", string);
+        debug!("    BAR{}", string);
     }
 
     let capabilities = if endpoint_header.status(pcie).has_capability_list() {
@@ -191,9 +191,8 @@ fn main() {
     let mut args = pico_args::Arguments::from_env();
     let verbosity = (0..).find(|_| !args.contains("-v")).unwrap_or(0);
     let log_level = match verbosity {
-        0 => log::LevelFilter::Warn,
-        1 => log::LevelFilter::Info,
-        2 => log::LevelFilter::Debug,
+        0 => log::LevelFilter::Info,
+        1 => log::LevelFilter::Debug,
         _ => log::LevelFilter::Trace,
     };
 
@@ -221,7 +220,7 @@ fn main_inner(daemon: redox_daemon::Daemon) -> ! {
             scan_device(&mut tree, &pcie, &mut bus_nums, bus_num, dev_num);
         }
     }
-    info!("Enumeration complete, now starting pci scheme");
+    debug!("Enumeration complete, now starting pci scheme");
 
     let mut scheme = scheme::PciScheme::new(pcie, tree);
     let socket = redox_scheme::Socket::create("pci").expect("failed to open pci scheme socket");
