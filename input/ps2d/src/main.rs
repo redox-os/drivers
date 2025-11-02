@@ -27,7 +27,7 @@ mod vm;
 
 fn daemon(daemon: redox_daemon::Daemon) -> ! {
     common::setup_logging(
-        "misc",
+        "input",
         "ps2",
         "ps2",
         log::LevelFilter::Warn,

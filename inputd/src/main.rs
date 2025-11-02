@@ -573,7 +573,7 @@ fn daemon_runner(redox_daemon: redox_daemon::Daemon) -> ! {
 
 fn main() {
     common::setup_logging(
-        "misc",
+        "input",
         "inputd",
         "inputd",
         log::LevelFilter::Warn,

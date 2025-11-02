@@ -259,7 +259,7 @@ impl Intel8254x {
     pub unsafe fn init(&mut self) {
         self.flag(CTRL, CTRL_RST, true);
         while self.read_reg(CTRL) & CTRL_RST == CTRL_RST {
-            print!("   - Waiting for reset: {:X}\n", self.read_reg(CTRL));
+            log::trace!("Waiting for reset: {:X}", self.read_reg(CTRL));
         }
 
         // Enable auto negotiate, link, clear reset, do not Invert Loss-Of Signal
@@ -287,12 +287,9 @@ impl Intel8254x {
             mac_high as u8,
             (mac_high >> 8) as u8,
         ];
-        print!(
-            "{}",
-            format!(
-                "   - MAC: {:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}\n",
-                mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
-            )
+        log::info!(
+            "MAC: {:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}",
+            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
         );
         self.mac_address = mac;
 
@@ -350,12 +347,12 @@ impl Intel8254x {
         // TIPG Packet Gap
         // TODO ...
 
-        print!("   - Waiting for link up: {:X}\n", self.read_reg(STATUS));
+        log::debug!("Waiting for link up: {:X}", self.read_reg(STATUS));
         while self.read_reg(STATUS) & 2 != 2 {
             thread::sleep(time::Duration::from_millis(100));
         }
-        print!(
-            "   - Link is up with speed {}\n",
+        log::info!(
+            "Link is up with speed {}",
             match (self.read_reg(STATUS) >> 6) & 0b11 {
                 0b00 => "10 Mb/s",
                 0b01 => "100 Mb/s",
