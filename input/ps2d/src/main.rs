@@ -87,8 +87,6 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         )
         .unwrap();
 
-    let mut ps2d = Ps2d::new(input, keymap);
-
     let scheme_file = Socket::nonblock("ps2").expect("ps2d: failed to create ps2 scheme");
 
     let mut scheme_handle = Ps2Scheme::new(
@@ -109,6 +107,8 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     daemon
         .ready()
         .expect("ps2d: failed to mark daemon as ready");
+
+    let mut ps2d = Ps2d::new(input, keymap);
 
     let mut data = [0; 256];
     for event in event_queue.map(|e| e.expect("ps2d: failed to get next event").user_data) {
