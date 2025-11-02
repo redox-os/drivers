@@ -209,7 +209,7 @@ impl IntelHDA {
         module.enumerate();
 
         module.configure();
-        log::info!("IHDA: Initialization finished.");
+        log::debug!("IHDA: Initialization finished.");
         Ok(module)
     }
 
@@ -716,7 +716,7 @@ impl IntelHDA {
     }
 
     pub fn info(&self) {
-        log::info!(
+        log::debug!(
             "Intel HD Audio Version {}.{}",
             self.regs.vmaj.read(),
             self.regs.vmin.read()
@@ -961,7 +961,7 @@ impl IntelHDA {
 
 impl Drop for IntelHDA {
     fn drop(&mut self) {
-        log::info!("IHDA: Deallocating IHDA driver.");
+        log::debug!("IHDA: Deallocating IHDA driver.");
     }
 }
 
@@ -1019,7 +1019,7 @@ impl SchemeBlockMut for IntelHDA {
             }
         };
 
-        //log::info!("Int count: {}", self.int_counter);
+        //log::debug!("Int count: {}", self.int_counter);
 
         self.write_to_output(index, buf)
     }

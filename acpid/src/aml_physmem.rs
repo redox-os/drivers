@@ -353,16 +353,16 @@ impl acpi::Handler for AmlPhysMemHandler {
     }
 
     fn create_mutex(&self) -> Handle {
-        log::info!("TODO: Handler::create_mutex");
+        log::debug!("TODO: Handler::create_mutex");
         Handle(0)
     }
 
     fn acquire(&self, mutex: Handle, timeout: u16) -> Result<(), AmlError> {
-        log::info!("TODO: Handler::acquire");
+        log::debug!("TODO: Handler::acquire");
         Ok(())
     }
 
     fn release(&self, mutex: Handle) {
-        log::info!("TODO: Handler::release");
+        log::debug!("TODO: Handler::release");
     }
 }

@@ -451,10 +451,12 @@ dependencies = [
 name = "fbcond"
 version = "0.1.0"
 dependencies = [
+ "common",
  "console-draw",
  "graphics-ipc",
  "inputd",
  "libredox",
+ "log",
  "orbclient",
  "ransid",
  "redox-daemon",

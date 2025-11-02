@@ -287,7 +287,7 @@ impl Intel8254x {
             mac_high as u8,
             (mac_high >> 8) as u8,
         ];
-        log::info!(
+        log::debug!(
             "MAC: {:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}",
             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
         );
@@ -351,7 +351,7 @@ impl Intel8254x {
         while self.read_reg(STATUS) & 2 != 2 {
             thread::sleep(time::Duration::from_millis(100));
         }
-        log::info!(
+        log::debug!(
             "Link is up with speed {}",
             match (self.read_reg(STATUS) >> 6) & 0b11 {
                 0b00 => "10 Mb/s",

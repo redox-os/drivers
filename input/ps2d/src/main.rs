@@ -30,8 +30,8 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         "input",
         "ps2",
         "ps2",
-        log::LevelFilter::Warn,
-        log::LevelFilter::Info,
+        common::output_level(),
+        common::file_level(),
     );
 
     acquire_port_io_rights().expect("ps2d: failed to get I/O permission");

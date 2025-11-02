@@ -202,7 +202,7 @@ impl Ps2 {
                     return Ok(ok);
                 }
                 Err(ref err) => {
-                    info!("ps2d: {}: retry {}/{}: {:?}", name, retry + 1, retries, err);
+                    debug!("ps2d: {}: retry {}/{}: {:?}", name, retry + 1, retries, err);
                 }
             }
         }

@@ -124,8 +124,8 @@ pub fn main() {
         "net",
         "pci",
         "virtio-netd",
-        log::LevelFilter::Warn,
-        log::LevelFilter::Info,
+        common::output_level(),
+        common::file_level(),
     );
     redox_daemon::Daemon::new(daemon_runner).expect("virtio-core: failed to daemonize");
 }

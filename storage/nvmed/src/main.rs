@@ -156,8 +156,8 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         "disk",
         "pci",
         &scheme_name,
-        log::LevelFilter::Warn,
-        log::LevelFilter::Info,
+        common::output_level(),
+        common::file_level(),
     );
 
     log::debug!("NVME PCI CONFIG: {:?}", pci_config);
@@ -231,7 +231,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     libredox::call::setrens(0, 0).expect("nvmed: failed to enter null namespace");
 
-    log::info!("Starting to listen for scheme events");
+    log::debug!("Starting to listen for scheme events");
 
     executor.block_on(async {
         loop {

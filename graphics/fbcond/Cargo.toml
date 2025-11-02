@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+log = "0.4"
 orbclient = "0.3.27"
 ransid = "0.4"
 redox_event = "0.4"
@@ -11,6 +12,7 @@ redox_syscall = "0.5"
 redox-daemon = "0.1"
 redox-scheme = "0.4"
 
+common = { path = "../../common" }
 console-draw = { path = "../console-draw" }
 graphics-ipc = { path = "../graphics-ipc" }
 inputd = { path = "../../inputd" }

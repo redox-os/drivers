@@ -6,7 +6,6 @@ use xhcid_interface::{
 };
 
 fn main() {
-
     let mut args = env::args().skip(1);
 
     const USAGE: &'static str = "usbhubd <scheme> <port> <interface>";
@@ -36,7 +35,7 @@ fn main() {
         "device",
         &name,
         log::LevelFilter::Warn,
-        log::LevelFilter::Info,
+        common::file_level(),
     );
 
     let handle = XhciClientHandle::new(scheme.clone(), port_id);

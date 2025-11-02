@@ -31,7 +31,7 @@ impl Display {
         let display_file = self.input_handle.open_display_v2().unwrap();
         let new_display_handle = V2GraphicsHandle::from_file(display_file).unwrap();
 
-        eprintln!("fbcond: Opened new display");
+        log::debug!("fbcond: Opened new display");
 
         let (width, height) = new_display_handle.display_size(0).unwrap();
         let fb = new_display_handle
@@ -40,7 +40,7 @@ impl Display {
 
         match new_display_handle.map_dumb_framebuffer(fb, width, height) {
             Ok(map) => {
-                eprintln!(
+                log::debug!(
                     "fbcond: Mapped new display with size {}x{}",
                     map.width(),
                     map.height()
@@ -53,7 +53,7 @@ impl Display {
                 });
             }
             Err(err) => {
-                eprintln!("failed to resize display: {}", err);
+                log::error!("failed to map display: {}", err);
             }
         }
     }
@@ -62,7 +62,7 @@ impl Display {
         let (width, height) = match map.display_handle.display_size(0) {
             Ok((width, height)) => (width, height),
             Err(err) => {
-                eprintln!("fbcond: failed to get display size: {}", err);
+                log::error!("fbcond: failed to get display size: {}", err);
                 (map.inner.width() as u32, map.inner.height() as u32)
             }
         };
@@ -94,14 +94,14 @@ impl Display {
                         map.fb = fb;
                         map.inner = new_map;
 
-                        eprintln!("fbcond: mapped display");
+                        log::debug!("fbcond: mapped display");
                     }
                     Err(err) => {
-                        eprintln!("fbcond: failed to open display: {}", err);
+                        log::error!("fbcond: failed to open display: {}", err);
                     }
                 },
                 Err(err) => {
-                    eprintln!("fbcond: failed to create framebuffer: {}", err);
+                    log::error!("fbcond: failed to create framebuffer: {}", err);
                 }
             }
         }

@@ -157,8 +157,7 @@ impl EndpDesc {
         self.ssc.is_some()
     }
     pub fn is_superspeedplus(&self) -> bool {
-        log::warn!("TODO: is_superspeedplus not implemented, defaulting to false");
-        false
+        self.sspc.is_some()
     }
     fn interrupt_usage_bits(&self) -> u8 {
         assert!(self.is_interrupt());

@@ -16,8 +16,8 @@ fn main() -> Result<()> {
         "bus",
         "pci",
         "pci-spawner.log",
-        log::LevelFilter::Warn,
-        log::LevelFilter::Info,
+        common::output_level(),
+        common::file_level(),
     );
 
     let config_data = if fs::metadata(&config_path)?.is_file() {

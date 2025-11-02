@@ -70,11 +70,11 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         "audio",
         "pci",
         &name,
-        log::LevelFilter::Warn,
-        log::LevelFilter::Info,
+        common::output_level(),
+        common::file_level(),
     );
 
-    log::info!(" + IHDA {}", pci_config.func.display());
+    log::info!("IHDA {}", pci_config.func.display());
 
     let address = unsafe { pcid_handle.map_bar(0) }.ptr.as_ptr() as usize;
 

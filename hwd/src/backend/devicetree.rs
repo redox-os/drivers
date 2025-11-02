@@ -20,7 +20,7 @@ impl DeviceTreeBackend {
                 line.push_str(id);
             }
         }
-        log::info!("{}", line);
+        log::debug!("{}", line);
         for child in node.children() {
             Self::dump(&child, level + 1);
         }

@@ -20,11 +20,11 @@ fn main() {
         "graphics",
         "pci",
         &name,
-        log::LevelFilter::Warn,
-        log::LevelFilter::Info,
+        common::output_level(),
+        common::file_level(),
     );
 
-    log::info!(" + BGA {}", pci_config.func.display());
+    log::info!("BGA {}", pci_config.func.display());
 
     redox_daemon::Daemon::new(move |daemon| {
         acquire_port_io_rights().expect("bgad: failed to get port IO permission");
@@ -32,7 +32,7 @@ fn main() {
         let socket = Socket::create("bga").expect("bgad: failed to create bga scheme");
 
         let mut bga = Bga::new();
-        log::info!("   - BGA {}x{}", bga.width(), bga.height());
+        log::debug!("BGA {}x{}", bga.width(), bga.height());
 
         let mut scheme = BgaScheme {
             bga,

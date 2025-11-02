@@ -17,7 +17,7 @@ mod logger;
 /// The Scatter Gather List (SGL) API for drivers.
 pub mod sgl;
 
-pub use logger::setup_logging;
+pub use logger::{output_level, file_level, setup_logging};
 
 /// Specifies the write behavior for a specific region of memory
 ///

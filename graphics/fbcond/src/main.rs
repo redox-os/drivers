@@ -18,6 +18,14 @@ fn main() {
         .map(|arg| arg.parse().expect("invalid vt number"))
         .collect::<Vec<_>>();
 
+    common::setup_logging(
+        "graphics",
+        "fbcond",
+        "fbcond",
+        common::output_level(),
+        common::file_level()
+    );
+
     redox_daemon::Daemon::new(|daemon| inner(daemon, &vt_ids)).expect("failed to create daemon");
 }
 fn inner(daemon: redox_daemon::Daemon, vt_ids: &[usize]) -> ! {

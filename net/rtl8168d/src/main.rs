@@ -60,7 +60,7 @@ fn get_int_method(pcid_handle: &mut PciFunctionHandle) -> File {
         };
 
         pcid_handle.enable_feature(PciFeature::MsiX);
-        log::info!("Enabled MSI-X");
+        log::debug!("Enabled MSI-X");
 
         method
     } else if has_msi {
@@ -113,11 +113,11 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         "net",
         "pci",
         &name,
-        log::LevelFilter::Warn,
-        log::LevelFilter::Info,
+        common::output_level(),
+        common::file_level(),
     );
 
-    log::info!(" + RTL8168 {}", pci_config.func.display());
+    log::info!("RTL8168 {}", pci_config.func.display());
 
     let bar = map_bar(&mut pcid_handle);
 

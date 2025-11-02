@@ -87,12 +87,12 @@ impl InputScheme {
         }
 
         if !self.vts.contains(&new_active) {
-            log::warn!("inputd: switch to non-existent VT #{new_active} was requested");
+            log::warn!("switch to non-existent VT #{new_active} was requested");
             return;
         }
 
-        log::info!(
-            "inputd: switching from VT #{} to VT #{new_active}",
+        log::debug!(
+            "switching from VT #{} to VT #{new_active}",
             self.active_vt.unwrap_or(0)
         );
 
@@ -205,12 +205,12 @@ impl SchemeSync for InputScheme {
             "control" => Handle::Control,
 
             _ => {
-                log::error!("inputd: invalid path '{path}'");
+                log::error!("invalid path '{path}'");
                 return Err(SysError::new(EINVAL));
             }
         };
 
-        log::info!("inputd: {path} channel has been opened");
+        log::debug!("{path} channel has been opened");
 
         self.handles.insert(fd, handle_ty);
         Ok(OpenResult::ThisScheme {
@@ -278,17 +278,17 @@ impl SchemeSync for InputScheme {
                     }
                     Ok(copy * size_of::<VtEvent>())
                 } else {
-                    log::error!("inputd: display tried to read incorrectly sized event");
+                    log::error!("display tried to read incorrectly sized event");
                     return Err(SysError::new(EINVAL));
                 }
             }
 
             Handle::Producer => {
-                log::error!("inputd: producer tried to read");
+                log::error!("producer tried to read");
                 return Err(SysError::new(EINVAL));
             }
             Handle::Control => {
-                log::error!("inputd: control tried to read");
+                log::error!("control tried to read");
                 return Err(SysError::new(EINVAL));
             }
         }
@@ -309,7 +309,7 @@ impl SchemeSync for InputScheme {
         match handle {
             Handle::Control => {
                 if buf.len() != size_of::<VtActivate>() {
-                    log::error!("inputd: control tried to write incorrectly sized command");
+                    log::error!("control tried to write incorrectly sized command");
                     return Err(SysError::new(EINVAL));
                 }
 
@@ -322,11 +322,11 @@ impl SchemeSync for InputScheme {
             }
 
             Handle::Consumer { .. } => {
-                log::error!("inputd: consumer tried to write");
+                log::error!("consumer tried to write");
                 return Err(SysError::new(EINVAL));
             }
             Handle::Display { .. } => {
-                log::error!("inputd: display tried to write");
+                log::error!("display tried to write");
                 return Err(SysError::new(EINVAL));
             }
             Handle::Producer => {}
@@ -460,7 +460,7 @@ impl SchemeSync for InputScheme {
                 Ok(EventFlags::empty())
             }
             Handle::Producer | Handle::Control => {
-                log::error!("inputd: producer or control tried to use an event queue");
+                log::error!("producer or control tried to use an event queue");
                 Err(SysError::new(EINVAL))
             }
         }
@@ -576,8 +576,8 @@ fn main() {
         "input",
         "inputd",
         "inputd",
-        log::LevelFilter::Warn,
-        log::LevelFilter::Info,
+        common::output_level(),
+        common::file_level(),
     );
 
     let mut args = std::env::args().skip(1);

@@ -223,7 +223,7 @@ pub fn allocate_first_msi_interrupt_on_bsp(
     pcid_handle.set_feature_info(SetFeatureInfo::Msi(set_feature_info));
 
     pcid_handle.enable_feature(PciFeature::Msi);
-    log::info!("Enabled MSI");
+    log::debug!("Enabled MSI");
 
     interrupt_handle
 }

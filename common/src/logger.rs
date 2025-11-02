@@ -1,5 +1,14 @@
 use redox_log::{OutputBuilder, RedoxLogger};
 
+pub fn output_level() -> log::LevelFilter {
+    //TODO: adjust with bootloader environment
+    log::LevelFilter::Info
+}
+
+pub fn file_level() -> log::LevelFilter {
+    log::LevelFilter::Info
+}
+
 /// Configures logging for a single driver.
 #[cfg_attr(not(target_os = "redox"), allow(unused_variables, unused_mut))]
 pub fn setup_logging(

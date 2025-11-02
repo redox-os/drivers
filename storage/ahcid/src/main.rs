@@ -33,11 +33,11 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         "disk",
         "pci",
         &name,
-        log::LevelFilter::Warn,
-        log::LevelFilter::Info,
+        common::output_level(),
+        common::file_level(),
     );
 
-    info!(" + AHCI {}", pci_config.func.display());
+    info!("AHCI {}", pci_config.func.display());
 
     let address = unsafe { pcid_handle.map_bar(5) }.ptr.as_ptr() as usize;
     {

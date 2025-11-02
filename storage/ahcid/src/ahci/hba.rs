@@ -153,7 +153,7 @@ impl HbaPort {
         // Power on and spin up device
         self.cmd.writef(1 << 2 | 1 << 1, true);
 
-        debug!("   - AHCI init {:X}", self.cmd.read());
+        debug!("AHCI init {:X}", self.cmd.read());
         Ok(())
     }
 
@@ -255,7 +255,7 @@ impl HbaPort {
         };
 
         info!(
-            "   + Serial: {} Firmware: {} Model: {} {}-bit LBA Size: {} MB",
+            "Serial: {} Firmware: {} Model: {} {}-bit LBA Size: {} MB",
             serial.trim(),
             firmware.trim(),
             model.trim(),
@@ -496,7 +496,7 @@ impl HbaMem {
         self.ghc.write(1 << 31 | 1 << 1);
 
         debug!(
-            "   - AHCI CAP {:X} GHC {:X} IS {:X} PI {:X} VS {:X} CAP2 {:X} BOHC {:X}",
+            "AHCI CAP {:X} GHC {:X} IS {:X} PI {:X} VS {:X} CAP2 {:X} BOHC {:X}",
             self.cap.read(),
             self.ghc.read(),
             self.is.read(),

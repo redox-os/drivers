@@ -40,8 +40,8 @@ fn main() {
             "audio",
             "pci",
             &name,
-            log::LevelFilter::Warn,
-            log::LevelFilter::Info,
+            common::output_level(),
+            common::file_level(),
         );
 
         common::acquire_port_io_rights()

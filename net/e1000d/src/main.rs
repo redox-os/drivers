@@ -18,8 +18,8 @@ fn main() {
         "net",
         "pci",
         &name,
-        log::LevelFilter::Warn,
-        log::LevelFilter::Info,
+        common::output_level(),
+        common::file_level(),
     );
 
     let irq = pci_config
@@ -27,7 +27,7 @@ fn main() {
         .legacy_interrupt_line
         .expect("e1000d: no legacy interrupts supported");
 
-    log::info!(" + E1000 {}", pci_config.func.display());
+    log::info!("E1000 {}", pci_config.func.display());
 
     redox_daemon::Daemon::new(move |daemon| {
         let mut irq_file = irq.irq_handle("e1000d");

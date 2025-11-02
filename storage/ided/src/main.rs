@@ -33,8 +33,8 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         "disk",
         "pci",
         &name,
-        log::LevelFilter::Warn,
-        log::LevelFilter::Info,
+        common::output_level(),
+        common::file_level(),
     );
 
     info!("IDE PCI CONFIG: {:?}", pci_config);
