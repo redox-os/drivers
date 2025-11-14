@@ -1,4 +1,5 @@
 #[macro_use]
+
 extern crate bitflags;
 extern crate orbclient;
 extern crate syscall;
@@ -12,7 +13,7 @@ use std::{env, process};
 use common::acquire_port_io_rights;
 use event::{user_data, EventQueue};
 use inputd::ProducerHandle;
-use log::info;
+use log::{LevelFilter, info};
 use redox_scheme::{RequestKind, SignalBehavior, Socket};
 use syscall::{EAGAIN, EWOULDBLOCK};
 
@@ -30,8 +31,8 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         "input",
         "ps2",
         "ps2",
-        common::output_level(),
-        common::file_level(),
+        LevelFilter::Trace,
+        LevelFilter::Trace,
     );
 
     acquire_port_io_rights().expect("ps2d: failed to get I/O permission");
