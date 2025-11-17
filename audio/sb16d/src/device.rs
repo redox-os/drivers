@@ -11,7 +11,6 @@ use redox_scheme::CallerCtx;
 use redox_scheme::OpenResult;
 use syscall::error::{Error, Result, EACCES, EBADF, ENODEV};
 use syscall::schemev2::NewFdFlags;
-use syscall::EWOULDBLOCK;
 
 use spin::Mutex;
 

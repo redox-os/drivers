@@ -5,13 +5,11 @@ extern crate event;
 extern crate spin;
 extern crate syscall;
 
-use std::fs::File;
-use std::io::{ErrorKind, Read, Write};
-use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
+use std::io::{Read, Write};
+use std::os::unix::io::AsRawFd;
 use std::usize;
 
 use event::{user_data, EventQueue};
-use libredox::flag;
 use pcid_interface::PciFunctionHandle;
 use redox_scheme::wrappers::ReadinessBased;
 use redox_scheme::Socket;

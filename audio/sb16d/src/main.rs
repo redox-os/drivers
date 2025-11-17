@@ -1,6 +1,5 @@
 //#![deny(warnings)]
 
-use libredox::errno::{EAGAIN, EWOULDBLOCK};
 use libredox::{flag, Fd};
 use redox_scheme::wrappers::ReadinessBased;
 use redox_scheme::Socket;
