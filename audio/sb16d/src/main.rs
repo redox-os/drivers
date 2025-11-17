@@ -69,7 +69,7 @@ fn main() {
 
         let all = [Source::Irq, Source::Scheme];
 
-        'events: for event in all
+        for event in all
             .into_iter()
             .chain(event_queue.map(|e| e.expect("sb16d: failed to get next event").user_data))
         {

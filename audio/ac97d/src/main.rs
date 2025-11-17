@@ -86,7 +86,7 @@ fn main() {
         libredox::call::setrens(0, 0).expect("ac97d: failed to enter null namespace");
 
         let all = [Source::Irq, Source::Scheme];
-        'events: for event in all
+        for event in all
             .into_iter()
             .chain(event_queue.map(|e| e.expect("ac97d: failed to get next event").user_data))
         {
