@@ -4,8 +4,12 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use common::io::Pio;
+use redox_scheme::scheme::SchemeSync;
+use redox_scheme::CallerCtx;
+use redox_scheme::OpenResult;
 use syscall::error::{Error, Result, EACCES, EBADF, EINVAL, ENOENT};
-use syscall::scheme::SchemeBlockMut;
+use syscall::schemev2::NewFdFlags;
+use syscall::EWOULDBLOCK;
 
 use common::{
     dma::Dma,
@@ -257,18 +261,28 @@ impl Ac97 {
     }
 }
 
-impl SchemeBlockMut for Ac97 {
-    fn open(&mut self, _path: &str, _flags: usize, uid: u32, _gid: u32) -> Result<Option<usize>> {
-        if uid == 0 {
+impl SchemeSync for Ac97 {
+    fn open(&mut self, _path: &str, _flags: usize, ctx: &CallerCtx) -> Result<OpenResult> {
+        if ctx.uid == 0 {
             let id = self.next_id.fetch_add(1, Ordering::SeqCst);
             self.handles.lock().insert(id, Handle::Todo);
-            Ok(Some(id))
+            Ok(OpenResult::ThisScheme {
+                number: id,
+                flags: NewFdFlags::empty(),
+            })
         } else {
             Err(Error::new(EACCES))
         }
     }
 
-    fn write(&mut self, id: usize, buf: &[u8]) -> Result<Option<usize>> {
+    fn write(
+        &mut self,
+        id: usize,
+        buf: &[u8],
+        _offset: u64,
+        _flags: u32,
+        _ctx: &CallerCtx,
+    ) -> Result<usize> {
         {
             let mut handles = self.handles.lock();
             let _handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
@@ -282,7 +296,7 @@ impl SchemeBlockMut for Ac97 {
         let mut lvi = self.bus.po.lvi.read() as usize;
         if lvi == (civ + 3) % NUM_SUB_BUFFS {
             // Block if we already are 3 buffers ahead
-            Ok(None)
+            Err(Error::new(EWOULDBLOCK))
         } else {
             // Fill next buffer
             lvi = (lvi + 1) % NUM_SUB_BUFFS;
@@ -291,28 +305,24 @@ impl SchemeBlockMut for Ac97 {
             }
             self.bus.po.lvi.write(lvi as u8);
 
-            Ok(Some(SUB_BUFF_SIZE))
+            Ok(SUB_BUFF_SIZE)
         }
     }
 
-    fn fpath(&mut self, id: usize, buf: &mut [u8]) -> Result<Option<usize>> {
+    fn fpath(&mut self, id: usize, buf: &mut [u8], _ctx: &CallerCtx) -> Result<usize> {
         let mut handles = self.handles.lock();
         let _handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
         let mut i = 0;
-        let scheme_path = b"audiohw:";
+        let scheme_path = b"/scheme/audiohw";
         while i < buf.len() && i < scheme_path.len() {
             buf[i] = scheme_path[i];
             i += 1;
         }
-        Ok(Some(i))
+        Ok(i)
     }
 
-    fn close(&mut self, id: usize) -> Result<Option<usize>> {
-        let mut handles = self.handles.lock();
-        handles
-            .remove(&id)
-            .ok_or(Error::new(EBADF))
-            .and(Ok(Some(0)))
+    fn on_close(&mut self, id: usize) {
+        let _ = self.handles.lock().remove(&id);
     }
 }
