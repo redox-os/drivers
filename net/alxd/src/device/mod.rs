@@ -373,7 +373,7 @@ impl Alx {
              */
             self.imask &= !ISR_PHY;
             let imask = self.imask;
-            self.write(IMR, imask);
+            self.reg_write(IMR, imask);
             self.flag |= FLAG_TASK_CHK_LINK;
             self.task();
         }
@@ -384,7 +384,7 @@ impl Alx {
     unsafe fn intr_1(&mut self, mut intr: u32) -> bool {
         /* ACK interrupt */
         println!("ACK interrupt: {:X}", intr | ISR_DIS);
-        self.write(ISR, intr | ISR_DIS);
+        self.reg_write(ISR, intr | ISR_DIS);
         intr &= self.imask;
 
         if (self.handle_intr_misc(intr)) {
@@ -397,19 +397,19 @@ impl Alx {
             /* mask rx/tx interrupt, enable them when napi complete */
             self.imask &= !ISR_ALL_QUEUES;
             let imask = self.imask;
-            self.write(IMR, imask);
+            self.reg_write(IMR, imask);
         }
 
-        self.write(ISR, 0);
+        self.reg_write(ISR, 0);
 
         return true;
     }
 
     pub unsafe fn intr_legacy(&mut self) -> bool {
         /* read interrupt status */
-        let intr = self.read(ISR);
+        let intr = self.reg_read(ISR);
         if (intr & ISR_DIS > 0 || intr & self.imask == 0) {
-            let mask = self.read(IMR);
+            let mask = self.reg_read(IMR);
             println!(
                 "seems a wild interrupt, intr={:X}, imask={:X}, mask={:X}",
                 intr, self.imask, mask
@@ -421,10 +421,10 @@ impl Alx {
         return self.intr_1(intr);
     }
 
-    pub fn next_read(&self) -> usize {
+    pub fn next_reg_read(&self) -> usize {
         /*
-        let head = unsafe { self.read(RDH) };
-        let mut tail = unsafe { self.read(RDT) };
+        let head = unsafe { self.reg_read(RDH) };
+        let mut tail = unsafe { self.reg_read(RDT) };
 
         tail += 1;
         if tail >= self.receive_ring.len() as u32 {
@@ -443,11 +443,11 @@ impl Alx {
         0
     }
 
-    unsafe fn read(&self, register: u32) -> u32 {
+    unsafe fn reg_read(&self, register: u32) -> u32 {
         ptr::read_volatile((self.base + register as usize) as *mut u32)
     }
 
-    unsafe fn write(&self, register: u32, data: u32) -> u32 {
+    unsafe fn reg_write(&self, register: u32, data: u32) -> u32 {
         ptr::write_volatile((self.base + register as usize) as *mut u32, data);
         ptr::read_volatile((self.base + register as usize) as *mut u32)
     }
@@ -457,7 +457,7 @@ impl Alx {
         let mut i: u32 = 0;
 
         while (i < MDIO_MAX_AC_TO) {
-            val = self.read(MDIO);
+            val = self.reg_read(MDIO);
             if (val & MDIO_BUSY == 0) {
                 break;
             }
@@ -472,7 +472,7 @@ impl Alx {
             return;
         }
 
-        self.write(MDIO, 0);
+        self.reg_write(MDIO, 0);
         self.wait_mdio_idle();
     }
 
@@ -488,11 +488,11 @@ impl Alx {
             | FIELDX!(MDIO_REG, 1)
             | MDIO_START
             | MDIO_OP_READ;
-        self.write(MDIO, val);
+        self.reg_write(MDIO, val);
         self.wait_mdio_idle();
         val |= MDIO_AUTO_POLLING;
         val &= !MDIO_START;
-        self.write(MDIO, val);
+        self.reg_write(MDIO, val);
         udelay(30);
     }
 
@@ -514,7 +514,7 @@ impl Alx {
 
         if (ext) {
             val = FIELDX!(MDIO_EXTN_DEVAD, dev) | FIELDX!(MDIO_EXTN_REG, reg);
-            self.write(MDIO_EXTN, val);
+            self.reg_write(MDIO_EXTN, val);
 
             val = MDIO_SPRES_PRMBL
                 | FIELDX!(MDIO_CLK_SEL, clk_sel)
@@ -528,12 +528,12 @@ impl Alx {
                 | MDIO_START
                 | MDIO_OP_READ;
         }
-        self.write(MDIO, val);
+        self.reg_write(MDIO, val);
 
         if (!self.wait_mdio_idle()) {
             err = ERR_MIIBUSY;
         } else {
-            val = self.read(MDIO);
+            val = self.reg_read(MDIO);
             *phy_data = FIELD_GETX!(val, MDIO_DATA) as u16;
             err = 0;
         }
@@ -559,7 +559,7 @@ impl Alx {
 
         if (ext) {
             val = FIELDX!(MDIO_EXTN_DEVAD, dev) | FIELDX!(MDIO_EXTN_REG, reg);
-            self.write(MDIO_EXTN, val);
+            self.reg_write(MDIO_EXTN, val);
 
             val = MDIO_SPRES_PRMBL
                 | FIELDX!(MDIO_CLK_SEL, clk_sel)
@@ -573,7 +573,7 @@ impl Alx {
                 | FIELDX!(MDIO_DATA, phy_data)
                 | MDIO_START;
         }
-        self.write(MDIO, val);
+        self.reg_write(MDIO, val);
 
         if !self.wait_mdio_idle() {
             err = ERR_MIIBUSY;
@@ -622,7 +622,7 @@ impl Alx {
         let mut pmctrl: u32;
         let rev: u8 = self.revid();
 
-        pmctrl = self.read(PMCTRL);
+        pmctrl = self.reg_read(PMCTRL);
 
         FIELD_SET32!(pmctrl, PMCTRL_LCKDET_TIMER, PMCTRL_LCKDET_TIMER_DEF);
         pmctrl |= PMCTRL_RCVR_WT_1US | PMCTRL_L1_CLKSW_EN | PMCTRL_L1_SRDSRX_PWD;
@@ -649,7 +649,7 @@ impl Alx {
             pmctrl |= (PMCTRL_L1_EN | PMCTRL_ASPM_FCEN);
         }
 
-        self.write(PMCTRL, pmctrl);
+        self.reg_write(PMCTRL, pmctrl);
     }
 
     unsafe fn reset_pcie(&mut self) {
@@ -657,38 +657,38 @@ impl Alx {
         let rev: u8 = self.revid();
 
         /* Workaround for PCI problem when BIOS sets MMRBC incorrectly. */
-        let mut val16 = ptr::read((self.base + 4) as *const u16);
+        let mut val16 = ptr::reg_read((self.base + 4) as *const u16);
         if (val16 & (PCI_COMMAND_MASTER | PCI_COMMAND_MEMORY | PCI_COMMAND_IO) == 0
             || val16 & PCI_COMMAND_INTX_DISABLE > 0)
         {
             println!("Fix PCI_COMMAND_INTX_DISABLE");
             val16 = (val16 | (PCI_COMMAND_MASTER | PCI_COMMAND_MEMORY | PCI_COMMAND_IO))
                 & !PCI_COMMAND_INTX_DISABLE;
-            ptr::write((self.base + 4) as *mut u16, val16);
+            ptr::reg_write((self.base + 4) as *mut u16, val16);
         }
 
         /* clear WoL setting/status */
-        val = self.read(WOL0);
-        self.write(WOL0, 0);
+        val = self.reg_read(WOL0);
+        self.reg_write(WOL0, 0);
 
         /* deflt val of PDLL D3PLLOFF */
-        val = self.read(PDLL_TRNS1);
-        self.write(PDLL_TRNS1, val & !PDLL_TRNS1_D3PLLOFF_EN);
+        val = self.reg_read(PDLL_TRNS1);
+        self.reg_write(PDLL_TRNS1, val & !PDLL_TRNS1_D3PLLOFF_EN);
 
         /* mask some pcie error bits */
-        val = self.read(UE_SVRT);
+        val = self.reg_read(UE_SVRT);
         val &= !(UE_SVRT_DLPROTERR | UE_SVRT_FCPROTERR);
-        self.write(UE_SVRT, val);
+        self.reg_write(UE_SVRT, val);
 
         /* wol 25M  & pclk */
-        val = self.read(MASTER);
+        val = self.reg_read(MASTER);
         if ((rev == REV_A0 || rev == REV_A1) && self.with_cr()) {
             if ((val & MASTER_WAKEN_25M) == 0 || (val & MASTER_PCLKSEL_SRDS) == 0) {
-                self.write(MASTER, val | MASTER_PCLKSEL_SRDS | MASTER_WAKEN_25M);
+                self.reg_write(MASTER, val | MASTER_PCLKSEL_SRDS | MASTER_WAKEN_25M);
             }
         } else {
             if ((val & MASTER_WAKEN_25M) == 0 || (val & MASTER_PCLKSEL_SRDS) != 0) {
-                self.write(MASTER, (val & !MASTER_PCLKSEL_SRDS) | MASTER_WAKEN_25M);
+                self.reg_write(MASTER, (val & !MASTER_PCLKSEL_SRDS) | MASTER_WAKEN_25M);
             }
         }
 
@@ -706,7 +706,7 @@ impl Alx {
         let mut phy_val: u16 = 0;
 
         /* (DSP)reset PHY core */
-        val = self.read(PHY_CTRL);
+        val = self.reg_read(PHY_CTRL);
         val &= !(PHY_CTRL_DSPRST_OUT
             | PHY_CTRL_IDDQ
             | PHY_CTRL_GATE_25M
@@ -719,9 +719,9 @@ impl Alx {
         } else {
             val &= !(PHY_CTRL_HIB_PULSE | PHY_CTRL_HIB_EN);
         }
-        self.write(PHY_CTRL, val);
+        self.reg_write(PHY_CTRL, val);
         udelay(10);
-        self.write(PHY_CTRL, val | PHY_CTRL_DSPRST_OUT);
+        self.reg_write(PHY_CTRL, val | PHY_CTRL_DSPRST_OUT);
 
         /* delay 800us */
         i = 0;
@@ -753,8 +753,8 @@ impl Alx {
                 /* half amplify */
                 self.write_phy_dbg(MIIDBG_AZ_ANADECT, AZ_ANADECT_DEF);
             } else {
-                val = self.read(LPI_CTRL);
-                self.write(LPI_CTRL, val & (!LPI_CTRL_EN));
+                val = self.reg_read(LPI_CTRL);
+                self.reg_write(LPI_CTRL, val & (!LPI_CTRL_EN));
                 self.write_phy_ext(MIIEXT_ANEG, MIIEXT_LOCAL_EEEADV, 0);
             }
 
@@ -800,19 +800,19 @@ impl Alx {
         let mut val: u32;
         let mut i: u32;
 
-        rxq = self.read(RXQ0);
-        self.write(RXQ0, rxq & (!RXQ0_EN));
-        txq = self.read(TXQ0);
-        self.write(TXQ0, txq & (!TXQ0_EN));
+        rxq = self.reg_read(RXQ0);
+        self.reg_write(RXQ0, rxq & (!RXQ0_EN));
+        txq = self.reg_read(TXQ0);
+        self.reg_write(TXQ0, txq & (!TXQ0_EN));
 
         udelay(40);
 
         self.rx_ctrl &= !(MAC_CTRL_RX_EN | MAC_CTRL_TX_EN);
-        self.write(MAC_CTRL, self.rx_ctrl);
+        self.reg_write(MAC_CTRL, self.rx_ctrl);
 
         i = 0;
         while i < DMA_MAC_RST_TO {
-            val = self.read(MAC_STS);
+            val = self.reg_read(MAC_STS);
             if (val & MAC_STS_IDLE == 0) {
                 break;
             }
@@ -832,10 +832,10 @@ impl Alx {
         let txq: u32;
         let rxq: u32;
 
-        rxq = self.read(RXQ0);
-        self.write(RXQ0, rxq | RXQ0_EN);
-        txq = self.read(TXQ0);
-        self.write(TXQ0, txq | TXQ0_EN);
+        rxq = self.reg_read(RXQ0);
+        self.reg_write(RXQ0, rxq | RXQ0_EN);
+        txq = self.reg_read(TXQ0);
+        self.reg_write(TXQ0, txq | TXQ0_EN);
 
         mac = self.rx_ctrl;
         if (self.link_duplex == FULL_DUPLEX) {
@@ -854,7 +854,7 @@ impl Alx {
         );
         mac |= MAC_CTRL_TX_EN | MAC_CTRL_RX_EN;
         self.rx_ctrl = mac;
-        self.write(MAC_CTRL, mac);
+        self.reg_write(MAC_CTRL, mac);
     }
 
     unsafe fn reset_osc(&mut self, rev: u8) {
@@ -862,13 +862,13 @@ impl Alx {
         let mut val2: u32;
 
         /* clear Internal OSC settings, switching OSC by hw itself */
-        val = self.read(MISC3);
-        self.write(MISC3, (val & !MISC3_25M_BY_SW) | MISC3_25M_NOTO_INTNL);
+        val = self.reg_read(MISC3);
+        self.reg_write(MISC3, (val & !MISC3_25M_BY_SW) | MISC3_25M_NOTO_INTNL);
 
         /* 25M clk from chipset may be unstable 1s after de-assert of
          * PERST, driver need re-calibrate before enter Sleep for WoL
          */
-        val = self.read(MISC);
+        val = self.reg_read(MISC);
         if (rev >= REV_B0) {
             /* restore over current protection def-val,
              * this val could be reset by MAC-RST
@@ -876,13 +876,13 @@ impl Alx {
             FIELD_SET32!(val, MISC_PSW_OCP, MISC_PSW_OCP_DEF);
             /* a 0->1 change will update the internal val of osc */
             val &= !MISC_INTNLOSC_OPEN;
-            self.write(MISC, val);
-            self.write(MISC, val | MISC_INTNLOSC_OPEN);
+            self.reg_write(MISC, val);
+            self.reg_write(MISC, val | MISC_INTNLOSC_OPEN);
             /* hw will automatically dis OSC after cab. */
-            val2 = self.read(MSIC2);
+            val2 = self.reg_read(MSIC2);
             val2 &= !MSIC2_CALB_START;
-            self.write(MSIC2, val2);
-            self.write(MSIC2, val2 | MSIC2_CALB_START);
+            self.reg_write(MSIC2, val2);
+            self.reg_write(MSIC2, val2 | MSIC2_CALB_START);
         } else {
             val &= !MISC_INTNLOSC_OPEN;
             /* disable isoloate for A0 */
@@ -890,8 +890,8 @@ impl Alx {
                 val &= !MISC_ISO_EN;
             }
 
-            self.write(MISC, val | MISC_INTNLOSC_OPEN);
-            self.write(MISC, val);
+            self.reg_write(MISC, val | MISC_INTNLOSC_OPEN);
+            self.reg_write(MISC, val);
         }
 
         udelay(20);
@@ -910,9 +910,9 @@ impl Alx {
         a_cr = (rev == REV_A0 || rev == REV_A1) && self.with_cr();
 
         /* disable all interrupts, RXQ/TXQ */
-        self.write(MSIX_MASK, 0xFFFFFFFF);
-        self.write(IMR, 0);
-        self.write(ISR, ISR_DIS);
+        self.reg_write(MSIX_MASK, 0xFFFFFFFF);
+        self.reg_write(IMR, 0);
+        self.reg_write(ISR, ISR_DIS);
 
         ret = self.stop_mac();
         if (ret > 0) {
@@ -920,25 +920,25 @@ impl Alx {
         }
 
         /* mac reset workaroud */
-        self.write(RFD_PIDX, 1);
+        self.reg_write(RFD_PIDX, 1);
 
         /* dis l0s/l1 before mac reset */
         if (a_cr) {
-            pmctrl = self.read(PMCTRL);
+            pmctrl = self.reg_read(PMCTRL);
             if ((pmctrl & (PMCTRL_L1_EN | PMCTRL_L0S_EN)) != 0) {
-                self.write(PMCTRL, pmctrl & !(PMCTRL_L1_EN | PMCTRL_L0S_EN));
+                self.reg_write(PMCTRL, pmctrl & !(PMCTRL_L1_EN | PMCTRL_L0S_EN));
             }
         }
 
         /* reset whole mac safely */
-        val = self.read(MASTER);
-        self.write(MASTER, val | MASTER_DMA_MAC_RST | MASTER_OOB_DIS);
+        val = self.reg_read(MASTER);
+        self.reg_write(MASTER, val | MASTER_DMA_MAC_RST | MASTER_OOB_DIS);
 
         /* make sure it's real idle */
         udelay(10);
         i = 0;
         while (i < DMA_MAC_RST_TO) {
-            val = self.read(RFD_PIDX);
+            val = self.reg_read(RFD_PIDX);
             if (val == 0) {
                 break;
             }
@@ -946,7 +946,7 @@ impl Alx {
             i += 1;
         }
         while (i < DMA_MAC_RST_TO) {
-            val = self.read(MASTER);
+            val = self.reg_read(MASTER);
             if ((val & MASTER_DMA_MAC_RST) == 0) {
                 break;
             }
@@ -960,10 +960,10 @@ impl Alx {
 
         if (a_cr) {
             /* set MASTER_PCLKSEL_SRDS (affect by soft-rst, PERST) */
-            self.write(MASTER, val | MASTER_PCLKSEL_SRDS);
+            self.reg_write(MASTER, val | MASTER_PCLKSEL_SRDS);
             /* resoter l0s / l1 */
             if (pmctrl & (PMCTRL_L1_EN | PMCTRL_L0S_EN) > 0) {
-                self.write(PMCTRL, pmctrl);
+                self.reg_write(PMCTRL, pmctrl);
             }
         }
 
@@ -971,22 +971,22 @@ impl Alx {
         /* clear Internal OSC settings, switching OSC by hw itself,
          * disable isoloate for A version
          */
-        val = self.read(MISC3);
-        self.write(MISC3, (val & !MISC3_25M_BY_SW) | MISC3_25M_NOTO_INTNL);
-        val = self.read(MISC);
+        val = self.reg_read(MISC3);
+        self.reg_write(MISC3, (val & !MISC3_25M_BY_SW) | MISC3_25M_NOTO_INTNL);
+        val = self.reg_read(MISC);
         val &= !MISC_INTNLOSC_OPEN;
         if (rev == REV_A0 || rev == REV_A1) {
             val &= !MISC_ISO_EN;
         }
-        self.write(MISC, val);
+        self.reg_write(MISC, val);
         udelay(20);
 
         /* driver control speed/duplex, hash-alg */
-        self.write(MAC_CTRL, self.rx_ctrl);
+        self.reg_write(MAC_CTRL, self.rx_ctrl);
 
         /* clk sw */
-        val = self.read(SERDES);
-        self.write(SERDES, val | SERDES_MACCLK_SLWDWN | SERDES_PHYCLK_SLWDWN);
+        val = self.reg_read(SERDES);
+        self.reg_write(SERDES, val | SERDES_MACCLK_SLWDWN | SERDES_PHYCLK_SLWDWN);
 
         /* mac reset cause MDIO ctrl restore non-polling status */
         if (self.is_fpga) {
@@ -1058,7 +1058,7 @@ impl Alx {
 
         /* clear flag */
         self.write_phy_reg(MII_DBG_ADDR, 0);
-        val = self.read(DRV);
+        val = self.reg_read(DRV);
         FIELD_SET32!(val, DRV_PHY, 0);
 
         if (ethadv & ADVERTISED_Autoneg > 0) {
@@ -1106,14 +1106,14 @@ impl Alx {
             val |= self.ethadv_to_hw_cfg(ethadv);
         }
 
-        self.write(DRV, val);
+        self.reg_write(DRV, val);
 
         return err;
     }
 
     unsafe fn get_perm_macaddr(&mut self) -> [u8; 6] {
-        let mac_low = self.read(STAD0);
-        let mac_high = self.read(STAD1);
+        let mac_low = self.reg_read(STAD0);
+        let mac_high = self.reg_read(STAD1);
         [
             mac_low as u8,
             (mac_low >> 8) as u8,
@@ -1200,30 +1200,30 @@ impl Alx {
         //TODO alx_set_macaddr(hw, self.mac_addr);
 
         /* clk gating */
-        self.write(CLK_GATE, CLK_GATE_ALL_A0);
+        self.reg_write(CLK_GATE, CLK_GATE_ALL_A0);
 
         /* idle timeout to switch clk_125M */
         if (chip_rev >= REV_B0) {
-            self.write(IDLE_DECISN_TIMER, IDLE_DECISN_TIMER_DEF);
+            self.reg_write(IDLE_DECISN_TIMER, IDLE_DECISN_TIMER_DEF);
         }
 
         /* stats refresh timeout */
-        self.write(SMB_TIMER, self.smb_timer * 500);
+        self.reg_write(SMB_TIMER, self.smb_timer * 500);
 
         /* intr moduration */
-        val = self.read(MASTER);
+        val = self.reg_read(MASTER);
         val = val | MASTER_IRQMOD2_EN | MASTER_IRQMOD1_EN | MASTER_SYSALVTIMER_EN;
-        self.write(MASTER, val);
-        self.write(IRQ_MODU_TIMER, FIELDX!(IRQ_MODU_TIMER1, self.imt >> 1));
+        self.reg_write(MASTER, val);
+        self.reg_write(IRQ_MODU_TIMER, FIELDX!(IRQ_MODU_TIMER1, self.imt >> 1));
         /* intr re-trig timeout */
-        self.write(INT_RETRIG, INT_RETRIG_TO);
+        self.reg_write(INT_RETRIG, INT_RETRIG_TO);
         /* tpd threshold to trig int */
-        self.write(TINT_TPD_THRSHLD, self.ith_tpd);
-        self.write(TINT_TIMER, self.imt as u32);
+        self.reg_write(TINT_TPD_THRSHLD, self.ith_tpd);
+        self.reg_write(TINT_TIMER, self.imt as u32);
 
         /* mtu, 8:fcs+vlan */
         raw_mtu = (self.mtu + ETH_HLEN) as u32;
-        self.write(MTU, raw_mtu + 8);
+        self.reg_write(MTU, raw_mtu + 8);
         if (raw_mtu > MTU_JUMBO_TH) {
             self.rx_ctrl &= !MAC_CTRL_FAST_PAUSE;
         }
@@ -1234,7 +1234,7 @@ impl Alx {
         } else {
             val = TXQ1_JUMBO_TSO_TH >> 3;
         }
-        self.write(TXQ1, val | TXQ1_ERRLGPKT_DROP_EN);
+        self.reg_write(TXQ1, val | TXQ1_ERRLGPKT_DROP_EN);
 
         /* TODO
         max_payload = alx_get_readrq(hw) >> 8;
@@ -1252,15 +1252,15 @@ impl Alx {
             | TXQ0_LSO_8023_EN
             | TXQ0_SUPT_IPOPT
             | FIELDX!(TXQ0_TXF_BURST_PREF, TXQ_TXF_BURST_PREF_DEF);
-        self.write(TXQ0, val);
+        self.reg_write(TXQ0, val);
         val = FIELDX!(HQTPD_Q1_NUMPREF, TXQ_TPD_BURSTPREF_DEF)
             | FIELDX!(HQTPD_Q2_NUMPREF, TXQ_TPD_BURSTPREF_DEF)
             | FIELDX!(HQTPD_Q3_NUMPREF, TXQ_TPD_BURSTPREF_DEF)
             | HQTPD_BURST_EN;
-        self.write(HQTPD, val);
+        self.reg_write(HQTPD, val);
 
         /* rxq, flow control */
-        val = self.read(SRAM5);
+        val = self.reg_read(SRAM5);
         val = FIELD_GETX!(val, SRAM_RXF_LEN) << 3;
         if (val > SRAM_RXF_LEN_8K) {
             val16 = (MTU_STD_ALGN >> 3) as u16;
@@ -1269,7 +1269,7 @@ impl Alx {
             val16 = (MTU_STD_ALGN >> 3) as u16;
             val = (val - MTU_STD_ALGN) >> 3;
         }
-        self.write(
+        self.reg_write(
             RXQ2,
             FIELDX!(RXQ2_RXF_XOFF_THRESH, val16) | FIELDX!(RXQ2_RXF_XON_THRESH, val),
         );
@@ -1282,17 +1282,17 @@ impl Alx {
         if (self.cap & CAP_GIGA > 0) {
             FIELD_SET32!(val, RXQ0_ASPM_THRESH, RXQ0_ASPM_THRESH_100M);
         }
-        self.write(RXQ0, val);
+        self.reg_write(RXQ0, val);
 
         /* DMA */
-        val = self.read(DMA);
+        val = self.reg_read(DMA);
         val = FIELDX!(DMA_RORDER_MODE, DMA_RORDER_MODE_OUT)
             | DMA_RREQ_PRI_DATA
             | FIELDX!(DMA_RREQ_BLEN, max_payload)
             | FIELDX!(DMA_WDLY_CNT, DMA_WDLY_CNT_DEF)
             | FIELDX!(DMA_RDLY_CNT, DMA_RDLY_CNT_DEF)
             | FIELDX!(DMA_RCHNL_SEL, self.dma_chnl - 1);
-        self.write(DMA, val);
+        self.reg_write(DMA, val);
 
         /* multi-tx-q weight */
         if (self.cap & CAP_MTQ > 0) {
@@ -1301,7 +1301,7 @@ impl Alx {
                 | FIELDX!(WRR_PRI1, self.wrr[1])
                 | FIELDX!(WRR_PRI2, self.wrr[2])
                 | FIELDX!(WRR_PRI3, self.wrr[3]);
-            self.write(WRR, val);
+            self.reg_write(WRR, val);
         }
     }
 
@@ -1317,8 +1317,8 @@ impl Alx {
             alx_add_mc_addr(hw, ha->addr);
         */
 
-        self.write(HASH_TBL0, self.mc_hash[0]);
-        self.write(HASH_TBL1, self.mc_hash[1]);
+        self.reg_write(HASH_TBL0, self.mc_hash[0]);
+        self.reg_write(HASH_TBL1, self.mc_hash[1]);
 
         /* check for Promiscuous and All Multicast modes */
         self.rx_ctrl &= !(MAC_CTRL_MULTIALL_EN | MAC_CTRL_PROMISC_EN);
@@ -1331,7 +1331,7 @@ impl Alx {
         }
         */
 
-        self.write(MAC_CTRL, self.rx_ctrl);
+        self.reg_write(MAC_CTRL, self.rx_ctrl);
     }
 
     unsafe fn set_vlan_mode(&mut self, vlan_rx: bool) {
@@ -1341,13 +1341,13 @@ impl Alx {
             self.rx_ctrl &= !MAC_CTRL_VLANSTRIP;
         }
 
-        self.write(MAC_CTRL, self.rx_ctrl);
+        self.reg_write(MAC_CTRL, self.rx_ctrl);
     }
 
     unsafe fn configure_rss(&mut self, en: bool) {
         let mut ctrl: u32;
 
-        ctrl = self.read(RXQ0);
+        ctrl = self.reg_read(RXQ0);
 
         if (en) {
             unimplemented!();
@@ -1362,7 +1362,7 @@ impl Alx {
             }
 
             for (i = 0; i < ARRAY_SIZE(self.rss_idt); i++)
-                self.write(RSS_IDT_TBL0 + i * 4,
+                self.reg_write(RSS_IDT_TBL0 + i * 4,
                         self.rss_idt[i]);
 
             FIELD_SET32(ctrl, RXQ0_RSS_HSTYP, self.rss_hash_type);
@@ -1374,7 +1374,7 @@ impl Alx {
             ctrl &= !RXQ0_RSS_HASH_EN;
         }
 
-        self.write(RXQ0, ctrl);
+        self.reg_write(RXQ0, ctrl);
     }
 
     unsafe fn configure(&mut self) {
@@ -1385,14 +1385,14 @@ impl Alx {
     }
 
     unsafe fn irq_enable(&mut self) {
-        self.write(ISR, 0);
+        self.reg_write(ISR, 0);
         let imask = self.imask;
-        self.write(IMR, imask);
+        self.reg_write(IMR, imask);
     }
 
     unsafe fn irq_disable(&mut self) {
-        self.write(ISR, ISR_DIS);
-        self.write(IMR, 0);
+        self.reg_write(ISR, ISR_DIS);
+        self.reg_write(IMR, 0);
     }
 
     unsafe fn clear_phy_intr(&mut self) -> usize {
@@ -1507,7 +1507,7 @@ impl Alx {
 
         self.flag &= !FLAG_HALT;
         /* clear old interrupts */
-        self.write(ISR, !ISR_DIS);
+        self.reg_write(ISR, !ISR_DIS);
 
         self.irq_enable();
 
@@ -1526,35 +1526,35 @@ impl Alx {
 
     unsafe fn init_ring_ptrs(&mut self) {
         // Write high addresses
-        self.write(RX_BASE_ADDR_HI, 0);
-        self.write(TX_BASE_ADDR_HI, 0);
+        self.reg_write(RX_BASE_ADDR_HI, 0);
+        self.reg_write(TX_BASE_ADDR_HI, 0);
 
         // RFD ring
         for i in 0..self.rfd_ring.len() {
             self.rfd_ring[i]
                 .addr_low
-                .write(self.rfd_buffer[i].physical() as u32);
+                .reg_write(self.rfd_buffer[i].physical() as u32);
             self.rfd_ring[i]
                 .addr_high
-                .write(((self.rfd_buffer[i].physical() as u64) >> 32) as u32);
+                .reg_write(((self.rfd_buffer[i].physical() as u64) >> 32) as u32);
         }
-        self.write(RFD_ADDR_LO, self.rfd_ring.physical() as u32);
-        self.write(RFD_RING_SZ, self.rfd_ring.len() as u32);
-        self.write(RFD_BUF_SZ, 16384);
+        self.reg_write(RFD_ADDR_LO, self.rfd_ring.physical() as u32);
+        self.reg_write(RFD_RING_SZ, self.rfd_ring.len() as u32);
+        self.reg_write(RFD_BUF_SZ, 16384);
 
         // RRD ring
-        self.write(RRD_ADDR_LO, self.rrd_ring.physical() as u32);
-        self.write(RRD_RING_SZ, self.rrd_ring.len() as u32);
+        self.reg_write(RRD_ADDR_LO, self.rrd_ring.physical() as u32);
+        self.reg_write(RRD_RING_SZ, self.rrd_ring.len() as u32);
 
         // TPD ring
-        self.write(TPD_PRI0_ADDR_LO, self.tpd_ring[0].physical() as u32);
-        self.write(TPD_PRI1_ADDR_LO, self.tpd_ring[1].physical() as u32);
-        self.write(TPD_PRI2_ADDR_LO, self.tpd_ring[2].physical() as u32);
-        self.write(TPD_PRI3_ADDR_LO, self.tpd_ring[3].physical() as u32);
-        self.write(TPD_RING_SZ, self.tpd_ring[0].len() as u32);
+        self.reg_write(TPD_PRI0_ADDR_LO, self.tpd_ring[0].physical() as u32);
+        self.reg_write(TPD_PRI1_ADDR_LO, self.tpd_ring[1].physical() as u32);
+        self.reg_write(TPD_PRI2_ADDR_LO, self.tpd_ring[2].physical() as u32);
+        self.reg_write(TPD_PRI3_ADDR_LO, self.tpd_ring[3].physical() as u32);
+        self.reg_write(TPD_RING_SZ, self.tpd_ring[0].len() as u32);
 
         // Write pointers into chip SRAM
-        self.write(SRAM9, SRAM_LOAD_PTR);
+        self.reg_write(SRAM9, SRAM_LOAD_PTR);
     }
 
     unsafe fn check_link(&mut self) {
@@ -1592,7 +1592,7 @@ impl Alx {
         /* open interrutp mask */
         self.imask |= ISR_PHY;
         let imask = self.imask;
-        self.write(IMR, imask);
+        self.reg_write(IMR, imask);
 
         if (!link_up && !self.link_up) {
             goto_out!();
@@ -1750,7 +1750,7 @@ impl Alx {
         self.flag &= !FLAG_HALT;
 
         /* clear old interrupts */
-        self.write(ISR, !ISR_DIS);
+        self.reg_write(ISR, !ISR_DIS);
 
         self.irq_enable();
 
@@ -1761,19 +1761,19 @@ impl Alx {
 
     unsafe fn init(&mut self) -> Result<()> {
         {
-            let pci_id = self.read(0);
+            let pci_id = self.reg_read(0);
             self.vendor_id = pci_id as u16;
             self.device_id = (pci_id >> 16) as u16;
         }
 
         {
-            let pci_subid = self.read(0x2C);
+            let pci_subid = self.reg_read(0x2C);
             self.subven_id = pci_subid as u16;
             self.subdev_id = (pci_subid >> 16) as u16;
         }
 
         {
-            let pci_rev = self.read(8);
+            let pci_rev = self.reg_read(8);
             self.revision = pci_rev as u8;
         }
 
@@ -1800,7 +1800,7 @@ impl Alx {
 
 impl SchemeSync for Alx {
     fn open(&mut self, path: &str, flags: usize, ctx: &CallerCtx) -> Result<OpenResult> {
-        if uid == 0 {
+        if ctx.uid == 0 {
             Ok(OpenResult::ThisScheme {
                 number: flags,
                 flags: NewFdFlags::empty(),
@@ -1819,8 +1819,8 @@ impl SchemeSync for Alx {
         _ctx: &CallerCtx,
     ) -> Result<usize> {
         /*
-        let head = unsafe { self.read(RDH) };
-        let mut tail = unsafe { self.read(RDT) };
+        let head = unsafe { self.reg_read(RDH) };
+        let mut tail = unsafe { self.reg_read(RDT) };
 
         tail += 1;
         if tail >= self.receive_ring.len() as u32 {
@@ -1840,7 +1840,7 @@ impl SchemeSync for Alx {
                     i += 1;
                 }
 
-                unsafe { self.write(RDT, tail) };
+                unsafe { self.reg_write(RDT, tail) };
 
                 return Ok(i);
             }
@@ -1864,8 +1864,8 @@ impl SchemeSync for Alx {
     ) -> Result<usize> {
         /*
         loop {
-            let head = unsafe { self.read(TDH) };
-            let mut tail = unsafe { self.read(TDT) };
+            let head = unsafe { self.reg_read(TDH) };
+            let mut tail = unsafe { self.reg_read(TDT) };
             let old_tail = tail;
 
             tail += 1;
@@ -1892,7 +1892,7 @@ impl SchemeSync for Alx {
                     i += 1;
                 }
 
-                unsafe { self.write(TDT, tail) };
+                unsafe { self.reg_write(TDT, tail) };
 
                 while td.status == 0 {
                     thread::yield_now();
