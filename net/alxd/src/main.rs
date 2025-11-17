@@ -92,7 +92,7 @@ fn main() {
                     Source::Irq => {
                         let mut irq = [0; 8];
                         irq_file.read(&mut irq).unwrap();
-                        if unsafe { device.borrow_mut().intr_legacy() } {
+                        if !unsafe { device.borrow_mut().intr_legacy() } {
                             continue;
                         }
                         irq_file.write(&mut irq).unwrap();
