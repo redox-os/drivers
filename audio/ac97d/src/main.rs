@@ -16,7 +16,6 @@ use pcid_interface::PciFunctionHandle;
 use redox_scheme::wrappers::ReadinessBased;
 use redox_scheme::Socket;
 use std::cell::RefCell;
-use syscall::{Packet, SchemeBlockMut};
 
 pub mod device;
 
@@ -85,8 +84,6 @@ fn main() {
         daemon.ready().expect("ac97d: failed to signal readiness");
 
         libredox::call::setrens(0, 0).expect("ac97d: failed to enter null namespace");
-
-        let mut todo = Vec::<Packet>::new();
 
         let all = [Source::Irq, Source::Scheme];
         'events: for event in all

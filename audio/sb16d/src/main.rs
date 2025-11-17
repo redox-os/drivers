@@ -6,7 +6,6 @@ use redox_scheme::wrappers::ReadinessBased;
 use redox_scheme::Socket;
 use std::cell::RefCell;
 use std::{env, usize};
-use syscall::{Packet, SchemeBlockMut};
 
 use event::{user_data, EventQueue};
 
@@ -67,8 +66,6 @@ fn main() {
         daemon.ready().expect("sb16d: failed to signal readiness");
 
         libredox::call::setrens(0, 0).expect("sb16d: failed to enter null namespace");
-
-        let mut todo = Vec::<Packet>::new();
 
         let all = [Source::Irq, Source::Scheme];
 

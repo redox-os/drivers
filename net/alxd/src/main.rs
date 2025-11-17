@@ -18,7 +18,6 @@ use redox_scheme::wrappers::ReadinessBased;
 use redox_scheme::Socket;
 use std::cell::RefCell;
 use syscall::error::EWOULDBLOCK;
-use syscall::{Packet, SchemeMut};
 
 pub mod device;
 

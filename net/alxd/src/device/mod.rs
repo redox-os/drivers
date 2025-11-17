@@ -7,9 +7,7 @@ use redox_scheme::CallerCtx;
 use redox_scheme::OpenResult;
 use syscall::error::{Error, Result, EACCES, EINVAL, EIO, EWOULDBLOCK};
 use syscall::flag::{EventFlags, O_NONBLOCK};
-use syscall::scheme;
 use syscall::schemev2::NewFdFlags;
-use syscall::EWOULDBLOCK;
 
 use common::dma::Dma;
 
@@ -657,14 +655,14 @@ impl Alx {
         let rev: u8 = self.revid();
 
         /* Workaround for PCI problem when BIOS sets MMRBC incorrectly. */
-        let mut val16 = ptr::reg_read((self.base + 4) as *const u16);
+        let mut val16 = ptr::read((self.base + 4) as *const u16);
         if (val16 & (PCI_COMMAND_MASTER | PCI_COMMAND_MEMORY | PCI_COMMAND_IO) == 0
             || val16 & PCI_COMMAND_INTX_DISABLE > 0)
         {
             println!("Fix PCI_COMMAND_INTX_DISABLE");
             val16 = (val16 | (PCI_COMMAND_MASTER | PCI_COMMAND_MEMORY | PCI_COMMAND_IO))
                 & !PCI_COMMAND_INTX_DISABLE;
-            ptr::reg_write((self.base + 4) as *mut u16, val16);
+            ptr::write((self.base + 4) as *mut u16, val16);
         }
 
         /* clear WoL setting/status */
@@ -1533,10 +1531,10 @@ impl Alx {
         for i in 0..self.rfd_ring.len() {
             self.rfd_ring[i]
                 .addr_low
-                .reg_write(self.rfd_buffer[i].physical() as u32);
+                .write(self.rfd_buffer[i].physical() as u32);
             self.rfd_ring[i]
                 .addr_high
-                .reg_write(((self.rfd_buffer[i].physical() as u64) >> 32) as u32);
+                .write(((self.rfd_buffer[i].physical() as u64) >> 32) as u32);
         }
         self.reg_write(RFD_ADDR_LO, self.rfd_ring.physical() as u32);
         self.reg_write(RFD_RING_SZ, self.rfd_ring.len() as u32);
@@ -1910,7 +1908,7 @@ impl SchemeSync for Alx {
     }
 
     fn fsync(&mut self, _id: usize, _ctx: &CallerCtx) -> Result<()> {
-        Ok(0)
+        Ok(())
     }
 
     fn on_close(&mut self, _id: usize) {}
