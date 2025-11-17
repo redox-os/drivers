@@ -6,8 +6,13 @@ use std::{thread, time};
 
 use common::io::{Io, Pio, ReadOnly, WriteOnly};
 
+use redox_scheme::scheme::SchemeSync;
+use redox_scheme::CallerCtx;
+use redox_scheme::OpenResult;
 use syscall::error::{Error, Result, EACCES, EBADF, ENODEV};
 use syscall::scheme::SchemeBlockMut;
+use syscall::schemev2::NewFdFlags;
+use syscall::EWOULDBLOCK;
 
 use spin::Mutex;
 
@@ -181,40 +186,46 @@ impl Sb16 {
     }
 }
 
-impl SchemeBlockMut for Sb16 {
-    fn open(&mut self, _path: &str, _flags: usize, uid: u32, _gid: u32) -> Result<Option<usize>> {
-        if uid == 0 {
+impl SchemeSync for Sb16 {
+    fn open(&mut self, _path: &str, _flags: usize, ctx: &CallerCtx) -> Result<OpenResult> {
+        if ctx.uid == 0 {
             let id = self.next_id.fetch_add(1, Ordering::SeqCst);
             self.handles.lock().insert(id, Handle::Todo);
-            Ok(Some(id))
+            Ok(OpenResult::ThisScheme {
+                number: id,
+                flags: NewFdFlags::empty(),
+            })
         } else {
             Err(Error::new(EACCES))
         }
     }
 
-    fn write(&mut self, _id: usize, _buf: &[u8]) -> Result<Option<usize>> {
+    fn write(
+        &mut self,
+        _id: usize,
+        _buf: &[u8],
+        _offset: u64,
+        _flags: u32,
+        _ctx: &CallerCtx,
+    ) -> Result<usize> {
         //TODO
         Err(Error::new(EBADF))
     }
 
-    fn fpath(&mut self, id: usize, buf: &mut [u8]) -> Result<Option<usize>> {
+    fn fpath(&mut self, id: usize, buf: &mut [u8], _ctx: &CallerCtx) -> Result<usize> {
         let mut handles = self.handles.lock();
         let _handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
         let mut i = 0;
-        let scheme_path = b"audiohw:";
+        let scheme_path = b"/scheme/audiohw";
         while i < buf.len() && i < scheme_path.len() {
             buf[i] = scheme_path[i];
             i += 1;
         }
-        Ok(Some(i))
+        Ok(i)
     }
 
-    fn close(&mut self, id: usize) -> Result<Option<usize>> {
-        let mut handles = self.handles.lock();
-        handles
-            .remove(&id)
-            .ok_or(Error::new(EBADF))
-            .and(Ok(Some(0)))
+    fn on_close(&mut self, id: usize) {
+        let _ = self.handles.lock().remove(&id);
     }
 }

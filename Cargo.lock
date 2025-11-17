@@ -12,6 +12,7 @@ dependencies = [
  "log",
  "pcid",
  "redox-daemon",
+ "redox-scheme 0.8.2",
  "redox_event",
  "redox_syscall",
  "spin 0.9.8",
@@ -87,6 +88,7 @@ dependencies = [
  "common",
  "libredox",
  "redox-daemon",
+ "redox-scheme 0.8.2",
  "redox_event",
  "redox_syscall",
 ]
@@ -692,6 +694,7 @@ dependencies = [
  "log",
  "pcid",
  "redox-daemon",
+ "redox-scheme 0.8.2",
  "redox_event",
  "redox_syscall",
  "spin 0.9.8",
@@ -1136,6 +1139,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "redox-scheme"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d54adf6001069dfc77e8e9f62dc62d4c9c1471fff65ca577ca140f0e9bdf4e10"
+dependencies = [
+ "libredox",
+ "redox_syscall",
+]
+
+[[package]]
 name = "redox_event"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1275,6 +1288,7 @@ dependencies = [
  "libredox",
  "log",
  "redox-daemon",
+ "redox-scheme 0.8.2",
  "redox_event",
  "redox_syscall",
  "spin 0.9.8",

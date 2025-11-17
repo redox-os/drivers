@@ -14,6 +14,9 @@ use std::{env, iter};
 
 use event::{user_data, EventQueue};
 use libredox::flag;
+use redox_scheme::wrappers::ReadinessBased;
+use redox_scheme::Socket;
+use std::cell::RefCell;
 use syscall::error::EWOULDBLOCK;
 use syscall::{Packet, SchemeMut};
 
@@ -35,13 +38,8 @@ fn main() {
 
     // Daemonize
     redox_daemon::Daemon::new(move |daemon| {
-        let socket_fd = libredox::call::open(
-            ":network",
-            flag::O_RDWR | flag::O_CREAT | flag::O_NONBLOCK,
-            0,
-        )
-        .expect("alxd: failed to create network scheme");
-        let mut socket = unsafe { File::from_raw_fd(socket_fd as RawFd) };
+        let socket = Socket::nonblock("network").expect("alxd: failed to create socket");
+        let mut readiness_based = ReadinessBased::new(&socket, 16);
 
         daemon.ready().expect("alxd: failed to signal readiness");
 
@@ -58,8 +56,9 @@ fn main() {
             .expect("alxd: failed to map address") as usize
         };
         {
-            let mut device =
-                unsafe { device::Alx::new(address).expect("alxd: failed to allocate device") };
+            let device = RefCell::new(unsafe {
+                device::Alx::new(address).expect("alxd: failed to allocate device")
+            });
 
             user_data! {
                 enum Source {
@@ -78,12 +77,14 @@ fn main() {
                 )
                 .unwrap();
             event_queue
-                .subscribe(socket_fd, Source::Scheme, event::EventFlags::READ)
+                .subscribe(
+                    socket.inner().raw(),
+                    Source::Scheme,
+                    event::EventFlags::READ,
+                )
                 .unwrap();
 
             libredox::call::setrens(0, 0).expect("alxd: failed to enter null namespace");
-
-            let mut todo = Vec::<Packet>::new();
 
             for event in iter::once(Source::Scheme)
                 .chain(event_queue.map(|e| e.expect("alxd: failed to get next event").user_data))
@@ -92,53 +93,36 @@ fn main() {
                     Source::Irq => {
                         let mut irq = [0; 8];
                         irq_file.read(&mut irq).unwrap();
-                        if unsafe { device.intr_legacy() } {
-                            irq_file.write(&mut irq).unwrap();
-
-                            let mut i = 0;
-                            while i < todo.len() {
-                                let a = todo[i].a;
-                                device.handle(&mut todo[i]);
-                                if todo[i].a == (-EWOULDBLOCK) as usize {
-                                    todo[i].a = a;
-                                    i += 1;
-                                } else {
-                                    socket
-                                        .write(&mut todo[i])
-                                        .expect("alxd: failed to write to socket");
-                                    todo.remove(i);
-                                }
-                            }
-
-                            /* TODO: Currently a no-op
-                            let next_read = device.next_read();
-                            if next_read > 0 {
-                                return Ok(Some(next_read));
-                            }
-                            */
+                        if unsafe { device.borrow_mut().intr_legacy() } {
+                            continue;
                         }
-                    }
-                    Source::Scheme => {
-                        loop {
-                            let mut packet = Packet::default();
-                            if socket
-                                .read(&mut packet)
-                                .expect("alxd: failed read from socket")
-                                == 0
-                            {
-                                break;
-                            }
+                        irq_file.write(&mut irq).unwrap();
 
-                            let a = packet.a;
-                            device.handle(&mut packet);
-                            if packet.a == (-EWOULDBLOCK) as usize {
-                                packet.a = a;
-                                todo.push(packet);
-                            } else {
-                                socket
-                                    .write(&mut packet)
-                                    .expect("alxd: failed to write to socket");
-                            }
+                        readiness_based
+                            .poll_all_requests(|| device.borrow_mut())
+                            .expect("ihdad: failed to poll requests");
+
+                        /* TODO: Currently a no-op
+                        let next_read = device.next_read();
+                        if next_read > 0 {
+                            return Ok(Some(next_read));
+                        }
+                        */
+                    }
+
+                    Source::Scheme => {
+                        if !readiness_based
+                            .read_requests()
+                            .expect("alxd: failed to read from socket")
+                        {
+                            break;
+                        }
+                        readiness_based.process_requests(|| device.borrow_mut());
+                        if !readiness_based
+                            .write_responses()
+                            .expect("alxd: failed to write to socket")
+                        {
+                            break;
                         }
 
                         // TODO

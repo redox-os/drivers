@@ -2,9 +2,14 @@ use std::convert::TryInto;
 use std::{ptr, thread, time};
 
 use common::io::{Io, Mmio};
+use redox_scheme::scheme::SchemeSync;
+use redox_scheme::CallerCtx;
+use redox_scheme::OpenResult;
 use syscall::error::{Error, Result, EACCES, EINVAL, EIO, EWOULDBLOCK};
 use syscall::flag::{EventFlags, O_NONBLOCK};
 use syscall::scheme;
+use syscall::schemev2::NewFdFlags;
+use syscall::EWOULDBLOCK;
 
 use common::dma::Dma;
 
@@ -1793,16 +1798,26 @@ impl Alx {
     }
 }
 
-impl scheme::SchemeMut for Alx {
-    fn open(&mut self, _path: &str, flags: usize, uid: u32, _gid: u32) -> Result<usize> {
+impl SchemeSync for Alx {
+    fn open(&mut self, path: &str, flags: usize, ctx: &CallerCtx) -> Result<OpenResult> {
         if uid == 0 {
-            Ok(flags)
+            Ok(OpenResult::ThisScheme {
+                number: flags,
+                flags: NewFdFlags::empty(),
+            })
         } else {
             Err(Error::new(EACCES))
         }
     }
 
-    fn read(&mut self, id: usize, _buf: &mut [u8]) -> Result<usize> {
+    fn read(
+        &mut self,
+        id: usize,
+        buf: &mut [u8],
+        offset: u64,
+        _flags: u32,
+        _ctx: &CallerCtx,
+    ) -> Result<usize> {
         /*
         let head = unsafe { self.read(RDH) };
         let mut tail = unsafe { self.read(RDT) };
@@ -1839,7 +1854,14 @@ impl scheme::SchemeMut for Alx {
         }
     }
 
-    fn write(&mut self, _id: usize, _buf: &[u8]) -> Result<usize> {
+    fn write(
+        &mut self,
+        id: usize,
+        buf: &[u8],
+        _offset: u64,
+        _flags: u32,
+        _ctx: &CallerCtx,
+    ) -> Result<usize> {
         /*
         loop {
             let head = unsafe { self.read(TDH) };
@@ -1883,15 +1905,13 @@ impl scheme::SchemeMut for Alx {
         Ok(0)
     }
 
-    fn fevent(&mut self, _id: usize, _flags: EventFlags) -> Result<EventFlags> {
+    fn fevent(&mut self, _id: usize, _flags: EventFlags, _ctx: &CallerCtx) -> Result<EventFlags> {
         Ok(EventFlags::empty())
     }
 
-    fn fsync(&mut self, _id: usize) -> Result<usize> {
+    fn fsync(&mut self, _id: usize, _ctx: &CallerCtx) -> Result<()> {
         Ok(0)
     }
 
-    fn close(&mut self, _id: usize) -> Result<usize> {
-        Ok(0)
-    }
+    fn on_close(&mut self, _id: usize) {}
 }

@@ -3,12 +3,13 @@ extern crate event;
 extern crate spin;
 extern crate syscall;
 
-use libredox::flag;
+use redox_scheme::Socket;
+use redox_scheme::wrappers::ReadinessBased;
+use std::cell::RefCell;
 use std::fs::File;
-use std::io::{ErrorKind, Read, Write};
-use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
+use std::io::{Read, Write};
+use std::os::unix::io::AsRawFd;
 use std::usize;
-use syscall::{Packet, SchemeBlockMut};
 
 use event::{user_data, EventQueue};
 #[cfg(target_arch = "x86_64")]
@@ -94,19 +95,14 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
         let event_queue =
             EventQueue::<Source>::new().expect("ihdad: Could not create event queue.");
-        let mut device = unsafe {
+        let device = RefCell::new(unsafe {
             hda::IntelHDA::new(address, vend_prod).expect("ihdad: failed to allocate device")
-        };
-        let socket_fd = libredox::call::open(
-            ":audiohw",
-            flag::O_RDWR | flag::O_CREAT | flag::O_NONBLOCK,
-            0,
-        )
-        .expect("ihdad: failed to create hda scheme");
-        let mut socket = unsafe { File::from_raw_fd(socket_fd as RawFd) };
+        });
+        let socket = Socket::nonblock("audiohw").expect("ihdad: failed to create socket");
+        let mut readiness_based = ReadinessBased::new(&socket, 16);
 
         event_queue
-            .subscribe(socket_fd, Source::Scheme, event::EventFlags::READ)
+            .subscribe(socket.inner().raw(), Source::Scheme, event::EventFlags::READ)
             .unwrap();
         event_queue
             .subscribe(
@@ -120,11 +116,9 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
         libredox::call::setrens(0, 0).expect("ihdad: failed to enter null namespace");
 
-        let mut todo = Vec::<Packet>::new();
-
         let all = [Source::Irq, Source::Scheme];
 
-        'events: for event in all
+        for event in all
             .into_iter()
             .chain(event_queue.map(|e| e.expect("failed to get next event").user_data))
         {
@@ -133,49 +127,27 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
                     let mut irq = [0; 8];
                     irq_file.read(&mut irq).unwrap();
 
-                    if device.irq() {
-                        irq_file.write(&mut irq).unwrap();
-
-                        let mut i = 0;
-                        while i < todo.len() {
-                            if let Some(a) = device.handle(&mut todo[i]) {
-                                let mut packet = todo.remove(i);
-                                packet.a = a;
-                                socket.write(&packet).unwrap();
-                            } else {
-                                i += 1;
-                            }
-                        }
-
-                        /*
-                        let next_read = device_irq.next_read();
-                        if next_read > 0 {
-                        return Ok(Some(next_read));
-                        }
-                        */
+                    if !device.borrow_mut().irq() {
+                        continue;
                     }
+                    irq_file.write(&mut irq).unwrap();
+
+                    readiness_based.poll_all_requests(|| device.borrow_mut()).expect("ihdad: failed to poll requests");
+
+                    /*
+                    let next_read = device_irq.next_read();
+                    if next_read > 0 {
+                    return Ok(Some(next_read));
+                    }
+                    */
                 }
                 Source::Scheme => {
-                    loop {
-                        let mut packet = Packet::default();
-                        match socket.read(&mut packet) {
-                            Ok(0) => break 'events,
-                            Ok(_) => (),
-                            Err(err) => {
-                                if err.kind() == ErrorKind::WouldBlock {
-                                    break;
-                                } else {
-                                    panic!("ihdad: failed to read from socket: {err}");
-                                }
-                            }
-                        }
-
-                        if let Some(a) = device.handle(&mut packet) {
-                            packet.a = a;
-                            socket.write(&packet).unwrap();
-                        } else {
-                            todo.push(packet);
-                        }
+                    if !readiness_based.read_requests().expect("ihdad: failed to read from socket") {
+                        break;
+                    }
+                    readiness_based.process_requests(|| device.borrow_mut());
+                    if !readiness_based.write_responses().expect("ihdad: failed to write to socket") {
+                        break;
                     }
 
                     /*
