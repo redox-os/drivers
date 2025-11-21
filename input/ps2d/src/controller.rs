@@ -1,7 +1,7 @@
 use common::io::{Io, Pio, ReadOnly, WriteOnly};
 use log::{debug, error, info, trace};
 
-use std::{fmt, thread, time::Duration};
+use std::{fmt, thread, time::{Duration, Instant}};
 
 #[derive(Debug)]
 pub enum Error {
@@ -95,6 +95,32 @@ enum MouseCommandData {
     SetSampleRate = 0xF3,
 }
 
+struct Timeout {
+    instant: Instant,
+    duration: Duration,
+}
+
+impl Timeout {
+    fn new(millis: u64) -> Self {
+        Self {
+            instant: Instant::now(),
+            duration: Duration::from_millis(millis),
+        }
+    }
+
+    fn run(&self) -> Result<(), ()> {
+        if self.instant.elapsed() < self.duration {
+            // Sleeps in Redox are only evaluated on PIT ticks (a few ms), which is not
+            // short enough for a reasonably responsive timeout. However, the clock is
+            // highly accurate. So, we yield instead of sleep to reduce latency.
+            thread::yield_now();
+            Ok(())
+        } else {
+            Err(())
+        }
+    }
+}
+
 pub struct Ps2 {
     data: Pio<u8>,
     status: ReadOnly<Pio<u8>>,
@@ -115,38 +141,35 @@ impl Ps2 {
     }
 
     fn wait_read(&mut self) -> Result<(), Error> {
-        let mut timeout = 100;
-        while timeout > 0 {
+        let timeout = Timeout::new(10);
+        loop {
             if self.status().contains(StatusFlags::OUTPUT_FULL) {
                 return Ok(());
             }
-            timeout -= 1;
-            thread::sleep(Duration::from_millis(1));
+            timeout.run().map_err(|()| Error::ReadTimeout)?
         }
-        Err(Error::ReadTimeout)
     }
 
     fn wait_write(&mut self) -> Result<(), Error> {
-        let mut timeout = 100;
-        while timeout > 0 {
+        let timeout = Timeout::new(10);
+        loop {
             if !self.status().contains(StatusFlags::INPUT_FULL) {
                 return Ok(());
             }
-            timeout -= 1;
-            thread::sleep(Duration::from_millis(1));
+            timeout.run().map_err(|()| Error::WriteTimeout)?
         }
-        Err(Error::WriteTimeout)
     }
 
     fn flush_read(&mut self, message: &str) {
-        let mut timeout = 100;
-        while timeout > 0 {
+        let timeout = Timeout::new(1);
+        loop {
             if self.status().contains(StatusFlags::OUTPUT_FULL) {
                 let val = self.data.read();
                 trace!("ps2d: flush {}: {:X}", message, val);
             }
-            timeout -= 1;
-            thread::sleep(Duration::from_millis(1));
+            if timeout.run().is_err() {
+                return;
+            }
         }
     }
 
