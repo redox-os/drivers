@@ -1,7 +1,10 @@
 use common::io::{Io, Pio, ReadOnly, WriteOnly};
 use log::{debug, error, info, trace};
 
-use std::{fmt, thread, time::{Duration, Instant}};
+use std::{
+    fmt, thread,
+    time::{Duration, Instant},
+};
 
 #[derive(Debug)]
 pub enum Error {
@@ -95,16 +98,21 @@ enum MouseCommandData {
     SetSampleRate = 0xF3,
 }
 
+// Default timeout in microseconds
+const DEFAULT_TIMEOUT: u64 = 50_000;
+// Reset timeout in microseconds
+const RESET_TIMEOUT: u64 = 500_000;
+
 struct Timeout {
     instant: Instant,
     duration: Duration,
 }
 
 impl Timeout {
-    fn new(millis: u64) -> Self {
+    fn new(micros: u64) -> Self {
         Self {
             instant: Instant::now(),
-            duration: Duration::from_millis(millis),
+            duration: Duration::from_micros(micros),
         }
     }
 
@@ -140,8 +148,8 @@ impl Ps2 {
         StatusFlags::from_bits_truncate(self.status.read())
     }
 
-    fn wait_read(&mut self) -> Result<(), Error> {
-        let timeout = Timeout::new(10);
+    fn wait_read(&mut self, micros: u64) -> Result<(), Error> {
+        let timeout = Timeout::new(micros);
         loop {
             if self.status().contains(StatusFlags::OUTPUT_FULL) {
                 return Ok(());
@@ -150,8 +158,8 @@ impl Ps2 {
         }
     }
 
-    fn wait_write(&mut self) -> Result<(), Error> {
-        let timeout = Timeout::new(10);
+    fn wait_write(&mut self, micros: u64) -> Result<(), Error> {
+        let timeout = Timeout::new(micros);
         loop {
             if !self.status().contains(StatusFlags::INPUT_FULL) {
                 return Ok(());
@@ -160,32 +168,24 @@ impl Ps2 {
         }
     }
 
-    fn flush_read(&mut self, message: &str) {
-        let timeout = Timeout::new(1);
-        loop {
-            if self.status().contains(StatusFlags::OUTPUT_FULL) {
-                let val = self.data.read();
-                trace!("ps2d: flush {}: {:X}", message, val);
-            }
-            if timeout.run().is_err() {
-                return;
-            }
-        }
-    }
-
     fn command(&mut self, command: Command) -> Result<(), Error> {
-        self.wait_write()?;
+        self.wait_write(DEFAULT_TIMEOUT)?;
         self.command.write(command as u8);
         Ok(())
     }
 
     fn read(&mut self) -> Result<u8, Error> {
-        self.wait_read()?;
-        Ok(self.data.read())
+        self.read_timeout(DEFAULT_TIMEOUT)
+    }
+
+    fn read_timeout(&mut self, micros: u64) -> Result<u8, Error> {
+        self.wait_read(micros)?;
+        let data = self.data.read();
+        Ok(data)
     }
 
     fn write(&mut self, data: u8) -> Result<(), Error> {
-        self.wait_write()?;
+        self.wait_write(DEFAULT_TIMEOUT)?;
         self.data.write(data);
         Ok(())
     }
@@ -311,9 +311,6 @@ impl Ps2 {
         {
             // Enable first device
             self.command(Command::EnableFirst)?;
-
-            // Clear remaining data
-            self.flush_read("enable first");
         }
 
         {
@@ -327,23 +324,15 @@ impl Ps2 {
             } else {
                 error!("ps2d: keyboard failed to reset: {:02X}", b);
             }
-
-            // Clear remaining data
-            self.flush_read("keyboard reset");
         }
 
         self.retry(format_args!("keyboard defaults"), 4, |x| {
-            x.flush_read("keyboard before defaults");
-
             // Set defaults and disable scanning
             let b = x.keyboard_command(KeyboardCommand::SetDefaultsDisable)?;
             if b != 0xFA {
                 error!("ps2d: keyboard failed to set defaults: {:02X}", b);
                 return Err(Error::CommandRetry);
             }
-
-            // Clear remaining data
-            x.flush_read("keyboard after defaults");
 
             Ok(b)
         })?;
@@ -358,39 +347,30 @@ impl Ps2 {
                     scancode_set, b
                 );
             }
-
-            // Clear remaining data
-            self.flush_read("keyboard scancode");
         }
 
         Ok(())
     }
 
     pub fn init_mouse(&mut self) -> Result<bool, Error> {
-        let mut b;
+        let mut b: u8 = 0;
 
         {
             // Enable second device
             self.command(Command::EnableSecond)?;
-
-            // Clear remaining data
-            self.flush_read("enable second");
         }
 
         self.retry(format_args!("mouse reset"), 4, |x| {
-            // Clear remaining data
-            x.flush_read("mouse before reset");
-
             // Reset mouse
             let mut b = x.mouse_command(MouseCommand::Reset)?;
             if b == 0xFA {
-                b = x.read()?;
+                b = x.read_timeout(RESET_TIMEOUT)?;
                 if b != 0xAA {
                     error!("ps2d: mouse failed self test 1: {:02X}", b);
                     return Err(Error::CommandRetry);
                 }
 
-                b = x.read()?;
+                b = x.read_timeout(RESET_TIMEOUT)?;
                 if b != 0x00 {
                     error!("ps2d: mouse failed self test 2: {:02X}", b);
                     return Err(Error::CommandRetry);
@@ -400,22 +380,8 @@ impl Ps2 {
                 return Err(Error::CommandRetry);
             }
 
-            // Clear remaining data
-            x.flush_read("mouse after reset");
-
             Ok(b)
         })?;
-
-        {
-            // Set defaults
-            b = self.mouse_command(MouseCommand::SetDefaults)?;
-            if b != 0xFA {
-                error!("ps2d: mouse failed to set defaults: {:02X}", b);
-            }
-
-            // Clear remaining data
-            self.flush_read("mouse defaults");
-        }
 
         {
             // Enable extra packet on mouse
@@ -426,9 +392,6 @@ impl Ps2 {
             {
                 error!("ps2d: mouse failed to enable extra packet");
             }
-
-            // Clear remaining data
-            self.flush_read("enable extra mouse packet");
         }
 
         b = self.mouse_command(MouseCommand::GetDeviceId)?;
@@ -438,35 +401,6 @@ impl Ps2 {
             error!("ps2d: mouse failed to get device id: {:02X}", b);
             false
         };
-
-        // Clear remaining data
-        self.flush_read("get device id");
-
-        {
-            // Set resolution to maximum
-            let resolution = 3;
-            b = self.mouse_command_data(MouseCommandData::SetResolution, resolution)?;
-            if b != 0xFA {
-                error!(
-                    "ps2d: mouse failed to set resolution to {}: {:02X}",
-                    resolution, b
-                );
-            }
-
-            // Clear remaining data
-            self.flush_read("set sample rate");
-        }
-
-        {
-            // Set scaling to 1:1
-            b = self.mouse_command(MouseCommand::SetScaling1To1)?;
-            if b != 0xFA {
-                error!("ps2d: mouse failed to set scaling: {:02X}", b);
-            }
-
-            // Clear remaining data
-            self.flush_read("set scaling");
-        }
 
         {
             // Set sample rate to maximum
@@ -478,9 +412,6 @@ impl Ps2 {
                     sample_rate, b
                 );
             }
-
-            // Clear remaining data
-            self.flush_read("set sample rate");
         }
 
         {
@@ -493,7 +424,7 @@ impl Ps2 {
                 let c = self.read()?;
 
                 debug!(
-                    "ps2d: mouse status {:#x} resolution {:#x} sample rate {:#x}",
+                    "ps2d: mouse status {:#x} resolution {} sample rate {}",
                     a, b, c
                 );
             }
@@ -503,33 +434,23 @@ impl Ps2 {
     }
 
     pub fn init(&mut self) -> bool {
-        // Clear remaining data
-        self.flush_read("init start");
-
         {
             // Disable devices
             self.command(Command::DisableFirst)
                 .expect("ps2d: failed to initialize");
             self.command(Command::DisableSecond)
                 .expect("ps2d: failed to initialize");
-
-            // Clear remaining data
-            self.flush_read("disable");
         }
 
         // Disable clocks, disable interrupts, and disable translate
-        let mut config;
         {
             // Since the default config may have interrupts enabled, and the kernel may eat up
             // our data in that case, we will write a config without reading the current one
-            config = ConfigFlags::POST_PASSED
+            let config = ConfigFlags::POST_PASSED
                 | ConfigFlags::FIRST_DISABLED
                 | ConfigFlags::SECOND_DISABLED;
             trace!("ps2d: config set {:?}", config);
             self.set_config(config).expect("ps2d: failed to initialize");
-
-            // Clear remaining data
-            self.flush_read("disable interrupts");
         }
 
         {
@@ -537,9 +458,6 @@ impl Ps2 {
             self.command(Command::TestController)
                 .expect("ps2d: failed to initialize");
             assert_eq!(self.read().expect("ps2d: failed to initialize"), 0x55);
-
-            // Clear remaining data
-            self.flush_read("test controller");
         }
 
         // Initialize keyboard
@@ -574,22 +492,17 @@ impl Ps2 {
 
         // Enable clocks and interrupts
         {
-            config.remove(ConfigFlags::FIRST_DISABLED);
-            config.insert(ConfigFlags::FIRST_TRANSLATE);
-            config.insert(ConfigFlags::FIRST_INTERRUPT);
-            if mouse_found {
-                config.remove(ConfigFlags::SECOND_DISABLED);
-                config.insert(ConfigFlags::SECOND_INTERRUPT);
-            } else {
-                config.insert(ConfigFlags::SECOND_DISABLED);
-                config.remove(ConfigFlags::SECOND_INTERRUPT);
-            }
+            let config = ConfigFlags::POST_PASSED
+                | ConfigFlags::FIRST_INTERRUPT
+                | ConfigFlags::FIRST_TRANSLATE
+                | if mouse_found {
+                    ConfigFlags::SECOND_INTERRUPT
+                } else {
+                    ConfigFlags::SECOND_DISABLED
+                };
             trace!("ps2d: config set {:?}", config);
             self.set_config(config).expect("ps2d: failed to initialize");
         }
-
-        // Clear remaining data
-        self.flush_read("init finish");
 
         mouse_extra
     }
