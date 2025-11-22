@@ -267,10 +267,6 @@ impl AmlSymbols {
         &self.symbol_cache
     }
 
-    pub fn parse_table(&mut self, aml: &[u8]) -> Result<(), AmlError> {
-        self.aml_context.load_table(aml)
-    }
-
     pub fn lookup(&self, symbol: &str) -> Option<String> {
         if let Some(description) = self.symbol_cache.get(symbol) {
             log::trace!("Found symbol in cache, {}, {}", symbol, description);
@@ -425,42 +421,7 @@ impl AcpiContext {
         Fadt::init(&mut this);
         //TODO (hangs on real hardware): Dmar::init(&this);
 
-        AcpiContext::build_aml_context(&this);
-
         this
-    }
-
-    fn build_aml_context(acpi: &AcpiContext) {
-        let mut aml_symbols = acpi.aml_symbols.write();
-
-        if let Some(dsdt) = acpi.dsdt() {
-            match aml_symbols.parse_table(dsdt.aml()) {
-                Ok(_) => log::trace!("Parsed DSDT"),
-                Err(e) => {
-                    log::error!("DSDT: {:?}", e);
-                }
-            }
-        } else {
-            log::error!("No DSDT for aml parsing");
-        }
-
-        for ssdt in acpi.ssdts() {
-            match aml_symbols.parse_table(ssdt.aml()) {
-                Ok(_) => log::trace!("Parsed SSDT"),
-                Err(e) => {
-                    log::error!("SSDT: {:?}", e);
-                }
-            }
-        }
-
-        if let Ok(mut page_cache) = aml_symbols.page_cache.lock() {
-            page_cache.clear();
-        } else {
-            log::error!("failed to lock AmlPageCache");
-        }
-
-        // force drop of page_cache from the previous if let
-        {}
     }
 
     pub fn dsdt(&self) -> Option<&Dsdt> {
