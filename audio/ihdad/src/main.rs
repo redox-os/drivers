@@ -92,11 +92,6 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
             }
         }
 
-        let event_queue =
-            EventQueue::<Source>::new().expect("ihdad: Could not create event queue.");
-        let mut device = unsafe {
-            hda::IntelHDA::new(address, vend_prod).expect("ihdad: failed to allocate device")
-        };
         let socket_fd = libredox::call::open(
             ":audiohw",
             flag::O_RDWR | flag::O_CREAT | flag::O_NONBLOCK,
@@ -104,6 +99,14 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         )
         .expect("ihdad: failed to create hda scheme");
         let mut socket = unsafe { File::from_raw_fd(socket_fd as RawFd) };
+
+        daemon.ready().expect("ihdad: failed to signal readiness");
+
+        let event_queue =
+            EventQueue::<Source>::new().expect("ihdad: Could not create event queue.");
+        let mut device = unsafe {
+            hda::IntelHDA::new(address, vend_prod).expect("ihdad: failed to allocate device")
+        };
 
         event_queue
             .subscribe(socket_fd, Source::Scheme, event::EventFlags::READ)
@@ -115,8 +118,6 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
                 event::EventFlags::READ,
             )
             .unwrap();
-
-        daemon.ready().expect("ihdad: failed to signal readiness");
 
         libredox::call::setrens(0, 0).expect("ihdad: failed to enter null namespace");
 
