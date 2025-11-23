@@ -210,7 +210,9 @@ fn main_inner(daemon: redox_daemon::Daemon) -> ! {
     // FIXME Use full ACPI for enumerating the host bridges. MCFG only describes the first
     // host bridge, while multi-processor systems likely have a host bridge for each CPU.
     // See also https://www.kernel.org/doc/html/latest/PCI/acpi-info.html
-    let mut bus_nums = vec![0];
+    // Bus 0x80 is scanned for compatibility with newer (Arrow Lake) Intel CPUs where PCH devices
+    // are there. This workaround may not be required if we had ACPI bus enumeration.
+    let mut bus_nums = vec![0, 0x80];
     let mut bus_i = 0;
     while bus_i < bus_nums.len() {
         let bus_num = bus_nums[bus_i];
