@@ -641,6 +641,7 @@ dependencies = [
  "common",
  "fdt 0.1.5",
  "log",
+ "redox-daemon",
  "ron",
 ]
 

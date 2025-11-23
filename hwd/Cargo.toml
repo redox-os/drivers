@@ -6,6 +6,7 @@ edition = "2018"
 [dependencies]
 fdt = "0.1.5"
 log = "0.4"
+redox-daemon = "0.1"
 ron = "0.8.1"
 
 amlserde = { path = "../amlserde" }
