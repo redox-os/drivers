@@ -93,7 +93,14 @@ fn deamon(daemon: redox_daemon::Daemon) -> Result<(), Box<dyn std::error::Error>
     name.push_str("_virtio_net");
 
     let device = VirtioNet::new(mac_address, rx_queue, tx_queue);
-    let mut scheme = NetworkScheme::new(device, format!("network.{name}"));
+    let mut scheme = NetworkScheme::new(
+        move || {
+            //TODO: do device init in this function to prevent hangs
+            device
+        },
+        daemon,
+        format!("network.{name}"),
+    );
 
     let mut event_queue = File::open("/scheme/event")?;
     event_queue.write(&syscall::Event {
@@ -103,8 +110,6 @@ fn deamon(daemon: redox_daemon::Daemon) -> Result<(), Box<dyn std::error::Error>
     })?;
 
     libredox::call::setrens(0, 0).expect("virtio-netd: failed to enter null namespace");
-
-    daemon.ready().expect("virtio-netd: failed to daemonize");
 
     scheme.tick()?;
 

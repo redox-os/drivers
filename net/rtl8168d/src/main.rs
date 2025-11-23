@@ -124,10 +124,13 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     //TODO: MSI-X
     let mut irq_file = get_int_method(&mut pcid_handle);
 
-    let device =
-        unsafe { device::Rtl8168::new(bar as usize).expect("rtl8168d: failed to allocate device") };
-
-    let mut scheme = NetworkScheme::new(device, format!("network.{name}"));
+    let mut scheme = NetworkScheme::new(
+        move || unsafe {
+            device::Rtl8168::new(bar as usize).expect("rtl8168d: failed to allocate device")
+        },
+        daemon,
+        format!("network.{name}"),
+    );
 
     user_data! {
         enum Source {
@@ -153,10 +156,6 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         .unwrap();
 
     libredox::call::setrens(0, 0).expect("rtl8168d: failed to enter null namespace");
-
-    daemon
-        .ready()
-        .expect("rtl8168d: failed to mark daemon as ready");
 
     scheme.tick().unwrap();
 
