@@ -75,7 +75,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     daemon.ready().expect("acpid: failed to notify parent");
 
-    libredox::call::setrens(0, 0).expect("acpid: failed to enter null namespace");
+    //TODO: needs to open /scheme/pci/access later! libredox::call::setrens(0, 0).expect("acpid: failed to enter null namespace");
 
     event_queue
         .subscribe(shutdown_pipe.as_raw_fd() as usize, 0, EventFlags::READ)
