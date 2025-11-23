@@ -212,6 +212,12 @@ impl SchemeSync for PciScheme {
 
         match handle.inner {
             Handle::Access => {
+                let payload_len = u16::try_from(payload.len()).map_err(|_| Error::new(EINVAL))?;
+                let write = match metadata.get(0) {
+                    Some(1) => false,
+                    Some(2) => true,
+                    _ => return Err(Error::new(EINVAL)),
+                };
                 let (addr, offset) = match metadata.get(1) {
                     Some(value) => {
                         // Segment: u16, at 28 bits
@@ -231,31 +237,32 @@ impl SchemeSync for PciScheme {
                     }
                     None => return Err(Error::new(EINVAL)),
                 };
-                match metadata.get(0) {
-                    Some(1) => {
-                        // Read
-                        let value = unsafe { self.pcie.read(addr, offset) };
-                        let bytes = value.to_le_bytes();
-                        let len = payload.len().min(bytes.len());
-                        payload.copy_from_slice(&bytes[..len]);
-                        Ok(len)
+                // This handle must allow less than 4 byte access, but the
+                // lower level only works with 4 byte reads and writes
+                let unaligned = offset % 4;
+                let start = offset - unaligned;
+                let end = offset + payload_len;
+                let mut i = 0;
+                while start + i < end {
+                    let mut bytes = unsafe { self.pcie.read(addr, start + i) }.to_le_bytes();
+                    for j in 0..bytes.len() {
+                        if let Some(payload_i) = i.checked_sub(unaligned) {
+                            if let Some(payload_b) = payload.get_mut(usize::from(payload_i)) {
+                                if write {
+                                    bytes[j] = *payload_b;
+                                } else {
+                                    *payload_b = bytes[j]
+                                }
+                            }
+                        }
+                        i += 1;
                     }
-                    Some(2) => {
-                        // Write
-                        let len = payload.len().min(4);
-                        let mut bytes = if len < 4 {
-                            //TODO: any way to do less than dword writes?
-                            unsafe { self.pcie.read(addr, offset).to_le_bytes() }
-                        } else {
-                            [0; 4]
-                        };
-                        bytes[..len].copy_from_slice(&payload);
+                    if write {
                         let value = u32::from_le_bytes(bytes);
-                        unsafe { self.pcie.write(addr, offset, value); }
-                        Ok(len)
+                        unsafe { self.pcie.write(addr, start + i, value); }
                     }
-                    _ => Err(Error::new(EINVAL)),
                 }
+                Ok(payload.len())
             }
 
             _ => Err(Error::new(EBADF)),
