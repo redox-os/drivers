@@ -1,3 +1,5 @@
+use std::process::Command;
+
 mod backend;
 use self::backend::{AcpiBackend, Backend, DeviceTreeBackend, LegacyBackend};
 
@@ -32,6 +34,22 @@ fn main() {
             }
         }
     };
+
+    //TODO: launch pcid based on backend information?
+    // Must launch after acpid but before probe calls /scheme/acpi/symbols
+    match Command::new("pcid").spawn() {
+        Ok(mut child) => match child.wait() {
+            Ok(status) => if !status.success() {
+                log::error!("pcid exited with status {}", status);
+            },
+            Err(err) => {
+                log::error!("failed to wait for pcid: {}", err);
+            }
+        },
+        Err(err) => {
+            log::error!("failed to spawn pcid: {}", err);
+        }
+    }
 
     //TODO: HWD is meant to locate PCI/XHCI/etc devices in ACPI and DeviceTree definitions and start their drivers
     match backend.probe() {
