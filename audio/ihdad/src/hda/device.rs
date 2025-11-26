@@ -11,7 +11,8 @@ use std::time::Duration;
 
 use common::dma::Dma;
 use common::io::{Io, Mmio};
-use syscall::error::{Error, Result, EACCES, EBADF, EINVAL};
+use common::timeout::Timeout;
+use syscall::error::{Error, Result, EACCES, EBADF, EIO, EINVAL};
 use syscall::flag::{SEEK_CUR, SEEK_END, SEEK_SET};
 use syscall::scheme::SchemeBlockMut;
 
@@ -203,7 +204,7 @@ impl IntelHDA {
             next_id: AtomicUsize::new(0),
         };
 
-        module.init();
+        module.init()?;
 
         module.info();
         module.enumerate();
@@ -213,8 +214,8 @@ impl IntelHDA {
         Ok(module)
     }
 
-    pub fn init(&mut self) -> bool {
-        self.reset_controller();
+    pub fn init(&mut self) -> Result<()> {
+        self.reset_controller()?;
 
         let use_immediate_command_interface = match self.vend_prod {
             0x8086_2668 => false,
@@ -224,7 +225,7 @@ impl IntelHDA {
         self.cmd.init(use_immediate_command_interface);
         self.init_interrupts();
 
-        true
+        Ok(())
     }
 
     pub fn init_interrupts(&mut self) {
@@ -652,25 +653,39 @@ impl IntelHDA {
         }
     }
 
-    pub fn reset_controller(&mut self) -> bool {
+    pub fn reset_controller(&mut self) -> Result<()> {
         self.cmd.stop();
 
         self.regs.statests.write(0x7FFF);
 
         // 3.3.7
-        self.regs.gctl.writef(CRST, false);
-        loop {
-            if !self.regs.gctl.readf(CRST) {
-                break;
+        {
+            let timeout = Timeout::from_secs(1);
+            self.regs.gctl.writef(CRST, false);
+            loop {
+                if !self.regs.gctl.readf(CRST) {
+                    break;
+                }
+                timeout.run().map_err(|()| {
+                    log::error!("failed to start reset");
+                    Error::new(EIO)
+                })?;
             }
         }
 
         thread::sleep(Duration::from_millis(1));
 
-        self.regs.gctl.writef(CRST, true);
-        loop {
-            if self.regs.gctl.readf(CRST) {
-                break;
+        {
+            let timeout = Timeout::from_secs(1);
+            self.regs.gctl.writef(CRST, true);
+            loop {
+                if self.regs.gctl.readf(CRST) {
+                    break;
+                }
+                timeout.run().map_err(|()| {
+                    log::error!("failed to finish reset");
+                    Error::new(EIO)
+                })?;
             }
         }
 
@@ -692,7 +707,7 @@ impl IntelHDA {
                 self.codecs.push(i as CodecAddr);
             }
         }
-        true
+        Ok(())
     }
 
     pub fn num_output_streams(&self) -> usize {

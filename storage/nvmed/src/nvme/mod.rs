@@ -207,7 +207,7 @@ impl Nvme {
 
         {
             log::trace!("Waiting for not ready.");
-            let mut timeout = Timeout::from_secs(5);
+            let timeout = Timeout::from_secs(1);
             loop {
                 let csts = self.regs.get_mut().csts.read();
                 log::trace!("CSTS: {:X}", csts);
@@ -278,7 +278,7 @@ impl Nvme {
 
         {
             log::debug!("Waiting for ready");
-            let mut timeout = Timeout::from_secs(5);
+            let timeout = Timeout::from_secs(1);
             loop {
                 let csts = self.regs.get_mut().csts.read();
                 log::debug!("CSTS: {:X}", csts);
