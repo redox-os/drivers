@@ -16,6 +16,8 @@ pub mod io;
 mod logger;
 /// The Scatter Gather List (SGL) API for drivers.
 pub mod sgl;
+/// Low latency timeout for driver loops
+pub mod timeout;
 
 pub use logger::{output_level, file_level, setup_logging};
 

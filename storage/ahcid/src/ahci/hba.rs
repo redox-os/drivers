@@ -4,12 +4,12 @@ use std::ops::DerefMut;
 use std::time::{Duration, Instant};
 use std::{ptr, u32};
 
+use common::dma::Dma;
 use common::io::{Io, Mmio};
+use common::timeout::Timeout;
 use syscall::error::{Error, Result, EIO};
 
 use super::fis::{FisRegH2D, FisType};
-
-use common::dma::Dma;
 
 const ATA_CMD_READ_DMA_EXT: u8 = 0x25;
 const ATA_CMD_WRITE_DMA_EXT: u8 = 0x35;
@@ -80,13 +80,12 @@ impl HbaPort {
     }
 
     pub fn start(&mut self) -> Result<()> {
-        let timer = Instant::now();
+        let timeout = Timeout::new(TIMEOUT);
         while self.cmd.readf(HBA_PORT_CMD_CR) {
-            core::hint::spin_loop();
-            if timer.elapsed() >= TIMEOUT {
+            timeout.run().map_err(|()| {
                 log::error!("HBA start timed out");
-                return Err(Error::new(EIO));
-            }
+                Error::new(EIO)
+            })?;
         }
 
         self.cmd.writef(HBA_PORT_CMD_FRE | HBA_PORT_CMD_ST, true);
@@ -96,13 +95,12 @@ impl HbaPort {
     pub fn stop(&mut self) -> Result<()> {
         self.cmd.writef(HBA_PORT_CMD_ST, false);
 
-        let timer = Instant::now();
+        let timeout = Timeout::new(TIMEOUT);
         while self.cmd.readf(HBA_PORT_CMD_FR | HBA_PORT_CMD_CR) {
-            core::hint::spin_loop();
-            if timer.elapsed() >= TIMEOUT {
+            timeout.run().map_err(|()| {
                 log::error!("HBA stop timed out");
-                return Err(Error::new(EIO));
-            }
+                Error::new(EIO)
+            })?;
         }
 
         self.cmd.writef(HBA_PORT_CMD_FRE, false);
@@ -404,13 +402,12 @@ impl HbaPort {
             callback(cmdheader, cmdfis, prdt_entry, acmd)
         }
 
-        let timer = Instant::now();
+        let timeout = Timeout::new(TIMEOUT);
         while self.tfd.readf((ATA_DEV_BUSY | ATA_DEV_DRQ) as u32) {
-            core::hint::spin_loop();
-            if timer.elapsed() >= TIMEOUT {
+            timeout.run().map_err(|()| {
                 log::error!("HBA ata_start timeout");
-                return Err(Error::new(EIO));
-            }
+                Error::new(EIO)
+            })?;
         }
 
         self.ci.writef(1 << slot, true);
@@ -426,13 +423,12 @@ impl HbaPort {
     }
 
     pub fn ata_stop(&mut self, slot: u32) -> Result<()> {
-        let timer = Instant::now();
+        let timeout = Timeout::new(TIMEOUT);
         while self.ata_running(slot) {
-            core::hint::spin_loop();
-            if timer.elapsed() >= TIMEOUT {
+            timeout.run().map_err(|()| {
                 log::error!("HBA ata_stop timeout");
-                return Err(Error::new(EIO));
-            }
+                Error::new(EIO)
+            })?;
         }
 
         self.stop()?;

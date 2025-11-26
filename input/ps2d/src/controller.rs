@@ -1,4 +1,4 @@
-use common::io::{Io, Pio, ReadOnly, WriteOnly};
+use common::{io::{Io, Pio, ReadOnly, WriteOnly}, timeout::Timeout};
 use log::{debug, error, info, trace};
 
 use std::{
@@ -103,32 +103,6 @@ const DEFAULT_TIMEOUT: u64 = 50_000;
 // Reset timeout in microseconds
 const RESET_TIMEOUT: u64 = 500_000;
 
-struct Timeout {
-    instant: Instant,
-    duration: Duration,
-}
-
-impl Timeout {
-    fn new(micros: u64) -> Self {
-        Self {
-            instant: Instant::now(),
-            duration: Duration::from_micros(micros),
-        }
-    }
-
-    fn run(&self) -> Result<(), ()> {
-        if self.instant.elapsed() < self.duration {
-            // Sleeps in Redox are only evaluated on PIT ticks (a few ms), which is not
-            // short enough for a reasonably responsive timeout. However, the clock is
-            // highly accurate. So, we yield instead of sleep to reduce latency.
-            thread::yield_now();
-            Ok(())
-        } else {
-            Err(())
-        }
-    }
-}
-
 pub struct Ps2 {
     data: Pio<u8>,
     status: ReadOnly<Pio<u8>>,
@@ -149,7 +123,7 @@ impl Ps2 {
     }
 
     fn wait_read(&mut self, micros: u64) -> Result<(), Error> {
-        let timeout = Timeout::new(micros);
+        let timeout = Timeout::from_micros(micros);
         loop {
             if self.status().contains(StatusFlags::OUTPUT_FULL) {
                 return Ok(());
@@ -159,7 +133,7 @@ impl Ps2 {
     }
 
     fn wait_write(&mut self, micros: u64) -> Result<(), Error> {
-        let timeout = Timeout::new(micros);
+        let timeout = Timeout::from_micros(micros);
         loop {
             if !self.status().contains(StatusFlags::INPUT_FULL) {
                 return Ok(());
