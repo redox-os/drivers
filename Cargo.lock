@@ -399,6 +399,7 @@ name = "driver-network"
 version = "0.1.0"
 dependencies = [
  "libredox",
+ "redox-daemon",
  "redox-scheme 0.4.0",
  "redox_syscall",
 ]
@@ -643,6 +644,7 @@ dependencies = [
  "common",
  "fdt 0.1.5",
  "log",
+ "redox-daemon",
  "ron",
 ]
 

@@ -1,6 +1,7 @@
 use acpi::aml::object::{Object, WrappedObject};
 use rustc_hash::FxHashMap;
 use std::convert::{TryFrom, TryInto};
+use std::error::Error;
 use std::ops::Deref;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
@@ -238,7 +239,7 @@ pub struct Ssdt(Sdt);
 // must empty the cache so it is rebuilt.
 // If you modify an SDT, you must discard the aml_context and rebuild it.
 pub struct AmlSymbols {
-    aml_context: Interpreter<AmlPhysMemHandler>,
+    aml_context: Option<Interpreter<AmlPhysMemHandler>>,
     // k = name, v = description
     symbol_cache: FxHashMap<String, String>,
     page_cache: Arc<Mutex<AmlPageCache>>,
@@ -246,29 +247,43 @@ pub struct AmlSymbols {
 
 impl AmlSymbols {
     pub fn new() -> Self {
-        let page_cache = Arc::new(Mutex::new(AmlPageCache::default()));
-        let handler = AmlPhysMemHandler::new(Arc::clone(&page_cache));
-        //TODO: use these parsed tables for the rest of acpid and return errors instead of unwrap
-        let rsdp_address = usize::from_str_radix(&std::env::var("RSDP_ADDR").unwrap(), 16).unwrap();
-        let tables = unsafe { AcpiTables::from_rsdp(handler.clone(), rsdp_address).unwrap() };
-        let platform = AcpiPlatform::new(tables, handler).unwrap();
         Self {
-            aml_context: Interpreter::new_from_platform(&platform).unwrap(),
+            aml_context: None,
             symbol_cache: FxHashMap::default(),
-            page_cache,
+            page_cache: Arc::new(Mutex::new(AmlPageCache::default())),
         }
     }
 
-    pub fn mut_aml_context(&mut self) -> &mut Interpreter<AmlPhysMemHandler> {
-        &mut self.aml_context
+    pub fn init(&mut self) -> Result<(), Box<dyn Error>> {
+        if self.aml_context.is_some() {
+            return Err("AML interpreter already initialized".into());
+        }
+        let format_err = |err| format!("{:?}", err);
+        let handler = AmlPhysMemHandler::new(Arc::clone(&self.page_cache));
+        //TODO: use these parsed tables for the rest of acpid
+        let rsdp_address = usize::from_str_radix(&std::env::var("RSDP_ADDR")?, 16)?;
+        let tables = unsafe { AcpiTables::from_rsdp(handler.clone(), rsdp_address).map_err(format_err)? };
+        let platform = AcpiPlatform::new(tables, handler).map_err(format_err)?;
+        let interpreter = Interpreter::new_from_platform(&platform).map_err(format_err)?;
+        self.aml_context = Some(interpreter);
+        Ok(())
+    }
+
+    pub fn aml_context_mut(&mut self) -> &mut Interpreter<AmlPhysMemHandler> {
+        // PCID must be running by this time!
+        if self.aml_context.is_none() {
+            match self.init() {
+                Ok(()) => (),
+                Err(err) => {
+                    log::error!("failed to initialize AML context: {}", err);
+                }
+            }
+        }
+        self.aml_context.as_mut().expect("AML context not initialized")
     }
 
     pub fn symbols_cache(&self) -> &FxHashMap<String, String> {
         &self.symbol_cache
-    }
-
-    pub fn parse_table(&mut self, aml: &[u8]) -> Result<(), AmlError> {
-        self.aml_context.load_table(aml)
     }
 
     pub fn lookup(&self, symbol: &str) -> Option<String> {
@@ -280,10 +295,11 @@ impl AmlSymbols {
     }
 
     pub fn build_cache(&mut self) {
+        let aml_context = self.aml_context_mut();
+
         let mut symbol_list: Vec<(AmlName, String)> = Vec::with_capacity(5000);
 
-        if self
-            .aml_context
+        if aml_context
             .namespace
             .lock()
             .traverse(|level_aml_name, level| {
@@ -314,7 +330,7 @@ impl AmlSymbols {
         for (aml_name, name) in &symbol_list {
             // create an empty entry, in case something goes wrong with serialization
             symbol_cache.insert(name.to_owned(), "".to_owned());
-            if let Some(ser_value) = AmlSerde::from_aml(&mut self.aml_context, aml_name) {
+            if let Some(ser_value) = AmlSerde::from_aml(aml_context, aml_name) {
                 if let Ok(ser_string) = ron::ser::to_string_pretty(&ser_value, Default::default()) {
                     // replace the empty entry
                     symbol_cache.insert(name.to_owned(), ser_string);
@@ -365,7 +381,8 @@ impl AcpiContext {
         symbol: AmlName,
         args: Vec<AmlSerdeValue>,
     ) -> Result<AmlSerdeValue, AmlEvalError> {
-        let interpreter = &mut self.aml_symbols.write().aml_context;
+        let mut symbols = self.aml_symbols.write();
+        let interpreter = symbols.aml_context_mut();
         interpreter.acquire_global_lock(16)?;
 
         let args = args
@@ -425,42 +442,7 @@ impl AcpiContext {
         Fadt::init(&mut this);
         //TODO (hangs on real hardware): Dmar::init(&this);
 
-        AcpiContext::build_aml_context(&this);
-
         this
-    }
-
-    fn build_aml_context(acpi: &AcpiContext) {
-        let mut aml_symbols = acpi.aml_symbols.write();
-
-        if let Some(dsdt) = acpi.dsdt() {
-            match aml_symbols.parse_table(dsdt.aml()) {
-                Ok(_) => log::trace!("Parsed DSDT"),
-                Err(e) => {
-                    log::error!("DSDT: {:?}", e);
-                }
-            }
-        } else {
-            log::error!("No DSDT for aml parsing");
-        }
-
-        for ssdt in acpi.ssdts() {
-            match aml_symbols.parse_table(ssdt.aml()) {
-                Ok(_) => log::trace!("Parsed SSDT"),
-                Err(e) => {
-                    log::error!("SSDT: {:?}", e);
-                }
-            }
-        }
-
-        if let Ok(mut page_cache) = aml_symbols.page_cache.lock() {
-            page_cache.clear();
-        } else {
-            log::error!("failed to lock AmlPageCache");
-        }
-
-        // force drop of page_cache from the previous if let
-        {}
     }
 
     pub fn dsdt(&self) -> Option<&Dsdt> {
@@ -588,10 +570,16 @@ impl AcpiContext {
             }
         };
 
-        let s5 = match aml_symbols.aml_context.namespace.lock().get(s5_aml_name) {
-            Ok(s5) => s5,
-            Err(error) => {
-                log::error!("Cannot set S-state, missing \\_S5, {:?}", error);
+        let s5 = match &aml_symbols.aml_context {
+            Some(aml_context) => match aml_context.namespace.lock().get(s5_aml_name) {
+                Ok(s5) => s5,
+                Err(error) => {
+                    log::error!("Cannot set S-state, missing \\_S5, {:?}", error);
+                    return;
+                }
+            },
+            None => {
+                log::error!("Cannot set S-state, AML context not initialized");
                 return;
             }
         };

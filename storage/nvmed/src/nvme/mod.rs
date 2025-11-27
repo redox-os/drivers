@@ -9,6 +9,7 @@ use std::sync::Arc;
 use parking_lot::{Mutex, ReentrantMutex, RwLock};
 
 use common::io::{Io, Mmio};
+use common::timeout::Timeout;
 use syscall::error::{Error, Result, EIO};
 
 use common::dma::Dma;
@@ -190,7 +191,7 @@ impl Nvme {
         self.doorbell_write(2 * (qid as usize) + 1, u32::from(head));
     }
 
-    pub unsafe fn init(&mut self) {
+    pub unsafe fn init(&mut self) -> Result<()> {
         let thread_ctxts = self.thread_ctxts.get_mut();
         {
             let regs = self.regs.read();
@@ -204,14 +205,20 @@ impl Nvme {
         log::debug!("Disabling controller.");
         self.regs.get_mut().cc.writef(1, false);
 
-        log::trace!("Waiting for not ready.");
-        loop {
-            let csts = self.regs.get_mut().csts.read();
-            log::trace!("CSTS: {:X}", csts);
-            if csts & 1 == 1 {
-                std::hint::spin_loop();
-            } else {
-                break;
+        {
+            log::trace!("Waiting for not ready.");
+            let timeout = Timeout::from_secs(1);
+            loop {
+                let csts = self.regs.get_mut().csts.read();
+                log::trace!("CSTS: {:X}", csts);
+                if csts & 1 == 1 {
+                    timeout.run().map_err(|()| {
+                        log::error!("failed to wait for not ready");
+                        Error::new(EIO)
+                    })?;
+                } else {
+                    break;
+                }
             }
         }
 
@@ -269,16 +276,24 @@ impl Nvme {
         log::debug!("Enabling controller.");
         self.regs.get_mut().cc.writef(1, true);
 
-        log::debug!("Waiting for ready");
-        loop {
-            let csts = self.regs.get_mut().csts.read();
-            log::debug!("CSTS: {:X}", csts);
-            if csts & 1 == 0 {
-                std::hint::spin_loop();
-            } else {
-                break;
+        {
+            log::debug!("Waiting for ready");
+            let timeout = Timeout::from_secs(1);
+            loop {
+                let csts = self.regs.get_mut().csts.read();
+                log::debug!("CSTS: {:X}", csts);
+                if csts & 1 == 0 {
+                    timeout.run().map_err(|()| {
+                        log::error!("failed to wait for ready");
+                        Error::new(EIO)
+                    })?;
+                } else {
+                    break;
+                }
             }
         }
+
+        Ok(())
     }
 
     /// Masks or unmasks multiple vectors.

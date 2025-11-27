@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, VecDeque};
 
-use pci_types::PciAddress;
+use pci_types::{ConfigRegionAccess, PciAddress};
 use redox_scheme::scheme::SchemeSync;
 use redox_scheme::{CallerCtx, OpenResult};
 use syscall::dirent::{DirEntry, DirentBuf, DirentKind};
@@ -19,6 +19,7 @@ pub struct PciScheme {
 }
 enum Handle {
     TopLevel { entries: Vec<String> },
+    Access,
     Device,
     Channel { addr: PciAddress, st: ChannelState },
 }
@@ -28,14 +29,14 @@ struct HandleWrapper {
 }
 impl Handle {
     fn is_file(&self) -> bool {
-        matches!(self, Self::Channel { .. })
+        matches!(self, Self::Access | Self::Channel { .. })
     }
     fn is_dir(&self) -> bool {
         !self.is_file()
     }
     // TODO: capability rather than root
     fn requires_root(&self) -> bool {
-        matches!(self, Self::Channel { .. })
+        matches!(self, Self::Access | Self::Channel { .. })
     }
 }
 
@@ -64,6 +65,8 @@ impl SchemeSync for PciScheme {
                     .map(|(addr, _)| format!("{}", addr).replace(':', "--"))
                     .collect::<Vec<_>>(),
             }
+        } else if path == "access" {
+            Handle::Access
         } else {
             let idx = path.find('/').unwrap_or(path.len());
             let (addr_str, after) = path.split_at(idx);
@@ -104,7 +107,7 @@ impl SchemeSync for PciScheme {
         let (len, mode) = match handle.inner {
             Handle::TopLevel { ref entries } => (entries.len(), MODE_DIR | 0o755),
             Handle::Device => (DEVICE_CONTENTS.len(), MODE_DIR | 0o755),
-            Handle::Channel { .. } => (0, MODE_CHR | 0o600),
+            Handle::Access | Handle::Channel { .. } => (0, MODE_CHR | 0o600),
         };
         stat.st_size = len as u64;
         stat.st_mode = mode;
@@ -131,6 +134,7 @@ impl SchemeSync for PciScheme {
                 addr: _,
                 ref mut st,
             } => Self::read_channel(st, buf),
+            _ => Err(Error::new(EBADF))
         }
     }
     fn getdents<'buf>(
@@ -162,7 +166,7 @@ impl SchemeSync for PciScheme {
                 return Ok(buf);
             }
             Handle::Device => DEVICE_CONTENTS,
-            Handle::Channel { .. } => return Err(Error::new(ENOTDIR)),
+            Handle::Access | Handle::Channel { .. } => return Err(Error::new(ENOTDIR)),
         };
 
         for (i, dent_name) in entries.iter().enumerate().skip(offset) {
@@ -193,6 +197,72 @@ impl SchemeSync for PciScheme {
         match handle.inner {
             Handle::Channel { addr, ref mut st } => {
                 Self::write_channel(&self.pcie, &mut self.tree, addr, st, buf)
+            }
+
+            _ => Err(Error::new(EBADF)),
+        }
+    }
+
+    fn call(&mut self, id: usize, payload: &mut [u8], metadata: &[u64]) -> Result<usize> {
+        let handle = self.handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+
+        if handle.stat {
+            return Err(Error::new(EBADF));
+        }
+
+        match handle.inner {
+            Handle::Access => {
+                let payload_len = u16::try_from(payload.len()).map_err(|_| Error::new(EINVAL))?;
+                let write = match metadata.get(0) {
+                    Some(1) => false,
+                    Some(2) => true,
+                    _ => return Err(Error::new(EINVAL)),
+                };
+                let (addr, offset) = match metadata.get(1) {
+                    Some(value) => {
+                        // Segment: u16, at 28 bits
+                        // Bus: u8, 8 bits, 256 total, at 20 bits
+                        // Device: u8, 5 bits, 32 total, at 15 bits
+                        // Function: u8, 3 bits, 8 total, at 12 bits
+                        // Offset: u16, 12 bits, 4096 total, at 0 bits
+                        (
+                            PciAddress::new(
+                                ((value >> 28) & 0xFFFF) as u16,
+                                ((value >> 20) & 0xFF) as u8,
+                                ((value >> 15) & 0x1F) as u8,
+                                ((value >> 12) & 0x7) as u8,
+                            ),
+                            (value & 0xFFF) as u16
+                        )
+                    }
+                    None => return Err(Error::new(EINVAL)),
+                };
+                // This handle must allow less than 4 byte access, but the
+                // lower level only works with 4 byte reads and writes
+                let unaligned = offset % 4;
+                let start = offset - unaligned;
+                let end = offset + payload_len;
+                let mut i = 0;
+                while start + i < end {
+                    let mut bytes = unsafe { self.pcie.read(addr, start + i) }.to_le_bytes();
+                    for j in 0..bytes.len() {
+                        if let Some(payload_i) = i.checked_sub(unaligned) {
+                            if let Some(payload_b) = payload.get_mut(usize::from(payload_i)) {
+                                if write {
+                                    bytes[j] = *payload_b;
+                                } else {
+                                    *payload_b = bytes[j]
+                                }
+                            }
+                        }
+                        i += 1;
+                    }
+                    if write {
+                        let value = u32::from_le_bytes(bytes);
+                        unsafe { self.pcie.write(addr, start + i, value); }
+                    }
+                }
+                Ok(payload.len())
             }
 
             _ => Err(Error::new(EBADF)),

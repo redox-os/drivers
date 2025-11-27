@@ -12,11 +12,11 @@ use std::time::Duration;
 
 use common::dma::Dma;
 use common::io::{Io, Mmio};
+use common::timeout::Timeout;
+use redox_scheme::scheme::SchemeSync;
 use redox_scheme::CallerCtx;
 use redox_scheme::OpenResult;
-use redox_scheme::scheme::SchemeSync;
-use syscall::EWOULDBLOCK;
-use syscall::error::{Error, Result, EACCES, EBADF, EINVAL};
+use syscall::error::{Error, Result, EACCES, EBADF, EINVAL, EIO, ENODEV, EWOULDBLOCK};
 
 use spin::Mutex;
 use syscall::schemev2::NewFdFlags;
@@ -207,28 +207,28 @@ impl IntelHDA {
             next_id: AtomicUsize::new(0),
         };
 
-        module.init();
+        module.init()?;
 
         module.info();
-        module.enumerate();
+        module.enumerate()?;
 
-        module.configure();
+        module.configure()?;
         log::debug!("IHDA: Initialization finished.");
         Ok(module)
     }
 
-    pub fn init(&mut self) -> bool {
-        self.reset_controller();
+    pub fn init(&mut self) -> Result<()> {
+        self.reset_controller()?;
 
         let use_immediate_command_interface = match self.vend_prod {
             0x8086_2668 => false,
             _ => true,
         };
 
-        self.cmd.init(use_immediate_command_interface);
+        self.cmd.init(use_immediate_command_interface)?;
         self.init_interrupts();
 
-        true
+        Ok(())
     }
 
     pub fn init_interrupts(&mut self) {
@@ -251,42 +251,42 @@ impl IntelHDA {
         self.int_counter
     }
 
-    pub fn read_node(&mut self, addr: WidgetAddr) -> HDANode {
+    pub fn read_node(&mut self, addr: WidgetAddr) -> Result<HDANode> {
         let mut node = HDANode::new();
         let mut temp: u64;
 
         node.addr = addr;
 
-        temp = self.cmd.cmd12(addr, 0xF00, 0x04);
+        temp = self.cmd.cmd12(addr, 0xF00, 0x04)?;
 
         node.subnode_count = (temp & 0xff) as u16;
         node.subnode_start = ((temp >> 16) & 0xff) as u16;
 
         if addr == (0, 0) {
-            return node;
+            return Ok(node);
         }
-        temp = self.cmd.cmd12(addr, 0xF00, 0x04);
+        temp = self.cmd.cmd12(addr, 0xF00, 0x04)?;
 
         node.function_group_type = (temp & 0xff) as u8;
 
-        temp = self.cmd.cmd12(addr, 0xF00, 0x09);
+        temp = self.cmd.cmd12(addr, 0xF00, 0x09)?;
         node.capabilities = temp as u32;
 
-        temp = self.cmd.cmd12(addr, 0xF00, 0x0E);
+        temp = self.cmd.cmd12(addr, 0xF00, 0x0E)?;
 
         node.conn_list_len = (temp & 0xFF) as u8;
 
-        node.connections = self.node_get_connection_list(&node);
+        node.connections = self.node_get_connection_list(&node)?;
 
-        node.connection_default = self.cmd.cmd12(addr, 0xF01, 0x00) as u8;
+        node.connection_default = self.cmd.cmd12(addr, 0xF01, 0x00)? as u8;
 
-        node.config_default = self.cmd.cmd12(addr, 0xF1C, 0x00) as u32;
+        node.config_default = self.cmd.cmd12(addr, 0xF1C, 0x00)? as u32;
 
-        node
+        Ok(node)
     }
 
-    pub fn node_get_connection_list(&mut self, node: &HDANode) -> Vec<WidgetAddr> {
-        let len_field: u8 = (self.cmd.cmd12(node.addr, 0xF00, 0x0E) & 0xFF) as u8;
+    pub fn node_get_connection_list(&mut self, node: &HDANode) -> Result<Vec<WidgetAddr>> {
+        let len_field: u8 = (self.cmd.cmd12(node.addr, 0xF00, 0x0E)? & 0xFF) as u8;
 
         // Highest bit is if addresses are represented in longer notation
         // lower 7 is actual count
@@ -299,7 +299,7 @@ impl IntelHDA {
         let mut list = Vec::<WidgetAddr>::new();
 
         while current < count {
-            let response: u32 = (self.cmd.cmd12(node.addr, 0xF02, current) & 0xFFFFFFFF) as u32;
+            let response: u32 = (self.cmd.cmd12(node.addr, 0xF02, current)? & 0xFFFFFFFF) as u32;
 
             if use_long_addr {
                 for i in 0..2 {
@@ -340,16 +340,16 @@ impl IntelHDA {
             current = list.len() as u8;
         }
 
-        list
+        Ok(list)
     }
 
-    pub fn enumerate(&mut self) {
+    pub fn enumerate(&mut self) -> Result<()> {
         self.output_pins.clear();
         self.input_pins.clear();
 
         let codec: u8 = 0;
 
-        let root = self.read_node((codec, 0));
+        let root = self.read_node((codec, 0))?;
 
         log::debug!("{}", root);
 
@@ -358,13 +358,13 @@ impl IntelHDA {
 
         //FIXME: So basically the way this is set up is to only support one codec and hopes the first one is an audio
         for i in 0..root_count {
-            let afg = self.read_node((codec, root_start + i));
+            let afg = self.read_node((codec, root_start + i))?;
             log::debug!("{}", afg);
             let afg_count = afg.subnode_count;
             let afg_start = afg.subnode_start;
 
             for j in 0..afg_count {
-                let mut widget = self.read_node((codec, afg_start + j));
+                let mut widget = self.read_node((codec, afg_start + j))?;
                 widget.is_widget = true;
                 match widget.widget_type() {
                     HDAWidgetType::AudioOutput => self.outputs.push(widget.addr),
@@ -385,15 +385,15 @@ impl IntelHDA {
                 self.widget_map.insert(widget.addr(), widget);
             }
         }
+
+        Ok(())
     }
 
-    pub fn find_best_output_pin(&mut self) -> Option<WidgetAddr> {
+    pub fn find_best_output_pin(&mut self) -> Result<WidgetAddr> {
         let outs = &self.output_pins;
-        if outs.len() == 0 {
-            None
-        } else if outs.len() == 1 {
-            Some(outs[0])
-        } else {
+        if outs.len() == 1 {
+            return Ok(outs[0]);
+        } else if outs.len() > 1 {
             //TODO: change output based on "unsolicited response" interrupts
             // Check for devices in this order: Headphone, Speaker, Line Out
             for supported_device in &[DefaultDevice::HPOut, DefaultDevice::Speaker] {
@@ -402,22 +402,21 @@ impl IntelHDA {
                     let cd = widget.configuration_default();
                     if cd.sequence() == 0 && &cd.default_device() == supported_device {
                         // Check for jack detect bit
-                        let pin_caps = self.cmd.cmd12(widget.addr, 0xF00, 0x0C);
+                        let pin_caps = self.cmd.cmd12(widget.addr, 0xF00, 0x0C)?;
                         if pin_caps & (1 << 2) != 0 {
                             // Check for presence
-                            let pin_sense = self.cmd.cmd12(widget.addr, 0xF09, 0);
+                            let pin_sense = self.cmd.cmd12(widget.addr, 0xF09, 0)?;
                             if pin_sense & (1 << 31) == 0 {
                                 // Skip if nothing is plugged in
                                 continue;
                             }
                         }
-                        return Some(out);
+                        return Ok(out);
                     }
                 }
             }
-
-            None
         }
+        Err(Error::new(ENODEV))
     }
 
     pub fn find_path_to_dac(&self, addr: WidgetAddr) -> Option<Vec<WidgetAddr>> {
@@ -469,8 +468,8 @@ impl IntelHDA {
         }
     }
 
-    pub fn configure(&mut self) {
-        let outpin = self.find_best_output_pin().expect("IHDA: No output pins?!");
+    pub fn configure(&mut self) -> Result<()> {
+        let outpin = self.find_best_output_pin()?;
 
         log::debug!("Best pin: {:01X}:{:02X}", outpin.0, outpin.1);
 
@@ -483,25 +482,25 @@ impl IntelHDA {
 
         // Set power state 0 (on) for all widgets in path
         for &addr in &path {
-            self.set_power_state(addr, 0);
+            self.set_power_state(addr, 0)?;
         }
 
         // Pin enable (0x80 = headphone amp enable, 0x40 = output enable)
-        self.cmd.cmd12(pin, 0x707, 0xC0);
+        self.cmd.cmd12(pin, 0x707, 0xC0)?;
 
         // EAPD enable
-        self.cmd.cmd12(pin, 0x70C, 2);
+        self.cmd.cmd12(pin, 0x70C, 2)?;
 
         // Set DAC stream and channel
-        self.set_stream_channel(dac, 1, 0);
+        self.set_stream_channel(dac, 1, 0)?;
 
         self.update_sound_buffers();
 
         log::debug!(
             "Supported Formats: {:08X}",
-            self.get_supported_formats((0, 0x1))
+            self.get_supported_formats((0, 0x1))?
         );
-        log::debug!("Capabilities: {:08X}", self.get_capabilities(path[0]));
+        log::debug!("Capabilities: {:08X}", self.get_capabilities(path[0])?);
 
         // Create output stream
         let output = self.get_output_stream_descriptor(0).unwrap();
@@ -513,16 +512,16 @@ impl IntelHDA {
         output.set_interrupt_on_completion(true);
 
         // Set DAC converter format
-        self.set_converter_format(dac, &super::SR_44_1, BitsPerSample::Bits16, 2);
+        self.set_converter_format(dac, &super::SR_44_1, BitsPerSample::Bits16, 2)?;
 
         // Get DAC converter format
         //TODO: should validate?
-        self.cmd.cmd12(dac, 0xA00, 0);
+        self.cmd.cmd12(dac, 0xA00, 0)?;
 
         // Unmute and set gain to 0db for input and output amplifiers on all widgets in path
         for &addr in &path {
             // Read widget capabilities
-            let caps = self.cmd.cmd12(addr, 0xF00, 0x09);
+            let caps = self.cmd.cmd12(addr, 0xF00, 0x09)?;
 
             //TODO: do we need to set any other indexes?
             let left = true;
@@ -533,28 +532,28 @@ impl IntelHDA {
             // Check for input amp
             if (caps & (1 << 1)) != 0 {
                 // Read input capabilities
-                let in_caps = self.cmd.cmd12(addr, 0xF00, 0x0D);
+                let in_caps = self.cmd.cmd12(addr, 0xF00, 0x0D)?;
                 let in_gain = (in_caps & 0x7f) as u8;
                 // Set input gain
                 let output = false;
                 let input = true;
                 self.set_amplifier_gain_mute(
                     addr, output, input, left, right, index, mute, in_gain,
-                );
+                )?;
                 log::debug!("Set {:X?} input gain to 0x{:X}", addr, in_gain);
             }
 
             // Check for output amp
             if (caps & (1 << 2)) != 0 {
                 // Read output capabilities
-                let out_caps = self.cmd.cmd12(addr, 0xF00, 0x12);
+                let out_caps = self.cmd.cmd12(addr, 0xF00, 0x12)?;
                 let out_gain = (out_caps & 0x7f) as u8;
                 // Set output gain
                 let output = true;
                 let input = false;
                 self.set_amplifier_gain_mute(
                     addr, output, input, left, right, index, mute, out_gain,
-                );
+                )?;
                 log::debug!("Set {:X?} output gain to 0x{:X}", addr, out_gain);
             }
         }
@@ -562,9 +561,15 @@ impl IntelHDA {
         //TODO: implement hda-verb?
 
         output.run();
-        log::debug!("Waiting for output 0 to start running...");
-        while output.control() & (1 << 1) == 0 {
-            //TODO: relax
+        {
+            log::debug!("Waiting for output 0 to start running...");
+            let timeout = Timeout::from_secs(1);
+            while output.control() & (1 << 1) == 0 {
+                timeout.run().map_err(|()| {
+                    log::error!("timeout on output running");
+                    Error::new(EIO)
+                })?;
+            }
         }
 
         log::debug!(
@@ -573,6 +578,7 @@ impl IntelHDA {
             output.status(),
             output.link_position()
         );
+        Ok(())
     }
     /*
 
@@ -647,34 +653,39 @@ impl IntelHDA {
         }
     }
 
-    pub fn read_beep(&mut self) -> u8 {
-        let addr = self.beep_addr;
-        if addr != (0, 0) {
-            self.cmd.cmd12(addr, 0x70A, 0) as u8
-        } else {
-            0
-        }
-    }
-
-    pub fn reset_controller(&mut self) -> bool {
-        self.cmd.stop();
+    pub fn reset_controller(&mut self) -> Result<()> {
+        self.cmd.stop()?;
 
         self.regs.statests.write(0x7FFF);
 
         // 3.3.7
-        self.regs.gctl.writef(CRST, false);
-        loop {
-            if !self.regs.gctl.readf(CRST) {
-                break;
+        {
+            let timeout = Timeout::from_secs(1);
+            self.regs.gctl.writef(CRST, false);
+            loop {
+                if !self.regs.gctl.readf(CRST) {
+                    break;
+                }
+                timeout.run().map_err(|()| {
+                    log::error!("failed to start reset");
+                    Error::new(EIO)
+                })?;
             }
         }
 
         thread::sleep(Duration::from_millis(1));
 
-        self.regs.gctl.writef(CRST, true);
-        loop {
-            if self.regs.gctl.readf(CRST) {
-                break;
+        {
+            let timeout = Timeout::from_secs(1);
+            self.regs.gctl.writef(CRST, true);
+            loop {
+                if self.regs.gctl.readf(CRST) {
+                    break;
+                }
+                timeout.run().map_err(|()| {
+                    log::error!("failed to finish reset");
+                    Error::new(EIO)
+                })?;
             }
         }
 
@@ -696,7 +707,7 @@ impl IntelHDA {
                 self.codecs.push(i as CodecAddr);
             }
         }
-        true
+        Ok(())
     }
 
     pub fn num_output_streams(&self) -> usize {
@@ -789,21 +800,23 @@ impl IntelHDA {
         self.regs.dpubase.write((addr_val >> 32) as u32);
     }
 
-    fn set_stream_channel(&mut self, addr: WidgetAddr, stream: u8, channel: u8) {
+    fn set_stream_channel(&mut self, addr: WidgetAddr, stream: u8, channel: u8) -> Result<()> {
         let val = ((stream & 0xF) << 4) | (channel & 0xF);
-        self.cmd.cmd12(addr, 0x706, val);
+        self.cmd.cmd12(addr, 0x706, val)?;
+        Ok(())
     }
 
-    fn set_power_state(&mut self, addr: WidgetAddr, state: u8) {
-        self.cmd.cmd12(addr, 0x705, state & 0xF) as u32;
+    fn set_power_state(&mut self, addr: WidgetAddr, state: u8) -> Result<()> {
+        self.cmd.cmd12(addr, 0x705, state & 0xF)?;
+        Ok(())
     }
 
-    fn get_supported_formats(&mut self, addr: WidgetAddr) -> u32 {
-        self.cmd.cmd12(addr, 0xF00, 0x0A) as u32
+    fn get_supported_formats(&mut self, addr: WidgetAddr) -> Result<u32> {
+        Ok(self.cmd.cmd12(addr, 0xF00, 0x0A)? as u32)
     }
 
-    fn get_capabilities(&mut self, addr: WidgetAddr) -> u32 {
-        self.cmd.cmd12(addr, 0xF00, 0x09) as u32
+    fn get_capabilities(&mut self, addr: WidgetAddr) -> Result<u32> {
+        Ok(self.cmd.cmd12(addr, 0xF00, 0x09)? as u32)
     }
 
     fn set_converter_format(
@@ -812,9 +825,10 @@ impl IntelHDA {
         sr: &super::SampleRate,
         bps: BitsPerSample,
         channels: u8,
-    ) {
+    ) -> Result<()> {
         let fmt = super::format_to_u16(sr, bps, channels);
-        self.cmd.cmd4(addr, 0x2, fmt);
+        self.cmd.cmd4(addr, 0x2, fmt)?;
+        Ok(())
     }
 
     fn set_amplifier_gain_mute(
@@ -827,7 +841,7 @@ impl IntelHDA {
         index: u8,
         mute: bool,
         gain: u8,
-    ) {
+    ) -> Result<()> {
         let mut payload: u16 = 0;
 
         if output {
@@ -848,7 +862,8 @@ impl IntelHDA {
         payload |= ((index as u16) & 0x0F) << 8;
         payload |= (gain as u16) & 0x7F;
 
-        self.cmd.cmd4(addr, 0x3, payload);
+        self.cmd.cmd4(addr, 0x3, payload)?;
+        Ok(())
     }
 
     pub fn write_to_output(&mut self, index: u8, buf: &[u8]) -> Poll<Result<usize>> {
@@ -996,22 +1011,42 @@ impl SchemeSync for IntelHDA {
         self.handles.lock().insert(id, handle);
 
         // TODO: always positioned?
-        Ok(OpenResult::ThisScheme { number: id, flags: NewFdFlags::POSITIONED })
+        Ok(OpenResult::ThisScheme {
+            number: id,
+            flags: NewFdFlags::POSITIONED,
+        })
     }
 
-    fn read(&mut self, id: usize, buf: &mut [u8], offset: u64, _flags: u32, _ctx: &CallerCtx) -> Result<usize> {
+    fn read(
+        &mut self,
+        id: usize,
+        buf: &mut [u8],
+        offset: u64,
+        _flags: u32,
+        _ctx: &CallerCtx,
+    ) -> Result<usize> {
         let handles = self.handles.lock();
         let Some(Handle::StrBuf(strbuf)) = handles.get(&id) else {
             return Err(Error::new(EBADF));
         };
 
-        let src = usize::try_from(offset).ok().and_then(|o| strbuf.get(o..)).unwrap_or(&[]);
+        let src = usize::try_from(offset)
+            .ok()
+            .and_then(|o| strbuf.get(o..))
+            .unwrap_or(&[]);
         let len = src.len().min(buf.len());
         buf[..len].copy_from_slice(&src[..len]);
         Ok(len)
     }
 
-    fn write(&mut self, id: usize, buf: &[u8], _offset: u64, _flags: u32, _ctx: &CallerCtx) -> Result<usize> {
+    fn write(
+        &mut self,
+        id: usize,
+        buf: &[u8],
+        _offset: u64,
+        _flags: u32,
+        _ctx: &CallerCtx,
+    ) -> Result<usize> {
         let index = {
             let mut handles = self.handles.lock();
             match handles.get_mut(&id).ok_or(Error::new(EBADF))? {

@@ -1,11 +1,11 @@
 use std::convert::TryInto;
 use std::mem;
 
-use common::io::{Io, Mmio, ReadOnly};
-use driver_network::NetworkAdapter;
-use syscall::error::{Error, Result, EMSGSIZE};
-
 use common::dma::Dma;
+use common::io::{Io, Mmio, ReadOnly};
+use common::timeout::Timeout;
+use driver_network::NetworkAdapter;
+use syscall::error::{Error, Result, EIO, EMSGSIZE};
 
 #[repr(C, packed)]
 struct Regs {
@@ -220,7 +220,7 @@ impl Rtl8168 {
         }
     }
 
-    pub unsafe fn init(&mut self) {
+    pub unsafe fn init(&mut self) -> Result<()> {
         let mac_low = self.regs.mac[0].read();
         let mac_high = self.regs.mac[1].read();
         let mac = [
@@ -233,15 +233,23 @@ impl Rtl8168 {
         ];
         log::debug!(
             "MAC: {:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}:{:>02X}",
-            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
+            mac[0],
+            mac[1],
+            mac[2],
+            mac[3],
+            mac[4],
+            mac[5]
         );
         self.mac_address = mac;
 
         // Reset - this will disable tx and rx, reinitialize FIFOs, and set the system buffer pointer to the initial value
-        log::debug!("Reset");
-        self.regs.cmd.writef(1 << 4, true);
-        while self.regs.cmd.readf(1 << 4) {
-            core::hint::spin_loop();
+        {
+            log::debug!("Reset");
+            let timeout = Timeout::from_secs(1);
+            self.regs.cmd.writef(1 << 4, true);
+            while self.regs.cmd.readf(1 << 4) {
+                timeout.run().map_err(|()| Error::new(EIO))?;
+            }
         }
 
         // Set up rx buffers
@@ -332,5 +340,6 @@ impl Rtl8168 {
         self.regs.cmd_9346.write(0);
 
         log::debug!("Complete!");
+        Ok(())
     }
 }

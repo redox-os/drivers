@@ -34,10 +34,13 @@ fn main() {
 
         let address = unsafe { pcid_handle.map_bar(0) }.ptr.as_ptr() as usize;
 
-        let device =
-            unsafe { device::Intel8254x::new(address).expect("e1000d: failed to allocate device") };
-
-        let mut scheme = NetworkScheme::new(device, format!("network.{name}"));
+        let mut scheme = NetworkScheme::new(
+            move || unsafe {
+                device::Intel8254x::new(address).expect("e1000d: failed to allocate device")
+            },
+            daemon,
+            format!("network.{name}"),
+        );
 
         user_data! {
             enum Source {
@@ -65,10 +68,6 @@ fn main() {
             .expect("e1000d: failed to subscribe to scheme fd");
 
         libredox::call::setrens(0, 0).expect("e1000d: failed to enter null namespace");
-
-        daemon
-            .ready()
-            .expect("e1000d: failed to mark daemon as ready");
 
         scheme.tick().unwrap();
 

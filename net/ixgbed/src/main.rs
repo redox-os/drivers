@@ -30,10 +30,14 @@ fn main() {
         let address = mapped_bar.ptr.as_ptr();
         let size = mapped_bar.bar_size;
 
-        let device = device::Intel8259x::new(address as usize, size)
-            .expect("ixgbed: failed to allocate device");
-
-        let mut scheme = NetworkScheme::new(device, format!("network.{name}"));
+        let mut scheme = NetworkScheme::new(
+            move || {
+                device::Intel8259x::new(address as usize, size)
+                    .expect("ixgbed: failed to allocate device")
+            },
+            daemon,
+            format!("network.{name}"),
+        );
 
         user_data! {
             enum Source {
@@ -60,10 +64,6 @@ fn main() {
             .unwrap();
 
         libredox::call::setrens(0, 0).expect("ixgbed: failed to enter null namespace");
-
-        daemon
-            .ready()
-            .expect("ixgbed: failed to mark daemon as ready");
 
         scheme.tick().unwrap();
 

@@ -3,8 +3,8 @@ extern crate event;
 extern crate spin;
 extern crate syscall;
 
-use redox_scheme::Socket;
 use redox_scheme::wrappers::ReadinessBased;
+use redox_scheme::Socket;
 use std::cell::RefCell;
 use std::fs::File;
 use std::io::{Read, Write};
@@ -101,8 +101,20 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         let socket = Socket::nonblock("audiohw").expect("ihdad: failed to create socket");
         let mut readiness_based = ReadinessBased::new(&socket, 16);
 
+        daemon.ready().expect("ihdad: failed to signal readiness");
+
+        let event_queue =
+            EventQueue::<Source>::new().expect("ihdad: Could not create event queue.");
+        let mut device = unsafe {
+            hda::IntelHDA::new(address, vend_prod).expect("ihdad: failed to allocate device")
+        };
+
         event_queue
-            .subscribe(socket.inner().raw(), Source::Scheme, event::EventFlags::READ)
+            .subscribe(
+                socket.inner().raw(),
+                Source::Scheme,
+                event::EventFlags::READ,
+            )
             .unwrap();
         event_queue
             .subscribe(
@@ -111,8 +123,6 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
                 event::EventFlags::READ,
             )
             .unwrap();
-
-        daemon.ready().expect("ihdad: failed to signal readiness");
 
         libredox::call::setrens(0, 0).expect("ihdad: failed to enter null namespace");
 
@@ -132,7 +142,9 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
                     }
                     irq_file.write(&mut irq).unwrap();
 
-                    readiness_based.poll_all_requests(|| device.borrow_mut()).expect("ihdad: failed to poll requests");
+                    readiness_based
+                        .poll_all_requests(|| device.borrow_mut())
+                        .expect("ihdad: failed to poll requests");
 
                     /*
                     let next_read = device_irq.next_read();
@@ -142,11 +154,17 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
                     */
                 }
                 Source::Scheme => {
-                    if !readiness_based.read_requests().expect("ihdad: failed to read from socket") {
+                    if !readiness_based
+                        .read_requests()
+                        .expect("ihdad: failed to read from socket")
+                    {
                         break;
                     }
                     readiness_based.process_requests(|| device.borrow_mut());
-                    if !readiness_based.write_responses().expect("ihdad: failed to write to socket") {
+                    if !readiness_based
+                        .write_responses()
+                        .expect("ihdad: failed to write to socket")
+                    {
                         break;
                     }
 

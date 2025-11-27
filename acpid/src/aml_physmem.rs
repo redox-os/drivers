@@ -140,13 +140,74 @@ impl AmlPageCache {
 #[derive(Clone)]
 pub struct AmlPhysMemHandler {
     page_cache: Arc<Mutex<AmlPageCache>>,
+    pci_fd: Arc<Option<libredox::Fd>>,
 }
 
 /// Read from a physical address.
 /// Generic parameter must be u8, u16, u32 or u64.
 impl AmlPhysMemHandler {
     pub fn new(page_cache: Arc<Mutex<AmlPageCache>>) -> Self {
-        Self { page_cache }
+        //TODO: have PCID send a socket?
+        let pci_fd = Arc::new(
+            match libredox::Fd::open(
+                "/scheme/pci/access",
+                libredox::flag::O_RDWR | libredox::flag::O_CLOEXEC,
+                0
+            ) {
+                Ok(fd) => Some(fd),
+                Err(err) => {
+                    log::error!("failed to open /scheme/pci/access: {}", err);
+                    None
+                }
+            }
+        );
+        Self { page_cache, pci_fd }
+    }
+
+    fn pci_call_metadata(kind: u8, addr: PciAddress, off: u16) -> [u64; 2] {
+        // Segment: u16, at 28 bits
+        // Bus: u8, 8 bits, 256 total, at 20 bits
+        // Device: u8, 5 bits, 32 total, at 15 bits
+        // Function: u8, 3 bits, 8 total, at 12 bits
+        // Offset: u16, 12 bits, 4096 total, at 0 bits
+        [
+            kind.into(),
+            (u64::from(addr.segment()) << 28) |
+            (u64::from(addr.bus()) << 20) |
+            (u64::from(addr.device()) << 15) |
+            (u64::from(addr.function()) << 12) |
+            u64::from(off)
+        ]
+    }
+
+    fn read_pci(&self, addr: PciAddress, off: u16, value: &mut [u8]) {
+        let metadata = Self::pci_call_metadata(1, addr, off);
+        match &*self.pci_fd {
+            Some(pci_fd) => match pci_fd.call_ro(value, syscall::CallFlags::empty(), &metadata) {
+                Ok(_) => {},
+                Err(err) => {
+                    log::error!("read pci {addr}@{off:04X}:{:02X}: {}", value.len(), err);
+                }
+            },
+            None => {
+                log::error!("read pci {addr}@{off:04X}:{:02X}: pci access not available", value.len());
+            }
+        }
+    }
+
+    fn write_pci(&self, addr: PciAddress, off: u16, value: &[u8]) {
+        let metadata = Self::pci_call_metadata(2, addr, off);
+        match &*self.pci_fd {
+            Some(pci_fd) => match pci_fd.call_wo(value, syscall::CallFlags::empty(), &metadata) {
+                Ok(_) => {},
+                Err(err) => {
+                    log::error!("write pci {addr}@{off:04X}={value:02X?}: {}", err);
+                }
+            }
+            None => {
+                log::error!("write pci {addr}@{off:04X}={value:02X?}: pci access not available");
+            }
+        }
     }
 }
 
@@ -314,25 +375,28 @@ impl acpi::Handler for AmlPhysMemHandler {
     }
 
     fn read_pci_u8(&self, addr: PciAddress, off: u16) -> u8 {
-        log::error!("read pci u8 {addr}@{off:04X}");
-        0
+        let mut value = [0u8];
+        self.read_pci(addr, off, &mut value);
+        value[0]
     }
     fn read_pci_u16(&self, addr: PciAddress, off: u16) -> u16 {
-        log::error!("read pci u16 {addr}@{off:04X}");
-        0
+        let mut value = [0u8; 2];
+        self.read_pci(addr, off, &mut value);
+        u16::from_le_bytes(value)
     }
     fn read_pci_u32(&self, addr: PciAddress, off: u16) -> u32 {
-        log::error!("read pci u32 {addr}@{off:04X}");
-        0
+        let mut value = [0u8; 4];
+        self.read_pci(addr, off, &mut value);
+        u32::from_le_bytes(value)
     }
     fn write_pci_u8(&self, addr: PciAddress, off: u16, value: u8) {
-        log::error!("write pci u8 {addr}@{off:04X}={value:02X}");
+        self.write_pci(addr, off, &[value]);
     }
     fn write_pci_u16(&self, addr: PciAddress, off: u16, value: u16) {
-        log::error!("write pci u16 {addr}@{off:04X}={value:04X}");
+        self.write_pci(addr, off, &value.to_le_bytes());
     }
     fn write_pci_u32(&self, addr: PciAddress, off: u16, value: u32) {
-        log::error!("write pci u32 {addr}@{off:04X}={value:08X}");
+        self.write_pci(addr, off, &value.to_le_bytes());
     }
 
     fn nanos_since_boot(&self) -> u64 {

@@ -169,7 +169,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let mut nvme = Nvme::new(address.as_ptr() as usize, interrupt_method, pcid_handle)
         .expect("nvmed: failed to allocate driver data");
 
-    unsafe { nvme.init() }
+    unsafe { nvme.init().expect("nvmed: failed to init") }
     log::debug!("Finished base initialization");
     let nvme = Arc::new(nvme);
 
