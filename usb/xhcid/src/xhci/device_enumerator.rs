@@ -78,7 +78,7 @@ impl<const N: usize> DeviceEnumerator<N> {
 
                     //THIS LOCKS THE PORTS. DO NOT LOCK PORTS BEFORE THIS POINT
                     info!("Received a device connect on port {}, but it's not enabled. Resetting the port.", port_id);
-                    self.hci.reset_port(port_id);
+                    let _ = self.hci.reset_port(port_id);
 
                     let mut ports = self.hci.ports.lock().unwrap();
                     let port = &mut ports[port_array_index];

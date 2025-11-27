@@ -20,7 +20,7 @@ use syscall::error::{Error, Result, EBADF, EBADMSG, EIO, ENOENT};
 use syscall::{EAGAIN, PAGE_SIZE};
 
 use chashmap::CHashMap;
-use common::{dma::Dma, io::Io};
+use common::{dma::Dma, io::Io, timeout::Timeout};
 use crossbeam_channel::{Receiver, Sender};
 use log::{debug, error, info, trace, warn};
 use serde::Deserialize;
@@ -374,26 +374,42 @@ impl<const N: usize> Xhci<N> {
 
         //Reset the XHCI device
         let (max_slots, max_ports) = {
-            debug!("Waiting for xHC becoming ready.");
-            // Wait until controller is ready
-            while op.usb_sts.readf(USB_STS_CNR) {
-                trace!("Waiting for the xHC to be ready.");
+            {
+                debug!("Waiting for xHC becoming ready.");
+                let timeout = Timeout::from_secs(1);
+                while op.usb_sts.readf(USB_STS_CNR) {
+                    timeout.run().map_err(|()| {
+                        log::error!("timeout on USB_STS_CNR");
+                        Error::new(EIO)
+                    })?;
+                }
             }
 
             debug!("Stopping the xHC");
             // Set run/stop to 0
             op.usb_cmd.writef(USB_CMD_RS, false);
 
-            debug!("Waiting for the xHC to stop.");
-            // Wait until controller not running
-            while !op.usb_sts.readf(USB_STS_HCH) {
-                trace!("Waiting for the xHC to stop.");
+            {
+                debug!("Waiting for the xHC to stop.");
+                let timeout = Timeout::from_secs(1);
+                while !op.usb_sts.readf(USB_STS_HCH) {
+                    timeout.run().map_err(|()| {
+                        log::error!("timeout on USB_STS_HCH");
+                        Error::new(EIO)
+                    })?;
+                }
             }
 
-            debug!("Resetting the xHC.");
-            op.usb_cmd.writef(USB_CMD_HCRST, true);
-            while op.usb_cmd.readf(USB_CMD_HCRST) {
-                trace!("Waiting for the xHC to reset.");
+            {
+                debug!("Resetting the xHC.");
+                op.usb_cmd.writef(USB_CMD_HCRST, true);
+                let timeout = Timeout::from_secs(1);
+                while op.usb_cmd.readf(USB_CMD_HCRST) {
+                    timeout.run().map_err(|()| {
+                        log::error!("timeout on USB_CMD_HCRST");
+                        Error::new(EIO)
+                    })?;
+                }
             }
 
             debug!("Reading max slots.");
@@ -472,14 +488,20 @@ impl<const N: usize> Xhci<N> {
         self.op.get_mut().unwrap().usb_cmd.writef(USB_CMD_RS, false);
 
         // Warm reset
-        debug!("Reset xHC");
-        self.op
-            .get_mut()
-            .unwrap()
-            .usb_cmd
-            .writef(USB_CMD_HCRST, true);
-        while self.op.get_mut().unwrap().usb_cmd.readf(USB_CMD_HCRST) {
-            thread::yield_now();
+        {
+            debug!("Reset xHC");
+            let timeout = Timeout::from_secs(1);
+            self.op
+                .get_mut()
+                .unwrap()
+                .usb_cmd
+                .writef(USB_CMD_HCRST, true);
+            while self.op.get_mut().unwrap().usb_cmd.readf(USB_CMD_HCRST) {
+                timeout.run().map_err(|()| {
+                    log::error!("timeout on USB_CMD_HCRST");
+                    Error::new(EIO)
+                })?;
+            }
         }
 
         // Set enabled slots
@@ -552,10 +574,15 @@ impl<const N: usize> Xhci<N> {
         debug!("Starting xHC.");
         self.op.get_mut().unwrap().usb_cmd.writef(USB_CMD_RS, true);
 
-        // Wait until controller is running
-        debug!("Waiting for start request to complete.");
-        while self.op.get_mut().unwrap().usb_sts.readf(USB_STS_HCH) {
-            trace!("Waiting for XHCI to report running status.");
+        {
+            debug!("Waiting for start request to complete.");
+            let timeout = Timeout::from_secs(1);
+            while self.op.get_mut().unwrap().usb_sts.readf(USB_STS_HCH) {
+                timeout.run().map_err(|()| {
+                    log::error!("timeout on USB_STS_HCH");
+                    Error::new(EIO)
+                })?;
+            }
         }
 
         // Ring command doorbell
@@ -654,7 +681,7 @@ impl<const N: usize> Xhci<N> {
             };
         }
     }
-    pub fn reset_port(&self, port_id: PortId) {
+    pub fn reset_port(&self, port_id: PortId) -> Result<()> {
         debug!("XHCI Port {} reset", port_id);
 
         //TODO handle the second unwrap
@@ -664,20 +691,22 @@ impl<const N: usize> Xhci<N> {
 
         debug!("Port {} Link State: {}", port_id, port.state());
 
-        port.set_pr();
-        debug!(
-            "Flags after setting port {} reset: {:?}",
-            port_id,
-            port.flags()
-        );
-        while !port.flags().contains(port::PortFlags::PRC) {
-            debug!("port {} reset loop ran at least once!", port_id);
-            if instant.elapsed().as_secs() >= 1 {
-                warn!("timeout");
-                break;
+        {
+            port.set_pr();
+            debug!(
+                "Flags after setting port {} reset: {:?}",
+                port_id,
+                port.flags()
+            );
+            let timeout = Timeout::from_secs(1);
+            while !port.flags().contains(port::PortFlags::PRC) {
+                timeout.run().map_err(|()| {
+                    log::error!("timeout on port {} PRC", port_id);
+                    Error::new(EIO)
+                })?;
             }
-            std::thread::yield_now();
         }
+        Ok(())
     }
 
     pub fn setup_scratchpads(&mut self) -> Result<()> {
