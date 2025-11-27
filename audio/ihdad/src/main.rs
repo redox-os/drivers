@@ -103,12 +103,6 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
         daemon.ready().expect("ihdad: failed to signal readiness");
 
-        let event_queue =
-            EventQueue::<Source>::new().expect("ihdad: Could not create event queue.");
-        let mut device = unsafe {
-            hda::IntelHDA::new(address, vend_prod).expect("ihdad: failed to allocate device")
-        };
-
         event_queue
             .subscribe(
                 socket.inner().raw(),
