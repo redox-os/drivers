@@ -1,5 +1,7 @@
 use common::dma::Dma;
 use common::io::{Io, Mmio};
+use common::timeout::Timeout;
+use syscall::error::{Error, Result, EIO};
 
 use super::common::*;
 
@@ -85,8 +87,8 @@ impl Corb {
     }
 
     //Intel 4.4.1.3
-    pub fn init(&mut self) {
-        self.stop();
+    pub fn init(&mut self) -> Result<()> {
+        self.stop()?;
         //Determine CORB and RIRB size and allocate buffer
 
         //3.3.24
@@ -118,9 +120,11 @@ impl Corb {
         self.set_address(addr);
         self.regs.corbsize.write((corbsize_reg & 0xFC) | corbsize);
 
-        self.reset_read_pointer();
+        self.reset_read_pointer()?;
         let old_wp = self.regs.corbwp.read();
         self.regs.corbwp.write(old_wp & 0xFF00);
+
+        Ok(())
     }
 
     pub fn start(&mut self) {
@@ -128,10 +132,16 @@ impl Corb {
     }
 
     #[inline(never)]
-    pub fn stop(&mut self) {
+    pub fn stop(&mut self) -> Result<()> {
+        let timeout = Timeout::from_secs(1);
         while self.regs.corbctl.readf(CORBRUN) {
             self.regs.corbctl.writef(CORBRUN, false);
+            timeout.run().map_err(|()| {
+                log::error!("timeout on clearing CORBRUN");
+                Error::new(EIO)
+            })?;
         }
+        Ok(())
     }
 
     pub fn set_address(&mut self, addr: usize) {
@@ -139,36 +149,60 @@ impl Corb {
         self.regs.corbubase.write(((addr as u64) >> 32) as u32);
     }
 
-    pub fn reset_read_pointer(&mut self) {
+    pub fn reset_read_pointer(&mut self) -> Result<()> {
         // 3.3.21
 
-        self.stop();
+        self.stop()?;
 
         // Set CORBRPRST to 1
         log::trace!("CORBRP {:X}", self.regs.corbrp.read());
         self.regs.corbrp.writef(CORBRPRST, true);
         log::trace!("CORBRP {:X}", self.regs.corbrp.read());
 
-        // Wait for it to become 1
-        while !self.regs.corbrp.readf(CORBRPRST) {
-            self.regs.corbrp.writef(CORBRPRST, true);
+        {
+            // Wait for it to become 1
+            let timeout = Timeout::from_secs(1);
+            while !self.regs.corbrp.readf(CORBRPRST) {
+                self.regs.corbrp.writef(CORBRPRST, true);
+                timeout.run().map_err(|()| {
+                    log::error!("timeout on setting CORBRPRST");
+                    Error::new(EIO)
+                })?;
+            }
         }
 
         // Clear the bit again
         self.regs.corbrp.writef(CORBRPRST, false);
 
-        // Read back the bit until zero to verify that it is cleared.
-        loop {
-            if !self.regs.corbrp.readf(CORBRPRST) {
-                break;
+        {
+            // Read back the bit until zero to verify that it is cleared.
+            let timeout = Timeout::from_secs(1);
+            loop {
+                if !self.regs.corbrp.readf(CORBRPRST) {
+                    break;
+                }
+                self.regs.corbrp.writef(CORBRPRST, false);
+                timeout.run().map_err(|()| {
+                    log::error!("timeout on clearing CORBRPRST");
+                    Error::new(EIO)
+                })?;
             }
-            self.regs.corbrp.writef(CORBRPRST, false);
         }
+
+        Ok(())
     }
 
-    fn send_command(&mut self, cmd: u32) {
-        // wait for the commands to finish
-        while (self.regs.corbwp.read() & 0xff) != (self.regs.corbrp.read() & 0xff) {}
+    fn send_command(&mut self, cmd: u32) -> Result<()> {
+        {
+            // wait for the commands to finish
+            let timeout = Timeout::from_secs(1);
+            while (self.regs.corbwp.read() & 0xff) != (self.regs.corbrp.read() & 0xff) {
+                timeout.run().map_err(|()| {
+                    log::error!("timeout on CORB command");
+                    Error::new(EIO)
+                })?;
+            }
+        }
         let write_pos: usize = ((self.regs.corbwp.read() as usize & 0xFF) + 1) % self.corb_count;
         unsafe {
             *self.corb_base.offset(write_pos as isize) = cmd;
@@ -177,6 +211,7 @@ impl Corb {
         self.regs.corbwp.write(write_pos as u16);
 
         log::trace!("Corb: {:08X}", cmd);
+        Ok(())
     }
 }
 
@@ -212,8 +247,8 @@ impl Rirb {
         }
     }
     //Intel 4.4.1.3
-    pub fn init(&mut self) {
-        self.stop();
+    pub fn init(&mut self) -> Result<()> {
+        self.stop()?;
 
         let rirbsize_reg = self.regs.rirbsize.read();
         let rirbszcap = (rirbsize_reg >> 4) & 0xF;
@@ -247,16 +282,24 @@ impl Rirb {
         self.rirb_rp = 0;
 
         self.regs.rintcnt.write(1);
+
+        Ok(())
     }
 
     pub fn start(&mut self) {
         self.regs.rirbctl.writef(RIRBDMAEN | RINTCTL, true);
     }
 
-    pub fn stop(&mut self) {
+    pub fn stop(&mut self) -> Result<()> {
+        let timeout = Timeout::from_secs(1);
         while self.regs.rirbctl.readf(RIRBDMAEN) {
             self.regs.rirbctl.writef(RIRBDMAEN, false);
+            timeout.run().map_err(|()| {
+                log::error!("timeout on clearing RIRBDMAEN");
+                Error::new(EIO)
+            })?;
         }
+        Ok(())
     }
 
     pub fn set_address(&mut self, addr: usize) {
@@ -268,9 +311,17 @@ impl Rirb {
         self.regs.rirbwp.writef(RIRBWPRST, true);
     }
 
-    fn read_response(&mut self) -> u64 {
-        // wait for response
-        while (self.regs.rirbwp.read() & 0xff) == (self.rirb_rp & 0xff) {}
+    fn read_response(&mut self) -> Result<u64> {
+        {
+            // wait for response
+            let timeout = Timeout::from_secs(1);
+            while (self.regs.rirbwp.read() & 0xff) == (self.rirb_rp & 0xff) {
+                timeout.run().map_err(|()| {
+                    log::error!("timeout on RIRB response");
+                    Error::new(EIO)
+                })?;
+            }
+        }
         let read_pos: u16 = (self.rirb_rp + 1) % self.rirb_count as u16;
 
         let res: u64;
@@ -279,7 +330,7 @@ impl Rirb {
         }
         self.rirb_rp = read_pos;
         log::trace!("Rirb: {:08X}", res);
-        res
+        Ok(res)
     }
 }
 
@@ -303,9 +354,17 @@ impl ImmediateCommand {
         }
     }
 
-    pub fn cmd(&mut self, cmd: u32) -> u64 {
-        // wait for ready
-        while self.regs.ics.readf(ICB) {}
+    pub fn cmd(&mut self, cmd: u32) -> Result<u64> {
+        {
+            // wait for ready
+            let timeout = Timeout::from_secs(1);
+            while self.regs.ics.readf(ICB) {
+                timeout.run().map_err(|()| {
+                    log::error!("timeout on immediate command");
+                    Error::new(EIO)
+                })?;
+            }
+        }
 
         // write command
         self.regs.icoi.write(cmd);
@@ -313,8 +372,16 @@ impl ImmediateCommand {
         // set ICB bit to send command
         self.regs.ics.writef(ICB, true);
 
-        // wait for IRV bit to be set to indicate a response is latched
-        while !self.regs.ics.readf(IRV) {}
+        {
+            // wait for IRV bit to be set to indicate a response is latched
+            let timeout = Timeout::from_secs(1);
+            while !self.regs.ics.readf(IRV) {
+                timeout.run().map_err(|()| {
+                    log::error!("timeout on immediate response");
+                    Error::new(EIO)
+                })?;
+            }
+        }
 
         // read the result register twice, total of 8 bytes
         // highest 4 will most likely be zeros (so I've heard)
@@ -324,7 +391,7 @@ impl ImmediateCommand {
         // clear the bit so we know when the next response comes
         self.regs.ics.writef(IRV, false);
 
-        res
+        Ok(res)
     }
 }
 
@@ -370,18 +437,20 @@ impl CommandBuffer {
         cmdbuff
     }
 
-    pub fn init(&mut self, use_imm_cmds: bool) {
-        self.corb.init();
-        self.rirb.init();
-        self.set_use_imm_cmds(use_imm_cmds);
+    pub fn init(&mut self, use_imm_cmds: bool) -> Result<()> {
+        self.corb.init()?;
+        self.rirb.init()?;
+        self.set_use_imm_cmds(use_imm_cmds)?;
+        Ok(())
     }
 
-    pub fn stop(&mut self) {
-        self.corb.stop();
-        self.rirb.stop();
+    pub fn stop(&mut self) -> Result<()> {
+        self.corb.stop()?;
+        self.rirb.stop()?;
+        Ok(())
     }
 
-    pub fn cmd12(&mut self, addr: WidgetAddr, command: u32, data: u8) -> u64 {
+    pub fn cmd12(&mut self, addr: WidgetAddr, command: u32, data: u8) -> Result<u64> {
         let mut ncmd: u32 = 0;
 
         ncmd |= (addr.0 as u32 & 0x00F) << 28;
@@ -390,7 +459,7 @@ impl CommandBuffer {
         ncmd |= (data as u32 & 0x0FF) << 0;
         self.cmd(ncmd)
     }
-    pub fn cmd4(&mut self, addr: WidgetAddr, command: u32, data: u16) -> u64 {
+    pub fn cmd4(&mut self, addr: WidgetAddr, command: u32, data: u16) -> Result<u64> {
         let mut ncmd: u32 = 0;
 
         ncmd |= (addr.0 as u32 & 0x000F) << 28;
@@ -400,7 +469,7 @@ impl CommandBuffer {
         self.cmd(ncmd)
     }
 
-    pub fn cmd(&mut self, cmd: u32) -> u64 {
+    pub fn cmd(&mut self, cmd: u32) -> Result<u64> {
         if self.use_immediate_cmd {
             self.cmd_imm(cmd)
         } else {
@@ -408,24 +477,25 @@ impl CommandBuffer {
         }
     }
 
-    pub fn cmd_imm(&mut self, cmd: u32) -> u64 {
+    pub fn cmd_imm(&mut self, cmd: u32) -> Result<u64> {
         self.icmd.cmd(cmd)
     }
 
-    pub fn cmd_buff(&mut self, cmd: u32) -> u64 {
-        self.corb.send_command(cmd);
+    pub fn cmd_buff(&mut self, cmd: u32) -> Result<u64> {
+        self.corb.send_command(cmd)?;
         self.rirb.read_response()
     }
 
-    pub fn set_use_imm_cmds(&mut self, use_imm: bool) {
+    pub fn set_use_imm_cmds(&mut self, use_imm: bool) -> Result<()> {
         self.use_immediate_cmd = use_imm;
 
         if self.use_immediate_cmd {
-            self.corb.stop();
-            self.rirb.stop();
+            self.corb.stop()?;
+            self.rirb.stop()?;
         } else {
             self.corb.start();
             self.rirb.start();
         }
+        Ok(())
     }
 }
