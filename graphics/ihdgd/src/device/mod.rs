@@ -86,7 +86,7 @@ impl Device {
             MmioRegion::new(phys, size)?
         };
         let iobar = func.bars[4].expect_port();
-        log::info!("IOBAR {:X?}", iobar);
+        log::debug!("IOBAR {:X?}", iobar);
 
         let ddi = Ddi::new(kind)?;
 
@@ -97,10 +97,10 @@ impl Device {
             DeviceKind::TigerLake => {
                 // IHD-OS-TGL-Vol 2c-12.21
                 let dc_state_en = unsafe { gttmm.mmio(0x45504)? };
-                log::info!("DC_STATE_EN {:08X}", dc_state_en.read());
+                log::debug!("DC_STATE_EN {:08X}", dc_state_en.read());
 
                 let fuse_status = unsafe { gttmm.mmio(0x42000)? };
-                log::info!("FUSE_STATUS {:08X}", fuse_status.read());
+                log::debug!("FUSE_STATUS {:08X}", fuse_status.read());
 
                 gmbus = unsafe { [
                     gttmm.mmio(0xC5100)?,
@@ -112,13 +112,13 @@ impl Device {
                 ] };
 
                 let pwr_well_ctl = unsafe { gttmm.mmio(0x45404)? };
-                log::info!("PWR_WELL_CTL {:08X}", pwr_well_ctl.read());
+                log::debug!("PWR_WELL_CTL {:08X}", pwr_well_ctl.read());
 
                 pwr_well_ctl_aux = unsafe { gttmm.mmio(0x45444)? };
-                log::info!("PWR_WELL_CTL_AUX {:08X}", pwr_well_ctl_aux.read());
+                log::debug!("PWR_WELL_CTL_AUX {:08X}", pwr_well_ctl_aux.read());
 
                 pwr_well_ctl_ddi = unsafe { gttmm.mmio(0x45454)? };
-                log::info!("PWR_WELL_CTL_DDI {:08X}", pwr_well_ctl_ddi.read());
+                log::debug!("PWR_WELL_CTL_DDI {:08X}", pwr_well_ctl_ddi.read());
             },
         };
 
@@ -126,7 +126,7 @@ impl Device {
             //TODO: init port if needed
             if let Some(offset) = port.port_comp_dw0() {
                 let port_comp_dw0 = unsafe { gttmm.mmio(offset)? };
-                log::info!("PORT_COMP_DW0_{}: {:08X}", port.name, port_comp_dw0.read());
+                log::debug!("PORT_COMP_DW0_{}: {:08X}", port.name, port_comp_dw0.read());
             }
 
             //let buf_ctl = unsafe { gttmm.mmio(port.buf_ctl())? };
@@ -214,7 +214,7 @@ impl Device {
                 let timeout = Timeout::from_secs(1);
                 while aux_ctl.readf(AUX_CTL_BUSY) {
                     timeout.run().map_err(|()| {
-                        log::warn!("AUX I2C transaction wait timeout");
+                        log::debug!("AUX I2C transaction wait timeout");
                         Error::new(EIO)
                     })?;
                 }
@@ -222,15 +222,15 @@ impl Device {
                 // Read result
                 v = aux_ctl.read();
                 if (v & AUX_CTL_TIMEOUT_ERROR) != 0 {
-                    log::warn!("AUX I2C transaction timeout error");
+                    log::debug!("AUX I2C transaction timeout error");
                     return Err(Error::new(EIO));
                 } 
                 if (v & AUX_CTL_RECEIVE_ERROR) != 0 {
-                    log::warn!("AUX I2C transaction receive error");
+                    log::debug!("AUX I2C transaction receive error");
                     return Err(Error::new(EIO));
                 } 
                 if (v & AUX_CTL_DONE) == 0 {
-                    log::warn!("AUX I2C transaction done not set");
+                    log::debug!("AUX I2C transaction done not set");
                     return Err(Error::new(EIO));
                 }
 
@@ -244,7 +244,7 @@ impl Device {
                 aux_data_i = 0;
                 let response = aux_datas[aux_data_i];
                 if response != 0 {
-                    log::warn!("AUX I2C unexpected response {:02X}", response);
+                    log::debug!("AUX I2C unexpected response {:02X}", response);
                     return Err(Error::new(EIO));
                 }
                 aux_data_i += 1;
@@ -275,7 +275,7 @@ impl Device {
                         timeout.run().map_err(|()| {
                             // Disable aux power on timeout
                             pwr_well_ctl_aux.writef(port.pwr_well_ctl_aux_request(), false);
-                            log::warn!("timeout while requesting port {} aux power", port.name);
+                            log::debug!("timeout while requesting port {} aux power", port.name);
                             Error::new(EIO)
                         })?;
                     }
@@ -343,7 +343,7 @@ impl Device {
                                 let timeout = Timeout::from_millis(10);
                                 while !gmbus[2].readf(GMBUS2_HW_RDY) {
                                     timeout.run().map_err(|()| {
-                                        log::warn!("timeout on GMBUS read");
+                                        log::debug!("timeout on GMBUS read");
                                         Error::new(EIO)
                                     })?;
                                 }
@@ -373,23 +373,23 @@ impl Device {
             let (source, edid) = match aux_read_edid() {
                 Ok(edid) => ("AUX", edid),
                 Err(err) => {
-                    log::warn!("Port {} failed to read EDID from AUX: {}", port.name, err);
+                    log::debug!("Port {} failed to read EDID from AUX: {}", port.name, err);
                     match gmbus_read_edid() {
                         Ok(edid) => ("GMBUS", edid),
                         Err(err) => {
-                            log::warn!("Port {} failed to read EDID from GMBUS: {}", port.name, err);
+                            log::debug!("Port {} failed to read EDID from GMBUS: {}", port.name, err);
                             continue;
                         }
                     }
                 }
             };
 
-            log::info!("Port {} EDID from {}: {:x?}", port.name, source, edid);
+            log::debug!("Port {} EDID from {}: {:x?}", port.name, source, edid);
             let (width, height) = (
                 (edid[0x38] as u32) | (((edid[0x3A] as u32) & 0xF0) << 4),
                 (edid[0x3B] as u32) | (((edid[0x3D] as u32) & 0xF0) << 4),
             );
-            log::info!("Port {} best resolution:: {}x{}", port.name, width, height);
+            log::info!("Port {} best resolution using EDID from {}: {}x{}", port.name, source, width, height);
         }
 
         Ok(Self {
