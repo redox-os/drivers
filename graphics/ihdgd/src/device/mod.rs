@@ -6,6 +6,31 @@ use syscall::error::{Error, Result, EIO, ENODEV, ERANGE};
 mod ddi;
 use self::ddi::Ddi;
 
+//TODO: move to common?
+pub struct CallbackGuard<'a, T, F: FnOnce(&mut T)> {
+    value: &'a mut T,
+    fini: Option<F>,
+}
+
+impl<'a, T, F: FnOnce(&mut T)> CallbackGuard<'a, T, F> {
+    // Note that fini will also run if init fails
+    pub fn new(value: &'a mut T, init: impl FnOnce(&mut T) -> Result<()>, fini: F) -> Result<Self> {
+        let mut this = Self {
+            value,
+            fini: Some(fini),
+        };
+        init(&mut this.value)?;
+        Ok(this)
+    }
+}
+
+impl<'a, T, F: FnOnce(&mut T)> Drop for CallbackGuard<'a, T, F> {
+    fn drop(&mut self) {
+        let fini = self.fini.take().unwrap();
+        fini(&mut self.value);
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum DeviceKind {
     TigerLake,
@@ -266,20 +291,25 @@ impl Device {
             let mut aux_read_edid = || -> Result<[u8; 128]> {
                 //TODO: BLOCK TCCOLD?
 
-                {
-                    // Enable AUX power
-                    //TODO: disable AUX power with guard?
-                    let timeout = Timeout::from_micros(1500);
-                    pwr_well_ctl_aux.writef(port.pwr_well_ctl_aux_request(), true);
-                    while !pwr_well_ctl_aux.readf(port.pwr_well_ctl_aux_state()) {
-                        timeout.run().map_err(|()| {
-                            // Disable aux power on timeout
-                            pwr_well_ctl_aux.writef(port.pwr_well_ctl_aux_request(), false);
-                            log::debug!("timeout while requesting port {} aux power", port.name);
-                            Error::new(EIO)
-                        })?;
+                let _pwr_guard = CallbackGuard::new(
+                    &mut pwr_well_ctl_aux,
+                    |pwr_well_ctl_aux| {
+                        // Enable aux power
+                        pwr_well_ctl_aux.writef(port.pwr_well_ctl_aux_request(), true);
+                        let timeout = Timeout::from_micros(1500);
+                        while !pwr_well_ctl_aux.readf(port.pwr_well_ctl_aux_state()) {
+                            timeout.run().map_err(|()| {
+                                log::debug!("timeout while requesting port {} aux power", port.name);
+                                Error::new(EIO)
+                            })?;
+                        }
+                        Ok(())
+                    },
+                    |pwr_well_ctl_aux| {
+                        // Disable aux power
+                        pwr_well_ctl_aux.writef(port.pwr_well_ctl_aux_request(), false);
                     }
-                }
+                )?;
 
                 // Check if device responds
                 aux_i2c_tx(true, 0x50, I2CData::Write(&[]))?;
