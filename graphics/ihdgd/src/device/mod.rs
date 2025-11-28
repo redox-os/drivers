@@ -90,23 +90,57 @@ impl Device {
 
         let ddi = Ddi::new(kind)?;
 
-        let mut pwr_well_ctl_aux = match kind {
+        let mut gmbus;
+        let mut pwr_well_ctl_aux;
+        let mut pwr_well_ctl_ddi;
+        match kind {
             DeviceKind::TigerLake => {
                 // IHD-OS-TGL-Vol 2c-12.21
-                unsafe { gttmm.mmio(0x45444)? }
+                let dc_state_en = unsafe { gttmm.mmio(0x45504)? };
+                log::info!("DC_STATE_EN {:08X}", dc_state_en.read());
+
+                let fuse_status = unsafe { gttmm.mmio(0x42000)? };
+                log::info!("FUSE_STATUS {:08X}", fuse_status.read());
+
+                gmbus = unsafe { [
+                    gttmm.mmio(0xC5100)?,
+                    gttmm.mmio(0xC5104)?,
+                    gttmm.mmio(0xC5108)?,
+                    gttmm.mmio(0xC510C)?,
+                    gttmm.mmio(0xC5110)?,
+                    gttmm.mmio(0xC5120)?,
+                ] };
+
+                let pwr_well_ctl = unsafe { gttmm.mmio(0x45404)? };
+                log::info!("PWR_WELL_CTL {:08X}", pwr_well_ctl.read());
+
+                pwr_well_ctl_aux = unsafe { gttmm.mmio(0x45444)? };
+                log::info!("PWR_WELL_CTL_AUX {:08X}", pwr_well_ctl_aux.read());
+
+                pwr_well_ctl_ddi = unsafe { gttmm.mmio(0x45454)? };
+                log::info!("PWR_WELL_CTL_DDI {:08X}", pwr_well_ctl_ddi.read());
             },
         };
-        log::info!("PWR_WELL_CTL_AUX {:08X}", pwr_well_ctl_aux.read());
 
         for port in ddi.ports.iter() {
+            //TODO: init port if needed
+            if let Some(offset) = port.port_comp_dw0() {
+                let port_comp_dw0 = unsafe { gttmm.mmio(offset)? };
+                log::info!("PORT_COMP_DW0_{}: {:08X}", port.name, port_comp_dw0.read());
+            }
+
             //let buf_ctl = unsafe { gttmm.mmio(port.buf_ctl())? };
 
             const AUX_CTL_BUSY: u32 = 1 << 31;
             const AUX_CTL_DONE: u32 = 1 << 30;
             const AUX_CTL_TIMEOUT_ERROR: u32 = 1 << 28;
+            const AUX_CTL_TIMEOUT_SHIFT: u32 = 26;
+            const AUX_CTL_TIMEOUT_MASK: u32 = 0b11 << AUX_CTL_TIMEOUT_SHIFT;
+            const AUX_CTL_TIMEOUT_4000US: u32 = 0b11 << AUX_CTL_TIMEOUT_SHIFT;
             const AUX_CTL_RECEIVE_ERROR: u32 = 1 << 25;
             const AUX_CTL_SIZE_SHIFT: u32 = 20;
             const AUX_CTL_SIZE_MASK: u32 = 0b11111 << 20;
+            const AUX_CTL_IO_SELECT: u32 = 1 << 11;
             let aux_ctl = unsafe { gttmm.mmio(port.aux_ctl())? };
 
             enum I2CData<'a> {
@@ -114,7 +148,7 @@ impl Device {
                 Write(&'a [u8]),
             }
 
-            let mut i2c_tx = |mot: bool, addr: u8, mut data: I2CData| -> Result<()> {
+            let mut aux_i2c_tx = |mot: bool, addr: u8, mut data: I2CData| -> Result<()> {
                 // Write header and data
                 let mut header = 0;
                 match &data {
@@ -166,6 +200,12 @@ impl Device {
                 // Set length
                 v &= !AUX_CTL_SIZE_MASK;
                 v |= (aux_data_i as u32) << AUX_CTL_SIZE_SHIFT;
+                // Set timeout
+                v &= !AUX_CTL_TIMEOUT_MASK;
+                v |= AUX_CTL_TIMEOUT_4000US;
+                // Set I/O select to legacy (cleared)
+                //TODO: TBT support?
+                v &= !AUX_CTL_IO_SELECT;
                 // Start transaction
                 v |= AUX_CTL_BUSY;
                 aux_ctl.write(v);
@@ -174,7 +214,7 @@ impl Device {
                 let timeout = Timeout::from_secs(1);
                 while aux_ctl.readf(AUX_CTL_BUSY) {
                     timeout.run().map_err(|()| {
-                        log::error!("AUX I2C transaction wait timeout");
+                        log::warn!("AUX I2C transaction wait timeout");
                         Error::new(EIO)
                     })?;
                 }
@@ -182,15 +222,15 @@ impl Device {
                 // Read result
                 v = aux_ctl.read();
                 if (v & AUX_CTL_TIMEOUT_ERROR) != 0 {
-                    log::error!("AUX I2C transaction timeout error");
+                    log::warn!("AUX I2C transaction timeout error");
                     return Err(Error::new(EIO));
                 } 
                 if (v & AUX_CTL_RECEIVE_ERROR) != 0 {
-                    log::error!("AUX I2C transaction receive error");
+                    log::warn!("AUX I2C transaction receive error");
                     return Err(Error::new(EIO));
                 } 
                 if (v & AUX_CTL_DONE) == 0 {
-                    log::error!("AUX I2C transaction done not set");
+                    log::warn!("AUX I2C transaction done not set");
                     return Err(Error::new(EIO));
                 }
 
@@ -204,7 +244,7 @@ impl Device {
                 aux_data_i = 0;
                 let response = aux_datas[aux_data_i];
                 if response != 0 {
-                    log::error!("AUX I2C unexpected response {:02X}", response);
+                    log::warn!("AUX I2C unexpected response {:02X}", response);
                     return Err(Error::new(EIO));
                 }
                 aux_data_i += 1;
@@ -223,48 +263,134 @@ impl Device {
                 Ok(())
             };
 
-            let mut read_edid = || -> Result<[u8; 128]> {
-                // Enable AUX power
-                //TODO: disable power with guard?
-                let timeout = Timeout::from_micros(1500);
-                pwr_well_ctl_aux.writef(port.pwr_well_ctl_aux_request(), true);
-                while !pwr_well_ctl_aux.readf(port.pwr_well_ctl_aux_state()) {
-                    timeout.run().map_err(|()| {
-                        log::error!("timeout while requesting port {} aux power", port.name);
-                        Error::new(EIO)
-                    })?;
+            let mut aux_read_edid = || -> Result<[u8; 128]> {
+                //TODO: BLOCK TCCOLD?
+
+                {
+                    // Enable AUX power
+                    //TODO: disable AUX power with guard?
+                    let timeout = Timeout::from_micros(1500);
+                    pwr_well_ctl_aux.writef(port.pwr_well_ctl_aux_request(), true);
+                    while !pwr_well_ctl_aux.readf(port.pwr_well_ctl_aux_state()) {
+                        timeout.run().map_err(|()| {
+                            // Disable aux power on timeout
+                            pwr_well_ctl_aux.writef(port.pwr_well_ctl_aux_request(), false);
+                            log::warn!("timeout while requesting port {} aux power", port.name);
+                            Error::new(EIO)
+                        })?;
+                    }
                 }
 
                 // Check if device responds
-                i2c_tx(true, 0x50, I2CData::Write(&[]))?;
+                aux_i2c_tx(true, 0x50, I2CData::Write(&[]))?;
                 // Write index
-                i2c_tx(true, 0x50, I2CData::Write(&[0]))?;
+                aux_i2c_tx(true, 0x50, I2CData::Write(&[0]))?;
                 // Read EDID
                 //TODO: Could EDID be read in multiple byte transactions?
                 let mut edid = [0; 128];
                 for chunk in edid.chunks_mut(1) {
-                    i2c_tx(true, 0x50, I2CData::Read(chunk))?;
+                    aux_i2c_tx(true, 0x50, I2CData::Read(chunk))?;
                 }
                 // Finish transaction
-                i2c_tx(false, 0x50, I2CData::Read(&mut []))?;
+                aux_i2c_tx(false, 0x50, I2CData::Read(&mut []))?;
 
                 Ok(edid)
             };
 
-            match read_edid() {
-                Ok(edid) => {
-                    log::info!("Port {} EDID: {:x?}", port.name, edid);
-                    let (width, height) = (
-                        (edid[0x38] as u32) | (((edid[0x3A] as u32) & 0xF0) << 4),
-                        (edid[0x3B] as u32) | (((edid[0x3D] as u32) & 0xF0) << 4),
-                    );
-                    log::info!("Port {} best resolution:: {}x{}", port.name, width, height);
-                },
-                Err(_) => ()
-            }
-        }
+            let mut gmbus_i2c_tx = |addr7: u8, index: u8, mut data: I2CData| -> Result<()> {
+                let Some(gmbus_pin_pair) = port.gmbus_pin_pair() else {
+                    log::error!("Port {} has no GMBUS pin pair", port.name);
+                    return Err(Error::new(EIO));
+                };
 
-        log::info!("PWR_WELL_CTL_AUX {:08X}", pwr_well_ctl_aux.read());
+                const GMBUS1_SW_RDY: u32 = 1 << 30;
+                const GMBUS1_CYCLE_STOP: u32 = 1 << 27;
+                const GMBUS1_CYCLE_INDEX: u32 = 1 << 26;
+                const GMBUS1_CYCLE_WAIT: u32 = 1 << 25;
+                const GMBUS1_SIZE_SHIFT: u32 = 16;
+                const GMBUS1_INDEX_SHIFT: u32 = 8;
+
+                const GMBUS2_HW_RDY: u32 = 1 << 11;
+
+                // Reset
+                gmbus[1].write(0);
+
+                // Start transaction
+                gmbus[0].write(gmbus_pin_pair as u32);
+                let (addr8, size) = match &data {
+                    I2CData::Read(buf) => ((addr7 << 1) | 1, buf.len() as u32),
+                    I2CData::Write(buf) => (addr7 << 1, buf.len() as u32),
+                };
+                if size >= 512 {
+                    log::error!("GMBUS transaction size {} too large", size);
+                    return Err(Error::new(EIO));
+                }
+                gmbus[1].write(
+                    GMBUS1_SW_RDY |
+                    GMBUS1_CYCLE_INDEX |
+                    GMBUS1_CYCLE_WAIT |
+                    (size << GMBUS1_SIZE_SHIFT) |
+                    (index as u32) << GMBUS1_INDEX_SHIFT |
+                    (addr8 as u32)
+                );
+
+                // Perform transaction
+                match &mut data {
+                    I2CData::Read(buf) => {
+                        for chunk in buf.chunks_mut(4) {
+                            {
+                                //TODO: ideal timeout for gmbus read?
+                                let timeout = Timeout::from_millis(10);
+                                while !gmbus[2].readf(GMBUS2_HW_RDY) {
+                                    timeout.run().map_err(|()| {
+                                        log::warn!("timeout on GMBUS read");
+                                        Error::new(EIO)
+                                    })?;
+                                }
+                            }
+
+                            let bytes = gmbus[3].read().to_le_bytes();
+                            chunk.copy_from_slice(&bytes[..chunk.len()]);
+                        }
+                    },
+                    I2CData::Write(buf) => {
+                        log::warn!("TODO: GMBUS WRITE");
+                    }
+                }
+
+                // Stop transaction
+                gmbus[1].write(GMBUS1_SW_RDY | GMBUS1_CYCLE_STOP);
+
+                Ok(())
+            };
+
+            let mut gmbus_read_edid = || -> Result<[u8; 128]> {
+                let mut edid = [0; 128];
+                gmbus_i2c_tx(0x50, 0x00, I2CData::Read(&mut edid))?;
+                Ok(edid)
+            };
+
+            let (source, edid) = match aux_read_edid() {
+                Ok(edid) => ("AUX", edid),
+                Err(err) => {
+                    log::warn!("Port {} failed to read EDID from AUX: {}", port.name, err);
+                    match gmbus_read_edid() {
+                        Ok(edid) => ("GMBUS", edid),
+                        Err(err) => {
+                            log::warn!("Port {} failed to read EDID from GMBUS: {}", port.name, err);
+                            continue;
+                        }
+                    }
+                }
+            };
+
+            log::info!("Port {} EDID from {}: {:x?}", port.name, source, edid);
+            let (width, height) = (
+                (edid[0x38] as u32) | (((edid[0x3A] as u32) & 0xF0) << 4),
+                (edid[0x3B] as u32) | (((edid[0x3D] as u32) & 0xF0) << 4),
+            );
+            log::info!("Port {} best resolution:: {}x{}", port.name, width, height);
+        }
 
         Ok(Self {
             kind,

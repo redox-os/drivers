@@ -26,11 +26,45 @@ impl DdiPort {
         self.addr() + 0x10
     }
 
+    pub fn gmbus_pin_pair(&self) -> Option<u8> {
+        match self.index {
+            // DDI pins
+            0 => Some(1),
+            1 => Some(2),
+            2 => Some(3),
+            // Type C pins
+            3 => Some(9),
+            4 => Some(10),
+            5 => Some(11),
+            6 => Some(12),
+            7 => Some(13),
+            8 => Some(14),
+            _ => None
+        }
+    }
+
+    pub fn port_comp_dw0(&self) -> Option<usize> {
+        match self.index {
+            0 => Some(0x162100),
+            1 => Some(0x6C100),
+            2 => Some(0x160100),
+            _ => None,
+        }
+    }
+
     pub fn pwr_well_ctl_aux_state(&self) -> u32 {
         1 << (self.index * 2)
     }
 
     pub fn pwr_well_ctl_aux_request(&self) -> u32 {
+        2 << (self.index * 2)
+    }
+
+    pub fn pwr_well_ctl_ddi_state(&self) -> u32 {
+        1 << (self.index * 2)
+    }
+
+    pub fn pwr_well_ctl_ddi_request(&self) -> u32 {
         2 << (self.index * 2)
     }
 
