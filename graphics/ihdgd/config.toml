@@ -1,0 +1,14 @@
+[[drivers]]
+name = "Intel HD Graphics"
+class = 0x03
+ids = { 0x8086 = [
+    # Tiger-Lake Mobile from Volume 4: Configurations in
+    # https://www.intel.com/content/www/us/en/docs/graphics-for-linux/developer-reference/1-0/tiger-lake.html
+    0x9A40,
+    0x9A49,
+    0x9A60,
+    0x9A68,
+    0x9A70,
+    0x9A78,
+] }
+command = ["ihdgd"]
