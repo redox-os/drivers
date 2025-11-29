@@ -8,7 +8,7 @@ pub const IXGBE_EIMC: u32                       = 0x00888;
 pub const IXGBE_CTRL: u32                       = 0x00000;
 pub const IXGBE_CTRL_LNK_RST: u32               = 0x00000008; /* Link Reset. Resets everything. */
 pub const IXGBE_CTRL_RST: u32                   = 0x04000000; /* Reset (SW) */
-pub const IXGBE_CTRL_RST_MASK: u32              = (IXGBE_CTRL_LNK_RST | IXGBE_CTRL_RST);
+pub const IXGBE_CTRL_RST_MASK: u32              = IXGBE_CTRL_LNK_RST | IXGBE_CTRL_RST;
 
 pub const IXGBE_EEC: u32                        = 0x10010;
 pub const IXGBE_EEC_ARD: u32                    = 0x00000200; /* EEPROM Auto Read Done */
@@ -19,11 +19,11 @@ pub const IXGBE_RDRXCTL_DMAIDONE: u32           = 0x00000008; /* DMA init cycle 
 
 pub const IXGBE_AUTOC: u32                      = 0x042A0;
 pub const IXGBE_AUTOC_LMS_SHIFT: u32            = 13;
-pub const IXGBE_AUTOC_LMS_MASK: u32             = (0x7 << IXGBE_AUTOC_LMS_SHIFT);
-pub const IXGBE_AUTOC_LMS_10G_SERIAL: u32       = (0x3 << IXGBE_AUTOC_LMS_SHIFT);
+pub const IXGBE_AUTOC_LMS_MASK: u32             = 0x7 << IXGBE_AUTOC_LMS_SHIFT;
+pub const IXGBE_AUTOC_LMS_10G_SERIAL: u32       = 0x3 << IXGBE_AUTOC_LMS_SHIFT;
 pub const IXGBE_AUTOC_10G_PMA_PMD_MASK: u32     = 0x00000180;
 pub const IXGBE_AUTOC_10G_PMA_PMD_SHIFT: u32    = 7;
-pub const IXGBE_AUTOC_10G_XAUI: u32             = (0x0 << IXGBE_AUTOC_10G_PMA_PMD_SHIFT);
+pub const IXGBE_AUTOC_10G_XAUI: u32             = 0x0 << IXGBE_AUTOC_10G_PMA_PMD_SHIFT;
 pub const IXGBE_AUTOC_AN_RESTART: u32           = 0x00001000;
 
 pub const IXGBE_GPRC: u32                       = 0x04074;
@@ -37,7 +37,7 @@ pub const IXGBE_RXCTRL: u32                     = 0x03000;
 pub const IXGBE_RXCTRL_RXEN: u32                = 0x00000001; /* Enable Receiver */
 
 pub fn IXGBE_RXPBSIZE(i: u32) -> u32 {
-    (0x03C00 + (i * 4))
+    0x03C00 + (i * 4)
 }
 
 pub const IXGBE_RXPBSIZE_128KB: u32             = 0x00020000; /* 128KB Packet Buffer */
@@ -115,7 +115,7 @@ pub const IXGBE_HLREG0_TXCRCEN: u32             = 0x00000001; /* bit  0 */
 pub const IXGBE_HLREG0_TXPADEN: u32             = 0x00000400; /* bit 10 */
 
 pub fn IXGBE_TXPBSIZE(i: u32) -> u32 {
-    (0x0CC00 + (i * 4))
+    0x0CC00 + (i * 4)
 } /* 8 of these */
 
 pub const IXGBE_TXPBSIZE_40KB: u32              = 0x0000A000; /* 40KB Packet Buffer */
@@ -124,16 +124,16 @@ pub const IXGBE_RTTDCS: u32                     = 0x04900;
 pub const IXGBE_RTTDCS_ARBDIS: u32              = 0x00000040; /* DCB arbiter disable */
 
 pub fn IXGBE_TDBAL(i: u32) -> u32 {
-    (0x06000 + (i * 0x40))
+    0x06000 + (i * 0x40)
 } /* 32 of them (0-31)*/
 pub fn IXGBE_TDBAH(i: u32) -> u32 {
-    (0x06004 + (i * 0x40))
+    0x06004 + (i * 0x40)
 }
 pub fn IXGBE_TDLEN(i: u32) -> u32 {
-    (0x06008 + (i * 0x40))
+    0x06008 + (i * 0x40)
 }
 pub fn IXGBE_TXDCTL(i: u32) -> u32 {
-    (0x06028 + (i * 0x40))
+    0x06028 + (i * 0x40)
 }
 
 pub const IXGBE_DMATXCTL: u32                   = 0x04A80;
@@ -150,10 +150,10 @@ pub const IXGBE_RXDCTL_ENABLE: u32              = 0x02000000; /* Ena specific Rx
 pub const IXGBE_TXDCTL_ENABLE: u32              = 0x02000000; /* Ena specific Tx Queue */
 
 pub fn IXGBE_TDH(i: u32) -> u32 {
-    (0x06010 + (i * 0x40))
+    0x06010 + (i * 0x40)
 }
 pub fn IXGBE_TDT(i: u32) -> u32 {
-    (0x06018 + (i * 0x40))
+    0x06018 + (i * 0x40)
 }
 
 pub const IXGBE_FCTRL_MPE: u32                  = 0x00000100; /* Multicast Promiscuous Ena*/
@@ -208,7 +208,7 @@ pub const IXGBE_IVAR_ALLOC_VAL: u32             = 0x80; /* Interrupt Allocation 
 pub const IXGBE_EICR_RTX_QUEUE: u32             = 0x0000FFFF; /* RTx Queue Interrupt */
 
 pub fn IXGBE_IVAR(i: u32) -> u32 {
-    (0x00900 + (i * 4))
+    0x00900 + (i * 4)
 } /* 24 at 0x900-0x960 */
 
 #[derive(Debug, Copy, Clone)]

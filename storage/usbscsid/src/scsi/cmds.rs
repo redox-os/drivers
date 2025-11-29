@@ -552,7 +552,7 @@ impl<'a> Iterator for ModePageIter<'a> {
     }
 }
 
-pub fn mode_page_iter(buffer: &[u8]) -> impl Iterator<Item = AnyModePage> {
+pub fn mode_page_iter(buffer: &[u8]) -> impl Iterator<Item = AnyModePage<'_>> {
     ModePageIter {
         raw: ModePageIterRaw { buffer },
     }

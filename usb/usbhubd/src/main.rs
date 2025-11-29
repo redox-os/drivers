@@ -155,7 +155,7 @@ fn main() {
     loop {
         for port in 1..=ports {
             let port_idx: usize = port.checked_sub(1).unwrap().into();
-            let mut state = states.get_mut(port_idx).unwrap();
+            let state = states.get_mut(port_idx).unwrap();
 
             let port_sts = if usb_3 {
                 let mut port_sts = usb::HubPortStatusV3::default();
