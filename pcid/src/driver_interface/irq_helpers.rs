@@ -325,6 +325,7 @@ pub fn pci_allocate_interrupt_vector(
         // INTx# pin based interrupts.
         InterruptVector {
             irq_handle: irq.irq_handle(driver),
+            vector: 0,
             kind: InterruptVectorKind::Legacy,
         }
     } else {
