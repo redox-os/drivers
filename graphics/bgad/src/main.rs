@@ -1,4 +1,5 @@
-use common::acquire_port_io_rights;
+//! <https://www.qemu.org/docs/master/specs/standard-vga.html>
+
 use inputd::ProducerHandle;
 use pcid_interface::PciFunctionHandle;
 use redox_scheme::{RequestKind, SignalBehavior, Socket};
@@ -9,8 +10,10 @@ use crate::scheme::BgaScheme;
 mod bga;
 mod scheme;
 
+// FIXME add a driver-graphics implementation
+
 fn main() {
-    let pcid_handle = PciFunctionHandle::connect_default();
+    let mut pcid_handle = PciFunctionHandle::connect_default();
     let pci_config = pcid_handle.config();
 
     let mut name = pci_config.func.name();
@@ -27,11 +30,11 @@ fn main() {
     log::info!("BGA {}", pci_config.func.display());
 
     redox_daemon::Daemon::new(move |daemon| {
-        acquire_port_io_rights().expect("bgad: failed to get port IO permission");
-
         let socket = Socket::create("bga").expect("bgad: failed to create bga scheme");
 
-        let mut bga = Bga::new();
+        let bar = unsafe { pcid_handle.map_bar(2) }.ptr.as_ptr();
+
+        let mut bga = unsafe { Bga::new(bar) };
         log::debug!("BGA {}x{}", bga.width(), bga.height());
 
         let mut scheme = BgaScheme {
