@@ -75,7 +75,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let event_queue = EventQueue::<Source>::new().expect("rtl8168d: Could not create event queue.");
     event_queue
         .subscribe(
-            irq_file.as_raw_fd() as usize,
+            irq_file.irq_handle().as_raw_fd() as usize,
             Source::Irq,
             event::EventFlags::READ,
         )
@@ -96,10 +96,10 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
         match event.user_data {
             Source::Irq => {
                 let mut irq = [0; 8];
-                irq_file.read(&mut irq).unwrap();
+                irq_file.irq_handle().read(&mut irq).unwrap();
                 //TODO: This may be causing spurious interrupts
                 if unsafe { scheme.adapter_mut().irq() } {
-                    irq_file.write(&mut irq).unwrap();
+                    irq_file.irq_handle().write(&mut irq).unwrap();
 
                     scheme.tick().unwrap();
                 }

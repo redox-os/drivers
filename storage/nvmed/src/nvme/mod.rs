@@ -1,12 +1,12 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::convert::TryFrom;
-use std::fs::File;
 use std::iter;
 use std::sync::atomic::AtomicU16;
 use std::sync::Arc;
 
 use parking_lot::{Mutex, ReentrantMutex, RwLock};
+use pcid_interface::irq_helpers::InterruptVector;
 
 use common::io::{Io, Mmio};
 use common::timeout::Timeout;
@@ -22,27 +22,7 @@ pub mod queues;
 use self::executor::NvmeExecutor;
 pub use self::queues::{NvmeCmd, NvmeCmdQueue, NvmeComp, NvmeCompQueue};
 
-use pcid_interface::msi::MappedMsixRegs;
 use pcid_interface::PciFunctionHandle;
-
-/// Used in conjunction with `InterruptMethod`, primarily by the CQ executor.
-#[derive(Debug)]
-pub enum InterruptSources {
-    MsiX(BTreeMap<u16, File>),
-    Msi(BTreeMap<u8, File>),
-    Intx(File),
-}
-
-/// The way interrupts are sent. Unlike other PCI-based interfaces, like XHCI, it doesn't seem like
-/// NVME supports operating with interrupts completely disabled.
-pub enum InterruptMethod {
-    /// Traditional level-triggered, INTx# interrupt pins.
-    Intx,
-    /// Message signaled interrupts
-    Msi,
-    /// Extended message signaled interrupts
-    MsiX(MappedMsixRegs),
-}
 
 #[repr(C, packed)]
 pub struct NvmeRegs {
@@ -93,7 +73,7 @@ pub type AtomicCmdId = AtomicU16;
 pub type Iv = u16;
 
 pub struct Nvme {
-    interrupt_method: Mutex<InterruptMethod>,
+    interrupt_vector: Mutex<InterruptVector>,
     pcid_interface: Mutex<PciFunctionHandle>,
     regs: RwLock<&'static mut NvmeRegs>,
 
@@ -132,7 +112,7 @@ pub enum FullSqHandling {
 impl Nvme {
     pub fn new(
         address: usize,
-        interrupt_method: InterruptMethod,
+        interrupt_vector: InterruptVector,
         pcid_interface: PciFunctionHandle,
     ) -> Result<Self> {
         Ok(Nvme {
@@ -156,7 +136,7 @@ impl Nvme {
             cq_ivs: RwLock::new(iter::once((0, 0)).collect()),
             sq_ivs: RwLock::new(iter::once((0, 0)).collect()),
 
-            interrupt_method: Mutex::new(interrupt_method),
+            interrupt_vector: Mutex::new(interrupt_vector),
             pcid_interface: Mutex::new(pcid_interface),
 
             // TODO
@@ -222,14 +202,9 @@ impl Nvme {
             }
         }
 
-        match self.interrupt_method.get_mut() {
-            &mut InterruptMethod::Intx | InterruptMethod::Msi { .. } => {
-                self.regs.get_mut().intms.write(0xFFFF_FFFF);
-                self.regs.get_mut().intmc.write(0x0000_0001);
-            }
-            &mut InterruptMethod::MsiX(ref mut cfg) => {
-                cfg.table_entry_pointer(0).unmask();
-            }
+        if !self.interrupt_vector.get_mut().set_masked_if_fast(false) {
+            self.regs.get_mut().intms.write(0xFFFF_FFFF);
+            self.regs.get_mut().intmc.write(0x0000_0001);
         }
 
         for (qid, iv) in self.cq_ivs.get_mut().iter_mut() {
@@ -296,72 +271,38 @@ impl Nvme {
         Ok(())
     }
 
-    /// Masks or unmasks multiple vectors.
-    ///
-    /// # Panics
-    /// Will panic if the same vector is called twice with different mask flags.
-    pub fn set_vectors_masked(&self, vectors: impl IntoIterator<Item = (u16, bool)>) {
-        let mut interrupt_method_guard = self.interrupt_method.lock();
+    pub fn set_vector_masked(&self, vector: u16, masked: bool) {
+        let mut interrupt_vector_guard = (&self).interrupt_vector.lock();
 
-        match &mut *interrupt_method_guard {
-            &mut InterruptMethod::Intx => {
-                let mut iter = vectors.into_iter();
-                let (vector, mask) = match iter.next() {
-                    Some(f) => f,
-                    None => return,
-                };
-                assert_eq!(
-                    iter.next(),
-                    None,
-                    "nvmed: internal error: multiple vectors on INTx#"
+        if !interrupt_vector_guard.set_masked_if_fast(masked) {
+            let mut to_mask = 0x0000_0000;
+            let mut to_clear = 0x0000_0000;
+
+            let vector = vector as u8;
+
+            if masked {
+                assert_ne!(
+                    to_clear & (1 << vector),
+                    (1 << vector),
+                    "nvmed: internal error: cannot both mask and set"
                 );
-                assert_eq!(vector, 0, "nvmed: internal error: nonzero vector on INTx#");
-                if mask {
-                    self.regs.write().intms.write(0x0000_0001);
-                } else {
-                    self.regs.write().intmc.write(0x0000_0001);
-                }
+                to_mask |= 1 << vector;
+            } else {
+                assert_ne!(
+                    to_mask & (1 << vector),
+                    (1 << vector),
+                    "nvmed: internal error: cannot both mask and set"
+                );
+                to_clear |= 1 << vector;
             }
-            &mut InterruptMethod::Msi => {
-                let mut to_mask = 0x0000_0000;
-                let mut to_clear = 0x0000_0000;
 
-                for (vector, mask) in vectors {
-                    let vector = vector as u8;
-
-                    if mask {
-                        assert_ne!(
-                            to_clear & (1 << vector),
-                            (1 << vector),
-                            "nvmed: internal error: cannot both mask and set"
-                        );
-                        to_mask |= 1 << vector;
-                    } else {
-                        assert_ne!(
-                            to_mask & (1 << vector),
-                            (1 << vector),
-                            "nvmed: internal error: cannot both mask and set"
-                        );
-                        to_clear |= 1 << vector;
-                    }
-                }
-
-                if to_mask != 0 {
-                    self.regs.write().intms.write(to_mask);
-                }
-                if to_clear != 0 {
-                    self.regs.write().intmc.write(to_clear);
-                }
+            if to_mask != 0 {
+                (&self).regs.write().intms.write(to_mask);
             }
-            &mut InterruptMethod::MsiX(ref mut cfg) => {
-                for (vector, mask) in vectors {
-                    cfg.table_entry_pointer(vector.into()).set_masked(mask);
-                }
+            if to_clear != 0 {
+                (&self).regs.write().intmc.write(to_clear);
             }
         }
-    }
-    pub fn set_vector_masked(&self, vector: u16, masked: bool) {
-        self.set_vectors_masked(std::iter::once((vector, masked)))
     }
 
     pub async fn submit_and_complete_command(
