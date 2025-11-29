@@ -12,8 +12,7 @@ use std::os::unix::io::AsRawFd;
 use std::usize;
 
 use event::{user_data, EventQueue};
-#[cfg(target_arch = "x86_64")]
-use pcid_interface::irq_helpers::allocate_first_msi_interrupt_on_bsp;
+use pcid_interface::irq_helpers::pci_allocate_interrupt_vector;
 use pcid_interface::PciFunctionHandle;
 
 pub mod hda;
@@ -24,40 +23,6 @@ Virtualbox   8086:2668
 QEMU ICH9    8086:293E
 82801H ICH8  8086:284B
 */
-
-#[cfg(target_arch = "x86_64")]
-fn get_int_method(pcid_handle: &mut PciFunctionHandle) -> File {
-    let pci_config = pcid_handle.config();
-
-    let all_pci_features = pcid_handle.fetch_all_features();
-    log::debug!("PCI FEATURES: {:?}", all_pci_features);
-
-    let has_msi = all_pci_features.iter().any(|feature| feature.is_msi());
-
-    if has_msi {
-        allocate_first_msi_interrupt_on_bsp(pcid_handle)
-    } else if let Some(irq) = pci_config.func.legacy_interrupt_line {
-        log::debug!("Legacy IRQ {}", irq);
-
-        // legacy INTx# interrupt pins.
-        irq.irq_handle("ihdad")
-    } else {
-        panic!("ihdad: no interrupts supported at all")
-    }
-}
-
-//TODO: MSI on non-x86_64?
-#[cfg(not(target_arch = "x86_64"))]
-fn get_int_method(pcid_handle: &mut PciFunctionHandle) -> File {
-    let pci_config = pcid_handle.config();
-
-    if let Some(irq) = pci_config.func.legacy_interrupt_line {
-        // legacy INTx# interrupt pins.
-        irq.irq_handle("ihdad")
-    } else {
-        panic!("ihdad: no interrupts supported at all")
-    }
-}
 
 fn daemon(daemon: redox_daemon::Daemon) -> ! {
     let mut pcid_handle = PciFunctionHandle::connect_default();
@@ -79,8 +44,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     let address = unsafe { pcid_handle.map_bar(0) }.ptr.as_ptr() as usize;
 
-    //TODO: MSI-X
-    let mut irq_file = get_int_method(&mut pcid_handle);
+    let mut irq_file = pci_allocate_interrupt_vector(&mut pcid_handle, "ihdad");
 
     {
         let vend_prod: u32 = ((pci_config.func.full_device_id.vendor_id as u32) << 16)

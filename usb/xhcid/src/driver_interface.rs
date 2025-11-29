@@ -814,7 +814,7 @@ impl XhciEndpHandle {
     pub fn transfer_nodata(&mut self) -> result::Result<PortTransferStatus, XhciClientHandleError> {
         self.generic_transfer(XhciEndpCtlDirection::NoData, |_| Ok(0), 0)
     }
-    fn transfer_stream(&mut self, total_len: u32) -> TransferStream {
+    fn transfer_stream(&mut self, total_len: u32) -> TransferStream<'_> {
         TransferStream {
             bytes_to_transfer: total_len,
             bytes_transferred: 0,
@@ -822,12 +822,12 @@ impl XhciEndpHandle {
             endp_handle: self,
         }
     }
-    pub fn transfer_write_stream(&mut self, total_len: u32) -> TransferWriteStream {
+    pub fn transfer_write_stream(&mut self, total_len: u32) -> TransferWriteStream<'_> {
         TransferWriteStream {
             inner: self.transfer_stream(total_len),
         }
     }
-    pub fn transfer_read_stream(&mut self, total_len: u32) -> TransferReadStream {
+    pub fn transfer_read_stream(&mut self, total_len: u32) -> TransferReadStream<'_> {
         TransferReadStream {
             inner: self.transfer_stream(total_len),
         }

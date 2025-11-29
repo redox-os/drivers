@@ -131,8 +131,8 @@ impl Scsi {
         protocol: &mut dyn Protocol,
     ) -> Result<(
         &cmds::ModeParamHeader10,
-        BlkDescSlice,
-        impl Iterator<Item = cmds::AnyModePage>,
+        BlkDescSlice<'_>,
+        impl Iterator<Item = cmds::AnyModePage<'_>>,
     )> {
         let initial_alloc_len = mem::size_of::<cmds::ModeParamHeader10>() as u16; // covers both mode_data_len and blk_desc_len.
         let mode_sense10 = self.cmd_mode_sense10();
@@ -207,7 +207,7 @@ impl Scsi {
         )
         .unwrap()
     }
-    pub fn res_blkdesc_mode10(&self) -> BlkDescSlice {
+    pub fn res_blkdesc_mode10(&self) -> BlkDescSlice<'_> {
         let header = self.res_mode_param_header10();
         let descs_start = mem::size_of::<cmds::ModeParamHeader10>();
         if header.longlba() {
@@ -240,7 +240,7 @@ impl Scsi {
         }
     }
 
-    pub fn res_mode_pages10(&self) -> impl Iterator<Item = cmds::AnyModePage> {
+    pub fn res_mode_pages10(&self) -> impl Iterator<Item = cmds::AnyModePage<'_>> {
         let header = self.res_mode_param_header10();
         let descs_start = mem::size_of::<cmds::ModeParamHeader10>();
         let buffer = &self.data_buffer[descs_start + header.block_desc_len() as usize..];

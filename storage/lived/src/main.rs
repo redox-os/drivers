@@ -15,7 +15,7 @@ use libredox::flag;
 use syscall::error::*;
 use syscall::PAGE_SIZE;
 
-use anyhow::{anyhow, bail, Context};
+use anyhow::{anyhow, Context};
 
 struct LiveDisk {
     original: &'static [u8],

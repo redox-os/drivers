@@ -227,3 +227,57 @@ pub fn allocate_first_msi_interrupt_on_bsp(
 
     interrupt_handle
 }
+
+/// Get the most optimal supported interrupt mechanism: either (in the order of preference):
+/// MSI-X, MSI, and INTx# pin. Returns the handles to the interrupts.
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+pub fn pci_allocate_interrupt_vector(
+    pcid_handle: &mut crate::driver_interface::PciFunctionHandle,
+    driver: &str,
+) -> File {
+    let features = pcid_handle.fetch_all_features();
+
+    let has_msi = features.iter().any(|feature| feature.is_msi());
+    let has_msix = features.iter().any(|feature| feature.is_msix());
+
+    if has_msix {
+        let capability_struct = match pcid_handle.feature_info(super::PciFeature::MsiX) {
+            super::PciFeatureInfo::MsiX(msix) => msix,
+            _ => unreachable!(),
+        };
+        let mut info = unsafe { capability_struct.map_and_mask_all(pcid_handle) };
+
+        pcid_handle.enable_feature(crate::driver_interface::PciFeature::MsiX);
+
+        let entry = info.table_entry_pointer(0);
+
+        let bsp_cpu_id = read_bsp_apic_id()
+            .unwrap_or_else(|err| panic!("{driver}: failed to read BSP APIC ID: {err}"));
+        let (msg_addr_and_data, irq_handle) = allocate_single_interrupt_vector_for_msi(bsp_cpu_id);
+        entry.write_addr_and_data(msg_addr_and_data);
+        entry.unmask();
+
+        irq_handle
+    } else if has_msi {
+        allocate_first_msi_interrupt_on_bsp(pcid_handle)
+    } else if let Some(irq) = pcid_handle.config().func.legacy_interrupt_line {
+        // INTx# pin based interrupts.
+        irq.irq_handle(driver)
+    } else {
+        panic!("{driver}: no interrupts supported at all")
+    }
+}
+
+// FIXME support MSI on non-x86 systems
+#[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+fn pci_allocate_interrupt_vector(
+    pcid_handle: &mut crate::driver_interface::PcidServerHandle,
+    driver: &str,
+) -> Vec<File> {
+    if let Some(irq) = pcid_handle.config().func.legacy_interrupt_line {
+        // INTx# pin based interrupts.
+        irq.irq_handle(driver)
+    } else {
+        panic!("{driver}: no interrupts supported at all")
+    }
+}

@@ -1,7 +1,7 @@
 use log::{debug, error, info, trace};
 use std::mem::size_of;
 use std::ops::DerefMut;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use std::{ptr, u32};
 
 use common::dma::Dma;

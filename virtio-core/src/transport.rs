@@ -270,9 +270,9 @@ impl<'a> Mem<'a> {
         match *self {
             Self::Owned(ref dma) => dma.as_ptr().cast(),
             Self::Borrowed(Borrowed {
-                phys,
+                phys: _,
                 virt,
-                size,
+                size: _,
                 _unused,
             }) => virt as *const T,
         }
@@ -281,9 +281,9 @@ impl<'a> Mem<'a> {
         match *self {
             Self::Owned(ref mut dma) => dma.as_mut_ptr().cast(),
             Self::Borrowed(Borrowed {
-                phys,
+                phys: _,
                 virt,
-                size,
+                size: _,
                 _unused,
             }) => virt as *mut T,
         }
@@ -502,7 +502,7 @@ pub trait Transport: Sync + Send {
     ///
     /// ## Panics
     /// This function panics if the device is running.
-    fn setup_queue(&self, vector: u16, irq_handle: &File) -> Result<Arc<Queue>, Error>;
+    fn setup_queue(&self, vector: u16, irq_handle: &File) -> Result<Arc<Queue<'_>>, Error>;
 
     // TODO(andypython): Should this function be unsafe?
     fn reinit_queue(&self, queue: Arc<Queue>);
@@ -615,7 +615,7 @@ impl Transport for StandardTransport<'_> {
         u32::from(self.common.lock().unwrap().config_generation.get())
     }
 
-    fn setup_queue(&self, vector: u16, irq_handle: &File) -> Result<Arc<Queue>, Error> {
+    fn setup_queue(&self, vector: u16, irq_handle: &File) -> Result<Arc<Queue<'_>>, Error> {
         let mut common = self.common.lock().unwrap();
 
         let queue_index = self.queue_index.fetch_add(1, Ordering::SeqCst);
