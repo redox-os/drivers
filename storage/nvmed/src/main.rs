@@ -7,100 +7,13 @@ use std::sync::Arc;
 use std::usize;
 
 use driver_block::{Disk, DiskScheme};
-use pcid_interface::{PciFeature, PciFeatureInfo, PciFunction, PciFunctionHandle};
-use syscall::Result;
+use pcid_interface::{irq_helpers, PciFunctionHandle};
 
 use crate::nvme::NvmeNamespace;
 
-use self::nvme::{InterruptMethod, InterruptSources, Nvme};
+use self::nvme::Nvme;
 
 mod nvme;
-
-/// Get the most optimal yet functional interrupt mechanism: either (in the order of preference):
-/// MSI-X, MSI, and INTx# pin. Returns both runtime interrupt structures (MSI/MSI-X capability
-/// structures), and the handles to the interrupts.
-#[cfg(target_arch = "x86_64")]
-fn get_int_method(
-    pcid_handle: &mut PciFunctionHandle,
-    function: &PciFunction,
-) -> Result<(InterruptMethod, InterruptSources)> {
-    log::trace!("Begin get_int_method");
-    use pcid_interface::irq_helpers;
-
-    let features = pcid_handle.fetch_all_features();
-
-    let has_msi = features.iter().any(|feature| feature.is_msi());
-    let has_msix = features.iter().any(|feature| feature.is_msix());
-
-    // TODO: Allocate more than one vector when possible and useful.
-    if has_msix {
-        // Extended message signaled interrupts.
-
-        let msix_info = match pcid_handle.feature_info(PciFeature::MsiX) {
-            PciFeatureInfo::MsiX(msix) => msix,
-            _ => unreachable!(),
-        };
-        let mut info = unsafe { msix_info.map_and_mask_all(pcid_handle) };
-
-        pcid_handle.enable_feature(PciFeature::MsiX);
-
-        let (msix_vector_number, irq_handle) = {
-            let entry = info.table_entry_pointer(0);
-
-            let bsp_cpu_id =
-                irq_helpers::read_bsp_apic_id().expect("nvmed: failed to read APIC ID");
-            let (msg_addr_and_data, irq_handle) =
-                irq_helpers::allocate_single_interrupt_vector_for_msi(bsp_cpu_id);
-            entry.write_addr_and_data(msg_addr_and_data);
-            entry.unmask();
-
-            (0, irq_handle)
-        };
-
-        let interrupt_method = InterruptMethod::MsiX(info);
-        let interrupt_sources =
-            InterruptSources::MsiX(std::iter::once((msix_vector_number, irq_handle)).collect());
-
-        log::trace!("Using MSI-X");
-        Ok((interrupt_method, interrupt_sources))
-    } else if has_msi {
-        // Message signaled interrupts.
-
-        let msi_vector_number = 0;
-        let irq_handle = irq_helpers::allocate_first_msi_interrupt_on_bsp(pcid_handle);
-
-        let interrupt_method = InterruptMethod::Msi;
-        let interrupt_sources =
-            InterruptSources::Msi(std::iter::once((msi_vector_number, irq_handle)).collect());
-
-        pcid_handle.enable_feature(PciFeature::Msi);
-
-        log::trace!("Using MSI");
-        Ok((interrupt_method, interrupt_sources))
-    } else if let Some(irq) = function.legacy_interrupt_line {
-        // INTx# pin based interrupts.
-        let irq_handle = irq.irq_handle("nvmed");
-        log::trace!("Using legacy interrupts");
-        Ok((InterruptMethod::Intx, InterruptSources::Intx(irq_handle)))
-    } else {
-        panic!("nvmed: no interrupts supported at all")
-    }
-}
-
-//TODO: MSI on non-x86_64?
-#[cfg(not(target_arch = "x86_64"))]
-fn get_int_method(
-    pcid_handle: &mut PciFunctionHandle,
-    function: &PciFunction,
-) -> Result<(InterruptMethod, InterruptSources)> {
-    if let Some(irq) = function.legacy_interrupt_line {
-        // INTx# pin based interrupts.
-        let irq_handle = irq.irq_handle("nvmed");
-        Ok((InterruptMethod::Intx, InterruptSources::Intx(irq_handle)))
-    } else {
-        panic!("nvmed: no interrupts supported at all")
-    }
-}
 
 struct NvmeDisk {
     nvme: Arc<Nvme>,
@@ -164,26 +77,18 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     let address = unsafe { pcid_handle.map_bar(0).ptr };
 
-    let (interrupt_method, interrupt_sources) = get_int_method(&mut pcid_handle, &pci_config.func)
-        .expect("nvmed: failed to find a suitable interrupt method");
-    let mut nvme = Nvme::new(address.as_ptr() as usize, interrupt_method, pcid_handle)
+    let interrupt_vector = irq_helpers::pci_allocate_interrupt_vector(&mut pcid_handle, "nvmed");
+    let iv = interrupt_vector.vector();
+    let irq_handle = interrupt_vector.irq_handle().try_clone().unwrap();
+
+    let mut nvme = Nvme::new(address.as_ptr() as usize, interrupt_vector, pcid_handle)
         .expect("nvmed: failed to allocate driver data");
 
     unsafe { nvme.init().expect("nvmed: failed to init") }
     log::debug!("Finished base initialization");
     let nvme = Arc::new(nvme);
 
-    let executor = {
-        let (intx, (iv, irq_handle)) = match interrupt_sources {
-            InterruptSources::Msi(mut vectors) => (
-                false,
-                vectors.pop_first().map(|(a, b)| (u16::from(a), b)).unwrap(),
-            ),
-            InterruptSources::MsiX(mut vectors) => (false, vectors.pop_first().unwrap()),
-            InterruptSources::Intx(file) => (true, (0, file)),
-        };
-        nvme::executor::init(Arc::clone(&nvme), iv, intx, irq_handle)
-    };
+    let executor = nvme::executor::init(Arc::clone(&nvme), iv, false /* FIXME */, irq_handle);
 
     let mut time_handle = File::open(&format!("/scheme/time/{}", libredox::flag::CLOCK_MONOTONIC))
         .expect("failed to open time handle");

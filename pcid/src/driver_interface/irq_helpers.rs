@@ -8,7 +8,7 @@ use std::fs::{self, File};
 use std::io::{self, prelude::*};
 use std::num::NonZeroU8;
 
-use crate::driver_interface::msi::MsiAddrAndData;
+use crate::driver_interface::msi::{MsiAddrAndData, MsixTableEntry};
 
 /// Read the local APIC ID of the bootstrap processor.
 pub fn read_bsp_apic_id() -> io::Result<usize> {
@@ -228,24 +228,59 @@ pub fn allocate_first_msi_interrupt_on_bsp(
     interrupt_handle
 }
 
+pub struct InterruptVector {
+    irq_handle: File,
+    vector: u16,
+    kind: InterruptVectorKind,
+}
+
+enum InterruptVectorKind {
+    Legacy,
+    Msi,
+    MsiX { table_entry: *mut MsixTableEntry },
+}
+
+impl InterruptVector {
+    pub fn irq_handle(&self) -> &File {
+        &self.irq_handle
+    }
+
+    pub fn vector(&self) -> u16 {
+        self.vector
+    }
+
+    pub fn set_masked_if_fast(&mut self, masked: bool) -> bool {
+        match self.kind {
+            InterruptVectorKind::Legacy | InterruptVectorKind::Msi => false,
+            InterruptVectorKind::MsiX { table_entry } => {
+                unsafe { (*table_entry).set_masked(masked) };
+                true
+            }
+        }
+    }
+}
+
 /// Get the most optimal supported interrupt mechanism: either (in the order of preference):
-/// MSI-X, MSI, and INTx# pin. Returns the handles to the interrupts.
+/// MSI-X, MSI, and INTx# pin. Returns both runtime interrupt structures (MSI/MSI-X capability
+/// structures), and the handles to the interrupts.
+// FIXME allow allocating multiple interrupt vectors
+// FIXME move MSI-X IRQ allocation to pcid
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 pub fn pci_allocate_interrupt_vector(
     pcid_handle: &mut crate::driver_interface::PciFunctionHandle,
     driver: &str,
-) -> File {
+) -> InterruptVector {
     let features = pcid_handle.fetch_all_features();
 
     let has_msi = features.iter().any(|feature| feature.is_msi());
     let has_msix = features.iter().any(|feature| feature.is_msix());
 
     if has_msix {
-        let capability_struct = match pcid_handle.feature_info(super::PciFeature::MsiX) {
+        let msix_info = match pcid_handle.feature_info(super::PciFeature::MsiX) {
             super::PciFeatureInfo::MsiX(msix) => msix,
             _ => unreachable!(),
         };
-        let mut info = unsafe { capability_struct.map_and_mask_all(pcid_handle) };
+        let mut info = unsafe { msix_info.map_and_mask_all(pcid_handle) };
 
         pcid_handle.enable_feature(crate::driver_interface::PciFeature::MsiX);
 
@@ -257,12 +292,24 @@ pub fn pci_allocate_interrupt_vector(
         entry.write_addr_and_data(msg_addr_and_data);
         entry.unmask();
 
-        irq_handle
+        InterruptVector {
+            irq_handle,
+            vector: 0,
+            kind: InterruptVectorKind::MsiX { table_entry: entry },
+        }
     } else if has_msi {
-        allocate_first_msi_interrupt_on_bsp(pcid_handle)
+        InterruptVector {
+            irq_handle: allocate_first_msi_interrupt_on_bsp(pcid_handle),
+            vector: 0,
+            kind: InterruptVectorKind::Msi,
+        }
     } else if let Some(irq) = pcid_handle.config().func.legacy_interrupt_line {
         // INTx# pin based interrupts.
-        irq.irq_handle(driver)
+        InterruptVector {
+            irq_handle: irq.irq_handle(driver),
+            vector: 0,
+            kind: InterruptVectorKind::Legacy,
+        }
     } else {
         panic!("{driver}: no interrupts supported at all")
     }
@@ -270,13 +317,16 @@ pub fn pci_allocate_interrupt_vector(
 
 // FIXME support MSI on non-x86 systems
 #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
-fn pci_allocate_interrupt_vector(
+pub fn pci_allocate_interrupt_vector(
     pcid_handle: &mut crate::driver_interface::PciFunctionHandle,
     driver: &str,
-) -> Vec<File> {
+) -> InterruptVector {
     if let Some(irq) = pcid_handle.config().func.legacy_interrupt_line {
         // INTx# pin based interrupts.
-        irq.irq_handle(driver)
+        InterruptVector {
+            irq_handle: irq.irq_handle(driver),
+            kind: InterruptVectorKind::Legacy,
+        }
     } else {
         panic!("{driver}: no interrupts supported at all")
     }

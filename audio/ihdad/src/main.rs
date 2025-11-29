@@ -76,7 +76,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
             .unwrap();
         event_queue
             .subscribe(
-                irq_file.as_raw_fd() as usize,
+                irq_file.irq_handle().as_raw_fd() as usize,
                 Source::Irq,
                 event::EventFlags::READ,
             )
@@ -93,12 +93,12 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
             match event {
                 Source::Irq => {
                     let mut irq = [0; 8];
-                    irq_file.read(&mut irq).unwrap();
+                    irq_file.irq_handle().read(&mut irq).unwrap();
 
                     if !device.borrow_mut().irq() {
                         continue;
                     }
-                    irq_file.write(&mut irq).unwrap();
+                    irq_file.irq_handle().write(&mut irq).unwrap();
 
                     readiness_based
                         .poll_all_requests(|| device.borrow_mut())
