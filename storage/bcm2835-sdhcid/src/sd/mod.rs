@@ -38,7 +38,7 @@ pub(crate) unsafe fn wait_msec(mut n: usize) {
 
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
-pub(crate) unsafe fn wait_msec(mut n: usize) {
+pub(crate) unsafe fn wait_msec(n: usize) {
     thread::sleep(Duration::from_millis(n as u64));
 }
 
@@ -381,11 +381,10 @@ impl SdHostCtrl {
     }
 
     pub unsafe fn set_clock(&mut self, freq: u32) -> Result<()> {
-        let mut cnt: i32 = 0;
         let regs = self.regs.get_mut().unwrap();
 
         let mut reg_val = regs.status.read() & (SR_CMD_INHIBIT | SR_DAT_INHIBIT);
-        cnt = 10_0000;
+        let mut cnt = 10_0000;
         while (cnt > 0) && reg_val != 0 {
             wait_msec(1);
             cnt -= 1;
@@ -436,7 +435,7 @@ impl SdHostCtrl {
                 s = 7;
             }
         }
-        let mut d = 0;
+        let mut d;
         if self.host_spec_ver > HOST_SPEC_V2 {
             d = c;
         } else {
@@ -454,7 +453,7 @@ impl SdHostCtrl {
             h = (d & 0x300) >> 2;
         }
 
-        d = (((d & 0xff) << 8) | h);
+        d = ((d & 0xff) << 8) | h;
         reg_val = regs.control1.read() & 0xffff_003f;
         regs.control1.write(reg_val | d);
         wait_msec(10);
@@ -554,9 +553,9 @@ impl SdHostCtrl {
             return Ok(reg_val);
         } else if code == CMD_SEND_REL_ADDR {
             let mut err = reg_val & 0x1fff;
-            err |= ((reg_val & 0x2000) << 6);
-            err |= ((reg_val & 0x4000) << 8);
-            err |= ((reg_val & 0x8000) << 8);
+            err |= (reg_val & 0x2000) << 6;
+            err |= (reg_val & 0x4000) << 8;
+            err |= (reg_val & 0x8000) << 8;
             err &= CMD_ERRORS_MASK;
 
             if err != 0 {
@@ -616,7 +615,6 @@ impl SdHostCtrl {
 
     pub unsafe fn sd_readblock(&mut self, lba: u32, buf: &mut [u32], num: u32) -> Result<usize> {
         let num = if num < 1 { 1 } else { num };
-        let mut reg_val: usize = 0;
 
         //println!("sd_readblock lba 0x{:x}, num 0x{:x}", lba, num);
 
@@ -672,7 +670,6 @@ impl SdHostCtrl {
 
     pub unsafe fn sd_writeblock(&mut self, lba: u32, buf: &[u32], num: u32) -> Result<usize> {
         let num = if num < 1 { 1 } else { num };
-        let mut reg_val: usize = 0;
 
         //println!("sd_writelock lba 0x{:x}, num 0x{:x}", lba, num);
 

@@ -1,8 +1,6 @@
-#![feature(let_chains)]
-
 use std::process;
 
-use driver_block::{Disk, DiskScheme, ExecutorTrait, TrivialExecutor};
+use driver_block::{DiskScheme, ExecutorTrait, TrivialExecutor};
 use event::{EventFlags, RawEventQueue};
 use fdt::Fdt;
 

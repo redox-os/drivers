@@ -663,7 +663,7 @@ impl Alx {
         }
 
         /* clear WoL setting/status */
-        val = self.read(WOL0);
+        self.read(WOL0);
         self.write(WOL0, 0);
 
         /* deflt val of PDLL D3PLLOFF */
@@ -1124,7 +1124,7 @@ impl Alx {
         let mut giga: u16 = 0;
         let mut err: usize;
 
-        err = self.read_phy_reg(MII_BMSR, &mut bmsr);
+        self.read_phy_reg(MII_BMSR, &mut bmsr);
         err = self.read_phy_reg(MII_BMSR, &mut bmsr);
         if (err > 0) {
             return err;
@@ -1280,7 +1280,7 @@ impl Alx {
         self.write(RXQ0, val);
 
         /* DMA */
-        val = self.read(DMA);
+        self.read(DMA);
         val = FIELDX!(DMA_RORDER_MODE, DMA_RORDER_MODE_OUT)
             | DMA_RREQ_PRI_DATA
             | FIELDX!(DMA_RREQ_BLEN, max_payload)
@@ -1726,16 +1726,6 @@ impl Alx {
     }
 
     unsafe fn open(&mut self) -> usize {
-        let _err: usize = 0;
-
-        macro_rules! goto_out {
-            () => {{
-                self.free_all_ring_resources();
-                self.disable_advanced_intr();
-                return err;
-            }};
-        }
-
         /* allocate all memory resources */
         self.init_ring_ptrs();
 
