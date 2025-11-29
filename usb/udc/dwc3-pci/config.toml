@@ -1,0 +1,6 @@
+[[drivers]]
+name = "DWC3"
+class = 0x0C
+subclass = 0x03
+ids = { 0x16c3 = [0xabcd] }
+command = ["dwc3"]
