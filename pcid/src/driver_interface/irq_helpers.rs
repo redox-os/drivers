@@ -273,7 +273,7 @@ pub fn pci_allocate_interrupt_vector(
 fn pci_allocate_interrupt_vector(
     pcid_handle: &mut crate::driver_interface::PciFunctionHandle,
     driver: &str,
-) -> Vec<File> {
+) -> File {
     if let Some(irq) = pcid_handle.config().func.legacy_interrupt_line {
         // INTx# pin based interrupts.
         irq.irq_handle(driver)
