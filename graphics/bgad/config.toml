@@ -4,10 +4,3 @@ class = 0x03
 vendor = 0x1234
 device = 0x1111
 command = ["bgad"]
-
-[[drivers]]
-name = "VirtualBox Graphics Array"
-class = 0x03
-vendor = 0x80EE
-device = 0xBEEF
-command = ["bgad"]
