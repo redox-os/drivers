@@ -1,10 +1,10 @@
-use common::{io::{Io, Pio, ReadOnly, WriteOnly}, timeout::Timeout};
-use log::{debug, error, info, trace};
-
-use std::{
-    fmt, thread,
-    time::{Duration, Instant},
+use common::{
+    io::{Io, Pio, ReadOnly, WriteOnly},
+    timeout::Timeout,
 };
+use log::{debug, error, trace};
+
+use std::fmt;
 
 #[derive(Debug)]
 pub enum Error {
@@ -94,7 +94,6 @@ enum MouseCommand {
 #[derive(Clone, Copy, Debug)]
 #[repr(u8)]
 enum MouseCommandData {
-    SetResolution = 0xE8,
     SetSampleRate = 0xF3,
 }
 
@@ -327,8 +326,6 @@ impl Ps2 {
     }
 
     pub fn init_mouse(&mut self) -> Result<bool, Error> {
-        let mut b: u8 = 0;
-
         {
             // Enable second device
             self.command(Command::EnableSecond)?;
@@ -368,7 +365,7 @@ impl Ps2 {
             }
         }
 
-        b = self.mouse_command(MouseCommand::GetDeviceId)?;
+        let b = self.mouse_command(MouseCommand::GetDeviceId)?;
         let mouse_extra = if b == 0xFA {
             self.read()? == 3
         } else {
@@ -379,7 +376,7 @@ impl Ps2 {
         {
             // Set sample rate to maximum
             let sample_rate = 200;
-            b = self.mouse_command_data(MouseCommandData::SetSampleRate, sample_rate)?;
+            let b = self.mouse_command_data(MouseCommandData::SetSampleRate, sample_rate)?;
             if b != 0xFA {
                 error!(
                     "ps2d: mouse failed to set sample rate to {}: {:02X}",
@@ -389,7 +386,7 @@ impl Ps2 {
         }
 
         {
-            b = self.mouse_command(MouseCommand::StatusRequest)?;
+            let b = self.mouse_command(MouseCommand::StatusRequest)?;
             if b != 0xFA {
                 error!("ps2d: mouse failed to request status: {:02X}", b);
             } else {
