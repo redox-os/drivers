@@ -5,6 +5,8 @@ use syscall::error::{Error, Result, EIO, ENODEV, ERANGE};
 
 mod ddi;
 use self::ddi::Ddi;
+mod transcoder;
+use self::transcoder::Transcoder;
 
 //TODO: move to common?
 pub struct CallbackGuard<'a, T, F: FnOnce(&mut T)> {
@@ -77,12 +79,12 @@ impl Drop for MmioRegion {
     }
 }
 
-#[derive(Debug)]
 pub struct Device {
     kind: DeviceKind,
     ddi: Ddi,
     gttmm: MmioRegion,
     gm: MmioRegion,
+    transcoders: Vec<Transcoder>,
 }
 
 impl Device {
@@ -115,17 +117,49 @@ impl Device {
 
         let ddi = Ddi::new(kind)?;
 
+        let de_hpd_interrupt;
+        let de_port_interrupt;
         let mut gmbus;
         let mut pwr_well_ctl_aux;
         let mut pwr_well_ctl_ddi;
+        let sde_interrupt;
+        let shotplug_ctl_ddi;
+        let shotplug_ctl_tc;
+        let tbt_hotplug_ctl;
+        let tc_hotplug_ctl;
+        let transcoders;
         match kind {
             DeviceKind::TigerLake => {
                 // IHD-OS-TGL-Vol 2c-12.21
                 let dc_state_en = unsafe { gttmm.mmio(0x45504)? };
-                log::debug!("DC_STATE_EN {:08X}", dc_state_en.read());
+                log::debug!("dc_state_en {:08X}", dc_state_en.read());
+
+                de_hpd_interrupt = unsafe { gttmm.mmio(0x44470)? };
+                log::debug!("de_hpd_interrupt {:08X}", de_hpd_interrupt.read());
+
+                de_port_interrupt = unsafe { gttmm.mmio(0x44440)? };
+                log::debug!("de_port_interrupt {:08X}", de_port_interrupt.read());
+
+                let dpclka_cfgcr0 = unsafe { gttmm.mmio(0x164280)? };
+                log::info!("dpclka_cfgcr0 {:08X}", dpclka_cfgcr0.read());
+
+                let dpll0_cfgcr0 = unsafe { gttmm.mmio(0x164284)? };
+                log::info!("dpll0_cfgcr0 {:08X}", dpll0_cfgcr0.read());
+
+                let dpll0_cfgcr1 = unsafe { gttmm.mmio(0x164288)? };
+                log::info!("dpll0_cfgcr1 {:08X}", dpll0_cfgcr1.read());
+
+                let dpll0_enable = unsafe { gttmm.mmio(0x46010)? };
+                log::info!("dpll0_enable {:08X}", dpll0_enable.read());
+
+                let dpll1_enable = unsafe { gttmm.mmio(0x46014)? };
+                log::info!("dpll1_enable {:08X}", dpll1_enable.read());
+
+                let dpll4_enable = unsafe { gttmm.mmio(0x46018)? };
+                log::info!("dpll4_enable {:08X}", dpll4_enable.read());
 
                 let fuse_status = unsafe { gttmm.mmio(0x42000)? };
-                log::debug!("FUSE_STATUS {:08X}", fuse_status.read());
+                log::debug!("fuse_status {:08X}", fuse_status.read());
 
                 gmbus = unsafe { [
                     gttmm.mmio(0xC5100)?,
@@ -137,13 +171,42 @@ impl Device {
                 ] };
 
                 let pwr_well_ctl = unsafe { gttmm.mmio(0x45404)? };
-                log::debug!("PWR_WELL_CTL {:08X}", pwr_well_ctl.read());
+                log::debug!("pwr_well_ctl {:08X}", pwr_well_ctl.read());
 
                 pwr_well_ctl_aux = unsafe { gttmm.mmio(0x45444)? };
-                log::debug!("PWR_WELL_CTL_AUX {:08X}", pwr_well_ctl_aux.read());
+                log::debug!("pwr_well_ctl_aux {:08X}", pwr_well_ctl_aux.read());
 
                 pwr_well_ctl_ddi = unsafe { gttmm.mmio(0x45454)? };
-                log::debug!("PWR_WELL_CTL_DDI {:08X}", pwr_well_ctl_ddi.read());
+                log::debug!("pwr_well_ctl_ddi {:08X}", pwr_well_ctl_ddi.read());
+
+                sde_interrupt = unsafe { gttmm.mmio(0xC4000)? };
+                log::debug!("sde_interrupt {:08X}", sde_interrupt.read());
+
+                shotplug_ctl_ddi = unsafe { gttmm.mmio(0xC4030)? };
+                log::debug!("shotplug_ctl_ddi {:08X}", shotplug_ctl_ddi.read());
+
+                shotplug_ctl_tc = unsafe { gttmm.mmio(0xC4034)? };
+                log::debug!("shotplug_ctl_tc {:08X}", shotplug_ctl_tc.read());
+
+                tbt_hotplug_ctl = unsafe { gttmm.mmio(0x44030)? };
+                log::debug!("tbt_hotplug_ctl {:08X}", tbt_hotplug_ctl.read());
+
+                tc_hotplug_ctl = unsafe { gttmm.mmio(0x44038)? };
+                log::debug!("tc_hotplug_ctl {:08X}", tc_hotplug_ctl.read());
+
+                let trans_clk_sel_a = unsafe { gttmm.mmio(0x46140)? };
+                log::info!("trans_clk_sel_a {:08X}", trans_clk_sel_a.read());
+
+                let trans_clk_sel_b = unsafe { gttmm.mmio(0x46144)? };
+                log::info!("trans_clk_sel_b {:08X}", trans_clk_sel_b.read());
+
+                let trans_clk_sel_c = unsafe { gttmm.mmio(0x46148)? };
+                log::info!("trans_clk_sel_c {:08X}", trans_clk_sel_c.read());
+
+                let trans_clk_sel_d = unsafe { gttmm.mmio(0x4614C)? };
+                log::info!("trans_clk_sel_d {:08X}", trans_clk_sel_d.read());
+
+                transcoders = Transcoder::tigerlake(&gttmm)?;
             },
         };
 
@@ -153,8 +216,6 @@ impl Device {
                 let port_comp_dw0 = unsafe { gttmm.mmio(offset)? };
                 log::debug!("PORT_COMP_DW0_{}: {:08X}", port.name, port_comp_dw0.read());
             }
-
-            //let buf_ctl = unsafe { gttmm.mmio(port.buf_ctl())? };
 
             const AUX_CTL_BUSY: u32 = 1 << 31;
             const AUX_CTL_DONE: u32 = 1 << 30;
@@ -420,13 +481,133 @@ impl Device {
                 (edid[0x3B] as u32) | (((edid[0x3D] as u32) & 0xF0) << 4),
             );
             log::info!("Port {} best resolution using EDID from {}: {}x{}", port.name, source, width, height);
+
+            const DDI_BUF_CTL_EANBLE: u32 = 1 << 31;
+            const DDI_BUF_CTL_IDLE: u32 = 1 << 7;
+
+            let mut modeset_hdmi = |buf_ctl: &mut Mmio<u32>| -> Result<()> {
+                // IHD-OS-TGL-Vol 12-1.22-Rev2.0 "Sequences for HDMI and DVI"
+
+                // Power wells should already be enabled
+
+                //TODO: Type-C needs aux power enabled and max lanes set
+                
+                // Enable port PLL without SSC
+                //TODO: assuming a DPLL is already set up for this DDI!
+                //TODO: Check DPCLKA_CFGCR0 for mapping and DPLL_ENABLE for status
+
+                // Enable IO power
+                let _pwr_guard = CallbackGuard::new(
+                    &mut pwr_well_ctl_ddi,
+                    |pwr_well_ctl_ddi| {
+                        // Enable IO power
+                        pwr_well_ctl_ddi.writef(port.pwr_well_ctl_ddi_request(), true);
+                        let timeout = Timeout::from_micros(30);
+                        while !pwr_well_ctl_ddi.readf(port.pwr_well_ctl_ddi_state()) {
+                            timeout.run().map_err(|()| {
+                                log::debug!("timeout while requesting port {} IO power", port.name);
+                                Error::new(EIO)
+                            })?;
+                        }
+                        Ok(())
+                    },
+                    |pwr_well_ctl_ddi| {
+                        // Disable IO power
+                        pwr_well_ctl_ddi.writef(port.pwr_well_ctl_ddi_request(), false);
+                    }
+                )?;
+
+                //TODO: Type-C DP_MODE
+
+                // Enable planes, pipe, and transcoder
+                {
+                    // Configure transcoder clock select
+
+                    // Configure and enable planes
+
+                    //TODO: VGA and panel fitter steps
+
+                    // Configure transcoder timings and other pipe and transcoder settings
+
+                    // Configure and enable TRANS_DDI_FUNC_CTL
+
+                    // Configure and enable TRANS_CONF
+                }
+
+                // Enable port
+                {
+                    //TODO: Configure voltage swing and related IO settings
+
+                    // Configure PORT_CL_DW10 static power down to power up all lanes
+                    //TODO: only power up required lanes
+                    if let Some(offset) = port.port_cl_dw10() {
+                        let mut port_cl_dw10 = unsafe { gttmm.mmio(offset)? };
+                        log::info!("port_cl_dw10 {:08X}", port_cl_dw10.read());
+                        port_cl_dw10.writef(0b1111 << 4, false);
+                    }
+
+                    // Configure and enable DDI_BUF_CTL
+                    //TODO: more DDI_BUF_CTL bits?
+                    buf_ctl.writef(DDI_BUF_CTL_EANBLE, true);
+
+                    // Wait for DDI_BUF_CTL IDLE = 0, timeout after 500 us
+                    let timeout = Timeout::from_micros(500);
+                    while buf_ctl.readf(DDI_BUF_CTL_IDLE) {
+                        timeout.run().map_err(|()| {
+                            log::warn!("timeout while waiting for port {} DDI active", port.name);
+                            Error::new(EIO)
+                        })?;
+                    }
+                }
+
+                // Keep IO power on if finished
+                mem::forget(_pwr_guard);
+
+                Ok(())
+            };
+
+            let buf_ctl = unsafe { gttmm.mmio(port.buf_ctl())? };
+            if buf_ctl.readf(DDI_BUF_CTL_IDLE) {
+                log::info!("Port {} DDI idle, will attempt mode setting", port.name);
+                //TODO: DisplayPort modeset
+                match modeset_hdmi(buf_ctl) {
+                    Ok(()) => {
+                        log::info!("Port {} modeset finished", port.name);
+                    },
+                    Err(err) => {
+                        log::warn!("Port {} modeset failed: {}", port.name, err);
+                    }
+                }
+            } else {
+                log::info!("Port {} DDI already active", port.name);
+            }
         }
+
+        for transcoder in transcoders.iter() {
+            transcoder.dump();
+        }
+
+        /*TODO: hotplug detect
+        loop {
+            //eprint!("\r");
+            eprint!(" DE_HPD_INTERRUPT {:08X}", de_hpd_interrupt.read());
+            eprint!(" DE_PORT_INTERRUPT {:08X}", de_port_interrupt.read());
+            eprint!(" SDE_INTERRUPT {:08X}", sde_interrupt.read());
+            eprint!(" SHOTPLUG_CTL_DDI {:08X}", shotplug_ctl_ddi.read());
+            eprint!(" SHOTPLUG_CTL_TC {:08X}", shotplug_ctl_tc.read());
+            eprint!(" TBT_HOTPLUG_CTL {:08X}", tbt_hotplug_ctl.read());
+            eprint!(" TC_HOTPLUG_CTL {:08X}", tc_hotplug_ctl.read());
+            eprintln!();
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+        */
 
         Ok(Self {
             kind,
             ddi,
             gttmm,
             gm,
+            transcoders,
         })
     }
 }

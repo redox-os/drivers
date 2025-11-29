@@ -43,6 +43,15 @@ impl DdiPort {
         }
     }
 
+    pub fn port_cl_dw10(&self) -> Option<usize> {
+        match self.index {
+            0 => Some(0x162028),
+            1 => Some(0x6C028),
+            2 => Some(0x160028),
+            _ => None,
+        }
+    }
+
     pub fn port_comp_dw0(&self) -> Option<usize> {
         match self.index {
             0 => Some(0x162100),
