@@ -6,17 +6,20 @@ use std::collections::HashMap;
 use std::fmt::Write;
 use std::str;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::task::Poll;
 use std::thread;
 use std::time::Duration;
 
 use common::dma::Dma;
 use common::io::{Io, Mmio};
 use common::timeout::Timeout;
-use syscall::error::{Error, Result, EACCES, EBADF, EIO, EINVAL, ENODEV};
-use syscall::flag::{SEEK_CUR, SEEK_END, SEEK_SET};
-use syscall::scheme::SchemeBlockMut;
+use redox_scheme::scheme::SchemeSync;
+use redox_scheme::CallerCtx;
+use redox_scheme::OpenResult;
+use syscall::error::{Error, Result, EACCES, EBADF, EINVAL, EIO, ENODEV, EWOULDBLOCK};
 
 use spin::Mutex;
+use syscall::schemev2::NewFdFlags;
 
 use super::common::*;
 use super::BitsPerSample;
@@ -65,7 +68,7 @@ enum Handle {
     Todo,
     Pcmout(usize, usize, usize), // Card, index, block_ptr
     Pcmin(usize, usize, usize),  // Card, index, block_ptr
-    StrBuf(Vec<u8>, usize),
+    StrBuf(Vec<u8>),
 }
 
 #[repr(C, packed)]
@@ -389,7 +392,7 @@ impl IntelHDA {
     pub fn find_best_output_pin(&mut self) -> Result<WidgetAddr> {
         let outs = &self.output_pins;
         if outs.len() == 1 {
-            return Ok(outs[0])
+            return Ok(outs[0]);
         } else if outs.len() > 1 {
             //TODO: change output based on "unsolicited response" interrupts
             // Check for devices in this order: Headphone, Speaker, Line Out
@@ -412,7 +415,6 @@ impl IntelHDA {
                     }
                 }
             }
-
         }
         Err(Error::new(ENODEV))
     }
@@ -864,7 +866,7 @@ impl IntelHDA {
         Ok(())
     }
 
-    pub fn write_to_output(&mut self, index: u8, buf: &[u8]) -> Result<Option<usize>> {
+    pub fn write_to_output(&mut self, index: u8, buf: &[u8]) -> Poll<Result<usize>> {
         let output = self.get_output_stream_descriptor(index as usize).unwrap();
         let os = self.output_streams.get_mut(index as usize).unwrap();
 
@@ -875,9 +877,9 @@ impl IntelHDA {
 
         if os.current_block() == (open_block + 3) % NUM_SUB_BUFFS {
             // Block if we already are 3 buffers ahead
-            Ok(None)
+            Poll::Pending
         } else {
-            os.write_block(buf).map(|count| Some(count))
+            Poll::Ready(os.write_block(buf))
         }
     }
 
@@ -982,8 +984,8 @@ impl Drop for IntelHDA {
     }
 }
 
-impl SchemeBlockMut for IntelHDA {
-    fn open(&mut self, path: &str, _flags: usize, uid: u32, _gid: u32) -> Result<Option<usize>> {
+impl SchemeSync for IntelHDA {
+    fn open(&mut self, path: &str, _flags: usize, ctx: &CallerCtx) -> Result<OpenResult> {
         //let path: Vec<&str>;
         /*
         match str::from_utf8(_path) {
@@ -997,37 +999,54 @@ impl SchemeBlockMut for IntelHDA {
         }*/
 
         // TODO:
-        if uid == 0 {
-            let handle = match path.trim_matches('/') {
-                //TODO: allow multiple codecs
-                "codec" => Handle::StrBuf(self.dump_codec(0).into_bytes(), 0),
-                _ => Handle::Todo,
-            };
-            let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-            self.handles.lock().insert(id, handle);
-            Ok(Some(id))
-        } else {
-            Err(Error::new(EACCES))
+        if ctx.uid != 0 {
+            return Err(Error::new(EACCES));
         }
+        let handle = match path.trim_matches('/') {
+            //TODO: allow multiple codecs
+            "codec" => Handle::StrBuf(self.dump_codec(0).into_bytes()),
+            _ => Handle::Todo,
+        };
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        self.handles.lock().insert(id, handle);
+
+        // TODO: always positioned?
+        Ok(OpenResult::ThisScheme {
+            number: id,
+            flags: NewFdFlags::POSITIONED,
+        })
     }
 
-    fn read(&mut self, id: usize, buf: &mut [u8]) -> Result<Option<usize>> {
-        let mut handles = self.handles.lock();
-        match *handles.get_mut(&id).ok_or(Error::new(EBADF))? {
-            Handle::StrBuf(ref strbuf, ref mut size) => {
-                let mut i = 0;
-                while i < buf.len() && *size < strbuf.len() {
-                    buf[i] = strbuf[*size];
-                    i += 1;
-                    *size += 1;
-                }
-                Ok(Some(i))
-            }
-            _ => Err(Error::new(EBADF)),
-        }
+    fn read(
+        &mut self,
+        id: usize,
+        buf: &mut [u8],
+        offset: u64,
+        _flags: u32,
+        _ctx: &CallerCtx,
+    ) -> Result<usize> {
+        let handles = self.handles.lock();
+        let Some(Handle::StrBuf(strbuf)) = handles.get(&id) else {
+            return Err(Error::new(EBADF));
+        };
+
+        let src = usize::try_from(offset)
+            .ok()
+            .and_then(|o| strbuf.get(o..))
+            .unwrap_or(&[]);
+        let len = src.len().min(buf.len());
+        buf[..len].copy_from_slice(&src[..len]);
+        Ok(len)
     }
 
-    fn write(&mut self, id: usize, buf: &[u8]) -> Result<Option<usize>> {
+    fn write(
+        &mut self,
+        id: usize,
+        buf: &[u8],
+        _offset: u64,
+        _flags: u32,
+        _ctx: &CallerCtx,
+    ) -> Result<usize> {
         let index = {
             let mut handles = self.handles.lock();
             match handles.get_mut(&id).ok_or(Error::new(EBADF))? {
@@ -1038,50 +1057,26 @@ impl SchemeBlockMut for IntelHDA {
 
         //log::debug!("Int count: {}", self.int_counter);
 
-        self.write_to_output(index, buf)
-    }
-
-    fn seek(&mut self, id: usize, pos: isize, whence: usize) -> Result<Option<isize>> {
-        let pos = pos as usize;
-        let mut handles = self.handles.lock();
-        match *handles.get_mut(&id).ok_or(Error::new(EBADF))? {
-            Handle::StrBuf(ref mut strbuf, ref mut size) => {
-                let len = strbuf.len() as usize;
-                *size = match whence {
-                    SEEK_SET => cmp::min(len, pos),
-                    SEEK_CUR => {
-                        cmp::max(0, cmp::min(len as isize, *size as isize + pos as isize)) as usize
-                    }
-                    SEEK_END => {
-                        cmp::max(0, cmp::min(len as isize, len as isize + pos as isize)) as usize
-                    }
-                    _ => return Err(Error::new(EINVAL)),
-                };
-                Ok(Some(*size as isize))
-            }
-
-            _ => Err(Error::new(EINVAL)),
+        match self.write_to_output(index, buf) {
+            Poll::Ready(r) => r,
+            Poll::Pending => Err(Error::new(EWOULDBLOCK)),
         }
     }
 
-    fn fpath(&mut self, id: usize, buf: &mut [u8]) -> Result<Option<usize>> {
+    fn fpath(&mut self, id: usize, buf: &mut [u8], _ctx: &CallerCtx) -> Result<usize> {
         let mut handles = self.handles.lock();
         let _handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
         let mut i = 0;
-        let scheme_path = b"audiohw:";
+        let scheme_path = b"/scheme/audiohw";
         while i < buf.len() && i < scheme_path.len() {
             buf[i] = scheme_path[i];
             i += 1;
         }
-        Ok(Some(i))
+        Ok(i)
     }
 
-    fn close(&mut self, id: usize) -> Result<Option<usize>> {
-        let mut handles = self.handles.lock();
-        handles
-            .remove(&id)
-            .ok_or(Error::new(EBADF))
-            .and(Ok(Some(0)))
+    fn on_close(&mut self, id: usize) {
+        let _ = self.handles.lock().remove(&id);
     }
 }
