@@ -382,6 +382,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "driver-gadget"
+version = "0.1.0"
+dependencies = [
+ "libredox",
+ "redox-scheme 0.6.2",
+ "redox_syscall",
+]
+
+[[package]]
 name = "driver-graphics"
 version = "0.1.0"
 dependencies = [
@@ -401,6 +410,41 @@ dependencies = [
  "libredox",
  "redox-daemon",
  "redox-scheme 0.4.0",
+ "redox_syscall",
+]
+
+[[package]]
+name = "driver-udc"
+version = "0.1.0"
+dependencies = [
+ "libredox",
+ "redox-scheme 0.6.2",
+ "redox_syscall",
+]
+
+[[package]]
+name = "dwc3"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "driver-udc",
+ "futures",
+ "log",
+ "redox_syscall",
+]
+
+[[package]]
+name = "dwc3-pci"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "driver-udc",
+ "dwc3",
+ "libredox",
+ "log",
+ "pcid",
+ "redox-daemon",
+ "redox_event",
  "redox_syscall",
 ]
 
