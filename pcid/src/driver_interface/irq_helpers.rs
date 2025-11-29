@@ -271,7 +271,7 @@ pub fn pci_allocate_interrupt_vector(
 // FIXME support MSI on non-x86 systems
 #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
 fn pci_allocate_interrupt_vector(
-    pcid_handle: &mut crate::driver_interface::PcidServerHandle,
+    pcid_handle: &mut crate::driver_interface::PciFunctionHandle,
     driver: &str,
 ) -> Vec<File> {
     if let Some(irq) = pcid_handle.config().func.legacy_interrupt_line {
