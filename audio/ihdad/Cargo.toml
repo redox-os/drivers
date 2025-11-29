@@ -14,3 +14,4 @@ spin = "0.9"
 
 common = { path = "../../common" }
 pcid = { path = "../../pcid" }
+redox-scheme = "0.8.2"
