@@ -1,15 +1,10 @@
-use std::fs::File;
 use std::io::{Read, Write};
 use std::os::unix::io::AsRawFd;
 
 use driver_network::NetworkScheme;
 use event::{user_data, EventQueue};
-use pcid_interface::irq_helpers::read_bsp_apic_id;
-#[cfg(target_arch = "x86_64")]
-use pcid_interface::irq_helpers::{
-    allocate_first_msi_interrupt_on_bsp, allocate_single_interrupt_vector_for_msi,
-};
-use pcid_interface::{PciFeature, PciFeatureInfo, PciFunctionHandle};
+use pcid_interface::irq_helpers::pci_allocate_interrupt_vector;
+use pcid_interface::PciFunctionHandle;
 
 pub mod device;
 
@@ -22,67 +17,6 @@ where
         a / b + T::from(1u8)
     } else {
         a / b
-    }
-}
-
-#[cfg(target_arch = "x86_64")]
-fn get_int_method(pcid_handle: &mut PciFunctionHandle) -> File {
-    let pci_config = pcid_handle.config();
-
-    let all_pci_features = pcid_handle.fetch_all_features();
-    log::info!("PCI FEATURES: {:?}", all_pci_features);
-
-    let has_msi = all_pci_features.iter().any(|feature| feature.is_msi());
-    let has_msix = all_pci_features.iter().any(|feature| feature.is_msix());
-
-    if has_msix {
-        let msix_info = match pcid_handle.feature_info(PciFeature::MsiX) {
-            PciFeatureInfo::Msi(_) => panic!(),
-            PciFeatureInfo::MsiX(s) => s,
-        };
-        let mut info = unsafe { msix_info.map_and_mask_all(pcid_handle) };
-
-        // Allocate one msi vector.
-
-        let method = {
-            // primary interrupter
-            let k = 0;
-
-            let table_entry_pointer = info.table_entry_pointer(k);
-
-            let destination_id = read_bsp_apic_id().expect("rtl8168d: failed to read BSP apic id");
-            let (msg_addr_and_data, interrupt_handle) =
-                allocate_single_interrupt_vector_for_msi(destination_id);
-            table_entry_pointer.write_addr_and_data(msg_addr_and_data);
-            table_entry_pointer.unmask();
-
-            interrupt_handle
-        };
-
-        pcid_handle.enable_feature(PciFeature::MsiX);
-        log::debug!("Enabled MSI-X");
-
-        method
-    } else if has_msi {
-        allocate_first_msi_interrupt_on_bsp(pcid_handle)
-    } else if let Some(irq) = pci_config.func.legacy_interrupt_line {
-        // legacy INTx# interrupt pins.
-        irq.irq_handle("rtl8168d")
-    } else {
-        panic!("rtl8168d: no interrupts supported at all")
-    }
-}
-
-//TODO: MSI on non-x86_64?
-#[cfg(not(target_arch = "x86_64"))]
-fn get_int_method(pcid_handle: &mut PciFunctionHandle) -> File {
-    let pci_config = pcid_handle.config();
-
-    if let Some(irq) = pci_config.func.legacy_interrupt_line {
-        // legacy INTx# interrupt pins.
-        irq.irq_handle("rtl8168d")
-    } else {
-        panic!("rtl8168d: no interrupts supported at all")
     }
 }
 
@@ -121,8 +55,7 @@ fn daemon(daemon: redox_daemon::Daemon) -> ! {
 
     let bar = map_bar(&mut pcid_handle);
 
-    //TODO: MSI-X
-    let mut irq_file = get_int_method(&mut pcid_handle);
+    let mut irq_file = pci_allocate_interrupt_vector(&mut pcid_handle, "rtl8168d");
 
     let mut scheme = NetworkScheme::new(
         move || unsafe {
