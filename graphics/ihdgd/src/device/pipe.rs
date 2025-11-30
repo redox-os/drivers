@@ -7,6 +7,24 @@ pub struct Plane {
     pub name: &'static str,
     pub index: usize,
     pub ctl: MmioPtr<u32>,
+    pub offset: MmioPtr<u32>,
+    pub pos: MmioPtr<u32>,
+    pub size: MmioPtr<u32>,
+    pub stride: MmioPtr<u32>,
+    pub surf: MmioPtr<u32>,
+}
+
+impl Plane {
+    pub fn dump(&self) {
+        eprint!("Plane {}", self.name);
+        eprint!(" ctl {:08X}", self.ctl.read());
+        eprint!(" offset {:08X}", self.offset.read());
+        eprint!(" pos {:08X}", self.offset.read());
+        eprint!(" size {:08X}", self.size.read());
+        eprint!(" stride {:08X}", self.stride.read());
+        eprint!(" surf {:08X}", self.surf.read());
+        eprintln!();
+    }
 }
 
 pub struct Pipe {
@@ -24,9 +42,8 @@ impl Pipe {
         eprint!(" srcsz {:08X}", self.srcsz.read());
         eprintln!();
         for plane in self.planes.iter() {
-            eprint!("  Plane {}", plane.name);
-            eprint!(" ctl {:08X}", plane.ctl.read());
-            eprintln!();
+            eprint!("  ");
+            plane.dump();
         }
     }
 
@@ -40,6 +57,16 @@ impl Pipe {
                     index: j,
                     // IHD-OS-TGL-Vol 2c-12.21 PLANE_CTL
                     ctl: unsafe { gttmm.mmio(0x70180 + i * 0x1000 + j * 0x100)? },
+                    // IHD-OS-TGL-Vol 2c-12.21 PLANE_OFFSET
+                    offset: unsafe { gttmm.mmio(0x701A4 + i * 0x1000 + j * 0x100)? },
+                    // IHD-OS-TGL-Vol 2c-12.21 PLANE_POS
+                    pos: unsafe { gttmm.mmio(0x7018C + i * 0x1000 + j * 0x100)? },
+                    // IHD-OS-TGL-Vol 2c-12.21 PLANE_SIZE
+                    size: unsafe { gttmm.mmio(0x70190 + i * 0x1000 + j * 0x100)? },
+                    // IHD-OS-TGL-Vol 2c-12.21 PLANE_STRIDE
+                    stride: unsafe { gttmm.mmio(0x70188 + i * 0x1000 + j * 0x100)? },
+                    // IHD-OS-TGL-Vol 2c-12.21 PLANE_SURF
+                    surf: unsafe { gttmm.mmio(0x7019C + i * 0x1000 + j * 0x100)? },
                 });
             }
             pipes.push(Pipe {

@@ -9,6 +9,7 @@ pub const TRANS_CLK_SEL_DDI_SHIFT: u32 = 28;
 // IHD-OS-TGL-Vol 2c-12.21 TRANS_CONF
 pub const TRANS_CONF_ENABLE: u32 = 1 << 31;
 pub const TRANS_CONF_STATE: u32 = 1 << 30;
+pub const TRANS_CONF_MODE_MASK: u32 = 0b11 << 21;
 
 // IHD-OS-TGL-Vol 2c-12.21 TRANS_DDI_FUNC_CTL
 pub const TRANS_DDI_FUNC_CTL_ENABLE: u32 = 1 << 31;
@@ -25,7 +26,14 @@ pub const TRANS_DDI_FUNC_CTL_SYNC_POLARITY_LOW: u32 = 0b00 << 16;
 pub const TRANS_DDI_FUNC_CTL_SYNC_POLARITY_VSLOW_HSHIGH: u32 = 0b01 << 16;
 pub const TRANS_DDI_FUNC_CTL_SYNC_POLARITY_VSHIGH_HSLOW: u32 = 0b10 << 16;
 pub const TRANS_DDI_FUNC_CTL_SYNC_POLARITY_HIGH: u32 = 0b11 << 16;
-pub const TRANS_DDI_FUNC_CTL_PIPE_SHIFT: u32 = 12;
+pub const TRANS_DDI_FUNC_CTL_DSI_INPUT_PIPE_SHIFT: u32 = 12;
+pub const TRANS_DDI_FUNC_CTL_HDMI_SCRAMBLER_CTS: u32 = 1 << 7;
+pub const TRANS_DDI_FUNC_CTL_HIGH_TMDS_CHAR_RATE: u32 = 1 << 4;
+pub const TRANS_DDI_FUNC_CTL_PORT_WIDTH_1: u32 = 0b000 << 1;
+pub const TRANS_DDI_FUNC_CTL_PORT_WIDTH_2: u32 = 0b001 << 1;
+pub const TRANS_DDI_FUNC_CTL_PORT_WIDTH_3: u32 = 0b010 << 1;
+pub const TRANS_DDI_FUNC_CTL_PORT_WIDTH_4: u32 = 0b011 << 1;
+pub const TRANS_DDI_FUNC_CTL_HDMI_SCRAMBLING: u32 = 1 << 0;
 
 pub struct Transcoder {
     pub name: &'static str,
@@ -102,7 +110,7 @@ impl Transcoder {
         self.hsync.write(hsync_start | (hsync_end << 16));
 
         // Configure vertical sync
-        //TODO: causes reset: self.vtotal.write(vactive | (vtotal << 16));
+        self.vtotal.write(vactive | (vtotal << 16));
         self.vblank.write(vactive | (vtotal << 16));
         self.vsync.write(vsync_start | (vsync_end << 16));
 

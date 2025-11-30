@@ -1,31 +1,34 @@
+use common::io::{Io, MmioPtr};
 use syscall::error::Result;
 
-use super::DeviceKind;
+use super::{DeviceKind, MmioRegion};
 
-#[derive(Debug)]
-pub struct DdiPort {
+// IHD-OS-TGL-Vol 2c-12.21 DDI_AUX_CTL
+pub const DDI_AUX_CTL_BUSY: u32 = 1 << 31;
+pub const DDI_AUX_CTL_DONE: u32 = 1 << 30;
+pub const DDI_AUX_CTL_TIMEOUT_ERROR: u32 = 1 << 28;
+pub const DDI_AUX_CTL_TIMEOUT_SHIFT: u32 = 26;
+pub const DDI_AUX_CTL_TIMEOUT_MASK: u32 = 0b11 << DDI_AUX_CTL_TIMEOUT_SHIFT;
+pub const DDI_AUX_CTL_TIMEOUT_4000US: u32 = 0b11 << DDI_AUX_CTL_TIMEOUT_SHIFT;
+pub const DDI_AUX_CTL_RECEIVE_ERROR: u32 = 1 << 25;
+pub const DDI_AUX_CTL_SIZE_SHIFT: u32 = 20;
+pub const DDI_AUX_CTL_SIZE_MASK: u32 = 0b11111 << 20;
+pub const DDI_AUX_CTL_IO_SELECT: u32 = 1 << 11;
+
+// IHD-OS-TGL-Vol 2c-12.21 DDI_BUF_CTL
+pub const DDI_BUF_CTL_ENABLE: u32 = 1 << 31;
+pub const DDI_BUF_CTL_IDLE: u32 = 1 << 7;
+
+pub struct Ddi {
     pub name: &'static str,
     pub index: usize,
+    pub aux_ctl: MmioPtr<u32>,
+    pub aux_datas: [MmioPtr<u32>; 5],
+    pub buf_ctl: MmioPtr<u32>,
 }
 
 //TODO: verify offsets and count using DeviceKind?
-impl DdiPort {
-    pub fn new(name: &'static str, index: usize) -> Self {
-        Self { name, index }
-    }
-
-    pub fn addr(&self) -> usize {
-        0x64000 + (self.index * 0x100)
-    }
-
-    pub fn buf_ctl(&self) -> usize {
-        self.addr()
-    }
-
-    pub fn aux_ctl(&self) -> usize {
-        self.addr() + 0x10
-    }
-
+impl Ddi {
     pub fn gmbus_pin_pair(&self) -> Option<u8> {
         match self.index {
             // DDI pins
@@ -77,46 +80,40 @@ impl DdiPort {
         2 << (self.index * 2)
     }
 
-    pub fn aux_datas(&self) -> [usize; 5] {
-        let addr = self.addr();
-        [
-            addr + 0x14,
-            addr + 0x18,
-            addr + 0x1C,
-            addr + 0x20,
-            addr + 0x24,
-        ]
-    }
-
     pub fn transcoder_index(&self) -> u32 {
         (self.index + 1) as u32
     }
-}
 
-#[derive(Debug)]
-pub struct Ddi {
-    pub ports: Vec<DdiPort>
-}
-
-impl Ddi {
-    pub fn new(kind: DeviceKind) -> Result<Self> {
-        match kind {
-            DeviceKind::TigerLake => {
-                // IHD-OS-TGL-Vol 2c-12.21
-                Ok(Self {
-                    ports: vec![
-                        DdiPort::new("A", 0),
-                        DdiPort::new("B", 1),
-                        DdiPort::new("C", 2),
-                        DdiPort::new("USBC1", 3),
-                        DdiPort::new("USBC2", 4),
-                        DdiPort::new("USBC3", 5),
-                        DdiPort::new("USBC4", 6),
-                        DdiPort::new("USBC5", 7),
-                        DdiPort::new("USBC6", 8),
-                    ]
-                })
-            }
+    pub fn tigerlake(gttmm: &MmioRegion) -> Result<Vec<Self>> {
+        let mut ddis = Vec::new();
+        for (i, name) in [
+            "A",
+            "B",
+            "C",
+            "USBC1",
+            "USBC2",
+            "USBC3",
+            "USBC4",
+            "USBC5",
+            "USBC6",
+        ].iter().enumerate() {
+            ddis.push(Self {
+                name,
+                index: i,
+                // IHD-OS-TGL-Vol 2c-12.21 DDI_AUX_CTL
+                aux_ctl: unsafe { gttmm.mmio(0x64010 + i * 0x100)? },
+                // IHD-OS-TGL-Vol 2c-12.21 DDI_AUX_DATA
+                aux_datas: [
+                    unsafe { gttmm.mmio(0x64014 + i * 0x100)? },
+                    unsafe { gttmm.mmio(0x64018 + i * 0x100)? },
+                    unsafe { gttmm.mmio(0x6401C + i * 0x100)? },
+                    unsafe { gttmm.mmio(0x64020 + i * 0x100)? },
+                    unsafe { gttmm.mmio(0x64024 + i * 0x100)? },
+                ],
+                // IHD-OS-TGL-Vol 2c-12.21 DDI_BUF_CTL
+                buf_ctl: unsafe { gttmm.mmio(0x64000 + i * 0x100)? }
+            })
         }
+        Ok(ddis)
     }
 }

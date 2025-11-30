@@ -85,7 +85,7 @@ impl Drop for MmioRegion {
 
 pub struct Device {
     kind: DeviceKind,
-    ddi: Ddi,
+    ddis: Vec<Ddi>,
     gttmm: MmioRegion,
     gm: MmioRegion,
     pipes: Vec<Pipe>,
@@ -124,10 +124,9 @@ impl Device {
         log::debug!("IOBAR {:X?}", iobar);
         */
 
-        let ddi = Ddi::new(kind)?;
-
         let de_hpd_interrupt;
         let de_port_interrupt;
+        let dssm;
         let mut gmbus;
         let mut pwr_well_ctl_aux;
         let mut pwr_well_ctl_ddi;
@@ -136,6 +135,7 @@ impl Device {
         let shotplug_ctl_tc;
         let tbt_hotplug_ctl;
         let tc_hotplug_ctl;
+        let mut ddis;
         let mut pipes;
         let mut transcoders;
         match kind {
@@ -167,6 +167,10 @@ impl Device {
 
                 let dpll4_enable = unsafe { gttmm.mmio(0x46018)? };
                 log::debug!("dpll4_enable {:08X}", dpll4_enable.read());
+
+                // IHD-OS-TGL-Vol 2c-12.21 DSSM
+                dssm = unsafe { gttmm.mmio(0x51004)? };
+                log::debug!("dssm {:08X}", dssm.read());
 
                 let fuse_status = unsafe { gttmm.mmio(0x42000)? };
                 log::debug!("fuse_status {:08X}", fuse_status.read());
@@ -204,48 +208,46 @@ impl Device {
                 tc_hotplug_ctl = unsafe { gttmm.mmio(0x44038)? };
                 log::debug!("tc_hotplug_ctl {:08X}", tc_hotplug_ctl.read());
 
-                let trans_clk_sel_a = unsafe { gttmm.mmio(0x46140)? };
-                log::debug!("trans_clk_sel_a {:08X}", trans_clk_sel_a.read());
-
-                let trans_clk_sel_b = unsafe { gttmm.mmio(0x46144)? };
-                log::debug!("trans_clk_sel_b {:08X}", trans_clk_sel_b.read());
-
-                let trans_clk_sel_c = unsafe { gttmm.mmio(0x46148)? };
-                log::debug!("trans_clk_sel_c {:08X}", trans_clk_sel_c.read());
-
-                let trans_clk_sel_d = unsafe { gttmm.mmio(0x4614C)? };
-                log::debug!("trans_clk_sel_d {:08X}", trans_clk_sel_d.read());
-
+                ddis = Ddi::tigerlake(&gttmm)?;
                 pipes = Pipe::tigerlake(&gttmm)?;
                 transcoders = Transcoder::tigerlake(&gttmm)?;
             },
         };
 
-        for port in ddi.ports.iter() {
+        const DSSM_REF_FREQ_24_MHZ: u32 = 0b000 << 29;
+        const DSSM_REF_FREQ_19_2_MHZ: u32 = 0b001 << 29;
+        const DSSM_REF_FREQ_38_4_MHZ: u32 = 0b010 << 29;
+        const DSSM_REF_FREQ_MASK: u32 = 0b111 << 29;
+        let ref_freq: u64 = match dssm.read() & DSSM_REF_FREQ_MASK {
+            DSSM_REF_FREQ_24_MHZ => {
+                24_000_000
+            },
+            DSSM_REF_FREQ_19_2_MHZ => {
+                19_200_000
+            },
+            DSSM_REF_FREQ_38_4_MHZ => {
+                38_400_000
+            },
+            unknown => {
+                log::error!("unknown DSSM reference frequency {}", unknown);
+                return Err(Error::new(EIO));
+            }
+        };
+
+        for port in ddis.iter_mut() {
             //TODO: init port if needed
             if let Some(offset) = port.port_comp_dw0() {
                 let port_comp_dw0 = unsafe { gttmm.mmio(offset)? };
                 log::debug!("PORT_COMP_DW0_{}: {:08X}", port.name, port_comp_dw0.read());
             }
 
-            const AUX_CTL_BUSY: u32 = 1 << 31;
-            const AUX_CTL_DONE: u32 = 1 << 30;
-            const AUX_CTL_TIMEOUT_ERROR: u32 = 1 << 28;
-            const AUX_CTL_TIMEOUT_SHIFT: u32 = 26;
-            const AUX_CTL_TIMEOUT_MASK: u32 = 0b11 << AUX_CTL_TIMEOUT_SHIFT;
-            const AUX_CTL_TIMEOUT_4000US: u32 = 0b11 << AUX_CTL_TIMEOUT_SHIFT;
-            const AUX_CTL_RECEIVE_ERROR: u32 = 1 << 25;
-            const AUX_CTL_SIZE_SHIFT: u32 = 20;
-            const AUX_CTL_SIZE_MASK: u32 = 0b11111 << 20;
-            const AUX_CTL_IO_SELECT: u32 = 1 << 11;
-            let mut aux_ctl = unsafe { gttmm.mmio(port.aux_ctl())? };
 
             enum I2CData<'a> {
                 Read(&'a mut [u8]),
                 Write(&'a [u8]),
             }
 
-            let mut aux_i2c_tx = |mot: bool, addr: u8, mut data: I2CData| -> Result<()> {
+            let mut aux_i2c_tx = |port: &mut Ddi, mot: bool, addr: u8, mut data: I2CData| -> Result<()> {
                 // Write header and data
                 let mut header = 0;
                 match &data {
@@ -287,29 +289,28 @@ impl Device {
 
                 // Write data to registers (big endian, dword access only)
                 for (i, chunk) in aux_datas.chunks(4).enumerate() {
-                    let mut aux_data = unsafe { gttmm.mmio(port.aux_datas()[i])? };
                     let mut bytes = [0; 4];
                     bytes[..chunk.len()].copy_from_slice(&chunk);
-                    aux_data.write(u32::from_be_bytes(bytes));
+                    port.aux_datas[i].write(u32::from_be_bytes(bytes));
                 }
 
-                let mut v = aux_ctl.read();
+                let mut v = port.aux_ctl.read();
                 // Set length
-                v &= !AUX_CTL_SIZE_MASK;
-                v |= (aux_data_i as u32) << AUX_CTL_SIZE_SHIFT;
+                v &= !DDI_AUX_CTL_SIZE_MASK;
+                v |= (aux_data_i as u32) << DDI_AUX_CTL_SIZE_SHIFT;
                 // Set timeout
-                v &= !AUX_CTL_TIMEOUT_MASK;
-                v |= AUX_CTL_TIMEOUT_4000US;
+                v &= !DDI_AUX_CTL_TIMEOUT_MASK;
+                v |= DDI_AUX_CTL_TIMEOUT_4000US;
                 // Set I/O select to legacy (cleared)
                 //TODO: TBT support?
-                v &= !AUX_CTL_IO_SELECT;
+                v &= !DDI_AUX_CTL_IO_SELECT;
                 // Start transaction
-                v |= AUX_CTL_BUSY;
-                aux_ctl.write(v);
+                v |= DDI_AUX_CTL_BUSY;
+                port.aux_ctl.write(v);
 
                 // Wait while busy
                 let timeout = Timeout::from_secs(1);
-                while aux_ctl.readf(AUX_CTL_BUSY) {
+                while port.aux_ctl.readf(DDI_AUX_CTL_BUSY) {
                     timeout.run().map_err(|()| {
                         log::debug!("AUX I2C transaction wait timeout");
                         Error::new(EIO)
@@ -317,24 +318,23 @@ impl Device {
                 }
 
                 // Read result
-                v = aux_ctl.read();
-                if (v & AUX_CTL_TIMEOUT_ERROR) != 0 {
+                v = port.aux_ctl.read();
+                if (v & DDI_AUX_CTL_TIMEOUT_ERROR) != 0 {
                     log::debug!("AUX I2C transaction timeout error");
                     return Err(Error::new(EIO));
                 } 
-                if (v & AUX_CTL_RECEIVE_ERROR) != 0 {
+                if (v & DDI_AUX_CTL_RECEIVE_ERROR) != 0 {
                     log::debug!("AUX I2C transaction receive error");
                     return Err(Error::new(EIO));
                 } 
-                if (v & AUX_CTL_DONE) == 0 {
+                if (v & DDI_AUX_CTL_DONE) == 0 {
                     log::debug!("AUX I2C transaction done not set");
                     return Err(Error::new(EIO));
                 }
 
                 // Read data from registers (big endian, dword access only)
                 for (i, chunk) in aux_datas.chunks_mut(4).enumerate() {
-                    let mut aux_data = unsafe { gttmm.mmio(port.aux_datas()[i])? };
-                    let bytes = aux_data.read().to_be_bytes();
+                    let bytes = port.aux_datas[i].read().to_be_bytes();
                     chunk.copy_from_slice(&bytes[..chunk.len()]);
                 }
 
@@ -360,16 +360,18 @@ impl Device {
                 Ok(())
             };
 
-            let mut aux_read_edid = || -> Result<[u8; 128]> {
+            let mut aux_read_edid = |port: &mut Ddi| -> Result<[u8; 128]> {
                 //TODO: BLOCK TCCOLD?
 
+                let pwr_well_ctl_aux_request = port.pwr_well_ctl_aux_request();
+                let pwr_well_ctl_aux_state = port.pwr_well_ctl_aux_state();
                 let _pwr_guard = CallbackGuard::new(
                     &mut pwr_well_ctl_aux,
                     |pwr_well_ctl_aux| {
                         // Enable aux power
-                        pwr_well_ctl_aux.writef(port.pwr_well_ctl_aux_request(), true);
+                        pwr_well_ctl_aux.writef(pwr_well_ctl_aux_request, true);
                         let timeout = Timeout::from_micros(1500);
-                        while !pwr_well_ctl_aux.readf(port.pwr_well_ctl_aux_state()) {
+                        while !pwr_well_ctl_aux.readf(pwr_well_ctl_aux_state) {
                             timeout.run().map_err(|()| {
                                 log::debug!("timeout while requesting port {} aux power", port.name);
                                 Error::new(EIO)
@@ -379,27 +381,27 @@ impl Device {
                     },
                     |pwr_well_ctl_aux| {
                         // Disable aux power
-                        pwr_well_ctl_aux.writef(port.pwr_well_ctl_aux_request(), false);
+                        pwr_well_ctl_aux.writef(pwr_well_ctl_aux_request, false);
                     }
                 )?;
 
                 // Check if device responds
-                aux_i2c_tx(true, 0x50, I2CData::Write(&[]))?;
+                aux_i2c_tx(port, true, 0x50, I2CData::Write(&[]))?;
                 // Write index
-                aux_i2c_tx(true, 0x50, I2CData::Write(&[0]))?;
+                aux_i2c_tx(port, true, 0x50, I2CData::Write(&[0]))?;
                 // Read EDID
                 //TODO: Could EDID be read in multiple byte transactions?
                 let mut edid_data = [0; 128];
                 for chunk in edid_data.chunks_mut(1) {
-                    aux_i2c_tx(true, 0x50, I2CData::Read(chunk))?;
+                    aux_i2c_tx(port, true, 0x50, I2CData::Read(chunk))?;
                 }
                 // Finish transaction
-                aux_i2c_tx(false, 0x50, I2CData::Read(&mut []))?;
+                aux_i2c_tx(port, false, 0x50, I2CData::Read(&mut []))?;
 
                 Ok(edid_data)
             };
 
-            let mut gmbus_i2c_tx = |addr7: u8, index: u8, mut data: I2CData| -> Result<()> {
+            let mut gmbus_i2c_tx = |port: &mut Ddi, addr7: u8, index: u8, mut data: I2CData| -> Result<()> {
                 let Some(gmbus_pin_pair) = port.gmbus_pin_pair() else {
                     log::error!("Port {} has no GMBUS pin pair", port.name);
                     return Err(Error::new(EIO));
@@ -466,17 +468,17 @@ impl Device {
                 Ok(())
             };
 
-            let mut gmbus_read_edid = || -> Result<[u8; 128]> {
+            let mut gmbus_read_edid = |port: &mut Ddi| -> Result<[u8; 128]> {
                 let mut edid_data = [0; 128];
-                gmbus_i2c_tx(0x50, 0x00, I2CData::Read(&mut edid_data))?;
+                gmbus_i2c_tx(port, 0x50, 0x00, I2CData::Read(&mut edid_data))?;
                 Ok(edid_data)
             };
 
-            let (source, edid_data) = match aux_read_edid() {
+            let (source, edid_data) = match aux_read_edid(port) {
                 Ok(edid_data) => ("AUX", edid_data),
                 Err(err) => {
                     log::debug!("Port {} failed to read EDID from AUX: {}", port.name, err);
-                    match gmbus_read_edid() {
+                    match gmbus_read_edid(port) {
                         Ok(edid_data) => ("GMBUS", edid_data),
                         Err(err) => {
                             log::debug!("Port {} failed to read EDID from GMBUS: {}", port.name, err);
@@ -497,7 +499,7 @@ impl Device {
                 }
             };
 
-            let mut timing_opt = None;;
+            let mut timing_opt = None;
             for desc in edid.descriptors.iter() {
                 match desc {
                     edid::Descriptor::DetailedTiming(timing) => {
@@ -514,10 +516,7 @@ impl Device {
 
             log::info!("Port {} best timing using EDID from {}: {:?}", port.name, source, timing);
 
-            const DDI_BUF_CTL_ENABLE: u32 = 1 << 31;
-            const DDI_BUF_CTL_IDLE: u32 = 1 << 7;
-
-            let mut modeset_hdmi = |buf_ctl: &mut MmioPtr<u32>| -> Result<()> {
+            let mut modeset_hdmi = |port: &mut Ddi| -> Result<()> {
                 // IHD-OS-TGL-Vol 12-1.22-Rev2.0 "Sequences for HDMI and DVI"
 
                 // Power wells should already be enabled
@@ -529,13 +528,15 @@ impl Device {
                 //TODO: Check DPCLKA_CFGCR0 for mapping and DPLL_ENABLE for status
 
                 // Enable IO power
+                let pwr_well_ctl_ddi_request = port.pwr_well_ctl_ddi_request();
+                let pwr_well_ctl_ddi_state = port.pwr_well_ctl_ddi_state();
                 let _pwr_guard = CallbackGuard::new(
                     &mut pwr_well_ctl_ddi,
                     |pwr_well_ctl_ddi| {
                         // Enable IO power
-                        pwr_well_ctl_ddi.writef(port.pwr_well_ctl_ddi_request(), true);
+                        pwr_well_ctl_ddi.writef(pwr_well_ctl_ddi_request, true);
                         let timeout = Timeout::from_micros(30);
-                        while !pwr_well_ctl_ddi.readf(port.pwr_well_ctl_ddi_state()) {
+                        while !pwr_well_ctl_ddi.readf(pwr_well_ctl_ddi_state) {
                             timeout.run().map_err(|()| {
                                 log::debug!("timeout while requesting port {} IO power", port.name);
                                 Error::new(EIO)
@@ -545,7 +546,7 @@ impl Device {
                     },
                     |pwr_well_ctl_ddi| {
                         // Disable IO power
-                        pwr_well_ctl_ddi.writef(port.pwr_well_ctl_ddi_request(), false);
+                        pwr_well_ctl_ddi.writef(pwr_well_ctl_ddi_request, false);
                     }
                 )?;
 
@@ -577,12 +578,12 @@ impl Device {
 
                     //TODO: VGA and panel fitter steps?
 
+                    /*TODO
                     // Configure transcoder timings and other pipe and transcoder settings
                     transcoder.modeset(pipe, timing);
 
                     transcoder.dump();
 
-                    /*TODO
                     // Configure and enable TRANS_DDI_FUNC_CTL
                     transcoder.ddi_func_ctl.write(
                         TRANS_DDI_FUNC_CTL_ENABLE |
@@ -592,14 +593,24 @@ impl Device {
                         TRANS_DDI_FUNC_CTL_BPC_8 |
                         //TODO: use sync polarity from EDID?
                         TRANS_DDI_FUNC_CTL_SYNC_POLARITY_HIGH |
-                        ((pipe.index as u32) << TRANS_DDI_FUNC_CTL_PIPE_SHIFT)
-                        //TODO: MST transport select, default is DPTP A
-                        //TODO: DP and HDMI bits
-                        //TODO: port width selection, default is x1
+                        //TODO: doc says this bit must be set before the scrambler is enabled?
+                        TRANS_DDI_FUNC_CTL_HDMI_SCRAMBLER_CTS |
+                        //TODO: HDMI scrambler reset frequency
+                        //TODO: set this based on HDMI rate > 340 mega-characters/second/channel
+                        TRANS_DDI_FUNC_CTL_HIGH_TMDS_CHAR_RATE |
+                        //TODO: correct port width selection
+                        TRANS_DDI_FUNC_CTL_PORT_WIDTH_4 |
+                        //TODO: set this based on HDMI rate > 340 MHz
+                        TRANS_DDI_FUNC_CTL_HDMI_SCRAMBLING
                     );
 
                     // Configure and enable TRANS_CONF
-                    transcoder.conf.write(TRANS_CONF_ENABLE);
+                    let mut conf = transcoder.conf.read();
+                    // Set mode to progressive
+                    conf &= !TRANS_CONF_MODE_MASK;
+                    // Enable transcoder
+                    conf |= TRANS_CONF_ENABLE;
+                    transcoder.conf.write(conf);
                     //TODO: what is the correct timeout?
                     let timeout = Timeout::from_millis(100);
                     while !transcoder.conf.readf(TRANS_CONF_STATE) {
@@ -625,11 +636,11 @@ impl Device {
 
                     // Configure and enable DDI_BUF_CTL
                     //TODO: more DDI_BUF_CTL bits?
-                    buf_ctl.writef(DDI_BUF_CTL_ENABLE, true);
+                    port.buf_ctl.writef(DDI_BUF_CTL_ENABLE, true);
 
                     // Wait for DDI_BUF_CTL IDLE = 0, timeout after 500 us
                     let timeout = Timeout::from_micros(500);
-                    while buf_ctl.readf(DDI_BUF_CTL_IDLE) {
+                    while port.buf_ctl.readf(DDI_BUF_CTL_IDLE) {
                         timeout.run().map_err(|()| {
                             log::warn!("timeout while waiting for port {} DDI active", port.name);
                             Error::new(EIO)
@@ -643,11 +654,10 @@ impl Device {
                 Ok(())
             };
 
-            let mut buf_ctl = unsafe { gttmm.mmio(port.buf_ctl())? };
-            if buf_ctl.readf(DDI_BUF_CTL_IDLE) {
+            if port.buf_ctl.readf(DDI_BUF_CTL_IDLE) {
                 log::info!("Port {} DDI idle, will attempt mode setting", port.name);
                 //TODO: DisplayPort modeset
-                match modeset_hdmi(&mut buf_ctl) {
+                match modeset_hdmi(port) {
                     Ok(()) => {
                         log::info!("Port {} modeset finished", port.name);
                     },
@@ -660,14 +670,12 @@ impl Device {
             }
         }
 
-        /*
-        for pipe in pipes.iter() {
-            pipe.dump();
-        }
-        */
-
         for transcoder in transcoders.iter() {
             transcoder.dump();
+        }
+
+        for pipe in pipes.iter() {
+            pipe.dump();
         }
 
         /*TODO: hotplug detect
@@ -687,7 +695,7 @@ impl Device {
 
         Ok(Self {
             kind,
-            ddi,
+            ddis,
             gttmm,
             gm,
             pipes,
