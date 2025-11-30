@@ -4,10 +4,12 @@ use core::{
 };
 
 mod mmio;
+mod mmio_ptr;
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 mod pio;
 
 pub use mmio::*;
+pub use mmio_ptr::*;
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 pub use pio::*;
 
