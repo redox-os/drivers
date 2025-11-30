@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+#TODO: edid is abandoned, fork it an maintain?
+edid = "0.3.0"
 log = "0.4"
 redox-daemon = "0.1"
 redox-scheme = "0.6.2"

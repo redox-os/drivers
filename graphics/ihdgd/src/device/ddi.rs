@@ -87,6 +87,10 @@ impl DdiPort {
             addr + 0x24,
         ]
     }
+
+    pub fn transcoder_index(&self) -> u32 {
+        (self.index + 1) as u32
+    }
 }
 
 #[derive(Debug)]

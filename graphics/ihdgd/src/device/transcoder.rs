@@ -1,39 +1,64 @@
-use common::io::{Io, Mmio};
+use common::io::{Io, MmioPtr};
 use syscall::error::Result;
 
-use super::MmioRegion;
+use super::{MmioRegion, Pipe};
+
+// IHD-OS-TGL-Vol 2c-12.21 TRANS_CLK_SEL
+pub const TRANS_CLK_SEL_DDI_SHIFT: u32 = 28;
+
+// IHD-OS-TGL-Vol 2c-12.21 TRANS_CONF
+pub const TRANS_CONF_ENABLE: u32 = 1 << 31;
+pub const TRANS_CONF_STATE: u32 = 1 << 30;
+
+// IHD-OS-TGL-Vol 2c-12.21 TRANS_DDI_FUNC_CTL
+pub const TRANS_DDI_FUNC_CTL_ENABLE: u32 = 1 << 31;
+pub const TRANS_DDI_FUNC_CTL_DDI_SHIFT: u32 = 27;
+pub const TRANS_DDI_FUNC_CTL_MODE_HDMI: u32 = 0b000 << 24;
+pub const TRANS_DDI_FUNC_CTL_MODE_DVI: u32 = 0b001 << 24;
+pub const TRANS_DDI_FUNC_CTL_MODE_DP_SST: u32 = 0b010 << 24;
+pub const TRANS_DDI_FUNC_CTL_MODE_DP_MST: u32 = 0b011 << 24;
+pub const TRANS_DDI_FUNC_CTL_BPC_8: u32 = 0b000 << 20;
+pub const TRANS_DDI_FUNC_CTL_BPC_10: u32 = 0b001 << 20;
+pub const TRANS_DDI_FUNC_CTL_BPC_6: u32 = 0b010 << 20;
+pub const TRANS_DDI_FUNC_CTL_BPC_12: u32 = 0b011 << 20;
+pub const TRANS_DDI_FUNC_CTL_SYNC_POLARITY_LOW: u32 = 0b00 << 16;
+pub const TRANS_DDI_FUNC_CTL_SYNC_POLARITY_VSLOW_HSHIGH: u32 = 0b01 << 16;
+pub const TRANS_DDI_FUNC_CTL_SYNC_POLARITY_VSHIGH_HSLOW: u32 = 0b10 << 16;
+pub const TRANS_DDI_FUNC_CTL_SYNC_POLARITY_HIGH: u32 = 0b11 << 16;
+pub const TRANS_DDI_FUNC_CTL_PIPE_SHIFT: u32 = 12;
 
 pub struct Transcoder {
     pub name: &'static str,
-    pub clk_sel: &'static mut Mmio<u32>,
-    pub conf: &'static mut Mmio<u32>,
-    pub ddi_func_ctl: &'static mut Mmio<u32>,
-    pub ddi_func_ctl2: &'static mut Mmio<u32>,
-    pub hblank: &'static mut Mmio<u32>,
-    pub hsync: &'static mut Mmio<u32>,
-    pub htotal: &'static mut Mmio<u32>,
-    pub msa_misc: &'static mut Mmio<u32>,
-    pub mult: &'static mut Mmio<u32>,
-    pub push: &'static mut Mmio<u32>,
-    pub space: &'static mut Mmio<u32>,
-    pub stereo3d_ctl: &'static mut Mmio<u32>,
-    pub vblank: &'static mut Mmio<u32>,
-    pub vrr_ctl: &'static mut Mmio<u32>,
-    pub vrr_flipline: &'static mut Mmio<u32>,
-    pub vrr_status: &'static mut Mmio<u32>,
-    pub vrr_status2: &'static mut Mmio<u32>,
-    pub vrr_vmax: &'static mut Mmio<u32>,
-    pub vrr_vmaxshift: &'static mut Mmio<u32>,
-    pub vrr_vmin: &'static mut Mmio<u32>,
-    pub vrr_vtotal_prev: &'static mut Mmio<u32>,
-    pub vsync: &'static mut Mmio<u32>,
-    pub vsyncshift: &'static mut Mmio<u32>,
-    pub vtotal: &'static mut Mmio<u32>,
+    pub index: usize,
+    pub clk_sel: MmioPtr<u32>,
+    pub conf: MmioPtr<u32>,
+    pub ddi_func_ctl: MmioPtr<u32>,
+    pub ddi_func_ctl2: MmioPtr<u32>,
+    pub hblank: MmioPtr<u32>,
+    pub hsync: MmioPtr<u32>,
+    pub htotal: MmioPtr<u32>,
+    pub msa_misc: MmioPtr<u32>,
+    pub mult: MmioPtr<u32>,
+    pub push: MmioPtr<u32>,
+    pub space: MmioPtr<u32>,
+    pub stereo3d_ctl: MmioPtr<u32>,
+    pub vblank: MmioPtr<u32>,
+    pub vrr_ctl: MmioPtr<u32>,
+    pub vrr_flipline: MmioPtr<u32>,
+    pub vrr_status: MmioPtr<u32>,
+    pub vrr_status2: MmioPtr<u32>,
+    pub vrr_vmax: MmioPtr<u32>,
+    pub vrr_vmaxshift: MmioPtr<u32>,
+    pub vrr_vmin: MmioPtr<u32>,
+    pub vrr_vtotal_prev: MmioPtr<u32>,
+    pub vsync: MmioPtr<u32>,
+    pub vsyncshift: MmioPtr<u32>,
+    pub vtotal: MmioPtr<u32>,
 }
 
 impl Transcoder {
     pub fn dump(&self) {
-        eprint!("Transcoder {}", self.name);
+        eprint!("Transcoder {} {}", self.name, self.index);
         eprint!(" clk_sel {:08X}", self.clk_sel.read());
         eprint!(" conf {:08X}", self.conf.read());
         eprint!(" ddi_func_ctl {:08X}", self.ddi_func_ctl.read());
@@ -61,11 +86,36 @@ impl Transcoder {
         eprintln!();
     }
 
+    pub fn modeset(&mut self, pipe: &mut Pipe, timing: &edid::DetailedTiming) {
+        let hactive = (timing.horizontal_active_pixels as u32) - 1;
+        let htotal = hactive + (timing.horizontal_blanking_pixels as u32);
+        let hsync_start = hactive + (timing.horizontal_front_porch as u32);
+        let hsync_end = hsync_start + (timing.horizontal_sync_width as u32);
+        let vactive = (timing.vertical_active_lines as u32) - 1;
+        let vtotal = vactive + (timing.vertical_blanking_lines as u32);
+        let vsync_start = vactive + (timing.vertical_front_porch as u32);
+        let vsync_end = vsync_start + (timing.vertical_sync_width as u32);
+
+        // Configure horizontal sync
+        self.htotal.write(hactive | (htotal << 16));
+        self.hblank.write(hactive | (htotal << 16));
+        self.hsync.write(hsync_start | (hsync_end << 16));
+
+        // Configure vertical sync
+        //TODO: causes reset: self.vtotal.write(vactive | (vtotal << 16));
+        self.vblank.write(vactive | (vtotal << 16));
+        self.vsync.write(vsync_start | (vsync_end << 16));
+
+        // Configure pipe
+        pipe.srcsz.write(vactive | (hactive << 16));
+    }
+
     pub fn tigerlake(gttmm: &MmioRegion) -> Result<Vec<Self>> {
         let mut transcoders = Vec::with_capacity(4);
         for (i, name) in ["A", "B", "C", "D"].iter().enumerate() {
             transcoders.push(Transcoder {
                 name,
+                index: i,
                 // IHD-OS-TGL-Vol 2c-12.21 TRANS_CLK_SEL
                 clk_sel: unsafe { gttmm.mmio(0x46140 + i * 0x4)? },
                 // IHD-OS-TGL-Vol 2c-12.21 TRANS_CONF

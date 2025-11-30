@@ -1,12 +1,14 @@
-use common::{io::{Io, Mmio}, timeout::Timeout};
+use common::{io::{Io, MmioPtr}, timeout::Timeout};
 use pcid_interface::PciFunction;
 use std::{mem, ptr};
 use syscall::error::{Error, Result, EIO, ENODEV, ERANGE};
 
 mod ddi;
-use self::ddi::Ddi;
+use self::ddi::*;
+mod pipe;
+use self::pipe::*;
 mod transcoder;
-use self::transcoder::Transcoder;
+use self::transcoder::*;
 
 //TODO: move to common?
 pub struct CallbackGuard<'a, T, F: FnOnce(&mut T)> {
@@ -62,12 +64,14 @@ impl MmioRegion {
         })
     }
 
-    unsafe fn mmio(&self, offset: usize) -> Result<&'static mut Mmio<u32>> {
-        if offset + mem::size_of::<u32>() > self.size {
-            return Err(Error::new(ERANGE));
+    unsafe fn mmio(&self, offset: usize) -> Result<MmioPtr<u32>> {
+        // Any errors here will return ERANGE
+        let err = Error::new(ERANGE);
+        if offset.checked_add(mem::size_of::<u32>()).ok_or(err)? > self.size {
+            return Err(err);
         }
-        let addr = self.virt + offset;
-        Ok(unsafe { &mut *(addr as *mut Mmio<u32>) })
+        let addr = self.virt.checked_add(offset).ok_or(err)?;
+        Ok(unsafe { MmioPtr::new(addr as *mut u32) })
     }
 }
 
@@ -84,6 +88,7 @@ pub struct Device {
     ddi: Ddi,
     gttmm: MmioRegion,
     gm: MmioRegion,
+    pipes: Vec<Pipe>,
     transcoders: Vec<Transcoder>,
 }
 
@@ -108,12 +113,16 @@ impl Device {
             let (phys, size) = func.bars[0].expect_mem();
             MmioRegion::new(phys, size)?
         };
+        log::info!("GTTMM {:X?}", gttmm);
         let gm = {
             let (phys, size) = func.bars[2].expect_mem();
             MmioRegion::new(phys, size)?
         };
+        log::info!("GM {:X?}", gttmm);
+        /* IOBAR not used
         let iobar = func.bars[4].expect_port();
         log::debug!("IOBAR {:X?}", iobar);
+        */
 
         let ddi = Ddi::new(kind)?;
 
@@ -127,7 +136,8 @@ impl Device {
         let shotplug_ctl_tc;
         let tbt_hotplug_ctl;
         let tc_hotplug_ctl;
-        let transcoders;
+        let mut pipes;
+        let mut transcoders;
         match kind {
             DeviceKind::TigerLake => {
                 // IHD-OS-TGL-Vol 2c-12.21
@@ -141,22 +151,22 @@ impl Device {
                 log::debug!("de_port_interrupt {:08X}", de_port_interrupt.read());
 
                 let dpclka_cfgcr0 = unsafe { gttmm.mmio(0x164280)? };
-                log::info!("dpclka_cfgcr0 {:08X}", dpclka_cfgcr0.read());
+                log::debug!("dpclka_cfgcr0 {:08X}", dpclka_cfgcr0.read());
 
                 let dpll0_cfgcr0 = unsafe { gttmm.mmio(0x164284)? };
-                log::info!("dpll0_cfgcr0 {:08X}", dpll0_cfgcr0.read());
+                log::debug!("dpll0_cfgcr0 {:08X}", dpll0_cfgcr0.read());
 
                 let dpll0_cfgcr1 = unsafe { gttmm.mmio(0x164288)? };
-                log::info!("dpll0_cfgcr1 {:08X}", dpll0_cfgcr1.read());
+                log::debug!("dpll0_cfgcr1 {:08X}", dpll0_cfgcr1.read());
 
                 let dpll0_enable = unsafe { gttmm.mmio(0x46010)? };
-                log::info!("dpll0_enable {:08X}", dpll0_enable.read());
+                log::debug!("dpll0_enable {:08X}", dpll0_enable.read());
 
                 let dpll1_enable = unsafe { gttmm.mmio(0x46014)? };
-                log::info!("dpll1_enable {:08X}", dpll1_enable.read());
+                log::debug!("dpll1_enable {:08X}", dpll1_enable.read());
 
                 let dpll4_enable = unsafe { gttmm.mmio(0x46018)? };
-                log::info!("dpll4_enable {:08X}", dpll4_enable.read());
+                log::debug!("dpll4_enable {:08X}", dpll4_enable.read());
 
                 let fuse_status = unsafe { gttmm.mmio(0x42000)? };
                 log::debug!("fuse_status {:08X}", fuse_status.read());
@@ -195,17 +205,18 @@ impl Device {
                 log::debug!("tc_hotplug_ctl {:08X}", tc_hotplug_ctl.read());
 
                 let trans_clk_sel_a = unsafe { gttmm.mmio(0x46140)? };
-                log::info!("trans_clk_sel_a {:08X}", trans_clk_sel_a.read());
+                log::debug!("trans_clk_sel_a {:08X}", trans_clk_sel_a.read());
 
                 let trans_clk_sel_b = unsafe { gttmm.mmio(0x46144)? };
-                log::info!("trans_clk_sel_b {:08X}", trans_clk_sel_b.read());
+                log::debug!("trans_clk_sel_b {:08X}", trans_clk_sel_b.read());
 
                 let trans_clk_sel_c = unsafe { gttmm.mmio(0x46148)? };
-                log::info!("trans_clk_sel_c {:08X}", trans_clk_sel_c.read());
+                log::debug!("trans_clk_sel_c {:08X}", trans_clk_sel_c.read());
 
                 let trans_clk_sel_d = unsafe { gttmm.mmio(0x4614C)? };
-                log::info!("trans_clk_sel_d {:08X}", trans_clk_sel_d.read());
+                log::debug!("trans_clk_sel_d {:08X}", trans_clk_sel_d.read());
 
+                pipes = Pipe::tigerlake(&gttmm)?;
                 transcoders = Transcoder::tigerlake(&gttmm)?;
             },
         };
@@ -227,7 +238,7 @@ impl Device {
             const AUX_CTL_SIZE_SHIFT: u32 = 20;
             const AUX_CTL_SIZE_MASK: u32 = 0b11111 << 20;
             const AUX_CTL_IO_SELECT: u32 = 1 << 11;
-            let aux_ctl = unsafe { gttmm.mmio(port.aux_ctl())? };
+            let mut aux_ctl = unsafe { gttmm.mmio(port.aux_ctl())? };
 
             enum I2CData<'a> {
                 Read(&'a mut [u8]),
@@ -378,14 +389,14 @@ impl Device {
                 aux_i2c_tx(true, 0x50, I2CData::Write(&[0]))?;
                 // Read EDID
                 //TODO: Could EDID be read in multiple byte transactions?
-                let mut edid = [0; 128];
-                for chunk in edid.chunks_mut(1) {
+                let mut edid_data = [0; 128];
+                for chunk in edid_data.chunks_mut(1) {
                     aux_i2c_tx(true, 0x50, I2CData::Read(chunk))?;
                 }
                 // Finish transaction
                 aux_i2c_tx(false, 0x50, I2CData::Read(&mut []))?;
 
-                Ok(edid)
+                Ok(edid_data)
             };
 
             let mut gmbus_i2c_tx = |addr7: u8, index: u8, mut data: I2CData| -> Result<()> {
@@ -456,17 +467,17 @@ impl Device {
             };
 
             let mut gmbus_read_edid = || -> Result<[u8; 128]> {
-                let mut edid = [0; 128];
-                gmbus_i2c_tx(0x50, 0x00, I2CData::Read(&mut edid))?;
-                Ok(edid)
+                let mut edid_data = [0; 128];
+                gmbus_i2c_tx(0x50, 0x00, I2CData::Read(&mut edid_data))?;
+                Ok(edid_data)
             };
 
-            let (source, edid) = match aux_read_edid() {
-                Ok(edid) => ("AUX", edid),
+            let (source, edid_data) = match aux_read_edid() {
+                Ok(edid_data) => ("AUX", edid_data),
                 Err(err) => {
                     log::debug!("Port {} failed to read EDID from AUX: {}", port.name, err);
                     match gmbus_read_edid() {
-                        Ok(edid) => ("GMBUS", edid),
+                        Ok(edid_data) => ("GMBUS", edid_data),
                         Err(err) => {
                             log::debug!("Port {} failed to read EDID from GMBUS: {}", port.name, err);
                             continue;
@@ -475,17 +486,38 @@ impl Device {
                 }
             };
 
-            log::debug!("Port {} EDID from {}: {:x?}", port.name, source, edid);
-            let (width, height) = (
-                (edid[0x38] as u32) | (((edid[0x3A] as u32) & 0xF0) << 4),
-                (edid[0x3B] as u32) | (((edid[0x3D] as u32) & 0xF0) << 4),
-            );
-            log::info!("Port {} best resolution using EDID from {}: {}x{}", port.name, source, width, height);
+            let edid = match edid::parse(&edid_data).to_full_result() {
+                Ok(edid) => {
+                    log::info!("Port {} EDID from {}: {:?}", port.name, source, edid);
+                    edid
+                },
+                Err(err) => {
+                    log::warn!("Port {} failed to parse EDID from {}: {:?}", port.name, source, err);
+                    continue;
+                }
+            };
 
-            const DDI_BUF_CTL_EANBLE: u32 = 1 << 31;
+            let mut timing_opt = None;;
+            for desc in edid.descriptors.iter() {
+                match desc {
+                    edid::Descriptor::DetailedTiming(timing) => {
+                        timing_opt = Some(timing);
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            let Some(timing) = timing_opt else {
+                log::warn!("Port {} EDID from {} missing detailed timing", port.name, source);
+                continue;
+            };
+
+            log::info!("Port {} best timing using EDID from {}: {:?}", port.name, source, timing);
+
+            const DDI_BUF_CTL_ENABLE: u32 = 1 << 31;
             const DDI_BUF_CTL_IDLE: u32 = 1 << 7;
 
-            let mut modeset_hdmi = |buf_ctl: &mut Mmio<u32>| -> Result<()> {
+            let mut modeset_hdmi = |buf_ctl: &mut MmioPtr<u32>| -> Result<()> {
                 // IHD-OS-TGL-Vol 12-1.22-Rev2.0 "Sequences for HDMI and DVI"
 
                 // Power wells should already be enabled
@@ -521,21 +553,66 @@ impl Device {
 
                 // Enable planes, pipe, and transcoder
                 {
+                    // Find free transcoder with free pipe
+                    let mut transcoder_pipe = None;
+                    for (transcoder, pipe) in transcoders.iter_mut().zip(pipes.iter_mut()) {
+                        if transcoder.conf.readf(TRANS_CONF_ENABLE) {
+                            continue;
+                        }
+                        //TODO: how would we know if pipe is in use?
+                        transcoder_pipe = Some((transcoder, pipe));
+                        break;
+                    }
+                    let Some((transcoder, pipe)) = transcoder_pipe else {
+                        log::error!("free transcoder and pipe not found");
+                        return Err(Error::new(EIO));
+                    };
+
+                    transcoder.dump();
+
                     // Configure transcoder clock select
+                    transcoder.clk_sel.write(port.transcoder_index() << TRANS_CLK_SEL_DDI_SHIFT);
 
-                    // Configure and enable planes
+                    //TODO: Configure and enable planes 
 
-                    //TODO: VGA and panel fitter steps
+                    //TODO: VGA and panel fitter steps?
 
                     // Configure transcoder timings and other pipe and transcoder settings
+                    transcoder.modeset(pipe, timing);
 
+                    transcoder.dump();
+
+                    /*TODO
                     // Configure and enable TRANS_DDI_FUNC_CTL
+                    transcoder.ddi_func_ctl.write(
+                        TRANS_DDI_FUNC_CTL_ENABLE |
+                        (port.transcoder_index() << TRANS_DDI_FUNC_CTL_DDI_SHIFT) |
+                        TRANS_DDI_FUNC_CTL_MODE_HDMI |
+                        //TODO: allow different bits per color
+                        TRANS_DDI_FUNC_CTL_BPC_8 |
+                        //TODO: use sync polarity from EDID?
+                        TRANS_DDI_FUNC_CTL_SYNC_POLARITY_HIGH |
+                        ((pipe.index as u32) << TRANS_DDI_FUNC_CTL_PIPE_SHIFT)
+                        //TODO: MST transport select, default is DPTP A
+                        //TODO: DP and HDMI bits
+                        //TODO: port width selection, default is x1
+                    );
 
                     // Configure and enable TRANS_CONF
+                    transcoder.conf.write(TRANS_CONF_ENABLE);
+                    //TODO: what is the correct timeout?
+                    let timeout = Timeout::from_millis(100);
+                    while !transcoder.conf.readf(TRANS_CONF_STATE) {
+                        timeout.run().map_err(|()| {
+                            log::error!("timeout on port {} transcoder {} enable", port.name, transcoder.name);
+                            Error::new(EIO)
+                        })?;
+                    }
+                    */
                 }
 
-                // Enable port
-                {
+                //TODO: Enable port
+                if false {
                     //TODO: Configure voltage swing and related IO settings
 
                     // Configure PORT_CL_DW10 static power down to power up all lanes
@@ -548,7 +625,7 @@ impl Device {
 
                     // Configure and enable DDI_BUF_CTL
                     //TODO: more DDI_BUF_CTL bits?
-                    buf_ctl.writef(DDI_BUF_CTL_EANBLE, true);
+                    buf_ctl.writef(DDI_BUF_CTL_ENABLE, true);
 
                     // Wait for DDI_BUF_CTL IDLE = 0, timeout after 500 us
                     let timeout = Timeout::from_micros(500);
@@ -566,11 +643,11 @@ impl Device {
                 Ok(())
             };
 
-            let buf_ctl = unsafe { gttmm.mmio(port.buf_ctl())? };
+            let mut buf_ctl = unsafe { gttmm.mmio(port.buf_ctl())? };
             if buf_ctl.readf(DDI_BUF_CTL_IDLE) {
                 log::info!("Port {} DDI idle, will attempt mode setting", port.name);
                 //TODO: DisplayPort modeset
-                match modeset_hdmi(buf_ctl) {
+                match modeset_hdmi(&mut buf_ctl) {
                     Ok(()) => {
                         log::info!("Port {} modeset finished", port.name);
                     },
@@ -582,6 +659,12 @@ impl Device {
                 log::info!("Port {} DDI already active", port.name);
             }
         }
+
+        /*
+        for pipe in pipes.iter() {
+            pipe.dump();
+        }
+        */
 
         for transcoder in transcoders.iter() {
             transcoder.dump();
@@ -607,6 +690,7 @@ impl Device {
             ddi,
             gttmm,
             gm,
+            pipes,
             transcoders,
         })
     }
