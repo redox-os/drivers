@@ -29,6 +29,32 @@ pub struct Ddi {
 
 //TODO: verify offsets and count using DeviceKind?
 impl Ddi {
+    pub fn dpclka_cfgcr0_clock_off(&self) -> Option<u32> {
+        match self.index {
+            // DDI
+            0 => Some(1 << 10),
+            1 => Some(1 << 11),
+            2 => Some(1 << 24),
+            // Type C
+            3 => Some(1 << 12),
+            4 => Some(1 << 13),
+            5 => Some(1 << 14),
+            6 => Some(1 << 21),
+            7 => Some(1 << 22),
+            8 => Some(1 << 23),
+            _ => None
+        }
+    }
+
+    pub fn dpclka_cfgcr0_clock_shift(&self) -> Option<u32> {
+        match self.index {
+            0 => Some(0),
+            1 => Some(2),
+            2 => Some(4),
+            _ => None
+        }
+    }
+
     pub fn gmbus_pin_pair(&self) -> Option<u8> {
         match self.index {
             // DDI pins

@@ -5,6 +5,8 @@ use syscall::error::{Error, Result, EIO, ENODEV, ERANGE};
 
 mod ddi;
 use self::ddi::*;
+mod dpll;
+use self::dpll::*;
 mod pipe;
 use self::pipe::*;
 mod transcoder;
@@ -86,6 +88,7 @@ impl Drop for MmioRegion {
 pub struct Device {
     kind: DeviceKind,
     ddis: Vec<Ddi>,
+    dplls: Vec<Dpll>,
     gttmm: MmioRegion,
     gm: MmioRegion,
     pipes: Vec<Pipe>,
@@ -126,6 +129,7 @@ impl Device {
 
         let de_hpd_interrupt;
         let de_port_interrupt;
+        let mut dpclka_cfgcr0;
         let dssm;
         let mut gmbus;
         let mut pwr_well_ctl_aux;
@@ -136,6 +140,7 @@ impl Device {
         let tbt_hotplug_ctl;
         let tc_hotplug_ctl;
         let mut ddis;
+        let mut dplls;
         let mut pipes;
         let mut transcoders;
         match kind {
@@ -150,8 +155,8 @@ impl Device {
                 de_port_interrupt = unsafe { gttmm.mmio(0x44440)? };
                 log::debug!("de_port_interrupt {:08X}", de_port_interrupt.read());
 
-                let dpclka_cfgcr0 = unsafe { gttmm.mmio(0x164280)? };
-                log::debug!("dpclka_cfgcr0 {:08X}", dpclka_cfgcr0.read());
+                dpclka_cfgcr0 = unsafe { gttmm.mmio(0x164280)? };
+                log::info!("dpclka_cfgcr0 {:08X}", dpclka_cfgcr0.read());
 
                 let dpll0_cfgcr0 = unsafe { gttmm.mmio(0x164284)? };
                 log::debug!("dpll0_cfgcr0 {:08X}", dpll0_cfgcr0.read());
@@ -209,6 +214,7 @@ impl Device {
                 log::debug!("tc_hotplug_ctl {:08X}", tc_hotplug_ctl.read());
 
                 ddis = Ddi::tigerlake(&gttmm)?;
+                dplls = Dpll::tigerlake(&gttmm)?;
                 pipes = Pipe::tigerlake(&gttmm)?;
                 transcoders = Transcoder::tigerlake(&gttmm)?;
             },
@@ -240,7 +246,6 @@ impl Device {
                 let port_comp_dw0 = unsafe { gttmm.mmio(offset)? };
                 log::debug!("PORT_COMP_DW0_{}: {:08X}", port.name, port_comp_dw0.read());
             }
-
 
             enum I2CData<'a> {
                 Read(&'a mut [u8]),
@@ -524,13 +529,94 @@ impl Device {
                 //TODO: Type-C needs aux power enabled and max lanes set
                 
                 // Enable port PLL without SSC
-                //TODO: assuming a DPLL is already set up for this DDI!
-                //TODO: Check DPCLKA_CFGCR0 for mapping and DPLL_ENABLE for status
+                {
+                    // Find free DPLL
+                    let dpll = dplls.iter_mut().find(|dpll| {
+                        !dpll.enable.readf(DPLL_ENABLE_ENABLE)
+                    }).ok_or_else(|| {
+                        log::error!("failed to find free DPLL");
+                        Error::new(EIO)
+                    })?;
+
+                    // DPLL power guard
+                    let mut dpll_enable = unsafe { MmioPtr::new(dpll.enable.as_mut_ptr()) };
+                    let dpll_power_guard = CallbackGuard::new(
+                        &mut dpll_enable,
+                        |dpll_enable| {
+                            // Enable DPLL power
+                            dpll_enable.writef(DPLL_ENABLE_POWER_ENABLE, true);
+                            //TODO: timeout not specified in docs, should be very fast
+                            let timeout = Timeout::from_micros(1);
+                            while !dpll_enable.readf(DPLL_ENABLE_POWER_STATE) {
+                                timeout.run().map_err(|()| {
+                                    log::debug!("timeout while enabling DPLL {} power", dpll.name);
+                                    Error::new(EIO)
+                                })?;
+                            }
+                            Ok(())
+                        },
+                        |dpll_enable| {
+                            // Disable DPLL power
+                            dpll_enable.writef(DPLL_ENABLE_POWER_ENABLE, false);
+                        }
+                    )?;
+
+                    // Set SSC enable/disable. For HDMI, always disable
+                    dpll.ssc.writef(DPLL_SSC_ENABLE, false);
+
+                    // Configure DPLL frequency
+                    dpll.set_freq_hdmi(ref_freq, timing)?;
+
+                    //TODO: "Sequence Before Frequency Change"
+
+                    // Enable DPLL
+                    //TODO: use guard?
+                    {
+                        dpll.enable.writef(DPLL_ENABLE_ENABLE, true);
+                        let timeout = Timeout::from_micros(50);
+                        while !dpll.enable.readf(DPLL_ENABLE_LOCK) {
+                            timeout.run().map_err(|()| {
+                                log::debug!("timeout while enabling DPLL {}", dpll.name);
+                                Error::new(EIO)
+                            })?;
+                        }
+                    }
+
+                    //TODO: "Sequence After Frequency Change"
+
+                    // Update DPLL mapping
+                    {
+                        const DPCLKA_CFGCR0_CLOCK_MASK: u32 = 0b11;
+
+                        let Some(clock_shift) = port.dpclka_cfgcr0_clock_shift() else {
+                            log::warn!("Port {} clock shift not implemented", port.name);
+                            return Err(Error::new(EIO));
+                        };
+                        let mut v = dpclka_cfgcr0.read();
+                        v &= !(DPCLKA_CFGCR0_CLOCK_MASK << clock_shift);
+                        v |= (dpll.dpclka_cfgcr0_clock_value << clock_shift);
+                        dpclka_cfgcr0.write(v);
+                    }
+
+                    // Enable DPLL clock (must be done separately from PLL mapping)
+                    {
+                        let Some(clock_off) = port.dpclka_cfgcr0_clock_off() else {
+                            log::warn!("Port {} clock off not implemented", port.name);
+                            return Err(Error::new(EIO));
+                        };
+                        let mut v = dpclka_cfgcr0.read();
+                        v &= !clock_off;
+                        dpclka_cfgcr0.write(v);
+                    }
+
+                    // Continue to allow DPLL power
+                    mem::forget(dpll_power_guard);
+                }
 
                 // Enable IO power
                 let pwr_well_ctl_ddi_request = port.pwr_well_ctl_ddi_request();
                 let pwr_well_ctl_ddi_state = port.pwr_well_ctl_ddi_state();
-                let _pwr_guard = CallbackGuard::new(
+                let pwr_guard = CallbackGuard::new(
                     &mut pwr_well_ctl_ddi,
                     |pwr_well_ctl_ddi| {
                         // Enable IO power
@@ -578,7 +664,6 @@ impl Device {
 
                     //TODO: VGA and panel fitter steps?
 
-                    /*TODO
                     // Configure transcoder timings and other pipe and transcoder settings
                     transcoder.modeset(pipe, timing);
 
@@ -619,11 +704,10 @@ impl Device {
                             Error::new(EIO)
                         })?;
                     }
-                    */
                 }
 
-                //TODO: Enable port
-                if false {
+                // Enable port
+                {
                     //TODO: Configure voltage swing and related IO settings
 
                     // Configure PORT_CL_DW10 static power down to power up all lanes
@@ -649,7 +733,7 @@ impl Device {
                 }
 
                 // Keep IO power on if finished
-                mem::forget(_pwr_guard);
+                mem::forget(pwr_guard);
 
                 Ok(())
             };
@@ -668,6 +752,10 @@ impl Device {
             } else {
                 log::info!("Port {} DDI already active", port.name);
             }
+        }
+
+        for dpll in dplls.iter() {
+            dpll.dump();
         }
 
         for transcoder in transcoders.iter() {
@@ -696,6 +784,7 @@ impl Device {
         Ok(Self {
             kind,
             ddis,
+            dplls,
             gttmm,
             gm,
             pipes,
