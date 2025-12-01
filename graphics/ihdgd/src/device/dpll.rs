@@ -156,8 +156,9 @@ impl Dpll {
             self.cfgcr1.write(v);
         }
 
-        // Read back DPLL_CFGCR0 or DPLL_CFGCR1 to ensure writes are complete
+        // Read back DPLL_CFGCR0 and DPLL_CFGCR1 to ensure writes are complete
         let _ = self.cfgcr0.read();
+        let _ = self.cfgcr1.read();
 
         Ok(())
     }

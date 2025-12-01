@@ -242,7 +242,7 @@ impl Device {
 
         for port in ddis.iter_mut() {
             //TODO: init port if needed
-            if let Some(offset) = port.port_comp_dw0() {
+            if let Some(offset) = port.port_comp(PortCompReg::Dw0) {
                 let port_comp_dw0 = unsafe { gttmm.mmio(offset)? };
                 log::debug!("PORT_COMP_DW0_{}: {:08X}", port.name, port_comp_dw0.read());
             }
@@ -604,9 +604,7 @@ impl Device {
                             log::warn!("Port {} clock off not implemented", port.name);
                             return Err(Error::new(EIO));
                         };
-                        let mut v = dpclka_cfgcr0.read();
-                        v &= !clock_off;
-                        dpclka_cfgcr0.write(v);
+                        dpclka_cfgcr0.writef(clock_off, false);
                     }
 
                     // Continue to allow DPLL power
@@ -655,8 +653,6 @@ impl Device {
                         return Err(Error::new(EIO));
                     };
 
-                    transcoder.dump();
-
                     // Configure transcoder clock select
                     transcoder.clk_sel.write(port.transcoder_index() << TRANS_CLK_SEL_DDI_SHIFT);
 
@@ -666,8 +662,6 @@ impl Device {
 
                     // Configure transcoder timings and other pipe and transcoder settings
                     transcoder.modeset(pipe, timing);
-
-                    transcoder.dump();
 
                     // Configure and enable TRANS_DDI_FUNC_CTL
                     transcoder.ddi_func_ctl.write(
@@ -708,13 +702,13 @@ impl Device {
 
                 // Enable port
                 {
-                    //TODO: Configure voltage swing and related IO settings
+                    // Configure voltage swing and related IO settings
+                    port.voltage_swing_hdmi(&gttmm, timing)?;
 
                     // Configure PORT_CL_DW10 static power down to power up all lanes
                     //TODO: only power up required lanes
-                    if let Some(offset) = port.port_cl_dw10() {
+                    if let Some(offset) = port.port_cl(PortClReg::Dw10) {
                         let mut port_cl_dw10 = unsafe { gttmm.mmio(offset)? };
-                        log::info!("port_cl_dw10 {:08X}", port_cl_dw10.read());
                         port_cl_dw10.writef(0b1111 << 4, false);
                     }
 
