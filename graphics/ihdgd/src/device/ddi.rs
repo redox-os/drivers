@@ -1,4 +1,5 @@
 use common::io::{Io, MmioPtr, WriteOnly};
+use std::sync::Arc;
 use syscall::error::{Error, Result, EIO};
 
 use super::{DeviceKind, MmioRegion};
@@ -86,7 +87,7 @@ pub enum PortCompReg {
 #[repr(usize)]
 pub enum PortPcsReg {
     Dw1 = 0x04,
-    Dw9 = 0x27,
+    Dw9 = 0x24,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -113,10 +114,10 @@ pub enum PortLane {
     Ln3 = 0xB00,
 }
 
-
 pub struct Ddi {
     pub name: &'static str,
     pub index: usize,
+    pub gttmm: Arc<MmioRegion>,
     pub port_base: Option<usize>,
     pub aux_ctl: MmioPtr<u32>,
     pub aux_datas: [MmioPtr<u32>; 5],
@@ -128,6 +129,44 @@ impl Ddi {
     pub fn dump(&self) {
         eprint!("Ddi {} {}", self.name, self.index);
         eprint!(" buf_ctl {:08X}", self.buf_ctl.read());
+        let lanes = [PortLane::Ln0, PortLane::Ln1, PortLane::Ln2, PortLane::Ln3];
+        for reg in [
+            PortClReg::Dw5,
+            PortClReg::Dw10,
+            PortClReg::Dw12,
+            PortClReg::Dw15,
+            PortClReg::Dw16,
+        ] {
+            if let Some(mmio) = self.port_cl(reg) {
+                eprint!(" CL_{:?} {:08X}", reg, mmio.read());
+            }
+        }
+        for reg in [
+            PortPcsReg::Dw1,
+            PortPcsReg::Dw9,
+        ] {
+            for lane in lanes {
+                if let Some(mmio) = self.port_pcs(reg, lane) {
+                    eprint!(" PCS_{:?}_{:?} {:08X}", reg, lane, mmio.read());
+                }
+            }
+        }
+        for reg in [
+            PortTxReg::Dw0,
+            PortTxReg::Dw1,
+            PortTxReg::Dw2,
+            PortTxReg::Dw4,
+            PortTxReg::Dw5,
+            PortTxReg::Dw6,
+            PortTxReg::Dw7,
+            PortTxReg::Dw8,
+        ] {
+            for lane in lanes {
+                if let Some(mmio) = self.port_tx(reg, lane) {
+                    eprint!(" TX_{:?}_{:?} {:08X}", reg, lane, mmio.read());
+                }
+            }
+        }
         eprintln!();
     }
 
@@ -174,20 +213,27 @@ impl Ddi {
         }
     }
 
-    pub fn port_cl(&self, reg: PortClReg) -> Option<usize> {
-        Some(self.port_base? + (reg as usize))
+    fn port_reg(&self, offset: usize) -> Option<MmioPtr<u32>> {
+        //TODO: handle gttmm.mmio error?
+        unsafe { self.gttmm.mmio(self.port_base? + offset).ok() }
     }
 
-    pub fn port_comp(&self, reg: PortCompReg) -> Option<usize> {
-        Some(self.port_base? + (reg as usize))
+    pub fn port_cl(&self, reg: PortClReg) -> Option<MmioPtr<u32>> {
+        self.port_reg(reg as usize)
     }
 
-    pub fn port_pcs(&self, reg: PortPcsReg, lane: PortLane) -> Option<usize> {
-        Some(self.port_base? + (reg as usize) + (lane as usize))
+    pub fn port_comp(&self, reg: PortCompReg) -> Option<MmioPtr<u32>> {
+        self.port_reg(reg as usize)
     }
 
-    pub fn port_tx(&self, reg: PortTxReg, lane: PortLane) -> Option<usize> {
-        Some(self.port_base? + (reg as usize) + (lane as usize))
+    //TODO: return WriteOnly if PortLane::Grp?
+    pub fn port_pcs(&self, reg: PortPcsReg, lane: PortLane) -> Option<MmioPtr<u32>> {
+        self.port_reg((reg as usize) + (lane as usize))
+    }
+
+    //TODO: return WriteOnly if PortLane::Grp?
+    pub fn port_tx(&self, reg: PortTxReg, lane: PortLane) -> Option<MmioPtr<u32>> {
+        self.port_reg((reg as usize) + (lane as usize))
     }
 
     pub fn pwr_well_ctl_aux_state(&self) -> u32 {
@@ -268,8 +314,8 @@ impl Ddi {
         // Clear cmnkeeper_enable for HDMI
         {
             // It is not possible to read from GRP register, so use LN0 as template
-            let mut pcs_dw1_ln0 = unsafe { gttmm.mmio(self.port_pcs(PortPcsReg::Dw1, PortLane::Ln0).unwrap())? };
-            let mut pcs_dw1_grp = unsafe { WriteOnly::new(gttmm.mmio(self.port_pcs(PortPcsReg::Dw1, PortLane::Grp).unwrap())?) };
+            let mut pcs_dw1_ln0 = self.port_pcs(PortPcsReg::Dw1, PortLane::Ln0).unwrap();
+            let mut pcs_dw1_grp = WriteOnly::new(self.port_pcs(PortPcsReg::Dw1, PortLane::Grp).unwrap());
             let mut v = pcs_dw1_ln0.read();
             v &= !PORT_PCS_DW1_CMNKEEPER_ENABLE;
             pcs_dw1_grp.write(v);
@@ -278,28 +324,28 @@ impl Ddi {
         // Program loadgen select
         //TODO: this assumes bit rate <= 6 GHz and 4 lanes enabled
         {
-            let mut tx_dw4_ln0 = unsafe { gttmm.mmio(self.port_tx(PortTxReg::Dw4, PortLane::Ln0).unwrap())? };
+            let mut tx_dw4_ln0 = self.port_tx(PortTxReg::Dw4, PortLane::Ln0).unwrap();
             tx_dw4_ln0.writef(PORT_TX_DW4_SELECT, false);
 
-            let mut tx_dw4_ln1 = unsafe { gttmm.mmio(self.port_tx(PortTxReg::Dw4, PortLane::Ln1).unwrap())? };
+            let mut tx_dw4_ln1 = self.port_tx(PortTxReg::Dw4, PortLane::Ln1).unwrap();
             tx_dw4_ln1.writef(PORT_TX_DW4_SELECT, true);
 
-            let mut tx_dw4_ln2 = unsafe { gttmm.mmio(self.port_tx(PortTxReg::Dw4, PortLane::Ln2).unwrap())? };
+            let mut tx_dw4_ln2 = self.port_tx(PortTxReg::Dw4, PortLane::Ln2).unwrap();
             tx_dw4_ln2.writef(PORT_TX_DW4_SELECT, true);
 
-            let mut tx_dw4_ln3 = unsafe { gttmm.mmio(self.port_tx(PortTxReg::Dw4, PortLane::Ln3).unwrap())? };
+            let mut tx_dw4_ln3 = self.port_tx(PortTxReg::Dw4, PortLane::Ln3).unwrap();
             tx_dw4_ln3.writef(PORT_TX_DW4_SELECT, true);
         }
 
         // Set PORT_CL_DW5 sus clock config to 11b
         {
-            let mut cl_dw5 = unsafe { gttmm.mmio(self.port_cl(PortClReg::Dw5).unwrap())? };
+            let mut cl_dw5 = self.port_cl(PortClReg::Dw5).unwrap();
             cl_dw5.writef(PORT_CL_DW5_SUS_CLOCK_MASK, true);
         }
 
         // Clear training enable to change swing values
-        let mut tx_dw5_ln0 = unsafe { gttmm.mmio(self.port_tx(PortTxReg::Dw5, PortLane::Ln0).unwrap())? };
-        let mut tx_dw5_grp = unsafe { WriteOnly::new(gttmm.mmio(self.port_tx(PortTxReg::Dw5, PortLane::Grp).unwrap())?) };
+        let mut tx_dw5_ln0 = self.port_tx(PortTxReg::Dw5, PortLane::Ln0).unwrap();
+        let mut tx_dw5_grp = WriteOnly::new(self.port_tx(PortTxReg::Dw5, PortLane::Grp).unwrap());
         {
             let mut v = tx_dw5_ln0.read();
             v &= !PORT_TX_DW5_TRAINING_ENABLE;
@@ -309,7 +355,7 @@ impl Ddi {
         // Program swing and de-emphasis
 
         // Disable eDP bits in PORT_CL_DW10
-        let mut cl_dw10 = unsafe { gttmm.mmio(self.port_cl(PortClReg::Dw10).unwrap())? };
+        let mut cl_dw10 = self.port_cl(PortClReg::Dw10).unwrap();
         cl_dw10.writef(PORT_CL_DW10_EDP4K2K_MODE_OVRD_EN | PORT_CL_DW10_EDP4K2K_MODE_OVRD_VAL, false);
 
         // For PORT_TX_DW5:
@@ -345,7 +391,7 @@ impl Ddi {
         // - Set swing sel from settings
         // - Set rcomp scalar to 0x98
         for lane in lanes {
-            let mut tx_dw2 = unsafe { gttmm.mmio(self.port_tx(PortTxReg::Dw2, lane).unwrap())? };
+            let mut tx_dw2 = self.port_tx(PortTxReg::Dw2, lane).unwrap();
             let mut v = tx_dw2.read();
             v &= !(
                 PORT_TX_DW2_SWING_SEL_UPPER_MASK |
@@ -366,7 +412,7 @@ impl Ddi {
         // - Set post cursor 2 to 0x0
         // - Set cursor coeff from settings
         for lane in lanes {
-            let mut tx_dw4 = unsafe { gttmm.mmio(self.port_tx(PortTxReg::Dw4, lane).unwrap())? };
+            let mut tx_dw4 = self.port_tx(PortTxReg::Dw4, lane).unwrap();
             let mut v = tx_dw4.read();
             v &= !(
                 PORT_TX_DW4_POST_CURSOR_1_MASK |
@@ -382,7 +428,7 @@ impl Ddi {
         // For PORT_TX_DW7:
         // - Set n scalar from settings
         for lane in lanes {
-            let mut tx_dw7 = unsafe { gttmm.mmio(self.port_tx(PortTxReg::Dw7, lane).unwrap())? };
+            let mut tx_dw7 = self.port_tx(PortTxReg::Dw7, lane).unwrap();
             // All other bits are spare
             tx_dw7.write(setting.dw7_n_scalar << PORT_TX_DW7_N_SCALAR_SHIFT);
         }
@@ -397,7 +443,7 @@ impl Ddi {
         Ok(())
     }
 
-    pub fn tigerlake(gttmm: &MmioRegion) -> Result<Vec<Self>> {
+    pub fn tigerlake(gttmm: &Arc<MmioRegion>) -> Result<Vec<Self>> {
         let mut ddis = Vec::new();
         for (i, name) in [
             "A",
@@ -420,6 +466,7 @@ impl Ddi {
                 name,
                 index: i,
                 port_base,
+                gttmm: gttmm.clone(),
                 // IHD-OS-TGL-Vol 2c-12.21 DDI_AUX_CTL
                 aux_ctl: unsafe { gttmm.mmio(0x64010 + i * 0x100)? },
                 // IHD-OS-TGL-Vol 2c-12.21 DDI_AUX_DATA
@@ -431,7 +478,7 @@ impl Ddi {
                     unsafe { gttmm.mmio(0x64024 + i * 0x100)? },
                 ],
                 // IHD-OS-TGL-Vol 2c-12.21 DDI_BUF_CTL
-                buf_ctl: unsafe { gttmm.mmio(0x64000 + i * 0x100)? }
+                buf_ctl: unsafe { gttmm.mmio(0x64000 + i * 0x100)? },
             })
         }
         Ok(ddis)

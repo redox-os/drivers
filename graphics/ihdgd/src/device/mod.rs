@@ -1,6 +1,6 @@
 use common::{io::{Io, MmioPtr}, timeout::Timeout};
 use pcid_interface::PciFunction;
-use std::{mem, ptr};
+use std::{mem, ptr, sync::Arc};
 use syscall::error::{Error, Result, EIO, ENODEV, ERANGE};
 
 mod ddi;
@@ -89,7 +89,7 @@ pub struct Device {
     kind: DeviceKind,
     ddis: Vec<Ddi>,
     dplls: Vec<Dpll>,
-    gttmm: MmioRegion,
+    gttmm: Arc<MmioRegion>,
     gm: MmioRegion,
     pipes: Vec<Pipe>,
     transcoders: Vec<Transcoder>,
@@ -114,7 +114,7 @@ impl Device {
 
         let gttmm = {
             let (phys, size) = func.bars[0].expect_mem();
-            MmioRegion::new(phys, size)?
+            Arc::new(MmioRegion::new(phys, size)?)
         };
         log::info!("GTTMM {:X?}", gttmm);
         let gm = {
@@ -242,8 +242,7 @@ impl Device {
 
         for port in ddis.iter_mut() {
             //TODO: init port if needed
-            if let Some(offset) = port.port_comp(PortCompReg::Dw0) {
-                let port_comp_dw0 = unsafe { gttmm.mmio(offset)? };
+            if let Some(port_comp_dw0) = port.port_comp(PortCompReg::Dw0) {
                 log::debug!("PORT_COMP_DW0_{}: {:08X}", port.name, port_comp_dw0.read());
             }
 
@@ -519,8 +518,6 @@ impl Device {
                 continue;
             };
 
-            log::info!("Port {} best timing using EDID from {}: {:?}", port.name, source, timing);
-
             let mut modeset_hdmi = |port: &mut Ddi| -> Result<()> {
                 // IHD-OS-TGL-Vol 12-1.22-Rev2.0 "Sequences for HDMI and DVI"
 
@@ -723,8 +720,7 @@ impl Device {
 
                     // Configure PORT_CL_DW10 static power down to power up all lanes
                     //TODO: only power up required lanes
-                    if let Some(offset) = port.port_cl(PortClReg::Dw10) {
-                        let mut port_cl_dw10 = unsafe { gttmm.mmio(offset)? };
+                    if let Some(mut port_cl_dw10) = port.port_cl(PortClReg::Dw10) {
                         port_cl_dw10.writef(0b1111 << 4, false);
                     }
 
