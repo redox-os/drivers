@@ -91,9 +91,5 @@ impl<I: Io> WriteOnly<I> {
         self.inner.write(value)
     }
 
-    #[inline(always)]
-    /// Calls [Io::writef]
-    pub fn writef(&mut self, flags: I::Value, value: bool) {
-        self.inner.writef(flags, value)
-    }
+    // writef requires read which is not valid when write-only
 }
