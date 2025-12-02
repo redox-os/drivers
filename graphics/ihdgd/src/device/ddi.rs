@@ -1,4 +1,4 @@
-use common::io::{Io, MmioPtr};
+use common::io::{Io, MmioPtr, WriteOnly};
 use syscall::error::{Error, Result, EIO};
 
 use super::{DeviceKind, MmioRegion};
@@ -61,7 +61,7 @@ pub const PORT_TX_DW5_RTERM_SELECT_MASK: u32 = 0b111 << PORT_TX_DW5_RTERM_SELECT
 // IHD-OS-TGL-Vol 2c-12.21 PORT_TX_DW7
 pub const PORT_TX_DW7_N_SCALAR_SHIFT: u32 = 24;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 #[repr(usize)]
 pub enum PortClReg {
     Dw5 = 0x14,
@@ -71,7 +71,7 @@ pub enum PortClReg {
     Dw16 = 0x40,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 #[repr(usize)]
 pub enum PortCompReg {
     Dw0 = 0x100,
@@ -82,14 +82,14 @@ pub enum PortCompReg {
     Dw10 = 0x128,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 #[repr(usize)]
 pub enum PortPcsReg {
     Dw1 = 0x04,
     Dw9 = 0x27,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 #[repr(usize)]
 pub enum PortTxReg {
     Dw0 = 0x80,
@@ -102,7 +102,7 @@ pub enum PortTxReg {
     Dw8 = 0xA0,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 #[repr(usize)]
 pub enum PortLane {
     Aux = 0x300,
@@ -125,6 +125,12 @@ pub struct Ddi {
 
 //TODO: verify offsets and count using DeviceKind?
 impl Ddi {
+    pub fn dump(&self) {
+        eprint!("Ddi {} {}", self.name, self.index);
+        eprint!(" buf_ctl {:08X}", self.buf_ctl.read());
+        eprintln!();
+    }
+
     pub fn dpclka_cfgcr0_clock_off(&self) -> Option<u32> {
         match self.index {
             // DDI
@@ -249,6 +255,10 @@ impl Ddi {
             Setting::new(0b0110, 0x7F, 0x35, 0x0A, 0b0),
         ];
 
+        // Last setting is the default
+        //TODO: get correct setting index from BIOS
+        let setting = settings.last().unwrap();
+
         // This allows unwraps on port functions below without panic
         if self.port_base.is_none() {
             log::error!("HDMI voltage swing procedure only implemented on combo DDI");
@@ -257,8 +267,12 @@ impl Ddi {
 
         // Clear cmnkeeper_enable for HDMI
         {
-            let mut pcs_dw1 = unsafe { gttmm.mmio(self.port_pcs(PortPcsReg::Dw1, PortLane::Grp).unwrap())? };
-            pcs_dw1.writef(PORT_PCS_DW1_CMNKEEPER_ENABLE, false);
+            // It is not possible to read from GRP register, so use LN0 as template
+            let mut pcs_dw1_ln0 = unsafe { gttmm.mmio(self.port_pcs(PortPcsReg::Dw1, PortLane::Ln0).unwrap())? };
+            let mut pcs_dw1_grp = unsafe { WriteOnly::new(gttmm.mmio(self.port_pcs(PortPcsReg::Dw1, PortLane::Grp).unwrap())?) };
+            let mut v = pcs_dw1_ln0.read();
+            v &= !PORT_PCS_DW1_CMNKEEPER_ENABLE;
+            pcs_dw1_grp.write(v);
         }
 
         // Program loadgen select
@@ -283,13 +297,14 @@ impl Ddi {
             cl_dw5.writef(PORT_CL_DW5_SUS_CLOCK_MASK, true);
         }
 
-        // Last setting is the default
-        //TODO: get correct setting index from BIOS
-        let setting = settings.last().unwrap();
-
         // Clear training enable to change swing values
-        let mut tx_dw5 = unsafe { gttmm.mmio(self.port_tx(PortTxReg::Dw5, PortLane::Grp).unwrap())? };
-        tx_dw5.writef(PORT_TX_DW5_TRAINING_ENABLE, false);
+        let mut tx_dw5_ln0 = unsafe { gttmm.mmio(self.port_tx(PortTxReg::Dw5, PortLane::Ln0).unwrap())? };
+        let mut tx_dw5_grp = unsafe { WriteOnly::new(gttmm.mmio(self.port_tx(PortTxReg::Dw5, PortLane::Grp).unwrap())?) };
+        {
+            let mut v = tx_dw5_ln0.read();
+            v &= !PORT_TX_DW5_TRAINING_ENABLE;
+            tx_dw5_grp.write(v);
+        }
 
         // Program swing and de-emphasis
 
@@ -297,11 +312,40 @@ impl Ddi {
         let mut cl_dw10 = unsafe { gttmm.mmio(self.port_cl(PortClReg::Dw10).unwrap())? };
         cl_dw10.writef(PORT_CL_DW10_EDP4K2K_MODE_OVRD_EN | PORT_CL_DW10_EDP4K2K_MODE_OVRD_VAL, false);
 
+        // For PORT_TX_DW5:
+        // - Set 2 tap disable from settings
+        // - Set scaling mode sel to 010b
+        // - Set rterm select to 110b
+        // - Set 3 tap disable to 1
+        // - Set cursor program to 0
+        // - Set coeff polarity to 0
+        {
+            let mut v = tx_dw5_ln0.read();
+            v &= !(
+                PORT_TX_DW5_DISABLE_2_TAP |
+                PORT_TX_DW5_CURSOR_PROGRAM |
+                PORT_TX_DW5_COEFF_POLARITY |
+                PORT_TX_DW5_SCALING_MODE_SEL_MASK |
+                PORT_TX_DW5_RTERM_SELECT_MASK
+            );
+            v |= (
+                (setting.dw5_2_tap_disable << PORT_TX_DW5_DISABLE_2_TAP_SHIFT) |
+                PORT_TX_DW5_DISABLE_3_TAP |
+                (0b010 << PORT_TX_DW5_SCALING_MODE_SEL_SHIFT) |
+                (0b110 << PORT_TX_DW5_RTERM_SELECT_SHIFT)
+            );
+            tx_dw5_grp.write(v);
+        }
+
+        // Individual lane settings are used to avoid overwriting lane-specific settings, and because
+        // group registers cannot be read
+        let lanes = [PortLane::Ln0, PortLane::Ln1, PortLane::Ln2, PortLane::Ln3];
+
         // For PORT_TX_DW2:
         // - Set swing sel from settings
         // - Set rcomp scalar to 0x98
-        {
-            let mut tx_dw2 = unsafe { gttmm.mmio(self.port_tx(PortTxReg::Dw2, PortLane::Grp).unwrap())? };
+        for lane in lanes {
+            let mut tx_dw2 = unsafe { gttmm.mmio(self.port_tx(PortTxReg::Dw2, lane).unwrap())? };
             let mut v = tx_dw2.read();
             v &= !(
                 PORT_TX_DW2_SWING_SEL_UPPER_MASK |
@@ -317,12 +361,11 @@ impl Ddi {
             tx_dw2.write(v);
         }
 
-        // Individual lane settings are used to avoid overwriting PORT_TX_DW4 individual settings above
         // For PORT_TX_DW4:
         // - Set post cursor 1 from settings
         // - Set post cursor 2 to 0x0
         // - Set cursor coeff from settings
-        for lane in [PortLane::Ln0, PortLane::Ln1, PortLane::Ln2, PortLane::Ln3] {
+        for lane in lanes {
             let mut tx_dw4 = unsafe { gttmm.mmio(self.port_tx(PortTxReg::Dw4, lane).unwrap())? };
             let mut v = tx_dw4.read();
             v &= !(
@@ -336,41 +379,20 @@ impl Ddi {
             tx_dw4.write(v);
         }
 
-        // For PORT_TX_DW5:
-        // - Set 2 tap disable from settings
-        // - Set scaling mode sel to 010b
-        // - Set rterm select to 110b
-        // - Set 3 tap disable to 1
-        // - Set cursor program to 0
-        // - Set coeff polarity to 0
-        {
-            let mut v = tx_dw5.read();
-            v &= !(
-                PORT_TX_DW5_DISABLE_2_TAP |
-                PORT_TX_DW5_CURSOR_PROGRAM |
-                PORT_TX_DW5_COEFF_POLARITY |
-                PORT_TX_DW5_SCALING_MODE_SEL_MASK |
-                PORT_TX_DW5_RTERM_SELECT_MASK
-            );
-            v |= (
-                (setting.dw5_2_tap_disable << PORT_TX_DW5_DISABLE_2_TAP_SHIFT) |
-                PORT_TX_DW5_DISABLE_3_TAP |
-                (0b010 << PORT_TX_DW5_SCALING_MODE_SEL_SHIFT) |
-                (0b110 << PORT_TX_DW5_RTERM_SELECT_SHIFT)
-            );
-            tx_dw5.write(v);
-        }
-
         // For PORT_TX_DW7:
         // - Set n scalar from settings
-        {
-            let mut tx_dw7 = unsafe { gttmm.mmio(self.port_tx(PortTxReg::Dw7, PortLane::Grp).unwrap())? };
+        for lane in lanes {
+            let mut tx_dw7 = unsafe { gttmm.mmio(self.port_tx(PortTxReg::Dw7, lane).unwrap())? };
             // All other bits are spare
             tx_dw7.write(setting.dw7_n_scalar << PORT_TX_DW7_N_SCALAR_SHIFT);
         }
 
         // Set training enable to trigger update
-        tx_dw5.writef(PORT_TX_DW5_TRAINING_ENABLE, true);
+        {
+            let mut v = tx_dw5_ln0.read();
+            v |= PORT_TX_DW5_TRAINING_ENABLE;
+            tx_dw5_grp.write(v);
+        }
 
         Ok(())
     }

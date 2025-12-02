@@ -664,24 +664,40 @@ impl Device {
                     transcoder.modeset(pipe, timing);
 
                     // Configure and enable TRANS_DDI_FUNC_CTL
-                    transcoder.ddi_func_ctl.write(
-                        TRANS_DDI_FUNC_CTL_ENABLE |
-                        (port.transcoder_index() << TRANS_DDI_FUNC_CTL_DDI_SHIFT) |
-                        TRANS_DDI_FUNC_CTL_MODE_HDMI |
-                        //TODO: allow different bits per color
-                        TRANS_DDI_FUNC_CTL_BPC_8 |
-                        //TODO: use sync polarity from EDID?
-                        TRANS_DDI_FUNC_CTL_SYNC_POLARITY_HIGH |
-                        //TODO: doc says this bit must be set before the scrambler is enabled?
-                        TRANS_DDI_FUNC_CTL_HDMI_SCRAMBLER_CTS |
-                        //TODO: HDMI scrambler reset frequency
-                        //TODO: set this based on HDMI rate > 340 mega-characters/second/channel
-                        TRANS_DDI_FUNC_CTL_HIGH_TMDS_CHAR_RATE |
-                        //TODO: correct port width selection
-                        TRANS_DDI_FUNC_CTL_PORT_WIDTH_4 |
-                        //TODO: set this based on HDMI rate > 340 MHz
-                        TRANS_DDI_FUNC_CTL_HDMI_SCRAMBLING
-                    );
+                    {
+                        let mut ddi_func_ctl = 
+                            TRANS_DDI_FUNC_CTL_ENABLE |
+                            (port.transcoder_index() << TRANS_DDI_FUNC_CTL_DDI_SHIFT) |
+                            TRANS_DDI_FUNC_CTL_MODE_HDMI |
+                            //TODO: allow different bits per color
+                            TRANS_DDI_FUNC_CTL_BPC_8 |
+                            //TODO: correct port width selection
+                            TRANS_DDI_FUNC_CTL_PORT_WIDTH_4;
+                        
+                        match (timing.features >> 3) & 0b11 {
+                            // Digital sync, separate
+                            0b11 => {
+                                if (timing.features & (1 << 2)) != 0 {
+                                    ddi_func_ctl |= TRANS_DDI_FUNC_CTL_SYNC_POLARITY_VSHIGH;
+                                }
+                                if (timing.features & (1 << 1)) != 0 {
+                                    ddi_func_ctl |= TRANS_DDI_FUNC_CTL_SYNC_POLARITY_HSHIGH;
+                                }
+                            },
+                            unsupported => {
+                                log::warn!("unsupported sync {:#x}", unsupported);
+                            }
+                        }
+
+                        // Set scrambling and high TMDS char rate based on symbol rate > 340 MHz
+                        if timing.pixel_clock > 340_000 {
+                            ddi_func_ctl |= 
+                                TRANS_DDI_FUNC_CTL_HIGH_TMDS_CHAR_RATE |
+                                TRANS_DDI_FUNC_CTL_HDMI_SCRAMBLING;
+                        }
+
+                        transcoder.ddi_func_ctl.write(ddi_func_ctl);
+                    }
 
                     // Configure and enable TRANS_CONF
                     let mut conf = transcoder.conf.read();
@@ -746,6 +762,8 @@ impl Device {
             } else {
                 log::info!("Port {} DDI already active", port.name);
             }
+
+            port.dump();
         }
 
         for dpll in dplls.iter() {
