@@ -758,20 +758,32 @@ impl Device {
             } else {
                 log::info!("Port {} DDI already active", port.name);
             }
-
-            port.dump();
         }
 
+        for port in ddis.iter() {
+            if port.buf_ctl.readf(DDI_BUF_CTL_ENABLE) {
+                port.dump();
+            }
+        }
+
+        eprintln!("dpclka_cfgcr0 {:08X}", dpclka_cfgcr0.read());
         for dpll in dplls.iter() {
-            dpll.dump();
+            if dpll.enable.readf(DPLL_ENABLE_ENABLE) {
+                dpll.dump();
+            }
         }
 
-        for transcoder in transcoders.iter() {
-            transcoder.dump();
-        }
-
-        for pipe in pipes.iter() {
-            pipe.dump();
+        for (transcoder, pipe) in transcoders.iter().zip(pipes.iter()) {
+            if transcoder.conf.readf(TRANS_CONF_ENABLE) {
+                transcoder.dump();
+                pipe.dump();
+                for plane in pipe.planes.iter() {
+                    if plane.ctl.readf(PLANE_CTL_ENABLE) {
+                        eprint!("  ");
+                        plane.dump();
+                    }
+                }
+            }
         }
 
         /*TODO: hotplug detect

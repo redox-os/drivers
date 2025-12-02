@@ -3,6 +3,8 @@ use syscall::error::Result;
 
 use super::MmioRegion;
 
+pub const PLANE_CTL_ENABLE: u32 = 1 << 31;
+
 pub struct Plane {
     pub name: &'static str,
     pub index: usize,
@@ -41,10 +43,6 @@ impl Pipe {
         eprint!(" misc {:08X}", self.misc.read());
         eprint!(" srcsz {:08X}", self.srcsz.read());
         eprintln!();
-        for plane in self.planes.iter() {
-            eprint!("  ");
-            plane.dump();
-        }
     }
 
     pub fn tigerlake(gttmm: &MmioRegion) -> Result<Vec<Self>> {
